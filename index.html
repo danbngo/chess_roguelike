@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chess Roguelike</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <h1>Chess Roguelike</h1>
+        <p>Move the king with the arrow keys or WASD. The board is a visible 8x8 window, and each step gives the enemy pieces one turn.</p>
+        <div class="hud">
+          <span id="turn">Turn 0</span>
+          <span id="health">HP 5</span>
+          <span id="score">Score 0</span>
+        </div>
+        <canvas id="game" width="640" height="640"></canvas>
+        <div class="actions">
+          <button id="restart" type="button">Restart</button>
+          <span id="status">The king awakens on a strange board.</span>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
