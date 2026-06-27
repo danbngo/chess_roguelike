@@ -12,7 +12,6 @@ function createEnemy(type, x, y) {
   };
 }
 
-// Find a random free tile matching `predicate`, avoiding everything in `occupied`.
 function findFreeTile(occupied, predicate, attempts) {
   for (let i = 0; i < (attempts || 300); i += 1) {
     const x = randomInt(WORLD_SIZE);
@@ -29,6 +28,54 @@ function findFreeTile(occupied, predicate, attempts) {
   return null;
 }
 
+// Scatter terrain patches. The tiles around the king's start stay clear so he
+// is never boxed in on arrival.
+function generateTerrain(floor, player) {
+  const terrain = {};
+  const nearStart = (x, y) => chebyshev(x, y, player.x, player.y) <= 2;
+  const put = (x, y, type) => {
+    if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) {
+      return;
+    }
+    if (nearStart(x, y)) {
+      return;
+    }
+    terrain[`${x},${y}`] = type;
+  };
+  const blob = (type, patches, spread) => {
+    for (let i = 0; i < patches; i += 1) {
+      const cx = randomInt(WORLD_SIZE);
+      const cy = randomInt(WORLD_SIZE);
+      const cells = 3 + randomInt(spread);
+      for (let j = 0; j < cells; j += 1) {
+        put(cx + randomInt(3) - 1, cy + randomInt(3) - 1, type);
+      }
+    }
+  };
+  const wallLine = (segments, length) => {
+    for (let i = 0; i < segments; i += 1) {
+      let x = randomInt(WORLD_SIZE);
+      let y = randomInt(WORLD_SIZE);
+      const horizontal = Math.random() < 0.5;
+      for (let j = 0; j < length; j += 1) {
+        put(x, y, 'wall');
+        if (horizontal) {
+          x += 1;
+        } else {
+          y += 1;
+        }
+      }
+    }
+  };
+
+  blob('water', 2 + floor, 4);
+  blob('ice', 2 + floor, 4);
+  blob('fog', 2 + floor, 4);
+  blob('lava', 1 + floor, 2);
+  wallLine(2 + Math.floor(floor / 2), 3); // Walls last so they win any overlap.
+  return terrain;
+}
+
 // Build (or rebuild) a floor. Carries the player's stats forward between floors.
 function generateFloor(floor, carryPlayer, score) {
   const isFinal = floor >= FINAL_FLOOR;
@@ -41,6 +88,7 @@ function generateFloor(floor, carryPlayer, score) {
     worldSize: WORLD_SIZE,
     viewSize: VIEW_SIZE,
     player,
+    terrain: generateTerrain(floor, player),
     enemies: [],
     items: [],
     exit: null,
@@ -56,14 +104,13 @@ function generateFloor(floor, carryPlayer, score) {
     pendingShop: false,
     message: isFinal ? 'The enemy king lurks on this floor. Hunt it down.' : 'A new floor. Seek the exit.',
     lastAction: 'start',
-    // Difficulty: deeper floors spawn reinforcements more often.
     spawnInterval: Math.max(3, 9 - floor),
     turnsSinceSpawn: 0,
   };
 
-  const bounds = getVisibleBounds(state);
-  const inView = (x, y) => isWithinBounds(bounds, x, y);
   const occupied = new Set([`${player.x},${player.y}`]);
+  const standable = (x, y) => isStandable(terrainAt(state, x, y));
+  const seen = (x, y) => inLineOfSight(state, x, y);
 
   function place(predicate) {
     const tile = findFreeTile(occupied, predicate);
@@ -77,31 +124,28 @@ function generateFloor(floor, carryPlayer, score) {
     const enemy = createEnemy(type, x, y);
     enemy.surprised = Boolean(surprised);
     state.enemies.push(enemy);
-    return enemy;
   }
 
-  // Enemies start asleep and out of sight, so nothing ambushes the player on
-  // arrival — they get a surprise turn when first spotted (see beginEnemyPhase).
+  // Enemies start asleep and out of sight; they wander until they spot the king.
   const offscreenCount = 3 + floor * 2;
   for (let i = 0; i < offscreenCount; i += 1) {
-    const tile = place((x, y) => !inView(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (!tile) {
       break;
     }
     addEnemy(PIECE_TYPES[randomInt(PIECE_TYPES.length)], tile.x, tile.y, false);
   }
 
-  // Floor 1 introduces the surprise mechanic with exactly one visible foe.
+  // Floor 1 introduces the game with exactly one visible, surprised foe.
   if (floor === 1) {
-    const tile = place((x, y) => inView(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+    const tile = place((x, y) => standable(x, y) && seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (tile) {
       addEnemy(PIECE_TYPES[randomInt(PIECE_TYPES.length)], tile.x, tile.y, true);
     }
   }
 
-  // The boss only appears on the final floor.
   if (isFinal) {
-    const tile = place((x, y) => !inView(x, y) && chebyshev(x, y, player.x, player.y) >= 5);
+    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 5);
     if (tile) {
       addEnemy('king', tile.x, tile.y, false);
     }
@@ -109,28 +153,27 @@ function generateFloor(floor, carryPlayer, score) {
 
   // Items are placed once, at floor creation, and never respawn.
   for (let i = 0; i < 2; i += 1) {
-    const tile = place((x, y) => chebyshev(x, y, player.x, player.y) >= 2);
+    const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (tile) {
       state.items.push({ id: `heart-${floor}-${i}`, kind: 'heart', x: tile.x, y: tile.y });
     }
   }
   for (let i = 0; i < 3 + floor; i += 1) {
-    const tile = place((x, y) => chebyshev(x, y, player.x, player.y) >= 2);
+    const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (tile) {
       state.items.push({ id: `gold-${floor}-${i}`, kind: 'gold', x: tile.x, y: tile.y, amount: 5 + randomInt(11) });
     }
   }
 
-  // The exit always starts outside the king's sight, so it must be found.
+  // The exit always starts out of sight, so it must be found.
   if (!isFinal) {
-    const tile = place((x, y) => !inView(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
+    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
     if (tile) {
       state.exit = { x: tile.x, y: tile.y, discovered: false };
     }
   }
 
-  // One shop per floor on a random tile.
-  const shopTile = place((x, y) => chebyshev(x, y, player.x, player.y) >= 2);
+  const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
   if (shopTile) {
     state.shop = { x: shopTile.x, y: shopTile.y, discovered: false };
   }
@@ -149,60 +192,43 @@ function nextFloor(state) {
   return generateFloor(state.floor + 1, healed, state.score);
 }
 
-// Mark the exit / shop as "discovered" once they've been seen, so the renderer
-// can leave a faint reminder of where they are even after they fall out of view.
+// Remember where the exit / shop are once they've been seen.
 function updateDiscovery(state) {
-  const bounds = getVisibleBounds(state);
-  if (state.exit && isWithinBounds(bounds, state.exit.x, state.exit.y)) {
+  if (state.exit && unitInSight(state, state.exit.x, state.exit.y)) {
     state.exit.discovered = true;
   }
-  if (state.shop && isWithinBounds(bounds, state.shop.x, state.shop.y)) {
+  if (state.shop && unitInSight(state, state.shop.x, state.shop.y)) {
     state.shop.discovered = true;
   }
 }
 
-// Every tile the king may move to: straight slides up to its move range, plus
-// knight leaps once that upgrade is unlocked.
+// Every tile the king may move to: terrain-aware slides up to his move range,
+// plus knight leaps once unlocked.
 function getPlayerMoves(state) {
+  const p = state.player;
+  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
+  const isEnemy = (x, y) => Boolean(enemyAt(x, y));
   const moves = [];
   const seen = new Set();
-  const w = state.worldSize;
-  const p = state.player;
-
-  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y);
-  const add = (x, y, viaJump) => {
-    const key = `${x},${y}`;
+  const add = (tile) => {
+    const key = `${tile.x},${tile.y}`;
     if (seen.has(key)) {
       return;
     }
     seen.add(key);
-    moves.push({ x, y, viaJump: Boolean(viaJump), capture: Boolean(enemyAt(x, y)) });
+    moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture) });
   };
 
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-    for (let stepCount = 1; stepCount <= p.moveRange; stepCount += 1) {
-      const x = p.x + dx * stepCount;
-      const y = p.y + dy * stepCount;
-      if (x < 0 || x >= w || y < 0 || y >= w) {
-        break;
-      }
-      add(x, y, false);
-      if (enemyAt(x, y)) {
-        break; // Capture, and the slide stops there.
-      }
+    for (const stop of slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy)) {
+      add(stop);
     }
   }
-
   if (p.canJump) {
-    for (const [dx, dy] of KNIGHT_STEPS) {
-      const x = p.x + dx;
-      const y = p.y + dy;
-      if (x >= 0 && x < w && y >= 0 && y < w) {
-        add(x, y, true);
-      }
+    for (const target of jumpTargets(state, p.x, p.y, enemyAt, isEnemy)) {
+      add(target);
     }
   }
-
   return moves;
 }
 
@@ -241,6 +267,7 @@ function applyArrival(next, x, y) {
       next.player.gold += item.amount;
       next.message = `You collect ${item.amount} gold.`;
     }
+    next.pickupKind = item.kind;
     next.lastAction = 'item';
   }
 
@@ -259,8 +286,7 @@ function applyArrival(next, x, y) {
   return next;
 }
 
-// Move the king to a specific tile (used by click-to-move). Validates the tile
-// is actually reachable; otherwise the move is rejected.
+// Move the king to a specific reachable tile (click-to-move).
 function movePlayerTo(state, x, y) {
   const next = structuredClone(state);
   const reachable = getPlayerMoves(next).some((move) => move.x === x && move.y === y);
@@ -272,27 +298,62 @@ function movePlayerTo(state, x, y) {
   return applyArrival(next, x, y);
 }
 
-// Keyboard movement: a single step in a direction (precise, always one tile).
+// Keyboard movement: a single ground step in a direction (but ice still slides).
 function movePlayer(state, dx, dy) {
-  return movePlayerTo(state, state.player.x + dx, state.player.y + dy);
+  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
+  const isEnemy = (x, y) => Boolean(enemyAt(x, y));
+  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, 1, enemyAt, isEnemy);
+  if (!stops.length) {
+    const next = structuredClone(state);
+    next.message = 'The king cannot move that way.';
+    next.lastAction = 'blocked';
+    return next;
+  }
+  const dest = stops[stops.length - 1];
+  return movePlayerTo(state, dest.x, dest.y);
 }
 
-// Resolve sight at the start of an enemy turn: wake newly-spotted pieces (which
-// freeze in surprise this turn) and return the ids of the pieces that may move.
+// An unseen enemy shuffles one step in a random direction, unaware of the king.
+function wanderEnemy(state, enemy) {
+  const unitAt = (x, y) => {
+    if (x === state.player.x && y === state.player.y) {
+      return 'player';
+    }
+    return state.enemies.find((other) => other.id !== enemy.id && other.x === x && other.y === y) || null;
+  };
+  const never = () => false;
+  const candidates = [];
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const stops = slideStops(state, enemy.x, enemy.y, dx, dy, 1, unitAt, never);
+    if (stops.length) {
+      candidates.push(stops[stops.length - 1]);
+    }
+  }
+  if (!candidates.length || Math.random() < 0.35) {
+    return; // Often it just idles.
+  }
+  const pick = candidates[randomInt(candidates.length)];
+  enemy.x = pick.x;
+  enemy.y = pick.y;
+}
+
+// Resolve sight at the start of an enemy turn: pieces in view that just spotted
+// the king freeze in surprise; those already aware get to move; the rest are
+// out of sight and wander (and will be surprised again when they re-see him).
 function beginEnemyPhase(state) {
   const next = structuredClone(state);
-  const bounds = getVisibleBounds(next);
   const moverIds = [];
 
   for (const enemy of next.enemies) {
-    if (!isWithinBounds(bounds, enemy.x, enemy.y)) {
+    if (!unitInSight(next, enemy.x, enemy.y)) {
       enemy.awake = false;
       enemy.surprised = false;
+      wanderEnemy(next, enemy);
       continue;
     }
     if (!enemy.awake) {
       enemy.awake = true;
-      enemy.surprised = true; // Spotted the king — frozen for this one turn.
+      enemy.surprised = true;
     } else {
       enemy.surprised = false;
       moverIds.push(enemy.id);
@@ -302,7 +363,7 @@ function beginEnemyPhase(state) {
   return { state: next, moverIds };
 }
 
-// Move a single enemy: capture the king if possible, otherwise close the distance.
+// Move a single (seen, aware) enemy: capture the king if possible, else close in.
 function moveEnemy(state, enemyId) {
   const next = structuredClone(state);
   const enemy = next.enemies.find((piece) => piece.id === enemyId);
@@ -354,9 +415,8 @@ function moveEnemy(state, enemyId) {
   }
 
   // An enemy that tramples an item in plain sight destroys it.
-  const bounds = getVisibleBounds(next);
   const itemIndex = next.items.findIndex((item) => item.x === enemy.x && item.y === enemy.y);
-  if (itemIndex >= 0 && isWithinBounds(bounds, enemy.x, enemy.y)) {
+  if (itemIndex >= 0 && unitInSight(next, enemy.x, enemy.y)) {
     const [item] = next.items.splice(itemIndex, 1);
     next.message = `An enemy tramples ${item.kind === 'heart' ? 'a heart' : 'some gold'}.`;
     next.lastAction = 'enemy';
@@ -368,7 +428,8 @@ function moveEnemy(state, enemyId) {
   return next;
 }
 
-// Difficulty over time: occasionally drop a fresh enemy somewhere out of sight.
+// Difficulty over time: occasionally drop a fresh enemy on standable ground out
+// of the king's sight.
 function maybeSpawnEnemy(state) {
   const next = structuredClone(state);
   next.turnsSinceSpawn += 1;
@@ -384,8 +445,7 @@ function maybeSpawnEnemy(state) {
   for (const item of next.items) {
     occupied.add(`${item.x},${item.y}`);
   }
-  const bounds = getVisibleBounds(next);
-  const tile = findFreeTile(occupied, (x, y) => !isWithinBounds(bounds, x, y));
+  const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y));
   if (tile) {
     next.enemies.push(createEnemy(PIECE_TYPES[randomInt(PIECE_TYPES.length)], tile.x, tile.y));
   }

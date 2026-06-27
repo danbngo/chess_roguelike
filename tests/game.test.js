@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 // the pure-logic files in order and evaluate them in one shared scope, then
 // hand back the symbols under test — exactly the globals the browser sees.
 const here = path.dirname(fileURLToPath(import.meta.url));
-const LOGIC_FILES = ['constants.js', 'utils.js', 'pieces.js', 'board.js', 'game.js'];
+const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'board.js', 'game.js'];
 
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 const { createInitialState, movePlayer, getVisibleBounds } = new Function(

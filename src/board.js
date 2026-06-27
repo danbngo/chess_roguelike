@@ -15,10 +15,9 @@ function isWithinBounds(bounds, x, y) {
   return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y && y < bounds.y + bounds.height;
 }
 
-// Enemies the king can actually see — only these get to act each turn.
+// Enemies the king can actually see (clear line of sight, not hidden in fog).
 function getVisibleEnemies(state) {
-  const bounds = getVisibleBounds(state);
-  return state.enemies.filter((enemy) => isWithinBounds(bounds, enemy.x, enemy.y));
+  return state.enemies.filter((enemy) => unitInSight(state, enemy.x, enemy.y));
 }
 
 // Map of "x,y" -> how many visible enemies could capture the king on that tile.

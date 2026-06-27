@@ -186,6 +186,24 @@ const Renderer = (function () {
     ctx.fill();
   }
 
+  // Tile colors per terrain (two shades to keep the checkerboard feel).
+  function terrainColor(type, isDark) {
+    switch (type) {
+      case 'ice':
+        return isDark ? '#bfe3f5' : '#dcf3fc';
+      case 'water':
+        return isDark ? '#2c5f96' : '#3a72ab';
+      case 'lava':
+        return isDark ? '#b23409' : '#cc3f0c';
+      case 'wall':
+        return isDark ? '#33333b' : '#3c3c45';
+      case 'fog':
+        return isDark ? '#566173' : '#5f6b7d';
+      default:
+        return isDark ? '#6b4a2b' : '#e9cfa0';
+    }
+  }
+
   // A flat dark canvas to sit behind the title screen before play begins.
   function drawEmpty() {
     ctx.fillStyle = '#020617';
@@ -203,6 +221,8 @@ const Renderer = (function () {
     const world = state.worldSize;
     const bounds = getVisibleBounds(state);
     const threatened = getThreatenedTiles(state);
+    const visible = computeVisibleTiles(state);
+    const lit = (x, y) => visible.has(`${x},${y}`) && terrainAt(state, x, y) !== 'fog';
 
     ctx.save();
     if (shake > 0) {
@@ -217,10 +237,10 @@ const Renderer = (function () {
       for (let x = 0; x < world; x += 1) {
         const px = x * tileSize;
         const py = y * tileSize;
-        const inView = isWithinBounds(bounds, x, y);
+        const inView = visible.has(`${x},${y}`);
         const isDark = (x + y) % 2 === 1;
 
-        ctx.fillStyle = isDark ? '#6b4a2b' : '#e9cfa0';
+        ctx.fillStyle = terrainColor(terrainAt(state, x, y), isDark);
         ctx.fillRect(px, py, tileSize, tileSize);
 
         const threatCount = inView ? threatened.get(`${x},${y}`) || 0 : 0;
@@ -232,7 +252,7 @@ const Renderer = (function () {
         }
 
         if (!inView) {
-          // Beyond the king's sight: dim the tiles and hide whatever lurks there.
+          // Out of the king's line of sight: dim it and hide what lurks there.
           ctx.fillStyle = 'rgba(2, 6, 23, 0.64)';
           ctx.fillRect(px, py, tileSize, tileSize);
         }
@@ -244,23 +264,23 @@ const Renderer = (function () {
     ctx.lineWidth = 2;
     ctx.strokeRect(bounds.x * tileSize, bounds.y * tileSize, bounds.width * tileSize, bounds.height * tileSize);
 
-    // Exit and shop: shown in view, or faded once discovered.
+    // Exit and shop: shown when in sight, or faded once discovered.
     if (state.exit) {
-      const visible = isWithinBounds(bounds, state.exit.x, state.exit.y);
-      if (visible || state.exit.discovered) {
-        drawExit(state.exit.x, state.exit.y, !visible);
+      const seen = lit(state.exit.x, state.exit.y);
+      if (seen || state.exit.discovered) {
+        drawExit(state.exit.x, state.exit.y, !seen);
       }
     }
     if (state.shop) {
-      const visible = isWithinBounds(bounds, state.shop.x, state.shop.y);
-      if (visible || state.shop.discovered) {
-        drawShop(state.shop.x, state.shop.y, !visible);
+      const seen = lit(state.shop.x, state.shop.y);
+      if (seen || state.shop.discovered) {
+        drawShop(state.shop.x, state.shop.y, !seen);
       }
     }
 
-    // Items are only visible inside the king's sight.
+    // Items are only visible inside the king's line of sight.
     for (const item of state.items) {
-      if (isWithinBounds(bounds, item.x, item.y)) {
+      if (lit(item.x, item.y)) {
         drawItem(item);
       }
     }
@@ -273,8 +293,8 @@ const Renderer = (function () {
     }
 
     for (const enemy of enemyRenders) {
-      if (!isWithinBounds(bounds, enemy.targetX, enemy.targetY)) {
-        continue; // Hidden in the fog.
+      if (!lit(enemy.targetX, enemy.targetY)) {
+        continue; // Out of sight / hidden in fog.
       }
       drawPiece(enemy.x, enemy.y, enemy.kind, false);
       if (enemy.surprised) {
