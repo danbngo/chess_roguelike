@@ -64,13 +64,146 @@ button:hover {
   background: rgba(59, 130, 246, 0.3);
 }
 
-canvas {
+.stage {
+  position: relative;
   width: 100%;
   max-width: 640px;
+  margin: 0 auto;
+}
+
+canvas {
+  width: 100%;
   aspect-ratio: 1 / 1;
   border-radius: 18px;
   border: 2px solid rgba(248, 250, 252, 0.12);
   background: #020617;
   display: block;
-  margin: 0 auto;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(3px);
+  text-align: center;
+  padding: 1rem;
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 320px;
+}
+
+.overlay-title {
+  margin: 0;
+  font-size: 1.9rem;
+  letter-spacing: 0.02em;
+}
+
+.overlay-sub {
+  margin: 0;
+  color: #cbd5e1;
+}
+
+.overlay-text {
+  text-align: left;
+  line-height: 1.5;
+}
+
+.overlay-buttons {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 0.4rem;
+}
+
+.overlay-buttons button {
+  font-size: 1rem;
+  padding: 0.55rem 1.1rem;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@keyframes damage-flash {
+  0% {
+    background: rgba(220, 38, 38, 0.95);
+    color: #fff;
+    transform: scale(1.35);
+  }
+  100% {
+    background: rgba(30, 41, 59, 0.9);
+    color: inherit;
+    transform: scale(1);
+  }
+}
+
+#health.damage {
+  animation: damage-flash 0.5s ease-out;
+}
+
+.shop-card {
+  max-width: 420px;
+  width: 90%;
+}
+
+.shop-list {
+  list-style: none;
+  margin: 0.4rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.shop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  text-align: left;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  padding: 0.5rem 0.7rem;
+}
+
+.shop-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.shop-name {
+  font-weight: 600;
+}
+
+.shop-desc {
+  font-size: 0.82rem;
+  color: #cbd5e1;
+}
+
+.shop-item button {
+  flex: none;
+  min-width: 64px;
+}
+
+.shop-message {
+  margin: 0.2rem 0 0;
+  min-height: 1.2em;
+  color: #fcd34d;
+  font-size: 0.9rem;
 }

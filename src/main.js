@@ -1,199 +1,476 @@
-import { createInitialState, getPieceLabel, getVisibleBounds, movePlayer, resolveEnemyTurn } from './game.js';
+// App controller: owns the screen state machine, the turn flow, the render
+// loop, tutorial tips, and all DOM wiring. Depends on every other script first.
 
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-const turnLabel = document.getElementById('turn');
-const healthLabel = document.getElementById('health');
-const scoreLabel = document.getElementById('score');
-const statusLabel = document.getElementById('status');
-const restartButton = document.getElementById('restart');
+(function () {
+  const canvas = document.getElementById('game');
+  const floorLabel = document.getElementById('floor');
+  const turnLabel = document.getElementById('turn');
+  const healthLabel = document.getElementById('health');
+  const goldLabel = document.getElementById('gold');
+  const scoreLabel = document.getElementById('score');
+  const statusLabel = document.getElementById('status');
+  const restartButton = document.getElementById('restart');
+  const optionsButton = document.getElementById('options');
 
-const tileSize = 44;
-const padding = 24;
-const boardPixelSize = tileSize * 8;
-const boardOffsetX = (canvas.width - boardPixelSize) / 2;
-const boardOffsetY = (canvas.height - boardPixelSize) / 2;
+  const titleScreen = document.getElementById('title-screen');
+  const gameoverScreen = document.getElementById('gameover-screen');
+  const gameoverStats = document.getElementById('gameover-stats');
+  const victoryScreen = document.getElementById('victory-screen');
+  const victoryStats = document.getElementById('victory-stats');
+  const shopScreen = document.getElementById('shop-screen');
+  const shopGold = document.getElementById('shop-gold');
+  const shopList = document.getElementById('shop-list');
+  const shopMessage = document.getElementById('shop-message');
+  const tutorialScreen = document.getElementById('tutorial-screen');
+  const tutorialTitle = document.getElementById('tutorial-title');
+  const tutorialText = document.getElementById('tutorial-text');
+  const optionsScreen = document.getElementById('options-screen');
+  const optionsStatus = document.getElementById('options-tutorial-status');
+  const optionsToggle = document.getElementById('options-toggle-tutorial');
 
-let gameState = createInitialState();
-let playerRender = { x: gameState.player.x, y: gameState.player.y, targetX: gameState.player.x, targetY: gameState.player.y };
-let enemyRenders = [];
-let animationTime = 0;
-let pendingEnemyTurn = false;
+  const newGameButton = document.getElementById('new-game');
+  const continueButton = document.getElementById('continue-game');
+  const titleOptionsButton = document.getElementById('title-options');
+  const playAgainButton = document.getElementById('play-again');
+  const toTitleButton = document.getElementById('to-title');
+  const victoryAgainButton = document.getElementById('victory-again');
+  const victoryTitleButton = document.getElementById('victory-title');
+  const shopCloseButton = document.getElementById('shop-close');
+  const tutorialOkButton = document.getElementById('tutorial-ok');
+  const tutorialDisableButton = document.getElementById('tutorial-disable');
+  const optionsCloseButton = document.getElementById('options-close');
 
-function syncRenderEntities(nextState) {
-  playerRender.targetX = nextState.player.x;
-  playerRender.targetY = nextState.player.y;
+  Renderer.init(canvas);
+  const tileSize = canvas.width / WORLD_SIZE;
 
-  const nextEnemyRenders = [];
-  for (const enemy of nextState.enemies) {
-    let render = enemyRenders.find((item) => item.id === enemy.id);
-    if (!render) {
-      render = { id: enemy.id, x: enemy.x, y: enemy.y, targetX: enemy.x, targetY: enemy.y };
+  // screen: 'title' | 'playing' | 'shop' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  let screen = 'title';
+  let gameState = null;
+
+  // The enemy turn is resolved one piece at a time so each move animates.
+  let enemyQueue = [];
+  let animTimer = 0;
+  let pendingAction = null; // null | 'floor' (descend once the move animates)
+  const PLAYER_MOVE_TIME = 0.16;
+  const ENEMY_MOVE_TIME = 0.16;
+
+  // Modal bookkeeping: which screen to return to when a tip / options closes.
+  let pendingTips = [];
+  let screenBeforeModal = 'playing';
+
+  function isIdle() {
+    return screen === 'playing' && animTimer <= 0 && enemyQueue.length === 0 && pendingAction === null && !gameState.gameOver;
+  }
+
+  function updateHud() {
+    if (!gameState) {
+      return;
     }
-    render.targetX = enemy.x;
-    render.targetY = enemy.y;
-    render.kind = enemy.kind;
-    nextEnemyRenders.push(render);
+    const finalNote = gameState.isFinalFloor ? ' (final)' : '';
+    floorLabel.textContent = `Floor ${gameState.floor}${finalNote}`;
+    turnLabel.textContent = `Turn ${gameState.turn}`;
+    healthLabel.textContent = `HP ${gameState.player.hp}/${gameState.player.maxHp}`;
+    goldLabel.textContent = `Gold ${gameState.player.gold}`;
+    scoreLabel.textContent = `Score ${gameState.score}`;
+    statusLabel.textContent = gameState.message;
   }
-  enemyRenders = nextEnemyRenders;
-}
 
-function updateHud() {
-  turnLabel.textContent = `Turn ${gameState.turn}`;
-  healthLabel.textContent = `HP ${gameState.player.hp}`;
-  scoreLabel.textContent = `Score ${gameState.score}`;
-  statusLabel.textContent = gameState.message;
-}
-
-function resetRenderPositions(nextState) {
-  playerRender.x = nextState.player.x;
-  playerRender.y = nextState.player.y;
-  playerRender.targetX = nextState.player.x;
-  playerRender.targetY = nextState.player.y;
-
-  enemyRenders = nextState.enemies.map((enemy) => ({
-    id: enemy.id,
-    x: enemy.x,
-    y: enemy.y,
-    targetX: enemy.x,
-    targetY: enemy.y,
-    kind: enemy.kind,
-  }));
-}
-
-function applyState(nextState, animate = true) {
-  gameState = nextState;
-  updateHud();
-  if (animate) {
-    syncRenderEntities(nextState);
-  } else {
-    resetRenderPositions(nextState);
+  // Restart the HP counter's damage animation (re-add the class after a reflow).
+  function flashHealth() {
+    healthLabel.classList.remove('damage');
+    void healthLabel.offsetWidth;
+    healthLabel.classList.add('damage');
   }
-}
 
-function updateEntities(delta) {
-  const speed = 0.18 + delta * 0.003;
-  playerRender.x += (playerRender.targetX - playerRender.x) * speed;
-  playerRender.y += (playerRender.targetY - playerRender.y) * speed;
-
-  for (const enemy of enemyRenders) {
-    enemy.x += (enemy.targetX - enemy.x) * speed;
-    enemy.y += (enemy.targetY - enemy.y) * speed;
-  }
-}
-
-function drawBoard() {
-  const bounds = getVisibleBounds(gameState);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#020617';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.save();
-  ctx.translate(boardOffsetX, boardOffsetY);
-
-  for (let row = 0; row < bounds.height; row += 1) {
-    for (let col = 0; col < bounds.width; col += 1) {
-      const x = col * tileSize;
-      const y = row * tileSize;
-      const isDark = (row + col) % 2 === 1;
-      ctx.fillStyle = isDark ? '#734d26' : '#f6d7a8';
-      ctx.fillRect(x, y, tileSize, tileSize);
+  function applyState(nextState, animate) {
+    gameState = nextState;
+    updateHud();
+    if (animate) {
+      Renderer.sync(nextState);
+    } else {
+      Renderer.reset(nextState);
     }
   }
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(0, 0, boardPixelSize, boardPixelSize);
+  /* ------------------------------ tutorials ------------------------------ */
 
-  const playerScreenX = (playerRender.x - bounds.x) * tileSize;
-  const playerScreenY = (playerRender.y - bounds.y) * tileSize;
-  ctx.fillStyle = '#fef3c7';
-  ctx.fillRect(playerScreenX + 4, playerScreenY + 4, tileSize - 8, tileSize - 8);
-
-  for (const enemy of enemyRenders) {
-    const screenX = (enemy.x - bounds.x) * tileSize;
-    const screenY = (enemy.y - bounds.y) * tileSize;
-    ctx.fillStyle = '#ef4444';
-    ctx.font = `${tileSize * 0.68}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(getPieceLabel(enemy.kind), screenX + tileSize / 2, screenY + tileSize / 2 + 2);
+  // Queue a tip if tips are on and this one hasn't been seen, then show it as
+  // soon as no other modal is up. Showing a tip pauses the game.
+  function queueTip(id) {
+    if (!tutorialsEnabled() || tipSeen(id) || pendingTips.includes(id) || !TUTORIALS[id]) {
+      return;
+    }
+    pendingTips.push(id);
+    showNextTipIfIdle();
   }
 
-  ctx.fillStyle = '#fff';
-  ctx.font = `${tileSize * 0.4}px sans-serif`;
-  ctx.textAlign = 'left';
-  ctx.fillText('♔', playerScreenX + tileSize * 0.27, playerScreenY + tileSize * 0.62);
-  ctx.restore();
-}
+  function showNextTipIfIdle() {
+    if (screen === 'tutorial' || screen === 'options' || !pendingTips.length) {
+      return;
+    }
+    screenBeforeModal = screen;
+    screen = 'tutorial';
+    presentTip(pendingTips[0]);
+  }
 
-function step(timestamp) {
-  if (!lastTime) {
+  function presentTip(id) {
+    tutorialTitle.textContent = TUTORIALS[id].title;
+    tutorialText.textContent = TUTORIALS[id].text;
+    tutorialScreen.classList.remove('hidden');
+  }
+
+  function dismissTip() {
+    const id = pendingTips.shift();
+    if (id) {
+      markTipSeen(id);
+    }
+    if (pendingTips.length) {
+      presentTip(pendingTips[0]);
+    } else {
+      tutorialScreen.classList.add('hidden');
+      screen = screenBeforeModal;
+    }
+  }
+
+  function disableTipsFromModal() {
+    setTutorialsEnabled(false);
+    pendingTips = [];
+    tutorialScreen.classList.add('hidden');
+    screen = screenBeforeModal;
+  }
+
+  // Queue tips for whatever the king can currently see.
+  function scanVisibleTips(state) {
+    const visible = getVisibleEnemies(state);
+    if (visible.some((enemy) => enemy.surprised)) {
+      queueTip('surprise');
+    }
+    if (visible.some((enemy) => enemy.kind === 'knight')) {
+      queueTip('knight');
+    }
+    if (visible.some((enemy) => enemy.kind === 'king')) {
+      queueTip('finalFloor');
+    }
+    if (getThreatenedTiles(state).size > 0) {
+      queueTip('threat');
+    }
+  }
+
+  /* ------------------------------- options ------------------------------- */
+
+  function refreshOptions() {
+    const enabled = tutorialsEnabled();
+    optionsStatus.textContent = `Tutorial tips are currently ${enabled ? 'ON' : 'OFF'}.`;
+    optionsToggle.textContent = enabled ? 'Disable tutorials' : 'Enable tutorials';
+  }
+
+  function openOptions() {
+    if (screen !== 'playing' && screen !== 'title') {
+      return;
+    }
+    screenBeforeModal = screen;
+    screen = 'options';
+    refreshOptions();
+    optionsScreen.classList.remove('hidden');
+  }
+
+  function closeOptions() {
+    optionsScreen.classList.add('hidden');
+    screen = screenBeforeModal;
+  }
+
+  /* --------------------------- screen handling --------------------------- */
+
+  function hideOverlays() {
+    titleScreen.classList.add('hidden');
+    gameoverScreen.classList.add('hidden');
+    victoryScreen.classList.add('hidden');
+    shopScreen.classList.add('hidden');
+    tutorialScreen.classList.add('hidden');
+    optionsScreen.classList.add('hidden');
+  }
+
+  function showTitle() {
+    screen = 'title';
+    gameState = null;
+    enemyQueue = [];
+    animTimer = 0;
+    pendingAction = null;
+    pendingTips = [];
+    hideOverlays();
+    titleScreen.classList.remove('hidden');
+    continueButton.disabled = !hasSave();
+    statusLabel.textContent = 'The king awaits your command.';
+  }
+
+  function startGame(state) {
+    applyState(state, false);
+    enemyQueue = [];
+    animTimer = 0;
+    pendingAction = null;
+    pendingTips = [];
+    screen = 'playing';
+    hideOverlays();
+  }
+
+  function newGame() {
+    startGame(createInitialState());
+    saveGame(gameState);
+    queueTip('welcome');
+    scanVisibleTips(gameState);
+  }
+
+  function continueGame() {
+    const saved = loadSave();
+    if (saved) {
+      startGame(saved);
+      scanVisibleTips(gameState);
+    } else {
+      newGame();
+    }
+  }
+
+  function goNextFloor() {
+    applyState(nextFloor(gameState), false);
+    enemyQueue = [];
+    animTimer = 0;
+    pendingAction = null;
+    saveGame(gameState);
+    if (gameState.isFinalFloor) {
+      queueTip('finalFloor');
+    }
+    scanVisibleTips(gameState);
+  }
+
+  function onGameOver() {
+    screen = 'gameover';
+    clearSave();
+    gameoverStats.textContent = `Floor ${gameState.floor} · score ${gameState.score} · ${gameState.turn} turns.`;
+    hideOverlays();
+    gameoverScreen.classList.remove('hidden');
+  }
+
+  function onVictory() {
+    screen = 'victory';
+    clearSave();
+    victoryStats.textContent = `Score ${gameState.score} · ${gameState.turn} turns on the final floor.`;
+    hideOverlays();
+    victoryScreen.classList.remove('hidden');
+  }
+
+  /* -------------------------------- shop -------------------------------- */
+
+  function renderShop() {
+    shopGold.textContent = `Gold ${gameState.player.gold}`;
+    shopMessage.textContent = gameState.shopMessage || '';
+    shopList.innerHTML = '';
+
+    for (const upgrade of UPGRADES) {
+      const owned = upgrade.id === 'jump' && gameState.player.canJump;
+      const maxed = upgrade.id === 'range' && gameState.player.moveRange >= upgrade.max;
+      const affordable = gameState.player.gold >= upgrade.cost;
+
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML = `<span class="shop-name">${upgrade.name}</span><span class="shop-desc">${upgrade.desc}</span>`;
+
+      const buy = document.createElement('button');
+      buy.type = 'button';
+      if (owned) {
+        buy.textContent = 'Owned';
+        buy.disabled = true;
+      } else if (maxed) {
+        buy.textContent = 'Maxed';
+        buy.disabled = true;
+      } else {
+        buy.textContent = `${upgrade.cost}g`;
+        buy.disabled = !affordable;
+        buy.addEventListener('click', () => {
+          applyState(buyUpgrade(gameState, upgrade.id), true);
+          renderShop();
+        });
+      }
+
+      row.append(info, buy);
+      shopList.append(row);
+    }
+  }
+
+  function openShop() {
+    screen = 'shop';
+    gameState.shopMessage = '';
+    renderShop();
+    shopScreen.classList.remove('hidden');
+    queueTip('shop');
+  }
+
+  function closeShop() {
+    screen = 'playing';
+    shopScreen.classList.add('hidden');
+    saveGame(gameState);
+  }
+
+  /* ------------------------------ turn flow ------------------------------ */
+
+  function processPlayerResult(nextState) {
+    if (nextState.lastAction === 'blocked') {
+      applyState(nextState, false);
+      return;
+    }
+
+    applyState(nextState, true);
+
+    if (nextState.lastAction === 'item') {
+      queueTip(nextState.pickupKind === 'gold' ? 'gold' : 'heart');
+    }
+    if (nextState.won) {
+      onVictory();
+      return;
+    }
+    if (nextState.gameOver) {
+      onGameOver();
+      return;
+    }
+    if (nextState.lastAction === 'exit') {
+      queueTip('exit');
+      pendingAction = 'floor';
+      animTimer = PLAYER_MOVE_TIME;
+      return;
+    }
+
+    // Pieces newly in view freeze in surprise; the rest get to move.
+    const phase = beginEnemyPhase(nextState);
+    applyState(phase.state, true);
+    enemyQueue = phase.moverIds;
+    animTimer = PLAYER_MOVE_TIME;
+    scanVisibleTips(phase.state);
+  }
+
+  function advanceEnemyQueue() {
+    while (enemyQueue.length) {
+      const id = enemyQueue.shift();
+      if (!gameState.enemies.some((enemy) => enemy.id === id)) {
+        continue; // Piece vanished (e.g. captured) before its turn.
+      }
+      const hpBefore = gameState.player.hp;
+      applyState(moveEnemy(gameState, id), true);
+      if (gameState.player.hp < hpBefore) {
+        Renderer.hit();
+        flashHealth();
+        if (!gameState.gameOver) {
+          queueTip('hp');
+        }
+      }
+      if (gameState.gameOver) {
+        enemyQueue = [];
+        onGameOver();
+        return;
+      }
+      animTimer = ENEMY_MOVE_TIME;
+      return;
+    }
+
+    // Turn complete: maybe reinforce, persist, then open a shop if stepped on.
+    applyState(maybeSpawnEnemy(gameState), true);
+    const shopPending = gameState.pendingShop;
+    gameState.pendingShop = false;
+    saveGame(gameState);
+    if (shopPending) {
+      openShop();
+    }
+  }
+
+  function handleStep(dx, dy) {
+    if (!isIdle()) {
+      return;
+    }
+    processPlayerResult(movePlayer(gameState, dx, dy));
+  }
+
+  function handleClick(event) {
+    if (!isIdle()) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
+    const tileX = Math.floor(((event.clientX - rect.left) * scale) / tileSize);
+    const tileY = Math.floor(((event.clientY - rect.top) * scale) / tileSize);
+    const reachable = getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
+    if (reachable) {
+      processPlayerResult(movePlayerTo(gameState, tileX, tileY));
+    }
+  }
+
+  /* ------------------------------ game loop ------------------------------ */
+
+  let lastTime = 0;
+
+  function step(timestamp) {
+    if (!lastTime) {
+      lastTime = timestamp;
+    }
+    const delta = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
-  }
-  const delta = (timestamp - lastTime) / 1000;
-  lastTime = timestamp;
 
-  if (animationTime > 0) {
-    animationTime = Math.max(0, animationTime - delta);
-    if (animationTime === 0 && pendingEnemyTurn && !gameState.gameOver) {
-      const nextState = resolveEnemyTurn(gameState);
-      applyState(nextState, true);
-      pendingEnemyTurn = false;
+    if (screen === 'playing' && animTimer > 0) {
+      animTimer = Math.max(0, animTimer - delta);
+      if (animTimer === 0) {
+        if (pendingAction === 'floor') {
+          pendingAction = null;
+          goNextFloor();
+        } else {
+          advanceEnemyQueue();
+        }
+      }
     }
+
+    Renderer.update(delta);
+    Renderer.draw(gameState, isIdle());
+    requestAnimationFrame(step);
   }
 
-  updateEntities(delta);
-  drawBoard();
+  /* ------------------------------- wiring -------------------------------- */
+
+  document.addEventListener('keydown', (event) => {
+    const move = resolveMove(event);
+    if (move) {
+      event.preventDefault();
+      handleStep(move[0], move[1]);
+    }
+  });
+
+  canvas.addEventListener('click', handleClick);
+
+  newGameButton.addEventListener('click', newGame);
+  continueButton.addEventListener('click', continueGame);
+  titleOptionsButton.addEventListener('click', openOptions);
+  playAgainButton.addEventListener('click', newGame);
+  toTitleButton.addEventListener('click', showTitle);
+  victoryAgainButton.addEventListener('click', newGame);
+  victoryTitleButton.addEventListener('click', showTitle);
+  shopCloseButton.addEventListener('click', closeShop);
+  tutorialOkButton.addEventListener('click', dismissTip);
+  tutorialDisableButton.addEventListener('click', disableTipsFromModal);
+  optionsButton.addEventListener('click', openOptions);
+  optionsCloseButton.addEventListener('click', closeOptions);
+  optionsToggle.addEventListener('click', () => {
+    if (tutorialsEnabled()) {
+      setTutorialsEnabled(false);
+    } else {
+      setTutorialsEnabled(true);
+      resetSeenTips(); // Let the tips play again from the start.
+    }
+    refreshOptions();
+  });
+  restartButton.addEventListener('click', () => {
+    if (screen === 'playing' || screen === 'gameover' || screen === 'victory') {
+      newGame();
+    }
+  });
+
+  showTitle();
   requestAnimationFrame(step);
-}
-
-let lastTime = 0;
-
-function handleMove(dx, dy) {
-  if (gameState.gameOver) {
-    return;
-  }
-
-  const nextState = movePlayer(gameState, dx, dy);
-  applyState(nextState, true);
-  if (nextState.enemyTurn) {
-    animationTime = 0.25;
-    pendingEnemyTurn = true;
-  }
-}
-
-function handleKeydown(event) {
-  const key = event.key.toLowerCase();
-  const moves = {
-    arrowup: [0, -1],
-    w: [0, -1],
-    arrowdown: [0, 1],
-    s: [0, 1],
-    arrowleft: [-1, 0],
-    a: [-1, 0],
-    arrowright: [1, 0],
-    d: [1, 0],
-  };
-  const move = moves[key];
-  if (move) {
-    event.preventDefault();
-    handleMove(...move);
-  }
-}
-
-restartButton.addEventListener('click', () => {
-  gameState = createInitialState();
-  resetRenderPositions(gameState);
-  updateHud();
-  animationTime = 0;
-  pendingEnemyTurn = false;
-  lastTime = 0;
-});
-
-document.addEventListener('keydown', handleKeydown);
-
-updateHud();
-resetRenderPositions(gameState);
-drawBoard();
-requestAnimationFrame(step);
+})();

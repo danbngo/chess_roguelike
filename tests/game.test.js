@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInitialState, movePlayer, getVisibleBounds } from '../src/game.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The game logic ships as plain browser scripts (no import/export), so the
+// browser can load it straight off the filesystem. To test it in Node we load
+// the pure-logic files in order and evaluate them in one shared scope, then
+// hand back the symbols under test — exactly the globals the browser sees.
+const here = path.dirname(fileURLToPath(import.meta.url));
+const LOGIC_FILES = ['constants.js', 'utils.js', 'pieces.js', 'board.js', 'game.js'];
+
+const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
+const { createInitialState, movePlayer, getVisibleBounds } = new Function(
+  `${source}\nreturn { createInitialState, movePlayer, getVisibleBounds };`,
+)();
 
 test('createInitialState starts the king at the center and spawns enemies', () => {
   const state = createInitialState();

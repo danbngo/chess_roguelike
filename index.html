@@ -10,19 +10,107 @@
     <main class="shell">
       <section class="panel">
         <h1>Chess Roguelike</h1>
-        <p>Move the king with the arrow keys or WASD. The board is a visible 8x8 window, and each step gives the enemy pieces one turn.</p>
         <div class="hud">
+          <span id="floor">Floor 1</span>
           <span id="turn">Turn 0</span>
-          <span id="health">HP 5</span>
+          <span id="health">HP 5/5</span>
+          <span id="gold">Gold 0</span>
           <span id="score">Score 0</span>
         </div>
-        <canvas id="game" width="640" height="640"></canvas>
+        <div class="stage">
+          <canvas id="game" width="640" height="640"></canvas>
+
+          <div id="title-screen" class="overlay">
+            <div class="overlay-card">
+              <h2 class="overlay-title">Chess Roguelike</h2>
+              <p class="overlay-sub">A lone king wanders a hostile board.</p>
+              <div class="overlay-buttons">
+                <button id="new-game" type="button">New Game</button>
+                <button id="continue-game" type="button">Continue</button>
+              </div>
+              <div class="overlay-buttons">
+                <button id="title-options" type="button">Options</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="gameover-screen" class="overlay hidden">
+            <div class="overlay-card">
+              <h2 class="overlay-title">The King Has Fallen</h2>
+              <p id="gameover-stats" class="overlay-sub"></p>
+              <div class="overlay-buttons">
+                <button id="play-again" type="button">Play Again</button>
+                <button id="to-title" type="button">Title Screen</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="victory-screen" class="overlay hidden">
+            <div class="overlay-card">
+              <h2 class="overlay-title">The Realm is Free</h2>
+              <p id="victory-stats" class="overlay-sub"></p>
+              <div class="overlay-buttons">
+                <button id="victory-again" type="button">Play Again</button>
+                <button id="victory-title" type="button">Title Screen</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="shop-screen" class="overlay hidden">
+            <div class="overlay-card shop-card">
+              <h2 class="overlay-title">Shop</h2>
+              <p id="shop-gold" class="overlay-sub">Gold 0</p>
+              <ul id="shop-list" class="shop-list"></ul>
+              <p id="shop-message" class="shop-message"></p>
+              <div class="overlay-buttons">
+                <button id="shop-close" type="button">Leave Shop</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="tutorial-screen" class="overlay hidden">
+            <div class="overlay-card">
+              <h2 id="tutorial-title" class="overlay-title"></h2>
+              <p id="tutorial-text" class="overlay-sub overlay-text"></p>
+              <div class="overlay-buttons">
+                <button id="tutorial-ok" type="button">Got it</button>
+                <button id="tutorial-disable" type="button">Disable tips</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="options-screen" class="overlay hidden">
+            <div class="overlay-card">
+              <h2 class="overlay-title">Options</h2>
+              <p id="options-tutorial-status" class="overlay-sub"></p>
+              <div class="overlay-buttons">
+                <button id="options-toggle-tutorial" type="button"></button>
+              </div>
+              <div class="overlay-buttons">
+                <button id="options-close" type="button">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="actions">
           <button id="restart" type="button">Restart</button>
+          <button id="options" type="button">Options</button>
           <span id="status">The king awakens on a strange board.</span>
         </div>
       </section>
     </main>
-    <script type="module" src="src/main.js"></script>
+    <!-- Plain classic scripts, loaded in dependency order, so the game runs
+         straight off the filesystem (no server / ES modules required). -->
+    <script src="src/constants.js"></script>
+    <script src="src/utils.js"></script>
+    <script src="src/pieces.js"></script>
+    <script src="src/board.js"></script>
+    <script src="src/game.js"></script>
+    <script src="src/storage.js"></script>
+    <script src="src/renderer.js"></script>
+    <script src="src/input.js"></script>
+    <script src="src/tutorials.js"></script>
+    <script src="src/main.js"></script>
   </body>
 </html>
