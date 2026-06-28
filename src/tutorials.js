@@ -66,11 +66,12 @@ const TUTORIALS = {
       'These stairs lead to the next floor. Deeper floors grow more dangerous, ' +
       'but the king recovers 1 HP on the way down.',
   },
-  finalFloor: {
-    title: 'The enemy king',
+  enemyKing: {
+    title: 'An enemy king',
     text:
-      'This floor holds the solo enemy king (♚) instead of an exit. Hunt it down ' +
-      'and capture it to win. It strikes back, so approach with care.',
+      'Enemy kings (♚) are common, weak foes — they shuffle one tile at a time. ' +
+      'Capture them like any other piece; there is no boss to slay, only how deep ' +
+      'you can descend.',
   },
   newGamePlus: {
     title: 'New Game +',

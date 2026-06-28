@@ -124,11 +124,15 @@ function getPieceMoves(piece, state) {
 }
 
 // Where the king could move if he played a card of the given kind: he moves like
-// that unit from his own square, and enemies are the capturable targets.
+// that unit from his own square, and enemies are the capturable targets. A card
+// can never carry him farther than he can see (his vision radius).
 function getCardMoves(state, kind) {
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
   const isEnemy = (x, y) => Boolean(enemyAt(x, y));
-  return generateMoves(kind, state, state.player.x, state.player.y, enemyAt, isEnemy);
+  const range = Math.floor((state.player.vision || state.viewSize) / 2);
+  return generateMoves(kind, state, state.player.x, state.player.y, enemyAt, isEnemy).filter(
+    (move) => chebyshev(move.x, move.y, state.player.x, state.player.y) <= range,
+  );
 }
 
 // The squares immediately adjacent (in the given directions) a piece threatens —

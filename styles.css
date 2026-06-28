@@ -435,6 +435,25 @@ body.in-game canvas {
   font-weight: 700;
 }
 
+/* End-of-run summary (score + conducts) on the game-over screen. */
+.run-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.conduct-list {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #fcd34d;
+}
+
 /* Corner pip marking a card that carries a weapon trait. */
 .card-trait {
   position: absolute;

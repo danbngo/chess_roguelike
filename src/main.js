@@ -88,8 +88,7 @@
     if (!gameState) {
       return;
     }
-    const finalNote = gameState.isFinalFloor ? ' (final)' : '';
-    floorLabel.textContent = `Floor ${gameState.floor}${finalNote}`;
+    floorLabel.textContent = `Floor ${gameState.floor}`;
     turnLabel.textContent = `Turn ${gameState.turn}`;
     healthLabel.textContent = `HP ${gameState.player.hp}/${gameState.player.maxHp}`;
     goldLabel.textContent = `Gold ${gameState.player.gold}`;
@@ -320,7 +319,7 @@
     chancellor: 'Moves as a rook or a knight.',
     amazon: 'Moves as a queen or a knight.',
     nightrider: 'Rides repeated knight leaps in a straight line.',
-    king: 'Moves one tile in any direction. Capture it to win the floor.',
+    king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
   };
 
   function setExamineEmpty(text) {
@@ -528,7 +527,7 @@
       queueTip('knight');
     }
     if (visible.some((enemy) => enemy.kind === 'king')) {
-      queueTip('finalFloor');
+      queueTip('enemyKing');
     }
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
@@ -639,20 +638,32 @@
     animTimer = 0;
     pendingAction = null;
     saveGame(gameState);
-    if (gameState.floor > FINAL_FLOOR) {
-      queueTip('newGamePlus');
-    }
-    if (gameState.isFinalFloor) {
-      queueTip('finalFloor');
-    }
     scanVisibleTips(gameState);
   }
 
-  // Carry the run on past a defeated king into the next floor (new game plus).
-  function continueNewGamePlus() {
-    hideOverlays();
-    screen = 'playing';
-    goNextFloor();
+  // Compose the end-of-run summary (score + earned conducts) into the given node.
+  function fillRunSummary(statsEl) {
+    const score = finalScore(gameState);
+    const conducts = earnedConducts(gameState.player);
+    statsEl.innerHTML = '';
+    const line = document.createElement('p');
+    line.className = 'overlay-sub';
+    line.textContent = `Reached floor ${gameState.floor} in ${gameState.player.totalTurns} turns · Score ${score}`;
+    statsEl.append(line);
+    if (conducts.length) {
+      const heading = document.createElement('p');
+      heading.className = 'overlay-sub';
+      heading.textContent = 'Conducts honoured:';
+      statsEl.append(heading);
+      const list = document.createElement('ul');
+      list.className = 'conduct-list';
+      for (const c of conducts) {
+        const li = document.createElement('li');
+        li.textContent = `${c.name} — ${c.desc}`;
+        list.append(li);
+      }
+      statsEl.append(list);
+    }
   }
 
   function onGameOver() {
@@ -660,7 +671,7 @@
     document.body.classList.remove('in-game');
     hideTilePopover();
     clearSave();
-    gameoverStats.textContent = `Floor ${gameState.floor} · score ${gameState.score} · ${gameState.turn} turns.`;
+    fillRunSummary(gameoverStats);
     hideOverlays();
     gameoverScreen.classList.remove('hidden');
   }
@@ -1123,7 +1134,6 @@
   titleOptionsButton.addEventListener('click', openOptions);
   playAgainButton.addEventListener('click', newGame);
   toTitleButton.addEventListener('click', showTitle);
-  victoryContinueButton.addEventListener('click', continueNewGamePlus);
   victoryAgainButton.addEventListener('click', newGame);
   victoryTitleButton.addEventListener('click', showTitle);
   altarCloseButton.addEventListener('click', closeAltar);

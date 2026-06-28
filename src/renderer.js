@@ -305,16 +305,20 @@ const Renderer = (function () {
     ctx.restore();
   }
 
-  function drawItem(item) {
+  // Draw a pickup. `animated` items (in current view) pulse and glow; remembered
+  // ones (out of view) are static and dimmed.
+  function drawItem(item, animated) {
     const cx = item.x * tileSize + tileSize / 2;
     const cy = item.y * tileSize + tileSize / 2;
-    // A soft pulsing glow so pickups catch the eye.
-    const pulse = 0.5 + 0.5 * Math.sin(clock * 4 + (item.x + item.y));
+    const pulse = animated ? 0.5 + 0.5 * Math.sin(clock * 4 + (item.x + item.y)) : 0;
     ctx.save();
-    ctx.shadowBlur = tileSize * (0.18 + 0.22 * pulse);
+    if (!animated) {
+      ctx.globalAlpha = 0.5;
+    }
+    ctx.shadowBlur = animated ? tileSize * (0.18 + 0.22 * pulse) : 0;
     if (item.kind === 'heart') {
-      ctx.shadowColor = 'rgba(248, 113, 113, 0.9)';
-      ctx.fillStyle = '#ef4444';
+      ctx.shadowColor = 'rgba(244, 114, 182, 0.9)';
+      ctx.fillStyle = '#f472b6'; // pink
       ctx.font = `${tileSize * (0.58 + 0.06 * pulse)}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -387,19 +391,25 @@ const Renderer = (function () {
     ctx.restore();
   }
 
-  // A fading blood spatter: a few dark-red blotches, alpha by remaining life.
+  // A fading blood spatter: a bright-red central splat plus a scatter of droplets
+  // of varied size, alpha by remaining life.
   function drawSpatter(spatter) {
     const px = spatter.x * tileSize;
     const py = spatter.y * tileSize;
     ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, spatter.life / spatter.max)) * 0.7;
-    ctx.fillStyle = '#7f1d1d';
-    for (let i = 0; i < 5; i += 1) {
-      const rx = tileHash(spatter.x * 5 + i, spatter.y * 7 + 3);
-      const ry = tileHash(spatter.x * 7 + 3, spatter.y * 5 + i);
-      const r = tileSize * (0.06 + 0.1 * tileHash(spatter.x + i, spatter.y - i));
+    ctx.globalAlpha = Math.max(0, Math.min(1, spatter.life / spatter.max)) * 0.85;
+    ctx.fillStyle = '#c81e1e'; // vivid red
+    // A central blob.
+    ctx.beginPath();
+    ctx.arc(px + tileSize * 0.5, py + tileSize * 0.5, tileSize * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Scattered droplets flung outward, deterministic per tile.
+    for (let i = 0; i < 11; i += 1) {
+      const rx = tileHash(spatter.x * 9 + i, spatter.y * 13 + 5);
+      const ry = tileHash(spatter.x * 13 + 5, spatter.y * 9 + i);
+      const r = tileSize * (0.02 + 0.07 * tileHash(spatter.x + i * 3, spatter.y - i));
       ctx.beginPath();
-      ctx.arc(px + tileSize * (0.2 + rx * 0.6), py + tileSize * (0.2 + ry * 0.6), r, 0, Math.PI * 2);
+      ctx.arc(px + tileSize * (0.08 + rx * 0.84), py + tileSize * (0.08 + ry * 0.84), r, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
@@ -657,10 +667,19 @@ const Renderer = (function () {
       }
     }
 
-    // Items are only visible inside the king's line of sight.
+    // Live items in current view: drawn from reality, animated.
     for (const item of state.items) {
       if (lit(item.x, item.y)) {
-        drawItem(item);
+        drawItem(item, true);
+      }
+    }
+    // Remembered items the king saw earlier, on explored ground he can't currently
+    // see: drawn static and dim. They may be stale (trampled while out of view).
+    const memory = state.itemMemory || {};
+    for (const key in memory) {
+      const [mx, my] = key.split(',').map(Number);
+      if (isExplored(mx, my) && !lit(mx, my)) {
+        drawItem({ x: mx, y: my, kind: memory[key].kind, amount: memory[key].amount }, false);
       }
     }
 

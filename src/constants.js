@@ -21,12 +21,12 @@ const MAX_ENEMIES = 40; // Hard safety cap so over-time spawning can't run away.
 
 // Enemy variety ramps with depth. A floor's spawn pool is every kind unlocked at
 // or before it, each chosen with equal probability (so spawn rates are even per
-// unit). The solo enemy king is the boss of each "final" floor and is placed
-// separately — it is never drawn from this pool. Floors line up with FINAL_FLOOR:
-// the full standard set arrives before the final floor (15), berolina pawns just
-// after, and the whole endgame set by floor 30 (2x final — i.e. new game plus).
+// unit). The enemy king is now an ordinary foe present from the very first floor
+// (no longer a boss). The full standard set arrives before floor 15, berolina
+// pawns just after, and the whole endgame set by floor 30.
 const ENEMY_UNLOCKS = [
   { kind: 'pawn', floor: 1 },
+  { kind: 'king', floor: 1 }, // a common, weak enemy — moves one tile, worth capturing
   { kind: 'knight', floor: 3 },
   { kind: 'bishop', floor: 6 },
   { kind: 'rook', floor: 9 },
@@ -52,10 +52,11 @@ const SHOP_CHOICES = 3; // Cards a weapon shop offers.
 const ALTAR_CHOICES = 2; // Blessings an altar offers.
 
 // A card lets the king move once like the given unit. Its gold cost equals the
-// piece's traditional chess value; cards share a fixed cooldown (king cards, once
-// the enemy king is seen, recharge faster). A card may also carry a weapon trait,
-// which doubles its price.
+// piece's traditional chess value; cards share a fixed cooldown, except pawns
+// (fast) and kings (a touch slower). A card may also carry a weapon trait, which
+// doubles its price — pawn, king and berolina cards must always have one.
 const CARD_POINTS = {
+  pawn: 1,
   berolina: 1,
   camel: 2,
   knight: 3,
@@ -66,32 +67,37 @@ const CARD_POINTS = {
   chancellor: 8,
   queen: 9,
   amazon: 12,
-  king: 9, // costs as much as a queen, but recharges faster and always bears a trait
+  king: 2,
 };
-const CARD_COOLDOWN = 3; // Fixed recharge for every card...
-const KING_CARD_COOLDOWN = 1; // ...except king cards, which recharge faster.
+const CARD_COOLDOWN = 3; // Fixed recharge for most cards.
+const TRAIT_REQUIRED_KINDS = ['pawn', 'king', 'berolina']; // these cards always bear a trait
 
 function isCardKind(kind) {
   return Object.prototype.hasOwnProperty.call(CARD_POINTS, kind);
 }
 
 function cardCooldown(kind) {
-  return kind === 'king' ? KING_CARD_COOLDOWN : CARD_COOLDOWN;
+  if (kind === 'pawn') return 1;
+  if (kind === 'king') return 2;
+  return CARD_COOLDOWN;
+}
+
+function cardMustHaveTrait(kind) {
+  return TRAIT_REQUIRED_KINDS.includes(kind);
 }
 
 function cardCost(kind, hasTrait) {
   return CARD_POINTS[kind] * (hasTrait ? 2 : 1);
 }
 
-// Weapon traits, each triggering when the card scores a kill. King cards always
-// have one; other cards gain one with a floor-scaled chance (0 on floor 1 up to
-// 50% by the final floor).
+// Weapon traits, each triggering when the card scores a kill. Pawn, king and
+// berolina cards always have one; other cards gain one with a floor-scaled chance
+// (0 on floor 1 up to 50% by the final floor).
 const TRAIT_INFO = {
   riposte: { name: 'Riposte', desc: 'Take no damage on the enemy turn after a kill with this card.' },
   slash: { name: 'Slash', desc: 'On a kill, also slay enemies on the 4 diagonal tiles.' },
   thrust: { name: 'Thrust', desc: 'On a kill, also slay enemies on the 4 cardinal tiles.' },
   shoot: { name: 'Shoot', desc: 'On a kill, snap back to your starting tile.' },
-  drain: { name: 'Drain', desc: 'On a kill, recover 1 HP.' },
   flourish: { name: 'Flourish', desc: 'On a kill, every visible enemy is caught by surprise.' },
 };
 const CARD_TRAITS = Object.keys(TRAIT_INFO);

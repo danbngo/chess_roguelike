@@ -14,7 +14,7 @@ function createEnemy(type, x, y) {
 }
 
 // The spawn pool for a floor: every enemy kind unlocked at or before it. The king
-// boss is never in here — it is placed by hand on final floors.
+// every kind unlocked at or before this floor.
 function enemyRosterForFloor(floor) {
   const pool = ENEMY_UNLOCKS.filter((entry) => floor >= entry.floor).map((entry) => entry.kind);
   return pool.length ? pool : ['pawn'];
@@ -24,11 +24,6 @@ function enemyRosterForFloor(floor) {
 function randomEnemyKind(floor) {
   const pool = enemyRosterForFloor(floor);
   return pool[randomInt(pool.length)];
-}
-
-// A floor is a "king floor" (the boss, no exit) on every multiple of FINAL_FLOOR.
-function isKingFloor(floor) {
-  return floor % FINAL_FLOOR === 0;
 }
 
 // Return up to `count` distinct random members of `items` (a shuffled sample).
@@ -57,7 +52,7 @@ function availableAltarUpgrades(player) {
 }
 
 // Roll a weapon trait for a card bought on this floor: none on floor 1, scaling up
-// to MAX_TRAIT_CHANCE by the final floor. King cards always carry one.
+// to MAX_TRAIT_CHANCE by the final floor. Some kinds always carry one (forceTrait).
 function rollCardTrait(floor, forceTrait) {
   const chance = forceTrait ? 1 : Math.min(MAX_TRAIT_CHANCE, MAX_TRAIT_CHANCE * ((floor - 1) / (FINAL_FLOOR - 1)));
   if (Math.random() >= chance) {
@@ -139,8 +134,6 @@ function generateTerrain(floor, player) {
 
 // Build (or rebuild) a floor. Carries the player's stats forward between floors.
 function generateFloor(floor, carryPlayer, score) {
-  const isFinal = isKingFloor(floor);
-
   const player = carryPlayer
     ? { ...carryPlayer, x: PLAYER_START.x, y: PLAYER_START.y }
     : {
@@ -159,6 +152,12 @@ function generateFloor(floor, carryPlayer, score) {
         weaponsUnlocked: false,
         upgradeCounts: { hp: 0, vision: 0, regen: 0, cards: 0 },
         warded: false,
+        totalTurns: 0,
+        // Conduct trackers (for end-of-run honours; never affect score).
+        usedAltar: false,
+        killedEnemy: false,
+        boughtCard: false,
+        wasHit: false,
       };
   // Backfill any fields missing from older saves.
   if (player.vision == null) player.vision = STARTING_VISION;
@@ -168,6 +167,7 @@ function generateFloor(floor, carryPlayer, score) {
   if (!Array.isArray(player.seenKinds)) player.seenKinds = [];
   if (player.weaponsUnlocked == null) player.weaponsUnlocked = false;
   if (!player.upgradeCounts) player.upgradeCounts = { hp: 0, vision: 0, regen: 0, cards: 0 };
+  if (player.totalTurns == null) player.totalTurns = 0;
 
   const state = {
     worldSize: WORLD_SIZE,
@@ -177,6 +177,9 @@ function generateFloor(floor, carryPlayer, score) {
     // Fog of war: tiles the king has ever seen on this floor (keys "x,y"). Fresh
     // each floor; everything else is hidden until explored.
     explored: {},
+    // Remembered items: last-seen pickup at each explored tile ("x,y" -> {kind,...}).
+    // May go stale (an enemy can trample an item out of view).
+    itemMemory: {},
     enemies: [],
     items: [],
     spatters: [], // decaying blood marks left by kills / the king being struck
@@ -184,8 +187,6 @@ function generateFloor(floor, carryPlayer, score) {
     altar: null, // free, one-use stat shrine
     weaponShop: null, // sells movement cards (once unlocked)
     floor,
-    finalFloor: FINAL_FLOOR,
-    isFinalFloor: isFinal,
     turn: 0,
     score: score || 0,
     enemyTurn: false,
@@ -193,7 +194,7 @@ function generateFloor(floor, carryPlayer, score) {
     won: false,
     pendingAltar: false,
     pendingWeaponShop: false,
-    message: isFinal ? 'The enemy king lurks on this floor. Hunt it down.' : 'A new floor. Seek the exit.',
+    message: 'A new floor. Seek the exit.',
     lastAction: 'start',
     spawnInterval: Math.max(3, 9 - floor),
     turnsSinceSpawn: 0,
@@ -236,13 +237,6 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  if (isFinal) {
-    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 5);
-    if (tile) {
-      addEnemy('king', tile.x, tile.y, false);
-    }
-  }
-
   // Items are placed once, at floor creation, and never respawn.
   for (let i = 0; i < 2; i += 1) {
     const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
@@ -257,8 +251,8 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  // The exit always starts out of sight, so it must be found.
-  if (!isFinal) {
+  // Every floor has a portal down; it starts out of sight, so it must be found.
+  {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
     if (tile) {
       // Hidden under fog of war until the king explores its tile.
@@ -279,13 +273,13 @@ function generateFloor(floor, carryPlayer, score) {
 
   // Weapon shops appear once the king has seen his first card-eligible enemy, and
   // each offers three cards drawn from the kinds he has seen. Each offer may carry
-  // a weapon trait (king cards always do).
+  // a weapon trait (pawn / king / berolina cards always do).
   if (player.weaponsUnlocked) {
     const kinds = pickSome(
       player.seenKinds.filter((kind) => isCardKind(kind)),
       SHOP_CHOICES,
     );
-    const shopOffers = kinds.map((kind) => ({ kind, trait: rollCardTrait(floor, kind === 'king'), sold: false }));
+    const shopOffers = kinds.map((kind) => ({ kind, trait: rollCardTrait(floor, cardMustHaveTrait(kind)), sold: false }));
     if (shopOffers.length) {
       const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
       if (shopTile) {
@@ -321,7 +315,7 @@ function decaySpatters(spatters) {
 }
 
 // Record any enemy kinds the king can currently see, and unlock weapon shops once
-// he has spotted his first card-eligible (non-pawn, non-king) foe.
+// he has spotted his first card-eligible foe.
 function recordSeenEnemies(state) {
   const p = state.player;
   if (!Array.isArray(p.seenKinds)) p.seenKinds = [];
@@ -331,6 +325,25 @@ function recordSeenEnemies(state) {
     }
     if (isCardKind(enemy.kind)) {
       p.weaponsUnlocked = true;
+    }
+  }
+}
+
+// Sync the king's memory of items with what he can currently see: tiles in view
+// get the true picture (item there, or none), while tiles out of view keep their
+// last-known state — which may have gone stale (an enemy can trample unseen).
+function rememberItems(state) {
+  if (!state.itemMemory) state.itemMemory = {};
+  for (const key of computeVisibleTiles(state)) {
+    const [x, y] = key.split(',').map(Number);
+    if (terrainAt(state, x, y) === 'mist') {
+      continue; // can't make out what's inside mist
+    }
+    const item = state.items.find((i) => i.x === x && i.y === y);
+    if (item) {
+      state.itemMemory[key] = { kind: item.kind, amount: item.amount };
+    } else {
+      delete state.itemMemory[key];
     }
   }
 }
@@ -351,6 +364,7 @@ function revealSeen(state) {
 function updateDiscovery(state) {
   revealSeen(state);
   recordSeenEnemies(state);
+  rememberItems(state);
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) {
     state.exit.discovered = true;
   }
@@ -397,6 +411,7 @@ function applyArrival(next, x, y) {
   next.player.x = x;
   next.player.y = y;
   next.turn += 1;
+  next.player.totalTurns = (next.player.totalTurns || 0) + 1;
   next.enemyTurn = true;
   next.lastAction = 'move';
   next.message = 'The king moves.';
@@ -414,16 +429,9 @@ function applyArrival(next, x, y) {
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   if (enemy) {
     next.enemies = next.enemies.filter((e) => e.id !== enemy.id);
-    next.score += 1;
     next.player.gold += 2;
+    next.player.killedEnemy = true; // breaks the pacifist conduct
     addSpatter(next, x, y); // the fallen piece's blood
-    if (enemy.kind === 'king') {
-      next.won = true;
-      next.gameOver = true;
-      next.lastAction = 'victory';
-      next.message = 'The enemy king falls — the realm is free!';
-      return next;
-    }
     next.message = `The king defeats a ${enemy.kind}.`;
     next.lastAction = 'combat';
   }
@@ -498,21 +506,15 @@ function useCard(state, cardIndex, x, y) {
 }
 
 // Slay any enemy on (tx, ty) — used by area-of-effect weapon traits. Returns true
-// if an enemy was there. Killing the boss king wins the floor.
+// if an enemy was there.
 function slayEnemyAt(state, tx, ty) {
   const enemy = state.enemies.find((e) => e.x === tx && e.y === ty);
   if (!enemy) {
     return false;
   }
   state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
-  state.score += 1;
+  state.player.killedEnemy = true;
   addSpatter(state, tx, ty);
-  if (enemy.kind === 'king') {
-    state.won = true;
-    state.gameOver = true;
-    state.lastAction = 'victory';
-    state.message = 'The enemy king falls — the realm is free!';
-  }
   return true;
 }
 
@@ -530,9 +532,6 @@ function applyCardTrait(state, trait, x, y, fromX, fromY) {
       state.player.x = fromX;
       state.player.y = fromY;
       updateDiscovery(state);
-      break;
-    case 'drain':
-      state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1);
       break;
     case 'flourish': // every seen enemy is caught off guard next enemy phase
       for (const e of state.enemies) {
@@ -691,14 +690,10 @@ function moveEnemy(state, enemyId) {
     const warded = Boolean(next.player.warded); // Riposte: no damage this turn
     if (!warded) {
       next.player.hp -= 1;
+      next.player.wasHit = true; // breaks the untouchable conduct
       addSpatter(next, next.player.x, next.player.y); // the king's own blood
     }
-    if (enemy.kind === 'king') {
-      enemy.x = fromX; // The boss strikes but stays on the board.
-      enemy.y = fromY;
-    } else {
-      next.enemies = next.enemies.filter((piece) => piece.id !== enemyId);
-    }
+    next.enemies = next.enemies.filter((piece) => piece.id !== enemyId); // the attacker spends itself
     if (warded) {
       next.message = `The king ripostes a ${enemy.kind}!`;
       next.lastAction = 'enemy';
@@ -713,13 +708,16 @@ function moveEnemy(state, enemyId) {
     return next;
   }
 
-  // An enemy that tramples an item in plain sight destroys it.
+  // An enemy that steps onto an item destroys it — even out of the king's sight,
+  // so a remembered pickup may be gone by the time he returns.
   const itemIndex = next.items.findIndex((item) => item.x === enemy.x && item.y === enemy.y);
-  if (itemIndex >= 0 && unitInSight(next, enemy.x, enemy.y)) {
+  if (itemIndex >= 0) {
     const [item] = next.items.splice(itemIndex, 1);
-    next.message = `An enemy tramples ${item.kind === 'heart' ? 'a heart' : 'some gold'}.`;
-    next.lastAction = 'enemy';
-    return next;
+    if (unitInSight(next, enemy.x, enemy.y)) {
+      next.message = `An enemy tramples ${item.kind === 'heart' ? 'a heart' : 'some gold'}.`;
+      next.lastAction = 'enemy';
+      return next;
+    }
   }
 
   next.message = 'An enemy piece advances.';
@@ -785,6 +783,7 @@ function useAltar(state, id) {
     p.maxCards += 1;
   }
   p.upgradeCounts[id] = (p.upgradeCounts[id] || 0) + 1;
+  p.usedAltar = true; // breaks the atheist conduct
   next.altar.used = true; // one blessing per altar, then it falls dormant
   next.altarMessage = `The altar grants ${def.name}.`;
   return next;
@@ -815,7 +814,25 @@ function buyCard(state, offerIndex, replaceIndex) {
     return next;
   }
   p.gold -= cost;
+  p.boughtCard = true; // breaks the ascetic conduct
   offer.sold = true;
   next.shopMessage = `Acquired the ${offer.kind} card.`;
   return next;
+}
+
+// The end-of-run honours the player earned (conducts kept the whole run).
+function earnedConducts(player) {
+  const conducts = [];
+  if (!player.usedAltar) conducts.push({ name: 'Atheist', desc: 'Never used an altar.' });
+  if (!player.killedEnemy) conducts.push({ name: 'Pacifist', desc: 'Never killed an enemy.' });
+  if (!player.boughtCard) conducts.push({ name: 'Ascetic', desc: 'Never bought a weapon card.' });
+  if (!player.wasHit) conducts.push({ name: 'Untouchable', desc: 'Never took a hit.' });
+  return conducts;
+}
+
+// Final score: rewards reaching deep floors quickly. Rises ~floor^1.25 and is
+// divided by the total turns taken across the whole run.
+function finalScore(state) {
+  const turns = Math.max(1, state.player.totalTurns || 0);
+  return Math.round((Math.pow(state.floor, 1.25) * 100) / turns);
 }
