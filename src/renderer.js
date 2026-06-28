@@ -64,6 +64,16 @@ const Renderer = (function () {
     camera.targetY += dyTiles;
   }
 
+  // Drag the world by a canvas-space pixel delta (used by click-and-drag panning):
+  // moving the cursor right slides the board right, so the camera shifts left.
+  function panByPixels(dxPx, dyPx) {
+    const ts = currentTileSize();
+    camera.targetX -= dxPx / ts;
+    camera.targetY -= dyPx / ts;
+    camera.x -= dxPx / ts; // move immediately so the drag feels 1:1
+    camera.y -= dyPx / ts;
+  }
+
   // Adjust the zoom target (positive zooms in, negative out), clamped to range.
   function zoomBy(amount) {
     camera.targetZoom = clamp(camera.targetZoom + amount, MIN_ZOOM, MAX_ZOOM);
@@ -310,6 +320,37 @@ const Renderer = (function () {
     ctx.fill();
   }
 
+  // A bright box around the tile the keyboard targeting cursor is on.
+  function drawCardCursor(tileX, tileY) {
+    const px = tileX * tileSize;
+    const py = tileY * tileSize;
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#f5d0fe';
+    ctx.shadowColor = 'rgba(168, 85, 247, 0.9)';
+    ctx.shadowBlur = tileSize * 0.3;
+    ctx.strokeRect(px + 2, py + 2, tileSize - 4, tileSize - 4);
+    ctx.restore();
+  }
+
+  // A fading blood spatter: a few dark-red blotches, alpha by remaining life.
+  function drawSpatter(spatter) {
+    const px = spatter.x * tileSize;
+    const py = spatter.y * tileSize;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, spatter.life / spatter.max)) * 0.7;
+    ctx.fillStyle = '#7f1d1d';
+    for (let i = 0; i < 5; i += 1) {
+      const rx = tileHash(spatter.x * 5 + i, spatter.y * 7 + 3);
+      const ry = tileHash(spatter.x * 7 + 3, spatter.y * 5 + i);
+      const r = tileSize * (0.06 + 0.1 * tileHash(spatter.x + i, spatter.y - i));
+      ctx.beginPath();
+      ctx.arc(px + tileSize * (0.2 + rx * 0.6), py + tileSize * (0.2 + ry * 0.6), r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   // Tile colors per terrain (two shades to keep the checkerboard feel). All kept
   // within a warm cream/tan/brown family — desaturated and fairly light — so the
   // green / red / orange move-and-threat tints overlay legibly on every tile.
@@ -417,7 +458,7 @@ const Renderer = (function () {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  function draw(state, showMoves, cardTargets) {
+  function draw(state, showMoves, cardTargets, cardCursor) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!state) {
@@ -523,6 +564,13 @@ const Renderer = (function () {
     ctx.lineWidth = 2;
     ctx.strokeRect(bounds.x * tileSize, bounds.y * tileSize, bounds.width * tileSize, bounds.height * tileSize);
 
+    // Blood spatters on explored ground, fading with each turn.
+    for (const spatter of state.spatters || []) {
+      if (isExplored(spatter.x, spatter.y)) {
+        drawSpatter(spatter);
+      }
+    }
+
     // Exit, altar and weapon shop: shown when in sight, or faded once discovered.
     if (state.exit) {
       const seen = lit(state.exit.x, state.exit.y);
@@ -557,6 +605,9 @@ const Renderer = (function () {
       for (const target of cardTargets) {
         drawCardHint(target.x, target.y, target.capture);
       }
+      if (cardCursor) {
+        drawCardCursor(cardCursor.x, cardCursor.y);
+      }
     } else {
       for (const move of playerMoves) {
         if (move.capture || move.viaJump) {
@@ -589,5 +640,5 @@ const Renderer = (function () {
     }
   }
 
-  return { init, reset, sync, update, draw, hit, centerOn, panBy, zoomBy, screenToTile };
+  return { init, reset, sync, update, draw, hit, centerOn, panBy, panByPixels, zoomBy, screenToTile };
 })();

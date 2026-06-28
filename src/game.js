@@ -31,6 +31,22 @@ function isKingFloor(floor) {
   return floor % FINAL_FLOOR === 0;
 }
 
+// Return up to `count` distinct random members of `items` (a shuffled sample).
+function pickSome(items, count) {
+  const pool = items.slice();
+  const picked = [];
+  while (pool.length && picked.length < count) {
+    picked.push(pool.splice(randomInt(pool.length), 1)[0]);
+  }
+  return picked;
+}
+
+// Altar upgrade ids the king can still take (not yet at the per-type cap).
+function availableAltarUpgrades(player) {
+  const counts = player.upgradeCounts || {};
+  return ALTAR_UPGRADES.filter((upgrade) => (counts[upgrade.id] || 0) < MAX_UPGRADES_PER_TYPE).map((upgrade) => upgrade.id);
+}
+
 function findFreeTile(occupied, predicate, attempts) {
   for (let i = 0; i < (attempts || 300); i += 1) {
     const x = randomInt(WORLD_SIZE);
@@ -122,6 +138,7 @@ function generateFloor(floor, carryPlayer, score) {
         cards: [],
         seenKinds: [],
         weaponsUnlocked: false,
+        upgradeCounts: { hp: 0, vision: 0, regen: 0, cards: 0 },
       };
   // Backfill any fields missing from older saves.
   if (player.vision == null) player.vision = STARTING_VISION;
@@ -130,6 +147,7 @@ function generateFloor(floor, carryPlayer, score) {
   if (!Array.isArray(player.cards)) player.cards = [];
   if (!Array.isArray(player.seenKinds)) player.seenKinds = [];
   if (player.weaponsUnlocked == null) player.weaponsUnlocked = false;
+  if (!player.upgradeCounts) player.upgradeCounts = { hp: 0, vision: 0, regen: 0, cards: 0 };
 
   const state = {
     worldSize: WORLD_SIZE,
@@ -141,6 +159,7 @@ function generateFloor(floor, carryPlayer, score) {
     explored: {},
     enemies: [],
     items: [],
+    spatters: [], // decaying blood marks left by kills / the king being struck
     exit: null,
     altar: null, // free, one-use stat shrine
     weaponShop: null, // sells movement cards (once unlocked)
@@ -226,18 +245,26 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  // Every floor holds an altar (free, single-use stat shrine).
-  const altarTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
-  if (altarTile) {
-    // Hidden under fog of war until the king explores its tile.
-    state.altar = { x: altarTile.x, y: altarTile.y, discovered: false, used: false };
+  // Every floor holds an altar (free, single-use stat shrine) that offers two of
+  // the still-available blessings.
+  const altarOffers = pickSome(availableAltarUpgrades(player), ALTAR_CHOICES);
+  if (altarOffers.length) {
+    const altarTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+    if (altarTile) {
+      // Hidden under fog of war until the king explores its tile.
+      state.altar = { x: altarTile.x, y: altarTile.y, discovered: false, used: false, offers: altarOffers };
+    }
   }
 
-  // Weapon shops appear once the king has seen his first card-eligible enemy.
+  // Weapon shops appear once the king has seen his first card-eligible enemy, and
+  // each offers three cards drawn from the kinds he has seen.
   if (player.weaponsUnlocked) {
-    const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
-    if (shopTile) {
-      state.weaponShop = { x: shopTile.x, y: shopTile.y, discovered: false };
+    const shopOffers = pickSome(player.seenKinds.filter((kind) => isCardKind(kind)), SHOP_CHOICES);
+    if (shopOffers.length) {
+      const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+      if (shopTile) {
+        state.weaponShop = { x: shopTile.x, y: shopTile.y, discovered: false, offers: shopOffers };
+      }
     }
   }
 
@@ -254,6 +281,17 @@ function nextFloor(state) {
   const regen = state.player.regen || STARTING_REGEN;
   const healed = { ...state.player, hp: Math.min(state.player.maxHp, state.player.hp + regen) };
   return generateFloor(state.floor + 1, healed, state.score);
+}
+
+// Blood spatters: add one at a tile, and age the set by a turn (dropping spent ones).
+function addSpatter(state, x, y) {
+  if (!Array.isArray(state.spatters)) state.spatters = [];
+  state.spatters.push({ x, y, life: SPATTER_LIFE, max: SPATTER_LIFE });
+}
+
+function decaySpatters(spatters) {
+  if (!Array.isArray(spatters)) return [];
+  return spatters.map((s) => ({ ...s, life: s.life - 1 })).filter((s) => s.life > 0);
 }
 
 // Record any enemy kinds the king can currently see, and unlock weapon shops once
@@ -337,18 +375,20 @@ function applyArrival(next, x, y) {
   next.lastAction = 'move';
   next.message = 'The king moves.';
 
-  // A turn passes: every card on cooldown recharges by one.
+  // A turn passes: every card on cooldown recharges by one, and blood fades.
   for (const card of next.player.cards || []) {
     if (card.remaining > 0) {
       card.remaining -= 1;
     }
   }
+  next.spatters = decaySpatters(next.spatters);
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   if (enemy) {
     next.enemies = next.enemies.filter((e) => e.id !== enemy.id);
     next.score += 1;
     next.player.gold += 2;
+    addSpatter(next, x, y); // the fallen piece's blood
     if (enemy.kind === 'king') {
       next.won = true;
       next.gameOver = true;
@@ -570,6 +610,7 @@ function moveEnemy(state, enemyId) {
 
   if (enemy.x === next.player.x && enemy.y === next.player.y) {
     next.player.hp -= 1;
+    addSpatter(next, next.player.x, next.player.y); // the king's own blood
     if (enemy.kind === 'king') {
       enemy.x = fromX; // The boss strikes but stays on the board.
       enemy.y = fromY;
@@ -605,8 +646,10 @@ function moveEnemy(state, enemyId) {
 function maybeSpawnEnemy(state) {
   const next = structuredClone(state);
   next.turnsSinceSpawn += 1;
-  // Every ~15 turns spent on this floor, spawns arrive one turn sooner.
-  const interval = Math.max(2, next.spawnInterval - Math.floor(next.turn / 15));
+  // Spawns accelerate the longer the king lingers, hitting their fastest at
+  // MAX_TURNS_SCARY turns spent on this floor.
+  const ramp = Math.min(1, next.turn / MAX_TURNS_SCARY);
+  const interval = Math.max(2, Math.round(next.spawnInterval - (next.spawnInterval - 2) * ramp));
   const cap = Math.min(MAX_ENEMIES, 10 + next.floor * 4);
   if (next.turnsSinceSpawn < interval || next.enemies.length >= cap) {
     return next;
@@ -632,19 +675,20 @@ function useAltar(state, id) {
   const next = structuredClone(state);
   const p = next.player;
   const def = ALTAR_UPGRADES.find((upgrade) => upgrade.id === id);
-  if (!def || !next.altar || next.altar.used) {
+  if (!def || !next.altar || next.altar.used || !(next.altar.offers || []).includes(id)) {
     return next;
   }
-  if (def.stat && def.max != null && p[def.stat] >= def.max) {
+  if (!p.upgradeCounts) p.upgradeCounts = { hp: 0, vision: 0, regen: 0, cards: 0 };
+  if ((p.upgradeCounts[id] || 0) >= MAX_UPGRADES_PER_TYPE) {
     next.altarMessage = `${def.name} is already maxed.`;
-    return next; // leave the altar active so another blessing can be chosen
+    return next; // leave the altar active so the other blessing can be chosen
   }
 
   if (id === 'hp') {
     p.maxHp += 1;
     p.hp += 1;
   } else if (id === 'vision') {
-    p.vision += 1;
+    p.vision += VISION_STEP;
     next.viewSize = p.vision; // keep the legacy mirror in sync
     updateDiscovery(next); // the wider window may dispel fog immediately
   } else if (id === 'regen') {
@@ -652,6 +696,7 @@ function useAltar(state, id) {
   } else if (id === 'cards') {
     p.maxCards += 1;
   }
+  p.upgradeCounts[id] = (p.upgradeCounts[id] || 0) + 1;
   next.altar.used = true; // one blessing per altar, then it falls dormant
   next.altarMessage = `The altar grants ${def.name}.`;
   return next;

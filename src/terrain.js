@@ -120,7 +120,15 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
     }
     if (unitAt(nx, ny)) {
       if (isTarget(nx, ny)) {
-        stops.push({ x: nx, y: ny, capture: true });
+        // Capturing the target costs a ground step (unless an ice slide carries
+        // the mover in for free). Without the range to spend it, the target is
+        // simply out of reach this move — a 1-range king can't pounce two tiles.
+        const captureCost = onIce ? 0 : 1;
+        if (captureCost === 0 || groundUsed < maxGround) {
+          stops.push({ x: nx, y: ny, capture: true });
+        } else if (onIce) {
+          stops.push({ x, y, capture: false });
+        }
       } else if (onIce) {
         stops.push({ x, y, capture: false });
       }
@@ -204,6 +212,38 @@ function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
       continue; // Friendly piece in the way.
     }
     targets.push({ x, y, viaJump: true, capture: Boolean(unit) });
+  }
+  return targets;
+}
+
+// A rider over leap vectors (the nightrider rides repeated knight hops in a line):
+// it keeps leaping in each direction until it leaves the board, hits wall/lava, or
+// meets a unit (capturing it if it is a target). Each individual hop leaps clean
+// over the cells between, but a unit on a landing square blocks further travel.
+function riderTargets(state, fromX, fromY, steps, unitAt, isTarget) {
+  const targets = [];
+  for (const [dx, dy] of steps) {
+    let x = fromX;
+    let y = fromY;
+    while (true) {
+      x += dx;
+      y += dy;
+      if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) {
+        break;
+      }
+      const terrain = terrainAt(state, x, y);
+      if (terrain === 'wall' || terrain === 'lava') {
+        break; // Can't land here, and can't ride past it.
+      }
+      const unit = unitAt(x, y);
+      if (unit) {
+        if (isTarget(x, y)) {
+          targets.push({ x, y, viaJump: true, capture: true });
+        }
+        break; // A unit on a landing square halts the ride.
+      }
+      targets.push({ x, y, viaJump: true, capture: false });
+    }
   }
   return targets;
 }

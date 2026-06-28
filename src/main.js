@@ -7,7 +7,6 @@
   const turnLabel = document.getElementById('turn');
   const healthLabel = document.getElementById('health');
   const goldLabel = document.getElementById('gold');
-  const scoreLabel = document.getElementById('score');
   const statusLabel = document.getElementById('status');
   const restartButton = document.getElementById('restart');
   const optionsButton = document.getElementById('options');
@@ -25,6 +24,7 @@
   const weaponshopList = document.getElementById('weaponshop-list');
   const weaponshopMessage = document.getElementById('weaponshop-message');
   const cardBar = document.getElementById('card-bar');
+  const tilePopover = document.getElementById('tile-popover');
   const tutorialScreen = document.getElementById('tutorial-screen');
   const tutorialTitle = document.getElementById('tutorial-title');
   const tutorialText = document.getElementById('tutorial-text');
@@ -61,10 +61,12 @@
   let screen = 'title';
   let gameState = null;
 
-  // Card targeting: the index of the card currently awaiting a destination click,
-  // or null when not aiming. `cardTargets` are the tiles it can reach.
+  // Card targeting: the index of the card currently awaiting a destination, or
+  // null when not aiming. `cardTargets` are the tiles it can reach; `cardCursor`
+  // is the keyboard-controlled target square.
   let cardTargeting = null;
   let cardTargets = [];
+  let cardCursor = null;
 
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
@@ -90,9 +92,21 @@
     turnLabel.textContent = `Turn ${gameState.turn}`;
     healthLabel.textContent = `HP ${gameState.player.hp}/${gameState.player.maxHp}`;
     goldLabel.textContent = `Gold ${gameState.player.gold}`;
-    scoreLabel.textContent = `Score ${gameState.score}`;
     statusLabel.textContent = gameState.message;
+
+    // Dread rises as the king lingers and as his health falls.
+    turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
+    healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
     renderCards();
+  }
+
+  // White -> yellow -> orange -> red -> dark red as `ratio` climbs 0..1.
+  function scaryColor(ratio) {
+    if (ratio >= 0.95) return '#7f1d1d';
+    if (ratio >= 0.7) return '#ef4444';
+    if (ratio >= 0.45) return '#fb923c';
+    if (ratio >= 0.2) return '#fde047';
+    return '#f8fafc';
   }
 
   /* -------------------------------- cards -------------------------------- */
@@ -160,13 +174,152 @@
       updateHud();
       return;
     }
-    gameState.message = `Aiming the ${card.kind} card — click a highlighted tile (Esc to cancel).`;
+    // Start the keyboard cursor on the reachable tile nearest the king.
+    cardCursor = cardTargets
+      .slice()
+      .sort((a, b) => distToKing(a) - distToKing(b))[0];
+    cardCursor = { x: cardCursor.x, y: cardCursor.y };
+    gameState.message = `Aiming the ${card.kind} card — click a tile or use the numpad, then Enter (Esc to cancel).`;
     updateHud();
+  }
+
+  function distToKing(tile) {
+    const dx = tile.x - gameState.player.x;
+    const dy = tile.y - gameState.player.y;
+    return dx * dx + dy * dy;
   }
 
   function cancelCardTargeting() {
     cardTargeting = null;
     cardTargets = [];
+    cardCursor = null;
+  }
+
+  /* ------------------------------ tile popover --------------------------- */
+
+  const TERRAIN_NAMES = {
+    normal: 'Open ground',
+    wall: 'Wall — blocks sight & movement',
+    water: 'Water — cross at most two',
+    ice: 'Ice — slippery, you slide across',
+    mist: 'Mist — passable but blocks sight',
+    trench: 'Trench — shelters its occupant',
+  };
+
+  // Build a human description of a tile (or null if there is nothing to say).
+  function describeTile(tx, ty) {
+    if (!gameState || tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) {
+      return null;
+    }
+    if (!(gameState.explored && gameState.explored[`${tx},${ty}`])) {
+      return 'Unexplored — shrouded in fog of war.';
+    }
+    const visible = inLineOfSight(gameState, tx, ty) && terrainAt(gameState, tx, ty) !== 'mist';
+    const lines = [];
+    if (gameState.player.x === tx && gameState.player.y === ty) {
+      lines.push('Your king');
+    }
+    const terrain = terrainAt(gameState, tx, ty);
+    lines.push(TERRAIN_NAMES[terrain] || terrain);
+    if (visible) {
+      const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
+      if (enemy) {
+        const tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
+        lines.push(`Enemy: ${enemy.kind}${tag}`);
+      }
+      const item = gameState.items.find((i) => i.x === tx && i.y === ty);
+      if (item) {
+        lines.push(item.kind === 'heart' ? 'Heart — restores 1 HP' : `Gold — ${item.amount}`);
+      }
+    }
+    const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
+    if (onBuilding(gameState.exit)) {
+      lines.push('Stairs down to the next floor');
+    }
+    if (onBuilding(gameState.altar)) {
+      lines.push(gameState.altar.used ? 'Altar — already spent' : 'Altar — a free blessing');
+    }
+    if (onBuilding(gameState.weaponShop)) {
+      lines.push('Weapon shop — buy cards');
+    }
+    return lines.join('\n');
+  }
+
+  function showTilePopover(event, canvasX, canvasY) {
+    if (screen !== 'playing') {
+      hideTilePopover();
+      return;
+    }
+    const { x, y } = Renderer.screenToTile(canvasX, canvasY);
+    const text = describeTile(x, y);
+    if (!text) {
+      hideTilePopover();
+      return;
+    }
+    tilePopover.textContent = text;
+    tilePopover.style.left = `${event.clientX + 14}px`;
+    tilePopover.style.top = `${event.clientY + 14}px`;
+    tilePopover.classList.remove('hidden');
+  }
+
+  function hideTilePopover() {
+    tilePopover.classList.add('hidden');
+  }
+
+  // Move the targeting cursor to the nearest valid target in the given direction.
+  function moveCardCursor(dx, dy) {
+    if (cardTargeting === null || !cardCursor) {
+      return;
+    }
+    let best = null;
+    let bestScore = Infinity;
+    for (const t of cardTargets) {
+      const ox = t.x - cardCursor.x;
+      const oy = t.y - cardCursor.y;
+      if (ox === 0 && oy === 0) continue;
+      // Must head in the pressed direction on each constrained axis.
+      if (dx !== 0 && Math.sign(ox) !== dx) continue;
+      if (dy !== 0 && Math.sign(oy) !== dy) continue;
+      if (dx === 0 && ox !== 0) continue; // pure vertical: stay in column-ish
+      if (dy === 0 && oy !== 0) continue; // pure horizontal: stay in row-ish
+      const score = ox * ox + oy * oy;
+      if (score < bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+    // If nothing lined up exactly, fall back to the closest target in that half-plane.
+    if (!best) {
+      for (const t of cardTargets) {
+        const ox = t.x - cardCursor.x;
+        const oy = t.y - cardCursor.y;
+        if (ox === 0 && oy === 0) continue;
+        if (dx !== 0 && Math.sign(ox) !== dx) continue;
+        if (dy !== 0 && Math.sign(oy) !== dy) continue;
+        const score = ox * ox + oy * oy;
+        if (score < bestScore) {
+          bestScore = score;
+          best = t;
+        }
+      }
+    }
+    if (best) {
+      cardCursor = { x: best.x, y: best.y };
+      Renderer.centerOn(cardCursor.x, cardCursor.y); // keep the cursor in view
+    }
+  }
+
+  function confirmCardCursor() {
+    if (cardTargeting === null || !cardCursor) {
+      return;
+    }
+    const target = cardTargets.find((t) => t.x === cardCursor.x && t.y === cardCursor.y);
+    const index = cardTargeting;
+    if (!target) {
+      return;
+    }
+    cancelCardTargeting();
+    processPlayerResult(useCard(gameState, index, target.x, target.y));
   }
 
   // Restart the HP counter's damage animation (re-add the class after a reflow).
@@ -302,6 +455,8 @@
     pendingTips = [];
     cancelCardTargeting();
     cardBar.innerHTML = '';
+    document.body.classList.remove('in-game');
+    hideTilePopover();
     hideOverlays();
     titleScreen.classList.remove('hidden');
     continueButton.disabled = !hasSave();
@@ -316,6 +471,7 @@
     pendingTips = [];
     cancelCardTargeting();
     screen = 'playing';
+    document.body.classList.add('in-game');
     hideOverlays();
   }
 
@@ -361,6 +517,8 @@
 
   function onGameOver() {
     screen = 'gameover';
+    document.body.classList.remove('in-game');
+    hideTilePopover();
     clearSave();
     gameoverStats.textContent = `Floor ${gameState.floor} · score ${gameState.score} · ${gameState.turn} turns.`;
     hideOverlays();
@@ -369,6 +527,8 @@
 
   function onVictory() {
     screen = 'victory';
+    document.body.classList.remove('in-game');
+    hideTilePopover();
     clearSave();
     victoryStats.textContent = `Score ${gameState.score} · ${gameState.turn} turns on the final floor.`;
     hideOverlays();
@@ -377,24 +537,24 @@
 
   /* ------------------------------- altar -------------------------------- */
 
-  function statValue(id) {
-    const p = gameState.player;
-    return { vision: p.vision, maxCards: p.maxCards }[id];
-  }
-
   function renderAltar() {
     altarMessage.textContent = gameState.altarMessage || '';
     altarList.innerHTML = '';
 
-    for (const upgrade of ALTAR_UPGRADES) {
-      const maxed = upgrade.stat && upgrade.max != null && gameState.player[upgrade.stat] >= upgrade.max;
+    const offers = (gameState.altar && gameState.altar.offers) || [];
+    const counts = gameState.player.upgradeCounts || {};
+    for (const id of offers) {
+      const upgrade = ALTAR_UPGRADES.find((u) => u.id === id);
+      if (!upgrade) continue;
+      const taken = counts[id] || 0;
+      const maxed = taken >= MAX_UPGRADES_PER_TYPE;
 
       const row = document.createElement('li');
       row.className = 'shop-item';
 
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${upgrade.name}</span><span class="shop-desc">${upgrade.desc}</span>`;
+      info.innerHTML = `<span class="shop-name">${upgrade.name} <small>(${taken}/${MAX_UPGRADES_PER_TYPE})</small></span><span class="shop-desc">${upgrade.desc}</span>`;
 
       const take = document.createElement('button');
       take.type = 'button';
@@ -404,7 +564,7 @@
       } else {
         take.textContent = 'Take';
         take.addEventListener('click', () => {
-          applyState(useAltar(gameState, upgrade.id), true);
+          applyState(useAltar(gameState, id), true);
           if (gameState.altar && gameState.altar.used) {
             closeAltar(); // a blessing was claimed; the altar is spent
           } else {
@@ -434,18 +594,13 @@
 
   /* ----------------------------- weapon shop ----------------------------- */
 
-  // Buyable cards = card-eligible enemy kinds the king has seen.
-  function shopCardKinds() {
-    return gameState.player.seenKinds.filter((kind) => isCardKind(kind));
-  }
-
   function renderWeaponShop() {
     weaponshopGold.textContent = `Gold ${gameState.player.gold}`;
     weaponshopMessage.textContent = gameState.shopMessage || '';
     weaponshopList.innerHTML = '';
 
     const p = gameState.player;
-    const kinds = shopCardKinds();
+    const kinds = (gameState.weaponShop && gameState.weaponShop.offers) || [];
     if (!kinds.length) {
       const empty = document.createElement('li');
       empty.className = 'shop-item';
@@ -609,9 +764,6 @@
   }
 
   function handleStep(dx, dy) {
-    if (cardTargeting !== null) {
-      cancelCardTargeting(); // a keyboard move cancels card aiming
-    }
     if (!isIdle()) {
       return;
     }
@@ -676,21 +828,36 @@
     Renderer.update(delta);
     // While aiming a card, show its reachable tiles instead of the normal moves.
     const aiming = cardTargeting !== null;
-    Renderer.draw(gameState, isIdle() && !aiming, aiming ? cardTargets : null);
+    Renderer.draw(gameState, isIdle() && !aiming, aiming ? cardTargets : null, aiming ? cardCursor : null);
     requestAnimationFrame(step);
   }
 
   /* ------------------------------- wiring -------------------------------- */
 
   document.addEventListener('keydown', (event) => {
-    // Escape cancels card aiming.
-    if (event.key === 'Escape' && cardTargeting !== null) {
-      event.preventDefault();
-      cancelCardTargeting();
-      gameState.message = 'Card cancelled.';
-      updateHud();
-      return;
+    // While aiming a card: movement keys steer the cursor, Enter/Space confirm,
+    // Escape cancels.
+    if (cardTargeting !== null) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelCardTargeting();
+        gameState.message = 'Card cancelled.';
+        updateHud();
+        return;
+      }
+      if (event.key === 'Enter' || event.key === ' ' || event.code === 'Space') {
+        event.preventDefault();
+        confirmCardCursor();
+        return;
+      }
+      const aim = resolveMove(event);
+      if (aim) {
+        event.preventDefault();
+        moveCardCursor(aim[0], aim[1]);
+        return;
+      }
     }
+
     const move = resolveMove(event);
     if (move) {
       event.preventDefault();
@@ -714,7 +881,13 @@
     }
   });
 
-  canvas.addEventListener('click', handleClick);
+  canvas.addEventListener('click', (event) => {
+    if (suppressClick) {
+      suppressClick = false; // this "click" was the end of a drag
+      return;
+    }
+    handleClick(event);
+  });
 
   // Mouse wheel zooms toward / away.
   canvas.addEventListener(
@@ -726,18 +899,56 @@
     { passive: false },
   );
 
-  // Hovering near a canvas edge pans the camera that way; track the direction.
+  // Click-and-drag panning, edge-of-screen panning, and the hover popover all key
+  // off mouse position.
+  let dragging = false;
+  let dragMoved = false;
+  let suppressClick = false;
+  let dragLast = { x: 0, y: 0 };
+
+  canvas.addEventListener('mousedown', (event) => {
+    dragging = true;
+    dragMoved = false;
+    dragLast = { x: event.clientX, y: event.clientY };
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragging && dragMoved) {
+      suppressClick = true; // swallow the click that follows a drag
+    }
+    dragging = false;
+  });
+
   canvas.addEventListener('mousemove', (event) => {
     const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    edgePan = {
-      x: x < EDGE_MARGIN ? -1 : x > rect.width - EDGE_MARGIN ? 1 : 0,
-      y: y < EDGE_MARGIN ? -1 : y > rect.height - EDGE_MARGIN ? 1 : 0,
-    };
+
+    if (dragging) {
+      const dx = event.clientX - dragLast.x;
+      const dy = event.clientY - dragLast.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) {
+        dragMoved = true;
+      }
+      Renderer.panByPixels(dx * scale, dy * scale);
+      dragLast = { x: event.clientX, y: event.clientY };
+      edgePan = { x: 0, y: 0 }; // dragging overrides edge panning
+    } else {
+      // Hovering near an edge pans the camera that way.
+      edgePan = {
+        x: x < EDGE_MARGIN ? -1 : x > rect.width - EDGE_MARGIN ? 1 : 0,
+        y: y < EDGE_MARGIN ? -1 : y > rect.height - EDGE_MARGIN ? 1 : 0,
+      };
+    }
+
+    showTilePopover(event, x * scale, y * scale);
   });
+
   canvas.addEventListener('mouseleave', () => {
     edgePan = { x: 0, y: 0 };
+    dragging = false;
+    hideTilePopover();
   });
 
   newGameButton.addEventListener('click', newGame);
@@ -764,9 +975,7 @@
     refreshOptions();
   });
   restartButton.addEventListener('click', () => {
-    if (screen === 'playing' || screen === 'gameover' || screen === 'victory') {
-      newGame();
-    }
+    newGame(); // lives in the options menu now; starts a fresh run
   });
 
   showTitle();

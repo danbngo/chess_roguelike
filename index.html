@@ -13,9 +13,9 @@
         <div class="hud">
           <span id="floor">Floor 1</span>
           <span id="turn">Turn 0</span>
-          <span id="health">HP 5/5</span>
+          <span id="health">HP 3/3</span>
           <span id="gold">Gold 0</span>
-          <span id="score">Score 0</span>
+          <button id="options" type="button" class="options-float">Options</button>
         </div>
         <div class="stage">
           <canvas id="game" width="640" height="640"></canvas>
@@ -102,6 +102,9 @@
                 <button id="options-toggle-tutorial" type="button"></button>
               </div>
               <div class="overlay-buttons">
+                <button id="restart" type="button">Restart Run</button>
+              </div>
+              <div class="overlay-buttons">
                 <button id="options-close" type="button">Close</button>
               </div>
             </div>
@@ -111,12 +114,11 @@
         <div id="card-bar" class="card-bar"></div>
 
         <div class="actions">
-          <button id="restart" type="button">Restart</button>
-          <button id="options" type="button">Options</button>
           <span id="status">The king awakens on a strange board.</span>
         </div>
       </section>
     </main>
+    <div id="tile-popover" class="tile-popover hidden"></div>
     <!-- Plain classic scripts, loaded in dependency order, so the game runs
          straight off the filesystem (no server / ES modules required). -->
     <script src="src/constants.js"></script>

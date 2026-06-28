@@ -1,13 +1,15 @@
 // Shared configuration. Loaded first; every other script reads from these.
 
 const WORLD_SIZE = 20; // The full board is WORLD_SIZE x WORLD_SIZE tiles.
-const STARTING_VISION = 4; // The king starts seeing a 4x4 window (half the old 8).
-const VISION_MAX = 8; // Sight range upgrades back up to a chessboard's worth.
+const STARTING_VISION = 5; // The king starts seeing a 5x5 window (odd, so centered).
+const VISION_STEP = 2; // Each Keen Eyes upgrade widens the window by 2 (5 -> 7 -> 9...).
 const PLAYER_START = { x: 8, y: 8 };
-const STARTING_HP = 5;
+const STARTING_HP = 3;
 const STARTING_REGEN = 1; // HP mended on descending to the next floor.
 const STARTING_CARD_SLOTS = 1; // Card slots the king begins with.
-const MAX_CARD_SLOTS = 4; // Cap on card slots (the Arsenal altar upgrade).
+const MAX_UPGRADES_PER_TYPE = 4; // Each altar upgrade type can be taken at most 4 times.
+const MAX_TURNS_SCARY = 50; // Lingering this many turns on a floor maxes spawn rate / dread.
+const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
 
 // Terrain is introduced gradually across the run: floor 1 is empty ground, and
 // each listed floor unlocks a new hazard type that grows denser on deeper floors
@@ -34,15 +36,20 @@ const ENEMY_UNLOCKS = [
   { kind: 'archbishop', floor: 8 },
   { kind: 'chancellor', floor: 9 },
   { kind: 'amazon', floor: 10 }, // 2x final floor: the complete endgame set
+  { kind: 'nightrider', floor: 11 }, // deeper new game plus: the knight-rider
 ];
 
-// Altar upgrades: free, but a given altar grants only one before it goes dormant.
+// Altar upgrades: free, but a given altar offers only two of these and grants one
+// before it goes dormant. Each type can be taken at most MAX_UPGRADES_PER_TYPE times.
 const ALTAR_UPGRADES = [
   { id: 'hp', name: 'Vitality', desc: '+1 max HP (and heal 1)' },
-  { id: 'vision', name: 'Keen Eyes', desc: '+1 sight range (see farther)', max: VISION_MAX, stat: 'vision' },
+  { id: 'vision', name: 'Keen Eyes', desc: '+2 sight range (see farther)' },
   { id: 'regen', name: 'Renewal', desc: '+1 HP mended each time you descend' },
-  { id: 'cards', name: 'Arsenal', desc: '+1 card slot', max: MAX_CARD_SLOTS, stat: 'maxCards' },
+  { id: 'cards', name: 'Arsenal', desc: '+1 card slot' },
 ];
+
+const SHOP_CHOICES = 3; // Cards a weapon shop offers.
+const ALTAR_CHOICES = 2; // Blessings an altar offers.
 
 // Cards the weapon shop can sell: any seen enemy unit except pawns and the king.
 // Higher cooldowns (and prices) for more powerful pieces. A card lets the king
@@ -53,6 +60,7 @@ const CARD_STATS = {
   camel: { cooldown: 2, cost: 14 },
   bishop: { cooldown: 3, cost: 16 },
   rook: { cooldown: 3, cost: 18 },
+  nightrider: { cooldown: 4, cost: 30 },
   archbishop: { cooldown: 4, cost: 26 },
   chancellor: { cooldown: 4, cost: 28 },
   queen: { cooldown: 5, cost: 34 },

@@ -208,6 +208,54 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+/* Options button floats to the right of the stats row. */
+.options-float {
+  margin-left: auto;
+}
+
+/* Hover popover describing the tile under the cursor. */
+.tile-popover {
+  position: fixed;
+  z-index: 60;
+  max-width: 230px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.5);
+}
+
+.tile-popover.hidden {
+  display: none;
+}
+
+/* In-game: shed the title/container chrome so the board fills the screen. */
+body.in-game .shell {
+  padding: 0.5rem;
+  align-items: start;
+}
+
+body.in-game .panel {
+  width: min(98vw, 1100px);
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+body.in-game h1 {
+  display: none;
+}
+
+body.in-game .stage {
+  max-width: min(96vw, 82vh);
+}
+
 /* The card bar beneath the board. */
 .card-bar {
   display: flex;

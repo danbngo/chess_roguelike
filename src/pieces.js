@@ -51,6 +51,12 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget) {
         moves.push(target);
       }
       break;
+    case 'nightrider':
+      // Rides repeated knight leaps in a line until blocked.
+      for (const target of riderTargets(state, fromX, fromY, KNIGHT_STEPS, unitAt, isTarget)) {
+        moves.push(target);
+      }
+      break;
     case 'archbishop':
       // Bishop + knight.
       slide(DIAG, Infinity);
@@ -176,6 +182,7 @@ function getPieceLabel(kind) {
     archbishop: 'A', // bishop + knight
     chancellor: 'M', // rook + knight (a.k.a. marshall)
     amazon: 'Z', // queen + knight
+    nightrider: 'N', // rides repeated knight leaps
   };
   return labels[kind] ?? '♟';
 }
