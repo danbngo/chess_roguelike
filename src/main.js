@@ -7,7 +7,8 @@
   const turnLabel = document.getElementById('turn');
   const healthLabel = document.getElementById('health');
   const goldLabel = document.getElementById('gold');
-  const statusLabel = document.getElementById('status');
+  const logEl = document.getElementById('log');
+  const examineEl = document.getElementById('examine');
   const restartButton = document.getElementById('restart');
   const optionsButton = document.getElementById('options');
 
@@ -92,12 +93,34 @@
     turnLabel.textContent = `Turn ${gameState.turn}`;
     healthLabel.textContent = `HP ${gameState.player.hp}/${gameState.player.maxHp}`;
     goldLabel.textContent = `Gold ${gameState.player.gold}`;
-    statusLabel.textContent = gameState.message;
+    logMessage(gameState.message);
 
     // Dread rises as the king lingers and as his health falls.
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
     renderCards();
+  }
+
+  /* -------------------------------- log --------------------------------- */
+
+  let lastLogged = null;
+  const LOG_MAX = 14;
+
+  // Append a message to the left-pane log (newest at the bottom), skipping exact
+  // consecutive repeats.
+  function logMessage(text) {
+    if (!text || text === lastLogged) {
+      return;
+    }
+    lastLogged = text;
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    line.textContent = text;
+    logEl.append(line);
+    while (logEl.childElementCount > LOG_MAX) {
+      logEl.removeChild(logEl.firstChild);
+    }
+    logEl.scrollTop = logEl.scrollHeight;
   }
 
   // White -> yellow -> orange -> red -> dark red as `ratio` climbs 0..1.
@@ -132,7 +155,7 @@
         continue;
       }
       slot.textContent = getPieceLabel(card.kind);
-      slot.title = `${card.kind} card · cooldown ${card.cooldown}`;
+      slot.title = card.trait ? `${card.kind} card · ${TRAIT_INFO[card.trait].name}` : `${card.kind} card`;
       const onCooldown = card.remaining > 0;
       if (cardTargeting === i) {
         slot.classList.add('targeting');
@@ -140,6 +163,13 @@
         slot.classList.add('cooldown');
       } else {
         slot.classList.add('ready');
+      }
+      if (card.trait) {
+        // A small corner pip marks a card that carries a weapon trait.
+        const pip = document.createElement('span');
+        pip.className = 'card-trait';
+        pip.textContent = TRAIT_INFO[card.trait].name[0];
+        slot.append(pip);
       }
       if (onCooldown) {
         const badge = document.createElement('span');
@@ -180,7 +210,17 @@
       .sort((a, b) => distToKing(a) - distToKing(b))[0];
     cardCursor = { x: cardCursor.x, y: cardCursor.y };
     gameState.message = `Aiming the ${card.kind} card — click a tile or use the numpad, then Enter (Esc to cancel).`;
+    showCardInfo(card);
     updateHud();
+  }
+
+  // Show the card being aimed (movement + any trait) in the right-hand pane.
+  function showCardInfo(card) {
+    examineEl.innerHTML = '';
+    addExamineBlock(`${card.kind} card`, [PIECE_INFO[card.kind] || '', `Cooldown ${card.cooldown} turns`]);
+    if (card.trait) {
+      addExamineBlock(`Trait — ${TRAIT_INFO[card.trait].name}`, TRAIT_INFO[card.trait].desc);
+    }
   }
 
   function distToKing(tile) {
@@ -200,10 +240,10 @@
   const TERRAIN_NAMES = {
     normal: 'Open ground',
     wall: 'Wall — blocks sight & movement',
-    water: 'Water — cross at most two',
+    water: 'Water — impassable, but clear to see through',
+    mud: 'Mud — cross at most two in a move',
     ice: 'Ice — slippery, you slide across',
     mist: 'Mist — passable but blocks sight',
-    trench: 'Trench — shelters its occupant',
   };
 
   // Build a human description of a tile (or null if there is nothing to say).
@@ -264,6 +304,98 @@
 
   function hideTilePopover() {
     tilePopover.classList.add('hidden');
+  }
+
+  /* ------------------------------ examine pane --------------------------- */
+
+  const PIECE_INFO = {
+    pawn: 'Steps one tile orthogonally; captures one tile diagonally.',
+    berolina: 'Steps one tile diagonally; captures one tile orthogonally.',
+    knight: 'Leaps in an L (two and one), clear over anything between.',
+    bishop: 'Slides any distance diagonally.',
+    rook: 'Slides any distance orthogonally.',
+    queen: 'Slides any distance in any direction.',
+    camel: 'Leaps in a (3,1) pattern, clear over anything between.',
+    archbishop: 'Moves as a bishop or a knight.',
+    chancellor: 'Moves as a rook or a knight.',
+    amazon: 'Moves as a queen or a knight.',
+    nightrider: 'Rides repeated knight leaps in a straight line.',
+    king: 'Moves one tile in any direction. Capture it to win the floor.',
+  };
+
+  function setExamineEmpty(text) {
+    examineEl.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'examine-empty';
+    p.textContent = text;
+    examineEl.append(p);
+  }
+
+  function addExamineBlock(title, lines) {
+    const block = document.createElement('div');
+    block.className = 'examine-block';
+    const h = document.createElement('div');
+    h.className = 'examine-h';
+    h.textContent = title;
+    block.append(h);
+    for (const line of [].concat(lines).filter(Boolean)) {
+      const row = document.createElement('div');
+      row.className = 'examine-line';
+      row.textContent = line;
+      block.append(row);
+    }
+    examineEl.append(block);
+  }
+
+  // Populate the right pane with full detail about a clicked tile.
+  function examineTile(tx, ty) {
+    if (!gameState || tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) {
+      setExamineEmpty('Click a tile to inspect it.');
+      return;
+    }
+    if (!(gameState.explored && gameState.explored[`${tx},${ty}`])) {
+      setExamineEmpty('Unexplored — shrouded in fog of war.');
+      return;
+    }
+    examineEl.innerHTML = '';
+    const visible = inLineOfSight(gameState, tx, ty) && terrainAt(gameState, tx, ty) !== 'mist';
+    const terrain = terrainAt(gameState, tx, ty);
+    addExamineBlock(`Tile (${tx}, ${ty})`, TERRAIN_NAMES[terrain] || terrain);
+
+    if (gameState.player.x === tx && gameState.player.y === ty) {
+      const p = gameState.player;
+      addExamineBlock('Your King', [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Gold ${p.gold}`, `Card slots ${p.maxCards}`]);
+    }
+
+    if (visible) {
+      const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
+      if (enemy) {
+        const state = enemy.surprised
+          ? 'Surprised — frozen this turn'
+          : enemy.frustrated
+            ? 'Frustrated — no legal move'
+            : enemy.awake
+              ? 'Hostile — hunting the king'
+              : 'Unaware — wandering';
+        const buyable = isCardKind(enemy.kind) ? 'Can be bought as a card.' : null;
+        addExamineBlock(`Enemy — ${enemy.kind}`, [PIECE_INFO[enemy.kind] || '', state, buyable]);
+      }
+      const item = gameState.items.find((i) => i.x === tx && i.y === ty);
+      if (item) {
+        addExamineBlock('Item', item.kind === 'heart' ? 'Heart — restores 1 HP.' : `Gold — worth ${item.amount}.`);
+      }
+    }
+
+    const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
+    if (onBuilding(gameState.exit)) {
+      addExamineBlock('Stairs', 'Descend to the next floor (the king mends a little).');
+    }
+    if (onBuilding(gameState.altar)) {
+      addExamineBlock('Altar', gameState.altar.used ? 'Already spent — dormant.' : 'A free blessing: pick one of two upgrades.');
+    }
+    if (onBuilding(gameState.weaponShop)) {
+      addExamineBlock('Weapon Shop', 'Buy movement cards drawn from foes you have seen.');
+    }
   }
 
   // Move the targeting cursor to the nearest valid target in the given direction.
@@ -401,6 +533,10 @@
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
     }
+    // Once dread crosses the halfway mark, warn about the rising tide of foes.
+    if (state.turn >= MAX_TURNS_SCARY / 2) {
+      queueTip('danger');
+    }
     // First sighting of each terrain type pops an explanatory tip.
     for (const key of computeVisibleTiles(state)) {
       const [tx, ty] = key.split(',').map(Number);
@@ -456,11 +592,13 @@
     cancelCardTargeting();
     cardBar.innerHTML = '';
     document.body.classList.remove('in-game');
+    document.body.classList.add('on-title');
     hideTilePopover();
     hideOverlays();
     titleScreen.classList.remove('hidden');
     continueButton.disabled = !hasSave();
-    statusLabel.textContent = 'The king awaits your command.';
+    logEl.innerHTML = '';
+    lastLogged = null;
   }
 
   function startGame(state) {
@@ -470,8 +608,10 @@
     pendingAction = null;
     pendingTips = [];
     cancelCardTargeting();
+    setExamineEmpty('Click a tile to inspect it.');
     screen = 'playing';
     document.body.classList.add('in-game');
+    document.body.classList.remove('on-title');
     hideOverlays();
   }
 
@@ -594,14 +734,28 @@
 
   /* ----------------------------- weapon shop ----------------------------- */
 
+  // A "knight · Slash" style label for a card / offer.
+  function cardName(kind, trait) {
+    const traitName = trait ? ` · ${TRAIT_INFO[trait].name}` : '';
+    return `${getPieceLabel(kind)} ${kind}${traitName}`;
+  }
+
+  function cardDesc(kind, trait) {
+    const parts = [`cooldown ${cardCooldown(kind)}`];
+    if (trait) {
+      parts.push(TRAIT_INFO[trait].desc);
+    }
+    return parts.join(' · ');
+  }
+
   function renderWeaponShop() {
     weaponshopGold.textContent = `Gold ${gameState.player.gold}`;
     weaponshopMessage.textContent = gameState.shopMessage || '';
     weaponshopList.innerHTML = '';
 
     const p = gameState.player;
-    const kinds = (gameState.weaponShop && gameState.weaponShop.offers) || [];
-    if (!kinds.length) {
+    const offers = (gameState.weaponShop && gameState.weaponShop.offers) || [];
+    if (!offers.length) {
       const empty = document.createElement('li');
       empty.className = 'shop-item';
       empty.textContent = 'No wares yet — face more foes to learn their forms.';
@@ -609,8 +763,8 @@
       return;
     }
 
-    for (const kind of kinds) {
-      const stats = CARD_STATS[kind];
+    offers.forEach((offer, index) => {
+      const cost = cardCost(offer.kind, Boolean(offer.trait));
       const slotsFull = p.cards.length >= p.maxCards;
 
       const row = document.createElement('li');
@@ -618,47 +772,53 @@
 
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${getPieceLabel(kind)} ${kind}</span><span class="shop-desc">cooldown ${stats.cooldown} · move like a ${kind}</span>`;
+      info.innerHTML = `<span class="shop-name">${cardName(offer.kind, offer.trait)}</span><span class="shop-desc">${cardDesc(offer.kind, offer.trait)}</span>`;
 
       const buy = document.createElement('button');
       buy.type = 'button';
-      buy.textContent = `${stats.cost}g`;
-      buy.disabled = p.gold < stats.cost;
-      buy.addEventListener('click', () => {
-        if (slotsFull) {
-          promptReplaceCard(kind);
-        } else {
-          applyState(buyCard(gameState, kind), true);
-          renderWeaponShop();
-        }
-      });
+      if (offer.sold) {
+        buy.textContent = 'Sold';
+        buy.disabled = true;
+      } else {
+        buy.textContent = `${cost}g`;
+        buy.disabled = p.gold < cost;
+        buy.addEventListener('click', () => {
+          if (slotsFull) {
+            promptReplaceCard(index);
+          } else {
+            applyState(buyCard(gameState, index), true);
+            renderWeaponShop();
+          }
+        });
+      }
 
       row.append(info, buy);
       weaponshopList.append(row);
-    }
+    });
   }
 
   // With slots full, ask which card to replace (a row of swap buttons), then buy.
-  function promptReplaceCard(kind) {
+  function promptReplaceCard(offerIndex) {
     const p = gameState.player;
-    if (p.gold < CARD_STATS[kind].cost) {
+    const offer = gameState.weaponShop.offers[offerIndex];
+    if (p.gold < cardCost(offer.kind, Boolean(offer.trait))) {
       gameState.shopMessage = 'Not enough gold.';
       renderWeaponShop();
       return;
     }
-    weaponshopMessage.textContent = `Replace which card with the ${kind}?`;
+    weaponshopMessage.textContent = `Replace which card with the ${offer.kind}?`;
     weaponshopList.innerHTML = '';
     p.cards.forEach((card, index) => {
       const row = document.createElement('li');
       row.className = 'shop-item';
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${getPieceLabel(card.kind)} ${card.kind}</span><span class="shop-desc">cooldown ${card.cooldown}</span>`;
+      info.innerHTML = `<span class="shop-name">${cardName(card.kind, card.trait)}</span><span class="shop-desc">${cardDesc(card.kind, card.trait)}</span>`;
       const swap = document.createElement('button');
       swap.type = 'button';
       swap.textContent = 'Replace';
       swap.addEventListener('click', () => {
-        applyState(buyCard(gameState, kind, index), true);
+        applyState(buyCard(gameState, offerIndex, index), true);
         renderWeaponShop();
       });
       row.append(info, swap);
@@ -771,7 +931,7 @@
   }
 
   function handleClick(event) {
-    if (!isIdle()) {
+    if (!gameState) {
       return;
     }
     const rect = canvas.getBoundingClientRect();
@@ -780,20 +940,27 @@
 
     // Aiming a card: a click on a highlighted tile plays it; anything else cancels.
     if (cardTargeting !== null) {
+      if (!isIdle()) {
+        return;
+      }
       const target = cardTargets.find((move) => move.x === tileX && move.y === tileY);
       const index = cardTargeting;
       cancelCardTargeting();
       if (target) {
         processPlayerResult(useCard(gameState, index, tileX, tileY));
       } else {
-        updateHud();
+        examineTile(tileX, tileY);
       }
       return;
     }
 
-    const reachable = getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
-    if (reachable) {
+    // A click on a reachable tile moves the king there; any other click inspects
+    // the tile in the right-hand pane.
+    const canMove = isIdle() && getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
+    if (canMove) {
       processPlayerResult(movePlayerTo(gameState, tileX, tileY));
+    } else {
+      examineTile(tileX, tileY);
     }
   }
 

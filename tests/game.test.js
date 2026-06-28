@@ -37,9 +37,9 @@ test('visible bounds are centered on the player and match the starting vision', 
   const state = createInitialState();
   const bounds = getVisibleBounds(state);
 
-  // The king starts with a 4x4 sight window (half the old 8), centered on (8,8).
-  assert.equal(bounds.width, 4);
-  assert.equal(bounds.height, 4);
+  // The king starts with a 5x5 sight window, centered on (8,8).
+  assert.equal(bounds.width, 5);
+  assert.equal(bounds.height, 5);
   assert.equal(bounds.x, 6);
   assert.equal(bounds.y, 6);
 });

@@ -41,10 +41,29 @@ function pickSome(items, count) {
   return picked;
 }
 
-// Altar upgrade ids the king can still take (not yet at the per-type cap).
+// Altar upgrade ids the king can still take (not yet at the per-type cap). The
+// card-slot upgrade is withheld until he actually owns a card.
 function availableAltarUpgrades(player) {
   const counts = player.upgradeCounts || {};
-  return ALTAR_UPGRADES.filter((upgrade) => (counts[upgrade.id] || 0) < MAX_UPGRADES_PER_TYPE).map((upgrade) => upgrade.id);
+  return ALTAR_UPGRADES.filter((upgrade) => {
+    if ((counts[upgrade.id] || 0) >= MAX_UPGRADES_PER_TYPE) {
+      return false;
+    }
+    if (upgrade.id === 'cards' && (!player.cards || player.cards.length === 0)) {
+      return false;
+    }
+    return true;
+  }).map((upgrade) => upgrade.id);
+}
+
+// Roll a weapon trait for a card bought on this floor: none on floor 1, scaling up
+// to MAX_TRAIT_CHANCE by the final floor. King cards always carry one.
+function rollCardTrait(floor, forceTrait) {
+  const chance = forceTrait ? 1 : Math.min(MAX_TRAIT_CHANCE, MAX_TRAIT_CHANCE * ((floor - 1) / (FINAL_FLOOR - 1)));
+  if (Math.random() >= chance) {
+    return null;
+  }
+  return CARD_TRAITS[randomInt(CARD_TRAITS.length)];
 }
 
 function findFreeTile(occupied, predicate, attempts) {
@@ -110,7 +129,7 @@ function generateTerrain(floor, player) {
     return floor < unlock ? 0 : floor - unlock + 1;
   };
 
-  // lava (and fire) removed from the game.
+  if (tiers('mud')) blob('mud', 2 * tiers('mud'), 4);
   if (tiers('water')) blob('water', 2 * tiers('water'), 4);
   if (tiers('ice')) blob('ice', 2 * tiers('ice'), 4);
   if (tiers('mist')) blob('mist', 2 * tiers('mist'), 4);
@@ -139,6 +158,7 @@ function generateFloor(floor, carryPlayer, score) {
         seenKinds: [],
         weaponsUnlocked: false,
         upgradeCounts: { hp: 0, vision: 0, regen: 0, cards: 0 },
+        warded: false,
       };
   // Backfill any fields missing from older saves.
   if (player.vision == null) player.vision = STARTING_VISION;
@@ -198,7 +218,8 @@ function generateFloor(floor, carryPlayer, score) {
   }
 
   // Enemies start asleep and out of sight; they wander until they spot the king.
-  const offscreenCount = 3 + floor * 2;
+  // Grows with depth but capped so deep new-game-plus floors aren't overrun at birth.
+  const offscreenCount = Math.min(6 + floor * 4, MAX_ENEMIES);
   for (let i = 0; i < offscreenCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (!tile) {
@@ -232,7 +253,7 @@ function generateFloor(floor, carryPlayer, score) {
   for (let i = 0; i < 3 + floor; i += 1) {
     const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (tile) {
-      state.items.push({ id: `gold-${floor}-${i}`, kind: 'gold', x: tile.x, y: tile.y, amount: 5 + randomInt(11) });
+      state.items.push({ id: `gold-${floor}-${i}`, kind: 'gold', x: tile.x, y: tile.y, amount: 1 });
     }
   }
 
@@ -257,9 +278,14 @@ function generateFloor(floor, carryPlayer, score) {
   }
 
   // Weapon shops appear once the king has seen his first card-eligible enemy, and
-  // each offers three cards drawn from the kinds he has seen.
+  // each offers three cards drawn from the kinds he has seen. Each offer may carry
+  // a weapon trait (king cards always do).
   if (player.weaponsUnlocked) {
-    const shopOffers = pickSome(player.seenKinds.filter((kind) => isCardKind(kind)), SHOP_CHOICES);
+    const kinds = pickSome(
+      player.seenKinds.filter((kind) => isCardKind(kind)),
+      SHOP_CHOICES,
+    );
+    const shopOffers = kinds.map((kind) => ({ kind, trait: rollCardTrait(floor, kind === 'king'), sold: false }));
     if (shopOffers.length) {
       const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
       if (shopTile) {
@@ -375,13 +401,15 @@ function applyArrival(next, x, y) {
   next.lastAction = 'move';
   next.message = 'The king moves.';
 
-  // A turn passes: every card on cooldown recharges by one, and blood fades.
+  // A turn passes: every card on cooldown recharges by one, blood fades, and any
+  // lingering Riposte ward from last turn lapses.
   for (const card of next.player.cards || []) {
     if (card.remaining > 0) {
       card.remaining -= 1;
     }
   }
   next.spatters = decaySpatters(next.spatters);
+  next.player.warded = false;
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   if (enemy) {
@@ -454,9 +482,71 @@ function useCard(state, cardIndex, x, y) {
     next.lastAction = 'blocked';
     return next;
   }
+  const fromX = next.player.x;
+  const fromY = next.player.y;
+  const trait = card.trait;
+  const struck = Boolean(next.enemies.find((e) => e.x === x && e.y === y)); // a kill this card scores
+
   const result = applyArrival(next, x, y); // ticks every card's cooldown down by one...
   result.player.cards[cardIndex].remaining = result.player.cards[cardIndex].cooldown; // ...then this one recharges fully.
+
+  // Weapon traits fire only when the card itself scores a kill (and the run goes on).
+  if (struck && trait && !result.gameOver) {
+    applyCardTrait(result, trait, x, y, fromX, fromY);
+  }
   return result;
+}
+
+// Slay any enemy on (tx, ty) — used by area-of-effect weapon traits. Returns true
+// if an enemy was there. Killing the boss king wins the floor.
+function slayEnemyAt(state, tx, ty) {
+  const enemy = state.enemies.find((e) => e.x === tx && e.y === ty);
+  if (!enemy) {
+    return false;
+  }
+  state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
+  state.score += 1;
+  addSpatter(state, tx, ty);
+  if (enemy.kind === 'king') {
+    state.won = true;
+    state.gameOver = true;
+    state.lastAction = 'victory';
+    state.message = 'The enemy king falls — the realm is free!';
+  }
+  return true;
+}
+
+// Resolve a weapon trait after a card scores a kill at (x, y), having departed
+// (fromX, fromY).
+function applyCardTrait(state, trait, x, y, fromX, fromY) {
+  switch (trait) {
+    case 'slash': // X shape: the four diagonal neighbours of the landing tile
+      for (const [dx, dy] of DIAG) slayEnemyAt(state, x + dx, y + dy);
+      break;
+    case 'thrust': // cross: the four cardinal neighbours
+      for (const [dx, dy] of ORTHO) slayEnemyAt(state, x + dx, y + dy);
+      break;
+    case 'shoot': // snap back to where the strike was launched from
+      state.player.x = fromX;
+      state.player.y = fromY;
+      updateDiscovery(state);
+      break;
+    case 'drain':
+      state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1);
+      break;
+    case 'flourish': // every seen enemy is caught off guard next enemy phase
+      for (const e of state.enemies) {
+        if (unitInSight(state, e.x, e.y)) {
+          e.awake = false; // beginEnemyPhase will re-surprise it
+        }
+      }
+      break;
+    case 'riposte': // shrug off all damage on the coming enemy turn
+      state.player.warded = true;
+      break;
+    default:
+      break;
+  }
 }
 
 // Move the king to a specific reachable tile (click-to-move).
@@ -488,9 +578,9 @@ function movePlayer(state, dx, dy) {
 
 // An unaware enemy shuffles one tile in a completely random direction. It never
 // steps onto another unit (enemies magically know where each other are), and it
-// tries to dip no more than a single tile into the king's vision before being
-// spotted: if its random pick would carry it into view, it looks for a move
-// heading the same way that intrudes less. (Vision is treated as bidirectional.)
+// never wanders into the king's line of sight — so a piece only ever enters view
+// because the *king* moved, and is then reliably caught by surprise on that exact
+// turn (rather than appearing un-surprised and freezing a turn late).
 function wanderEnemy(state, enemy) {
   const unitAt = (x, y) => {
     if (x === state.player.x && y === state.player.y) {
@@ -506,31 +596,14 @@ function wanderEnemy(state, enemy) {
       continue;
     }
     const dest = stops[stops.length - 1];
-    candidates.push({ x: dest.x, y: dest.y, dx, dy });
-  }
-  if (!candidates.length) {
-    return; // Boxed in — just idle.
-  }
-
-  // A completely random choice among the available shuffles.
-  let pick = candidates[randomInt(candidates.length)];
-
-  // How far into the king's view a tile reaches: 0 when out of sight, larger the
-  // closer it sits to the king once inside it.
-  const intrusion = (tile) =>
-    unitInSight(state, tile.x, tile.y) ? state.worldSize - chebyshev(tile.x, tile.y, state.player.x, state.player.y) : 0;
-
-  if (intrusion(pick) > 0) {
-    // Prefer a move in that exact direction that digs less far into his space, so
-    // the enemy only pokes one tile into view (and is caught by surprise next
-    // turn). If nothing milder exists, keep the original move.
-    for (const c of candidates) {
-      if (Math.sign(c.dx) === Math.sign(pick.dx) && Math.sign(c.dy) === Math.sign(pick.dy) && intrusion(c) < intrusion(pick)) {
-        pick = c;
-      }
+    if (!unitInSight(state, dest.x, dest.y)) {
+      candidates.push(dest); // stay hidden until the king comes to us
     }
   }
-
+  if (!candidates.length) {
+    return; // Boxed in (or hemmed against the king's view) — just idle.
+  }
+  const pick = candidates[randomInt(candidates.length)];
   enemy.x = pick.x;
   enemy.y = pick.y;
 }
@@ -563,6 +636,12 @@ function beginEnemyPhase(state) {
       enemy.surprised = false;
       moverIds.push(enemy.id);
     }
+  }
+
+  // Hostile pieces act in a random order each turn (Fisher-Yates shuffle).
+  for (let i = moverIds.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1);
+    [moverIds[i], moverIds[j]] = [moverIds[j], moverIds[i]];
   }
 
   return { state: next, moverIds };
@@ -609,19 +688,27 @@ function moveEnemy(state, enemyId) {
   enemy.y = chosen.y;
 
   if (enemy.x === next.player.x && enemy.y === next.player.y) {
-    next.player.hp -= 1;
-    addSpatter(next, next.player.x, next.player.y); // the king's own blood
+    const warded = Boolean(next.player.warded); // Riposte: no damage this turn
+    if (!warded) {
+      next.player.hp -= 1;
+      addSpatter(next, next.player.x, next.player.y); // the king's own blood
+    }
     if (enemy.kind === 'king') {
       enemy.x = fromX; // The boss strikes but stays on the board.
       enemy.y = fromY;
     } else {
       next.enemies = next.enemies.filter((piece) => piece.id !== enemyId);
     }
-    next.message = `A ${enemy.kind} strikes the king!`;
-    next.lastAction = 'hit';
-    if (next.player.hp <= 0) {
-      next.gameOver = true;
-      next.message = 'The king falls.';
+    if (warded) {
+      next.message = `The king ripostes a ${enemy.kind}!`;
+      next.lastAction = 'enemy';
+    } else {
+      next.message = `A ${enemy.kind} strikes the king!`;
+      next.lastAction = 'hit';
+      if (next.player.hp <= 0) {
+        next.gameOver = true;
+        next.message = 'The king falls.';
+      }
     }
     return next;
   }
@@ -647,9 +734,10 @@ function maybeSpawnEnemy(state) {
   const next = structuredClone(state);
   next.turnsSinceSpawn += 1;
   // Spawns accelerate the longer the king lingers, hitting their fastest at
-  // MAX_TURNS_SCARY turns spent on this floor.
+  // MAX_TURNS_SCARY turns spent on this floor. The whole curve is twice as fast as
+  // the raw interval (rate doubled), bottoming out at one spawn per turn.
   const ramp = Math.min(1, next.turn / MAX_TURNS_SCARY);
-  const interval = Math.max(2, Math.round(next.spawnInterval - (next.spawnInterval - 2) * ramp));
+  const interval = Math.max(1, Math.round((next.spawnInterval - (next.spawnInterval - 2) * ramp) / 2));
   const cap = Math.min(MAX_ENEMIES, 10 + next.floor * 4);
   if (next.turnsSinceSpawn < interval || next.enemies.length >= cap) {
     return next;
@@ -702,21 +790,22 @@ function useAltar(state, id) {
   return next;
 }
 
-// Buy a movement card from a weapon shop. With a free slot it is added; with all
-// slots full, `replaceIndex` says which existing card to swap out. `shopMessage`
-// reports the result.
-function buyCard(state, kind, replaceIndex) {
+// Buy a weapon-shop offer (identified by its index in weaponShop.offers). With a
+// free slot the card is added; with all slots full, `replaceIndex` says which to
+// swap out. `shopMessage` reports the result.
+function buyCard(state, offerIndex, replaceIndex) {
   const next = structuredClone(state);
   const p = next.player;
-  const stats = CARD_STATS[kind];
-  if (!stats) {
+  const offer = next.weaponShop && next.weaponShop.offers && next.weaponShop.offers[offerIndex];
+  if (!offer || offer.sold || !isCardKind(offer.kind)) {
     return next;
   }
-  if (p.gold < stats.cost) {
+  const cost = cardCost(offer.kind, Boolean(offer.trait));
+  if (p.gold < cost) {
     next.shopMessage = 'Not enough gold.';
     return next;
   }
-  const card = { kind, cooldown: stats.cooldown, remaining: 0 };
+  const card = { kind: offer.kind, trait: offer.trait || null, cooldown: cardCooldown(offer.kind), remaining: 0 };
   if (p.cards.length < p.maxCards) {
     p.cards.push(card);
   } else if (replaceIndex != null && replaceIndex >= 0 && replaceIndex < p.cards.length) {
@@ -725,7 +814,8 @@ function buyCard(state, kind, replaceIndex) {
     next.shopMessage = 'Card slots full — choose one to replace.';
     return next;
   }
-  p.gold -= stats.cost;
-  next.shopMessage = `Acquired the ${kind} card.`;
+  p.gold -= cost;
+  offer.sold = true;
+  next.shopMessage = `Acquired the ${offer.kind} card.`;
   return next;
 }

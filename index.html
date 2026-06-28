@@ -10,15 +10,21 @@
     <main class="shell">
       <section class="panel">
         <h1>Chess Roguelike</h1>
-        <div class="hud">
-          <span id="floor">Floor 1</span>
-          <span id="turn">Turn 0</span>
-          <span id="health">HP 3/3</span>
-          <span id="gold">Gold 0</span>
-          <button id="options" type="button" class="options-float">Options</button>
-        </div>
-        <div class="stage">
-          <canvas id="game" width="640" height="640"></canvas>
+        <div class="game-layout">
+          <aside class="pane left-pane">
+            <div class="info-panel">
+              <div id="floor">Floor 1</div>
+              <div id="turn">Turn 0</div>
+              <div id="health">HP 3/3</div>
+              <div id="gold">Gold 0</div>
+            </div>
+            <button id="options" type="button" class="pane-button">Options</button>
+            <div id="card-bar" class="card-bar"></div>
+            <div id="log" class="log"></div>
+          </aside>
+
+          <div class="stage">
+            <canvas id="game" width="640" height="640"></canvas>
 
           <div id="title-screen" class="overlay">
             <div class="overlay-card">
@@ -109,12 +115,14 @@
               </div>
             </div>
           </div>
-        </div>
+          </div>
 
-        <div id="card-bar" class="card-bar"></div>
-
-        <div class="actions">
-          <span id="status">The king awakens on a strange board.</span>
+          <aside class="pane right-pane">
+            <h3 class="pane-title">Examine</h3>
+            <div id="examine" class="examine">
+              <p class="examine-empty">Click a tile to inspect it.</p>
+            </div>
+          </aside>
         </div>
       </section>
     </main>

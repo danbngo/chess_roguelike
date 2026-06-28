@@ -202,52 +202,106 @@ const Renderer = (function () {
     drawStatusMark(tileX, tileY, '✖', '#fb923c');
   }
 
+  // A cyan shield over the king while a Riposte ward is active.
+  function drawWardMark(tileX, tileY) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const top = tileY * tileSize + tileSize * 0.04;
+    const w = tileSize * 0.3;
+    const h = tileSize * 0.32;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2, top);
+    ctx.lineTo(cx + w / 2, top);
+    ctx.lineTo(cx + w / 2, top + h * 0.55);
+    ctx.quadraticCurveTo(cx, top + h * 1.2, cx, top + h);
+    ctx.quadraticCurveTo(cx, top + h * 1.2, cx - w / 2, top + h * 0.55);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.9)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0c4a6e';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // The exit: a dark stairwell of pale steps receding downward.
   function drawExit(tileX, tileY, faded) {
     const px = tileX * tileSize;
     const py = tileY * tileSize;
     ctx.save();
     ctx.globalAlpha = faded ? 0.45 : 1;
-    ctx.fillStyle = '#0e7490';
-    ctx.fillRect(px + tileSize * 0.15, py + tileSize * 0.15, tileSize * 0.7, tileSize * 0.7);
-    ctx.fillStyle = '#a5f3fc';
-    ctx.beginPath();
-    ctx.moveTo(px + tileSize * 0.3, py + tileSize * 0.38);
-    ctx.lineTo(px + tileSize * 0.7, py + tileSize * 0.38);
-    ctx.lineTo(px + tileSize * 0.5, py + tileSize * 0.74);
-    ctx.closePath();
-    ctx.fill();
+    // Dark stairwell pit.
+    ctx.fillStyle = '#0b1220';
+    ctx.fillRect(px + tileSize * 0.14, py + tileSize * 0.14, tileSize * 0.72, tileSize * 0.72);
+    // Four descending steps, each narrower and lower.
+    ctx.fillStyle = '#7c93ad';
+    for (let i = 0; i < 4; i += 1) {
+      const inset = 0.18 + i * 0.07;
+      const top = py + tileSize * (0.2 + i * 0.16);
+      ctx.fillStyle = `rgb(${150 - i * 28}, ${168 - i * 30}, ${190 - i * 30})`;
+      ctx.fillRect(px + tileSize * inset, top, tileSize * (1 - inset * 2), tileSize * 0.1);
+    }
     ctx.restore();
   }
 
-  // The weapon shop: an amber kiosk marked with "$".
+  // The weapon shop: a stall with two crossed swords.
   function drawWeaponShop(tileX, tileY, faded) {
     const px = tileX * tileSize;
     const py = tileY * tileSize;
+    const cx = px + tileSize / 2;
+    const cy = py + tileSize / 2;
     ctx.save();
     ctx.globalAlpha = faded ? 0.45 : 1;
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(px + tileSize * 0.12, py + tileSize * 0.12, tileSize * 0.76, tileSize * 0.76);
+    // Awning stripe.
     ctx.fillStyle = '#b45309';
-    ctx.fillRect(px + tileSize * 0.15, py + tileSize * 0.15, tileSize * 0.7, tileSize * 0.7);
-    ctx.fillStyle = '#fde68a';
-    ctx.font = `bold ${tileSize * 0.5}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('$', px + tileSize / 2, py + tileSize * 0.54);
+    ctx.fillRect(px + tileSize * 0.12, py + tileSize * 0.12, tileSize * 0.76, tileSize * 0.18);
+    // Two crossed sword blades.
+    ctx.translate(cx, cy + tileSize * 0.08);
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = Math.max(2, tileSize * 0.06);
+    ctx.lineCap = 'round';
+    for (const dir of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(dir * tileSize * 0.22, tileSize * 0.18);
+      ctx.lineTo(-dir * tileSize * 0.22, -tileSize * 0.22);
+      ctx.stroke();
+    }
+    // Hilts.
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = Math.max(2, tileSize * 0.05);
+    for (const dir of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(dir * tileSize * 0.14, tileSize * 0.1);
+      ctx.lineTo(dir * tileSize * 0.26, tileSize * 0.22);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
-  // The altar: a violet shrine marked with a star. Dimmed once spent.
+  // The altar: a pale stone plinth with a glowing flame. Dimmed once spent.
   function drawAltar(tileX, tileY, faded, used) {
     const px = tileX * tileSize;
     const py = tileY * tileSize;
     ctx.save();
-    ctx.globalAlpha = used ? 0.3 : faded ? 0.45 : 1;
-    ctx.fillStyle = used ? '#4b5563' : '#7c3aed';
-    ctx.fillRect(px + tileSize * 0.15, py + tileSize * 0.15, tileSize * 0.7, tileSize * 0.7);
-    ctx.fillStyle = used ? '#9ca3af' : '#e9d5ff';
-    ctx.font = `bold ${tileSize * 0.55}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('✦', px + tileSize / 2, py + tileSize * 0.56);
+    ctx.globalAlpha = used ? 0.35 : faded ? 0.45 : 1;
+    // Plinth base + top slab.
+    ctx.fillStyle = used ? '#6b7280' : '#cbd5e1';
+    ctx.fillRect(px + tileSize * 0.28, py + tileSize * 0.46, tileSize * 0.44, tileSize * 0.36);
+    ctx.fillStyle = used ? '#9ca3af' : '#e2e8f0';
+    ctx.fillRect(px + tileSize * 0.22, py + tileSize * 0.4, tileSize * 0.56, tileSize * 0.12);
+    if (!used) {
+      // A violet flame floating above it.
+      const cx = px + tileSize / 2;
+      const fy = py + tileSize * 0.36;
+      ctx.beginPath();
+      ctx.moveTo(cx, fy - tileSize * 0.22);
+      ctx.quadraticCurveTo(cx + tileSize * 0.14, fy - tileSize * 0.02, cx, fy);
+      ctx.quadraticCurveTo(cx - tileSize * 0.14, fy - tileSize * 0.02, cx, fy - tileSize * 0.22);
+      ctx.fillStyle = '#a855f7';
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -359,9 +413,9 @@ const Renderer = (function () {
       case 'ice':
         return isDark ? '#c2cccc' : '#e0e7e3'; // pale frost
       case 'water':
-        return isDark ? '#6b8a90' : '#86a3a8'; // muted, desaturated blue
-      case 'lava':
-        return isDark ? '#b23409' : '#cc3f0c'; // (lava removed — unused)
+        return isDark ? '#2f5d78' : '#386b8a'; // deep, impassable blue
+      case 'mud':
+        return isDark ? '#5a4a30' : '#6e5a3c'; // murky brown
       case 'wall':
         return isDark ? '#5a4f45' : '#6b5e52'; // warm brown stone
       case 'mist':
@@ -384,7 +438,7 @@ const Renderer = (function () {
     switch (type) {
       case 'water': {
         // Gentle horizontal ripples.
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.strokeStyle = 'rgba(220, 240, 255, 0.18)';
         ctx.lineWidth = 1;
         for (let i = 1; i <= 2; i += 1) {
           const ly = py + tileSize * (0.28 * i + 0.12);
@@ -392,6 +446,18 @@ const Renderer = (function () {
           ctx.moveTo(px + tileSize * 0.12, ly);
           ctx.quadraticCurveTo(px + tileSize * 0.5, ly - tileSize * 0.07, px + tileSize * 0.88, ly);
           ctx.stroke();
+        }
+        break;
+      }
+      case 'mud': {
+        // Murky bubbles.
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+        for (let i = 0; i < 4; i += 1) {
+          const rx = tileHash(x * 6 + i, y + 2);
+          const ry = tileHash(x + 2, y * 6 + i);
+          ctx.beginPath();
+          ctx.arc(px + tileSize * (0.2 + rx * 0.6), py + tileSize * (0.2 + ry * 0.6), tileSize * (0.05 + 0.05 * rx), 0, Math.PI * 2);
+          ctx.fill();
         }
         break;
       }
@@ -616,10 +682,12 @@ const Renderer = (function () {
       }
     }
 
-    for (const enemy of enemyRenders) {
-      if (!lit(enemy.targetX, enemy.targetY)) {
-        continue; // Out of sight / hidden in mist.
-      }
+    // Visible enemies, with those currently mid-move (e.g. a knight in the middle
+    // of a leap) drawn last so they ride visibly over the pieces they pass over.
+    const visibleEnemies = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY));
+    const isMoving = (enemy) => Math.abs(enemy.x - enemy.targetX) + Math.abs(enemy.y - enemy.targetY) > 0.05;
+    const ordered = [...visibleEnemies.filter((enemy) => !isMoving(enemy)), ...visibleEnemies.filter(isMoving)];
+    for (const enemy of ordered) {
       drawPiece(enemy.x, enemy.y, enemy.kind, false);
       if (enemy.surprised) {
         drawSurpriseMark(enemy.x, enemy.y);
@@ -629,6 +697,9 @@ const Renderer = (function () {
     }
 
     drawPiece(playerRender.x, playerRender.y, 'king', true);
+    if (state.player.warded) {
+      drawWardMark(playerRender.x, playerRender.y);
+    }
 
     ctx.restore();
 

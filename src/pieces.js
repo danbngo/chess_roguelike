@@ -141,8 +141,7 @@ function adjacentThreats(piece, state, dirs) {
     if (x < 0 || x >= state.worldSize || y < 0 || y >= state.worldSize) {
       continue;
     }
-    const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'lava') {
+    if (!isStandable(terrainAt(state, x, y))) {
       continue;
     }
     if (state.enemies.some((other) => other.id !== piece.id && other.x === x && other.y === y)) {

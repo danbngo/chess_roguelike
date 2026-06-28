@@ -79,6 +79,13 @@ const TUTORIALS = {
       'pawns, camels, and the great compound pieces (archbishop, chancellor, ' +
       'amazon) — and another enemy king waits below. How far can you descend?',
   },
+  danger: {
+    title: 'The longer you linger...',
+    text:
+      'Danger climbs the more turns you spend on a floor — enemies spawn faster ' +
+      'and faster (watch the Turn counter redden), peaking after about 100 turns. ' +
+      'Don’t dawdle: find the stairs and press on.',
+  },
 
   // Terrain tips fire the first time each hazard type comes into view. Their ids
   // match `terrain-<type>` so the renderer/controller can map a tile to its tip.
@@ -91,8 +98,14 @@ const TUTORIALS = {
   'terrain-water': {
     title: 'Water',
     text:
-      'You may wade across at most two water tiles in a single move. A knight ' +
-      'leap clears water entirely.',
+      'Deep water is impassable — you cannot wade in. It does not block your ' +
+      'sight, though, and leapers can still jump clean over it.',
+  },
+  'terrain-mud': {
+    title: 'Mud',
+    text:
+      'You may slog across at most two mud tiles in a single move. A leap clears ' +
+      'mud entirely.',
   },
   'terrain-ice': {
     title: 'Ice',

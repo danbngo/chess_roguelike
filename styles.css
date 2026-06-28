@@ -6,7 +6,7 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: #0f172a;
+  background: #000;
   color: #f8fafc;
 }
 
@@ -37,25 +37,11 @@ p {
   color: #cbd5e1;
 }
 
-.hud,
-.actions {
-  display: flex;
-  gap: 0.8rem;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
-
-.hud span,
-.actions span,
 button {
   background: rgba(30, 41, 59, 0.9);
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 999px;
   padding: 0.45rem 0.8rem;
-}
-
-button {
   cursor: pointer;
   color: inherit;
 }
@@ -209,10 +195,6 @@ button:disabled {
 }
 
 /* Options button floats to the right of the stats row. */
-.options-float {
-  margin-left: auto;
-}
-
 /* Hover popover describing the tile under the cursor. */
 .tile-popover {
   position: fixed;
@@ -234,15 +216,57 @@ button:disabled {
   display: none;
 }
 
-/* In-game: shed the title/container chrome so the board fills the screen. */
+/* The three-pane game layout: left controls | board | examine pane. */
+.game-layout {
+  display: flex;
+  justify-content: center;
+}
+
+.pane {
+  display: none; /* only shown in-game */
+}
+
+/* Title screen: a clean fullscreen splash — board only, no panes or chrome. */
+body.on-title .shell {
+  padding: 0;
+}
+
+body.on-title .panel {
+  width: 100vw;
+  max-width: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.on-title h1 {
+  display: none;
+}
+
+body.on-title .stage {
+  max-width: none;
+  width: 100vw;
+  height: 100vh;
+}
+
+body.on-title canvas {
+  width: 100vw;
+  height: 100vh;
+  border: none;
+  border-radius: 0;
+}
+
+/* In-game: black backdrop, board fills the centre, panes flank it. */
 body.in-game .shell {
-  padding: 0.5rem;
-  align-items: start;
+  padding: 0;
 }
 
 body.in-game .panel {
-  width: min(98vw, 1100px);
-  padding: 0.5rem 0.75rem;
+  width: 100vw;
+  max-width: none;
+  padding: 0;
   background: transparent;
   border: none;
   box-shadow: none;
@@ -252,8 +276,100 @@ body.in-game h1 {
   display: none;
 }
 
+body.in-game .game-layout {
+  align-items: stretch;
+  height: 100vh;
+  width: 100vw;
+}
+
+body.in-game .pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex: 1 1 0;
+  min-width: 160px;
+  max-width: 300px;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 0.7rem;
+  overflow-y: auto;
+  background: #000;
+}
+
 body.in-game .stage {
-  max-width: min(96vw, 82vh);
+  flex: 0 0 auto;
+  width: min(100vh, 62vw);
+  max-width: min(100vh, 62vw);
+}
+
+body.in-game canvas {
+  border: none;
+  border-radius: 0;
+}
+
+/* Left pane: plain one-line stats, controls, cards, and the message log. */
+.info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pane-button {
+  align-self: flex-start;
+}
+
+.log {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  color: #cbd5e1;
+  overflow-y: auto;
+  max-height: 40vh;
+}
+
+.log-line {
+  opacity: 0.65;
+}
+
+.log-line:last-child {
+  opacity: 1;
+  color: #f8fafc;
+}
+
+/* Right pane: the examine readout. */
+.pane-title {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: 0.03em;
+  color: #cbd5e1;
+}
+
+.examine-empty {
+  color: #64748b;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.examine-block {
+  margin-bottom: 0.7rem;
+}
+
+.examine-h {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #f8fafc;
+  margin-bottom: 0.15rem;
+}
+
+.examine-line {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: #cbd5e1;
 }
 
 /* The card bar beneath the board. */
@@ -316,5 +432,21 @@ body.in-game .stage {
   background: rgba(2, 6, 23, 0.6);
   color: #f8fafc;
   font-size: 1.1rem;
+  font-weight: 700;
+}
+
+/* Corner pip marking a card that carries a weapon trait. */
+.card-trait {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 1.1rem;
+  height: 1.1rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #f59e0b;
+  color: #1f1300;
+  font-size: 0.7rem;
   font-weight: 700;
 }

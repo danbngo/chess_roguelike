@@ -8,35 +8,35 @@ const STARTING_HP = 3;
 const STARTING_REGEN = 1; // HP mended on descending to the next floor.
 const STARTING_CARD_SLOTS = 1; // Card slots the king begins with.
 const MAX_UPGRADES_PER_TYPE = 4; // Each altar upgrade type can be taken at most 4 times.
-const MAX_TURNS_SCARY = 50; // Lingering this many turns on a floor maxes spawn rate / dread.
+const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread.
 const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
 
 // Terrain is introduced gradually across the run: floor 1 is empty ground, and
 // each listed floor unlocks a new hazard type that grows denser on deeper floors
 // (so the final floor is crowded). The first sighting of each type pops a tip.
-const TERRAIN_UNLOCK = { wall: 2, water: 3, ice: 4, mist: 5 };
+const TERRAIN_UNLOCK = { wall: 2, mud: 3, ice: 4, mist: 5, water: 6 };
 
-const FINAL_FLOOR = 5; // Every multiple of this holds the solo enemy king (5, 10, ...).
+const FINAL_FLOOR = 15; // Every multiple of this holds the solo enemy king (15, 30, ...).
 const MAX_ENEMIES = 40; // Hard safety cap so over-time spawning can't run away.
 
 // Enemy variety ramps with depth. A floor's spawn pool is every kind unlocked at
 // or before it, each chosen with equal probability (so spawn rates are even per
 // unit). The solo enemy king is the boss of each "final" floor and is placed
 // separately — it is never drawn from this pool. Floors line up with FINAL_FLOOR:
-// the full standard set arrives by floor 5, berolina pawns just after (floor 6),
-// and the whole endgame set by floor 10 (2x final — i.e. new game plus).
+// the full standard set arrives before the final floor (15), berolina pawns just
+// after, and the whole endgame set by floor 30 (2x final — i.e. new game plus).
 const ENEMY_UNLOCKS = [
   { kind: 'pawn', floor: 1 },
-  { kind: 'knight', floor: 2 },
-  { kind: 'bishop', floor: 3 },
-  { kind: 'rook', floor: 4 },
-  { kind: 'queen', floor: 5 }, // final floor: full standard set
-  { kind: 'berolina', floor: 6 }, // just past the final floor
-  { kind: 'camel', floor: 7 },
-  { kind: 'archbishop', floor: 8 },
-  { kind: 'chancellor', floor: 9 },
-  { kind: 'amazon', floor: 10 }, // 2x final floor: the complete endgame set
-  { kind: 'nightrider', floor: 11 }, // deeper new game plus: the knight-rider
+  { kind: 'knight', floor: 3 },
+  { kind: 'bishop', floor: 6 },
+  { kind: 'rook', floor: 9 },
+  { kind: 'queen', floor: 12 }, // full standard set in hand before the final floor (15)
+  { kind: 'berolina', floor: 16 }, // just past the final floor
+  { kind: 'camel', floor: 19 },
+  { kind: 'archbishop', floor: 22 },
+  { kind: 'chancellor', floor: 25 },
+  { kind: 'nightrider', floor: 28 },
+  { kind: 'amazon', floor: 30 }, // 2x final floor: the complete endgame set
 ];
 
 // Altar upgrades: free, but a given altar offers only two of these and grants one
@@ -51,26 +51,51 @@ const ALTAR_UPGRADES = [
 const SHOP_CHOICES = 3; // Cards a weapon shop offers.
 const ALTAR_CHOICES = 2; // Blessings an altar offers.
 
-// Cards the weapon shop can sell: any seen enemy unit except pawns and the king.
-// Higher cooldowns (and prices) for more powerful pieces. A card lets the king
-// move like that unit once, then it must recharge over `cooldown` turns.
-const CARD_STATS = {
-  knight: { cooldown: 2, cost: 12 },
-  berolina: { cooldown: 2, cost: 12 },
-  camel: { cooldown: 2, cost: 14 },
-  bishop: { cooldown: 3, cost: 16 },
-  rook: { cooldown: 3, cost: 18 },
-  nightrider: { cooldown: 4, cost: 30 },
-  archbishop: { cooldown: 4, cost: 26 },
-  chancellor: { cooldown: 4, cost: 28 },
-  queen: { cooldown: 5, cost: 34 },
-  amazon: { cooldown: 6, cost: 44 },
+// A card lets the king move once like the given unit. Its gold cost equals the
+// piece's traditional chess value; cards share a fixed cooldown (king cards, once
+// the enemy king is seen, recharge faster). A card may also carry a weapon trait,
+// which doubles its price.
+const CARD_POINTS = {
+  berolina: 1,
+  camel: 2,
+  knight: 3,
+  bishop: 3,
+  rook: 5,
+  nightrider: 5,
+  archbishop: 7,
+  chancellor: 8,
+  queen: 9,
+  amazon: 12,
+  king: 9, // costs as much as a queen, but recharges faster and always bears a trait
 };
+const CARD_COOLDOWN = 3; // Fixed recharge for every card...
+const KING_CARD_COOLDOWN = 1; // ...except king cards, which recharge faster.
 
-// Whether an enemy kind can be bought as a card (not pawns, not the enemy king).
 function isCardKind(kind) {
-  return Object.prototype.hasOwnProperty.call(CARD_STATS, kind);
+  return Object.prototype.hasOwnProperty.call(CARD_POINTS, kind);
 }
+
+function cardCooldown(kind) {
+  return kind === 'king' ? KING_CARD_COOLDOWN : CARD_COOLDOWN;
+}
+
+function cardCost(kind, hasTrait) {
+  return CARD_POINTS[kind] * (hasTrait ? 2 : 1);
+}
+
+// Weapon traits, each triggering when the card scores a kill. King cards always
+// have one; other cards gain one with a floor-scaled chance (0 on floor 1 up to
+// 50% by the final floor).
+const TRAIT_INFO = {
+  riposte: { name: 'Riposte', desc: 'Take no damage on the enemy turn after a kill with this card.' },
+  slash: { name: 'Slash', desc: 'On a kill, also slay enemies on the 4 diagonal tiles.' },
+  thrust: { name: 'Thrust', desc: 'On a kill, also slay enemies on the 4 cardinal tiles.' },
+  shoot: { name: 'Shoot', desc: 'On a kill, snap back to your starting tile.' },
+  drain: { name: 'Drain', desc: 'On a kill, recover 1 HP.' },
+  flourish: { name: 'Flourish', desc: 'On a kill, every visible enemy is caught by surprise.' },
+};
+const CARD_TRAITS = Object.keys(TRAIT_INFO);
+const MAX_TRAIT_CHANCE = 0.5; // Highest chance (reached on the final floor) a card bears a trait.
 
 // Movement direction tables, reused by the piece-move generators.
 const ORTHO = [

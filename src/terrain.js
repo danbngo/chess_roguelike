@@ -2,12 +2,13 @@
 // the slide / jump movement primitives shared by the player and the enemies.
 //
 //   normal - open ground.
+//   wall   - solid; nothing may stand on it, it blocks line of sight, and it
+//            cannot be leapt over.
+//   water  - impassable (nothing may stand on it), but it does NOT block sight;
+//            leapers can still jump clean over it.
+//   mud    - at most two mud tiles may be crossed in one move, unless jumping.
 //   ice    - you cannot stop on it; you slide to the far end (or until you bump
 //            a unit / hit a wall), moving the maximum distance across it.
-//   lava   - nothing may stand on it, but knights (and the knight-leap upgrade)
-//            can jump over it.
-//   water  - at most two water tiles may be crossed in one move, unless jumping.
-//   wall   - solid like lava, also blocks line of sight, and cannot be leapt over.
 //   mist   - passable, but blocks line of sight (and hides whatever stands in it).
 //
 // Note: "mist" (a terrain tile) is unrelated to the fog of war (the persistent
@@ -19,22 +20,13 @@ function terrainAt(state, x, y) {
 }
 
 function blocksSight(type) {
-  return type === 'wall' || type === 'mist' || type === 'bush';
+  return type === 'wall' || type === 'mist';
 }
 
-// Wall and lava are the only terrain nothing may stand on. (Thorns can be
-// entered — it just hurts; ice can't be *stopped* on, handled in slideStops.)
+// Walls and (deep) water are the terrain nothing may stand on. (Ice can't be
+// *stopped* on, which is handled separately in slideStops.)
 function isStandable(type) {
-  return type !== 'wall' && type !== 'lava';
-}
-
-// A unit on a trench may only be captured by an attacker that began its turn
-// within one tile of it. Empty trenches offer no such protection.
-function captureAllowed(state, attackerX, attackerY, targetX, targetY) {
-  if (terrainAt(state, targetX, targetY) === 'trench') {
-    return chebyshev(attackerX, attackerY, targetX, targetY) <= 1;
-  }
-  return true;
+  return type !== 'wall' && type !== 'water';
 }
 
 // Symmetric line of sight: clear unless a wall/mist tile lies strictly between
@@ -76,8 +68,7 @@ function inLineOfSight(state, x, y) {
 // itself concealed in mist. (Line of sight is symmetric, so this is "it sees you
 // and you see it".)
 function unitInSight(state, x, y) {
-  const terrain = terrainAt(state, x, y);
-  return inLineOfSight(state, x, y) && terrain !== 'mist' && terrain !== 'bush';
+  return inLineOfSight(state, x, y) && terrainAt(state, x, y) !== 'mist';
 }
 
 // The set of tiles the king can currently see (for rendering brightness).
@@ -95,7 +86,7 @@ function computeVisibleTiles(state) {
 }
 
 // Walk a ray, returning every tile the mover may legally stop on. Ice forces a
-// slide (you can't stop on it); water caps at two crossed tiles; walls and lava
+// slide (you can't stop on it); mud caps at two crossed tiles; walls and water
 // are solid. `unitAt(x,y)` returns a blocking unit (or null); `isTarget(x,y)`
 // reports whether a unit there may be captured (and thus stopped on).
 function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
@@ -103,7 +94,7 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
   let x = sx;
   let y = sy;
   let groundUsed = 0;
-  let waterUsed = 0;
+  let mudUsed = 0;
   let onIce = false;
 
   while (true) {
@@ -114,7 +105,8 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
       break;
     }
     const terrain = terrainAt(state, nx, ny);
-    if (terrain === 'wall' || terrain === 'lava') {
+    if (terrain === 'wall' || terrain === 'water') {
+      // Solid: walls and (deep) water cannot be entered on the ground.
       if (onIce) stops.push({ x, y, capture: false });
       break;
     }
@@ -134,7 +126,7 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
       }
       break;
     }
-    if (terrain === 'water' && waterUsed >= 2) {
+    if (terrain === 'mud' && mudUsed >= 2) {
       if (onIce) stops.push({ x, y, capture: false });
       break;
     }
@@ -143,8 +135,8 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
       break; // Out of range on solid ground.
     }
     groundUsed += cost;
-    if (terrain === 'water') {
-      waterUsed += 1;
+    if (terrain === 'mud') {
+      mudUsed += 1;
     }
     const wasOnIce = onIce;
     x = nx;
@@ -162,9 +154,9 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
   return stops;
 }
 
-// Knight-style leaps: land on the L tiles, never onto lava/wall, and never over
-// a wall (a wall on either orthogonal shoulder blocks the leap). Lava and water
-// underneath are leapt clean over.
+// Knight-style leaps: land on the L tiles, never onto a wall, and never over a
+// wall (a wall on either orthogonal shoulder blocks the leap). Water underneath
+// is leapt clean over.
 function jumpTargets(state, fromX, fromY, unitAt, isTarget) {
   const targets = [];
   for (const [dx, dy] of KNIGHT_STEPS) {
@@ -174,8 +166,8 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'lava') {
-      continue; // Can't land here.
+    if (terrain === 'wall' || terrain === 'water') {
+      continue; // Can't land on a wall or in deep water.
     }
     if (terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall') {
       continue; // Wall blocks the leap.
@@ -193,8 +185,8 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget) {
 }
 
 // A generic leaper (e.g. the camel's (3,1) hop): lands on from+step, leaping
-// clean over whatever lies between. Like a knight it cannot land on wall/lava or
-// a friendly piece, but it has no shoulder-blocking rule.
+// clean over whatever lies between. Like a knight it cannot land on a wall or a
+// friendly piece, but it has no shoulder-blocking rule.
 function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
   const targets = [];
   for (const [dx, dy] of steps) {
@@ -204,8 +196,8 @@ function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'lava') {
-      continue; // Can't land here.
+    if (terrain === 'wall' || terrain === 'water') {
+      continue; // Can't land on a wall or in deep water.
     }
     const unit = unitAt(x, y);
     if (unit && !isTarget(x, y)) {
@@ -217,7 +209,7 @@ function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
 }
 
 // A rider over leap vectors (the nightrider rides repeated knight hops in a line):
-// it keeps leaping in each direction until it leaves the board, hits wall/lava, or
+// it keeps leaping in each direction until it leaves the board, hits a wall, or
 // meets a unit (capturing it if it is a target). Each individual hop leaps clean
 // over the cells between, but a unit on a landing square blocks further travel.
 function riderTargets(state, fromX, fromY, steps, unitAt, isTarget) {
@@ -232,8 +224,8 @@ function riderTargets(state, fromX, fromY, steps, unitAt, isTarget) {
         break;
       }
       const terrain = terrainAt(state, x, y);
-      if (terrain === 'wall' || terrain === 'lava') {
-        break; // Can't land here, and can't ride past it.
+      if (terrain === 'wall' || terrain === 'water') {
+        break; // Can't land on a wall or in deep water, and can't ride past it.
       }
       const unit = unitAt(x, y);
       if (unit) {
