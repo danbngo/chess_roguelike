@@ -1,13 +1,16 @@
 // Vision / fog-of-war: what the king can see and which tiles are under threat.
 
-// The 8x8 window centered on the king, clamped to stay inside the world.
+// The square sight window centered on the king, sized by his current vision
+// (upgradable), clamped to stay inside the world. `viewSize` is a legacy
+// fallback for saves made before vision became a player stat.
 function getVisibleBounds(state) {
-  const half = Math.floor(state.viewSize / 2);
+  const size = state.player.vision || state.viewSize;
+  const half = Math.floor(size / 2);
   return {
-    x: clamp(state.player.x - half, 0, state.worldSize - state.viewSize),
-    y: clamp(state.player.y - half, 0, state.worldSize - state.viewSize),
-    width: state.viewSize,
-    height: state.viewSize,
+    x: clamp(state.player.x - half, 0, state.worldSize - size),
+    y: clamp(state.player.y - half, 0, state.worldSize - size),
+    width: size,
+    height: size,
   };
 }
 
@@ -15,7 +18,7 @@ function isWithinBounds(bounds, x, y) {
   return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y && y < bounds.y + bounds.height;
 }
 
-// Enemies the king can actually see (clear line of sight, not hidden in fog).
+// Enemies the king can actually see (clear line of sight, not hidden in mist).
 function getVisibleEnemies(state) {
   return state.enemies.filter((enemy) => unitInSight(state, enemy.x, enemy.y));
 }

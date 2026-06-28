@@ -14,15 +14,75 @@ const Renderer = (function () {
   const SHAKE_DURATION = 0.4;
   const SHAKE_MAGNITUDE = 9;
 
+  // Camera: a movable, zoomable window onto the board. `baseTile` is the on-screen
+  // size of a tile at zoom 1 — set so the default view shows half the board (i.e.
+  // tiles are 2x the size of the old whole-board view). The camera position is the
+  // world coordinate (in tiles, fractional) sitting at the center of the canvas;
+  // x/y ease toward targetX/targetY and zoom toward targetZoom for smooth motion.
+  let baseTile = 0;
+  const DEFAULT_ZOOM = 1;
+  const MIN_ZOOM = 0.5; // zoomed all the way out shows the whole 20x20 board
+  const MAX_ZOOM = 2.5; // zoomed all the way in shows a handful of tiles
+  let camera = { x: 10, y: 10, targetX: 10, targetY: 10, zoom: DEFAULT_ZOOM, targetZoom: DEFAULT_ZOOM };
+
+  function currentTileSize() {
+    return baseTile * camera.zoom;
+  }
+
   function init(canvasEl) {
     canvas = canvasEl;
     ctx = canvasEl.getContext('2d');
-    tileSize = canvasEl.width / WORLD_SIZE;
+    // Two tiles' worth bigger than the old full-board fit: the default view spans
+    // half the world (WORLD_SIZE / 2 tiles across the canvas).
+    baseTile = canvasEl.width / (WORLD_SIZE / 2);
+    tileSize = baseTile * camera.zoom;
   }
 
   // Kick off the on-hit shake/flash.
   function hit() {
     shake = SHAKE_DURATION;
+  }
+
+  // Snap the camera onto the king instantly (keeps the current zoom level).
+  function snapCameraToPlayer(state) {
+    camera.x = camera.targetX = state.player.x + 0.5;
+    camera.y = camera.targetY = state.player.y + 0.5;
+  }
+
+  // Glide the camera so the king's tile sits at the center of the view.
+  function centerOn(x, y) {
+    camera.targetX = x + 0.5;
+    camera.targetY = y + 0.5;
+  }
+
+  // Nudge the camera target by a number of tiles (used by pan controls).
+  function panBy(dxTiles, dyTiles) {
+    camera.targetX += dxTiles;
+    camera.targetY += dyTiles;
+  }
+
+  // Adjust the zoom target (positive zooms in, negative out), clamped to range.
+  function zoomBy(amount) {
+    camera.targetZoom = clamp(camera.targetZoom + amount, MIN_ZOOM, MAX_ZOOM);
+  }
+
+  // Convert a canvas-space pixel (already scaled to the 640px backing size) to the
+  // world tile under it, accounting for the current camera position and zoom.
+  function screenToTile(canvasX, canvasY) {
+    const ts = currentTileSize();
+    const originX = camera.x - canvas.width / ts / 2;
+    const originY = camera.y - canvas.height / ts / 2;
+    return { x: Math.floor(canvasX / ts + originX), y: Math.floor(canvasY / ts + originY) };
+  }
+
+  // Keep the camera target from drifting off the board. When the view is wider
+  // than the world, lock it to the world center.
+  function clampCamera() {
+    const ts = baseTile * camera.targetZoom;
+    const viewX = canvas.width / ts;
+    const viewY = canvas.height / ts;
+    camera.targetX = viewX >= WORLD_SIZE ? WORLD_SIZE / 2 : clamp(camera.targetX, viewX / 2, WORLD_SIZE - viewX / 2);
+    camera.targetY = viewY >= WORLD_SIZE ? WORLD_SIZE / 2 : clamp(camera.targetY, viewY / 2, WORLD_SIZE - viewY / 2);
   }
 
   // Snap render positions to the state instantly (new game / load / restart).
@@ -42,6 +102,7 @@ const Renderer = (function () {
       kind: enemy.kind,
       surprised: Boolean(enemy.surprised),
     }));
+    snapCameraToPlayer(state);
   }
 
   // Retarget render entities so they glide to their new tiles.
@@ -72,6 +133,10 @@ const Renderer = (function () {
       enemy.x += (enemy.targetX - enemy.x) * speed;
       enemy.y += (enemy.targetY - enemy.y) * speed;
     }
+    clampCamera();
+    camera.x += (camera.targetX - camera.x) * speed;
+    camera.y += (camera.targetY - camera.y) * speed;
+    camera.zoom += (camera.targetZoom - camera.zoom) * speed;
     if (shake > 0) {
       shake = Math.max(0, shake - delta);
     }
@@ -186,22 +251,105 @@ const Renderer = (function () {
     ctx.fill();
   }
 
-  // Tile colors per terrain (two shades to keep the checkerboard feel).
+  // Tile colors per terrain (two shades to keep the checkerboard feel). All kept
+  // within a warm cream/tan/brown family — desaturated and fairly light — so the
+  // green / red / orange move-and-threat tints overlay legibly on every tile.
   function terrainColor(type, isDark) {
     switch (type) {
       case 'ice':
-        return isDark ? '#bfe3f5' : '#dcf3fc';
+        return isDark ? '#c2cccc' : '#e0e7e3'; // pale frost
       case 'water':
-        return isDark ? '#2c5f96' : '#3a72ab';
+        return isDark ? '#6b8a90' : '#86a3a8'; // muted, desaturated blue
       case 'lava':
-        return isDark ? '#b23409' : '#cc3f0c';
+        return isDark ? '#b23409' : '#cc3f0c'; // (lava removed — unused)
       case 'wall':
-        return isDark ? '#33333b' : '#3c3c45';
-      case 'fog':
-        return isDark ? '#566173' : '#5f6b7d';
+        return isDark ? '#5a4f45' : '#6b5e52'; // warm brown stone
+      case 'mist':
+        return isDark ? '#9c9586' : '#b1a999'; // warm taupe
       default:
-        return isDark ? '#6b4a2b' : '#e9cfa0';
+        return isDark ? '#6b4a2b' : '#e9cfa0'; // cream/brown ground
     }
+  }
+
+  // Deterministic per-tile pseudo-random in [0, 1) so textures stay put across
+  // frames (no flicker) yet differ from tile to tile.
+  function tileHash(x, y) {
+    const h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return h - Math.floor(h);
+  }
+
+  // A light dusting of per-terrain detail painted over the flat base color.
+  function drawTexture(type, px, py, isDark, x, y) {
+    ctx.save();
+    switch (type) {
+      case 'water': {
+        // Gentle horizontal ripples.
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i <= 2; i += 1) {
+          const ly = py + tileSize * (0.28 * i + 0.12);
+          ctx.beginPath();
+          ctx.moveTo(px + tileSize * 0.12, ly);
+          ctx.quadraticCurveTo(px + tileSize * 0.5, ly - tileSize * 0.07, px + tileSize * 0.88, ly);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'ice': {
+        // A pale crack catching the light.
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(px + tileSize * 0.18, py + tileSize * 0.72);
+        ctx.lineTo(px + tileSize * 0.5, py + tileSize * 0.3);
+        ctx.lineTo(px + tileSize * 0.72, py + tileSize * 0.56);
+        ctx.stroke();
+        break;
+      }
+      case 'wall': {
+        // Staggered brickwork.
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.lineWidth = 1;
+        const midY = py + tileSize * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(px, midY);
+        ctx.lineTo(px + tileSize, midY);
+        ctx.moveTo(px + tileSize * 0.5, py);
+        ctx.lineTo(px + tileSize * 0.5, midY);
+        ctx.moveTo(px + tileSize * 0.25, midY);
+        ctx.lineTo(px + tileSize * 0.25, py + tileSize);
+        ctx.moveTo(px + tileSize * 0.75, midY);
+        ctx.lineTo(px + tileSize * 0.75, py + tileSize);
+        ctx.stroke();
+        break;
+      }
+      case 'mist': {
+        // Soft drifting blobs.
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+        for (let i = 0; i < 3; i += 1) {
+          const rx = tileHash(x * 3 + i, y + 7);
+          const ry = tileHash(x + 7, y * 3 + i);
+          ctx.beginPath();
+          ctx.arc(px + tileSize * (0.2 + rx * 0.6), py + tileSize * (0.2 + ry * 0.6), tileSize * 0.18, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      default: {
+        // Open ground: scattered grit specks.
+        ctx.fillStyle = isDark ? 'rgba(0, 0, 0, 0.13)' : 'rgba(120, 80, 40, 0.16)';
+        for (let i = 0; i < 4; i += 1) {
+          const rx = tileHash(x * 4 + i, y);
+          const ry = tileHash(x, y * 4 + i);
+          const r = tileSize * (0.03 + 0.03 * tileHash(x + i, y - i));
+          ctx.beginPath();
+          ctx.arc(px + tileSize * (0.15 + rx * 0.7), py + tileSize * (0.15 + ry * 0.7), r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+    }
+    ctx.restore();
   }
 
   // A flat dark canvas to sit behind the title screen before play begins.
@@ -218,11 +366,32 @@ const Renderer = (function () {
       return;
     }
 
+    // Lock in the camera's on-screen scale for this frame, and compute the world
+    // coordinate sitting at the top-left of the canvas.
+    tileSize = currentTileSize();
+    const viewTilesX = canvas.width / tileSize;
+    const viewTilesY = canvas.height / tileSize;
+    const originX = camera.x - viewTilesX / 2;
+    const originY = camera.y - viewTilesY / 2;
+
+    // Void beyond the board edges.
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     const world = state.worldSize;
     const bounds = getVisibleBounds(state);
     const threatened = getThreatenedTiles(state);
     const visible = computeVisibleTiles(state);
-    const lit = (x, y) => visible.has(`${x},${y}`) && terrainAt(state, x, y) !== 'fog';
+    const lit = (x, y) => visible.has(`${x},${y}`) && terrainAt(state, x, y) !== 'mist';
+
+    // Fog of war: ground the king has never seen on this floor stays hidden.
+    const explored = state.explored || {};
+    const isExplored = (x, y) => Boolean(explored[`${x},${y}`]);
+
+    // Tiles the king can reach this turn, used both for the tints below and the
+    // special jump / capture markers drawn later.
+    const playerMoves = showMoves ? getPlayerMoves(state) : [];
+    const reachable = new Set(playerMoves.map((move) => `${move.x},${move.y}`));
 
     ctx.save();
     if (shake > 0) {
@@ -232,22 +401,53 @@ const Renderer = (function () {
       const oy = (Math.random() * 2 - 1) * SHAKE_MAGNITUDE * t;
       ctx.translate(ox, oy);
     }
+    // Shift world-space drawing into the camera's view; everything below now draws
+    // at `tileX * tileSize` in world space, as before.
+    ctx.translate(-originX * tileSize, -originY * tileSize);
 
-    for (let y = 0; y < world; y += 1) {
-      for (let x = 0; x < world; x += 1) {
+    // Only the tiles that fall inside the viewport need drawing.
+    const minX = Math.max(0, Math.floor(originX));
+    const maxX = Math.min(world - 1, Math.floor(originX + viewTilesX));
+    const minY = Math.max(0, Math.floor(originY));
+    const maxY = Math.min(world - 1, Math.floor(originY + viewTilesY));
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
         const px = x * tileSize;
         const py = y * tileSize;
+
+        if (!isExplored(x, y)) {
+          // Under the fog of war: terrain (and any shop / exit / item on it) is
+          // entirely hidden until the king first lays eyes on this tile.
+          ctx.fillStyle = '#05060a';
+          ctx.fillRect(px, py, tileSize, tileSize);
+          continue;
+        }
+
         const inView = visible.has(`${x},${y}`);
         const isDark = (x + y) % 2 === 1;
 
-        ctx.fillStyle = terrainColor(terrainAt(state, x, y), isDark);
+        const type = terrainAt(state, x, y);
+        ctx.fillStyle = terrainColor(type, isDark);
         ctx.fillRect(px, py, tileSize, tileSize);
+        drawTexture(type, px, py, isDark, x, y);
 
         const threatCount = inView ? threatened.get(`${x},${y}`) || 0 : 0;
-        if (threatCount > 0) {
-          // Deeper red where more enemies cover the same square.
-          const alpha = Math.min(0.78, 0.27 + 0.15 * threatCount);
+        const canMove = reachable.has(`${x},${y}`);
+        if (canMove && threatCount > 0) {
+          // Dangerous: the king can step here, but an enemy covers it too. Red,
+          // deepening where more enemies converge.
+          const alpha = Math.min(0.62, 0.32 + 0.12 * threatCount);
           ctx.fillStyle = `rgba(220, 38, 38, ${alpha})`;
+          ctx.fillRect(px, py, tileSize, tileSize);
+        } else if (canMove) {
+          // Safe king move — light green.
+          ctx.fillStyle = 'rgba(74, 222, 128, 0.35)';
+          ctx.fillRect(px, py, tileSize, tileSize);
+        } else if (threatCount > 0) {
+          // Enemies cover this square but the king can't reach it — orange.
+          const alpha = Math.min(0.6, 0.3 + 0.12 * threatCount);
+          ctx.fillStyle = `rgba(249, 115, 22, ${alpha})`;
           ctx.fillRect(px, py, tileSize, tileSize);
         }
 
@@ -285,16 +485,17 @@ const Renderer = (function () {
       }
     }
 
-    // Where the king can move this turn.
-    if (showMoves) {
-      for (const move of getPlayerMoves(state)) {
+    // Plain moves are shown by the light-green tile tint above; here we only mark
+    // the special cases: capture targets (ring) and knight-leap tiles (blue dot).
+    for (const move of playerMoves) {
+      if (move.capture || move.viaJump) {
         drawMoveHint(move.x, move.y, move.viaJump, move.capture);
       }
     }
 
     for (const enemy of enemyRenders) {
       if (!lit(enemy.targetX, enemy.targetY)) {
-        continue; // Out of sight / hidden in fog.
+        continue; // Out of sight / hidden in mist.
       }
       drawPiece(enemy.x, enemy.y, enemy.kind, false);
       if (enemy.surprised) {
@@ -314,5 +515,5 @@ const Renderer = (function () {
     }
   }
 
-  return { init, reset, sync, update, draw, hit };
+  return { init, reset, sync, update, draw, hit, centerOn, panBy, zoomBy, screenToTile };
 })();

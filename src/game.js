@@ -12,6 +12,24 @@ function createEnemy(type, x, y) {
   };
 }
 
+// The spawn pool for a floor: every enemy kind unlocked at or before it. The king
+// boss is never in here — it is placed by hand on final floors.
+function enemyRosterForFloor(floor) {
+  const pool = ENEMY_UNLOCKS.filter((entry) => floor >= entry.floor).map((entry) => entry.kind);
+  return pool.length ? pool : ['pawn'];
+}
+
+// Pick a random kind from the floor's pool, with even odds per unit.
+function randomEnemyKind(floor) {
+  const pool = enemyRosterForFloor(floor);
+  return pool[randomInt(pool.length)];
+}
+
+// A floor is a "king floor" (the boss, no exit) on every multiple of FINAL_FLOOR.
+function isKingFloor(floor) {
+  return floor % FINAL_FLOOR === 0;
+}
+
 function findFreeTile(occupied, predicate, attempts) {
   for (let i = 0; i < (attempts || 300); i += 1) {
     const x = randomInt(WORLD_SIZE);
@@ -68,27 +86,39 @@ function generateTerrain(floor, player) {
     }
   };
 
-  blob('water', 2 + floor, 4);
-  blob('ice', 2 + floor, 4);
-  blob('fog', 2 + floor, 4);
-  blob('lava', 1 + floor, 2);
-  wallLine(2 + Math.floor(floor / 2), 3); // Walls last so they win any overlap.
+  // How many "doublings" of a terrain type to scatter this floor: 0 before it is
+  // unlocked, then growing each deeper floor so the final floor is crowded.
+  const tiers = (type) => {
+    const unlock = TERRAIN_UNLOCK[type];
+    return floor < unlock ? 0 : floor - unlock + 1;
+  };
+
+  // lava (and fire) removed from the game.
+  if (tiers('water')) blob('water', 2 * tiers('water'), 4);
+  if (tiers('ice')) blob('ice', 2 * tiers('ice'), 4);
+  if (tiers('mist')) blob('mist', 2 * tiers('mist'), 4);
+  if (tiers('wall')) wallLine(2 * tiers('wall'), 3); // Walls last so they win any overlap.
   return terrain;
 }
 
 // Build (or rebuild) a floor. Carries the player's stats forward between floors.
 function generateFloor(floor, carryPlayer, score) {
-  const isFinal = floor >= FINAL_FLOOR;
+  const isFinal = isKingFloor(floor);
 
   const player = carryPlayer
     ? { ...carryPlayer, x: PLAYER_START.x, y: PLAYER_START.y }
-    : { x: PLAYER_START.x, y: PLAYER_START.y, hp: STARTING_HP, maxHp: STARTING_HP, gold: 0, moveRange: 1, canJump: false };
+    : { x: PLAYER_START.x, y: PLAYER_START.y, hp: STARTING_HP, maxHp: STARTING_HP, gold: 0, moveRange: 1, vision: STARTING_VISION, canJump: false };
+  // Saves from before vision existed carry no `vision` — fall back to the start value.
+  if (player.vision == null) player.vision = STARTING_VISION;
 
   const state = {
     worldSize: WORLD_SIZE,
-    viewSize: VIEW_SIZE,
+    viewSize: player.vision, // legacy field, kept in sync with the vision stat
     player,
     terrain: generateTerrain(floor, player),
+    // Fog of war: tiles the king has ever seen on this floor (keys "x,y"). Fresh
+    // each floor; everything else is hidden until explored.
+    explored: {},
     enemies: [],
     items: [],
     exit: null,
@@ -133,14 +163,14 @@ function generateFloor(floor, carryPlayer, score) {
     if (!tile) {
       break;
     }
-    addEnemy(PIECE_TYPES[randomInt(PIECE_TYPES.length)], tile.x, tile.y, false);
+    addEnemy(randomEnemyKind(floor), tile.x, tile.y, false);
   }
 
   // Floor 1 introduces the game with exactly one visible, surprised foe.
   if (floor === 1) {
     const tile = place((x, y) => standable(x, y) && seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (tile) {
-      addEnemy(PIECE_TYPES[randomInt(PIECE_TYPES.length)], tile.x, tile.y, true);
+      addEnemy(randomEnemyKind(floor), tile.x, tile.y, true);
     }
   }
 
@@ -169,12 +199,14 @@ function generateFloor(floor, carryPlayer, score) {
   if (!isFinal) {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
     if (tile) {
+      // Hidden under fog of war until the king explores its tile.
       state.exit = { x: tile.x, y: tile.y, discovered: false };
     }
   }
 
   const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
   if (shopTile) {
+    // Hidden under fog of war until the king explores its tile.
     state.shop = { x: shopTile.x, y: shopTile.y, discovered: false };
   }
 
@@ -192,12 +224,24 @@ function nextFloor(state) {
   return generateFloor(state.floor + 1, healed, state.score);
 }
 
-// Remember where the exit / shop are once they've been seen.
+// Dispel the fog of war over every tile currently in the king's line of sight.
+// Explored tiles stay revealed (terrain remembered) even after he looks away.
+function revealSeen(state) {
+  if (!state.explored) {
+    state.explored = {};
+  }
+  for (const key of computeVisibleTiles(state)) {
+    state.explored[key] = true;
+  }
+}
+
+// Reveal newly-seen ground and remember the exit / shop once explored.
 function updateDiscovery(state) {
-  if (state.exit && unitInSight(state, state.exit.x, state.exit.y)) {
+  revealSeen(state);
+  if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) {
     state.exit.discovered = true;
   }
-  if (state.shop && unitInSight(state, state.shop.x, state.shop.y)) {
+  if (state.shop && state.explored[`${state.shop.x},${state.shop.y}`]) {
     state.shop.discovered = true;
   }
 }
@@ -325,8 +369,16 @@ function wanderEnemy(state, enemy) {
   const candidates = [];
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     const stops = slideStops(state, enemy.x, enemy.y, dx, dy, 1, unitAt, never);
-    if (stops.length) {
-      candidates.push(stops[stops.length - 1]);
+    if (!stops.length) {
+      continue;
+    }
+    const dest = stops[stops.length - 1];
+    // Wanderers never shuffle into the king's line of sight. That way an enemy
+    // only ever appears in view because the *king* moved, so it is reliably
+    // caught by surprise on that exact turn (see beginEnemyPhase) — rather than a
+    // turn late, or not at all, if it had ambled into view under its own power.
+    if (!unitInSight(state, dest.x, dest.y)) {
+      candidates.push(dest);
     }
   }
   if (!candidates.length || Math.random() < 0.35) {
@@ -337,9 +389,13 @@ function wanderEnemy(state, enemy) {
   enemy.y = pick.y;
 }
 
-// Resolve sight at the start of an enemy turn: pieces in view that just spotted
-// the king freeze in surprise; those already aware get to move; the rest are
-// out of sight and wander (and will be surprised again when they re-see him).
+// Resolve sight at the start of an enemy turn, per piece:
+//   - not in sight        -> sleep (clear awake/surprised) and wander, staying hidden.
+//   - newly in sight       -> freeze in surprise for this one turn (awake, no move).
+//   - in sight and aware   -> hostile: it gets to move (hunt / attack).
+// Because wanderers can't step into view, a piece always becomes visible on a
+// turn the king moved, so it is reliably surprised that very turn — then either
+// acts hostile next turn (if still seen) or goes back to wandering (if not).
 function beginEnemyPhase(state) {
   const next = structuredClone(state);
   const moverIds = [];
@@ -428,12 +484,16 @@ function moveEnemy(state, enemyId) {
   return next;
 }
 
-// Difficulty over time: occasionally drop a fresh enemy on standable ground out
-// of the king's sight.
+// Difficulty over time: drop fresh enemies on standable ground out of the king's
+// sight, and faster the longer he lingers on a floor — so the board fills up more
+// and more. The population ceiling grows with depth (capped for safety).
 function maybeSpawnEnemy(state) {
   const next = structuredClone(state);
   next.turnsSinceSpawn += 1;
-  if (next.turnsSinceSpawn < next.spawnInterval || next.enemies.length >= MAX_ENEMIES) {
+  // Every ~15 turns spent on this floor, spawns arrive one turn sooner.
+  const interval = Math.max(2, next.spawnInterval - Math.floor(next.turn / 15));
+  const cap = Math.min(MAX_ENEMIES, 10 + next.floor * 4);
+  if (next.turnsSinceSpawn < interval || next.enemies.length >= cap) {
     return next;
   }
   next.turnsSinceSpawn = 0;
@@ -447,7 +507,7 @@ function maybeSpawnEnemy(state) {
   }
   const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y));
   if (tile) {
-    next.enemies.push(createEnemy(PIECE_TYPES[randomInt(PIECE_TYPES.length)], tile.x, tile.y));
+    next.enemies.push(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y));
   }
   return next;
 }
@@ -468,6 +528,10 @@ function buyUpgrade(state, id) {
     next.shopMessage = 'Move range is maxed out.';
     return next;
   }
+  if (id === 'vision' && p.vision >= def.max) {
+    next.shopMessage = 'Sight range is maxed out.';
+    return next;
+  }
   if (id === 'heal' && p.hp >= p.maxHp) {
     next.shopMessage = 'Already at full health.';
     return next;
@@ -485,6 +549,10 @@ function buyUpgrade(state, id) {
     p.hp = p.maxHp;
   } else if (id === 'range') {
     p.moveRange += 1;
+  } else if (id === 'vision') {
+    p.vision += 1;
+    next.viewSize = p.vision; // keep the legacy mirror in sync
+    updateDiscovery(next); // the wider window may dispel fog immediately
   } else if (id === 'jump') {
     p.canJump = true;
   }

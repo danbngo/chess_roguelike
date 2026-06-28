@@ -5,9 +5,12 @@ const TUTORIALS = {
   welcome: {
     title: 'Long live the King',
     text:
-      'Move with WASD or the arrow keys, the diagonals Q E Z X, the numpad, ' +
-      'or by clicking a highlighted tile. You only see an 8×8 window around ' +
-      'you — explore to find the stairs down.',
+      'Move the king with WASD, the diagonals Q E Z X, the numpad, or by clicking ' +
+      'a highlighted tile. Pan the camera with the arrow keys or by nudging the ' +
+      'mouse to a screen edge, and zoom with the mouse wheel or Page Up / Page ' +
+      'Down. You see only a short distance, and unexplored ground is shrouded in ' +
+      'fog of war until you reach it — explore to find the stairs down. Buy Keen ' +
+      'Eyes at a shop to see farther.',
   },
   surprise: {
     title: 'Caught by surprise',
@@ -58,7 +61,41 @@ const TUTORIALS = {
   finalFloor: {
     title: 'The enemy king',
     text:
-      'This is the final floor — there is no exit. Hunt down and capture the ' +
-      'black enemy king (♚) to win. It strikes back, so approach with care.',
+      'This floor holds the solo enemy king (♚) instead of an exit. Hunt it down ' +
+      'and capture it to win. It strikes back, so approach with care.',
+  },
+  newGamePlus: {
+    title: 'New Game +',
+    text:
+      'The realm runs deeper than one king. Stranger pieces now appear — berolina ' +
+      'pawns, camels, and the great compound pieces (archbishop, chancellor, ' +
+      'amazon) — and another enemy king waits below. How far can you descend?',
+  },
+
+  // Terrain tips fire the first time each hazard type comes into view. Their ids
+  // match `terrain-<type>` so the renderer/controller can map a tile to its tip.
+  'terrain-wall': {
+    title: 'Walls',
+    text:
+      'Stone walls block movement and line of sight, and cannot be leapt over. ' +
+      'Route around them — and beware what they might be hiding.',
+  },
+  'terrain-water': {
+    title: 'Water',
+    text:
+      'You may wade across at most two water tiles in a single move. A knight ' +
+      'leap clears water entirely.',
+  },
+  'terrain-ice': {
+    title: 'Ice',
+    text:
+      'You cannot stop on ice. Step onto it and you slide in that direction ' +
+      'until you hit a wall, a unit, or solid ground.',
+  },
+  'terrain-mist': {
+    title: 'Mist',
+    text:
+      'Mist is passable but blocks line of sight, concealing whatever stands ' +
+      'within it. Step carefully — an enemy could be lurking inside.',
   },
 };

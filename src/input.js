@@ -12,14 +12,11 @@ const NUMPAD_MOVES = {
   Numpad3: [1, 1],
 };
 
+// WSADQEZX move the king; the arrow keys are reserved for panning the camera.
 const KEY_MOVES = {
-  arrowup: [0, -1],
   w: [0, -1],
-  arrowdown: [0, 1],
   s: [0, 1],
-  arrowleft: [-1, 0],
   a: [-1, 0],
-  arrowright: [1, 0],
   d: [1, 0],
   // Diagonals around WASD.
   q: [-1, -1],
@@ -28,6 +25,19 @@ const KEY_MOVES = {
   x: [1, 1],
 };
 
+// Arrow keys pan the camera rather than moving the king.
+const PAN_KEYS = {
+  arrowup: [0, -1],
+  arrowdown: [0, 1],
+  arrowleft: [-1, 0],
+  arrowright: [1, 0],
+};
+
 function resolveMove(event) {
   return NUMPAD_MOVES[event.code] ?? KEY_MOVES[event.key.toLowerCase()] ?? null;
+}
+
+// Returns a [dx, dy] pan direction for arrow keys, or null.
+function resolvePan(event) {
+  return PAN_KEYS[event.key.toLowerCase()] ?? null;
 }

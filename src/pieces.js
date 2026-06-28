@@ -44,6 +44,49 @@ function getPieceMoves(piece, state) {
         moves.push(target);
       }
       break;
+    case 'camel':
+      // A (3,1) leaper.
+      for (const target of leapTargets(state, piece.x, piece.y, CAMEL_STEPS, unitAt, isKing)) {
+        moves.push(target);
+      }
+      break;
+    case 'archbishop':
+      // Bishop + knight.
+      slide(DIAG, Infinity);
+      for (const target of jumpTargets(state, piece.x, piece.y, unitAt, isKing)) {
+        moves.push(target);
+      }
+      break;
+    case 'chancellor':
+      // Rook + knight.
+      slide(ORTHO, Infinity);
+      for (const target of jumpTargets(state, piece.x, piece.y, unitAt, isKing)) {
+        moves.push(target);
+      }
+      break;
+    case 'amazon':
+      // Queen + knight.
+      slide([...ORTHO, ...DIAG], Infinity);
+      for (const target of jumpTargets(state, piece.x, piece.y, unitAt, isKing)) {
+        moves.push(target);
+      }
+      break;
+    case 'berolina':
+      // The pawn's mirror: steps diagonally onto empty ground...
+      for (const [dx, dy] of DIAG) {
+        for (const stop of slideStops(state, piece.x, piece.y, dx, dy, 1, unitAt, () => false)) {
+          moves.push(stop);
+        }
+      }
+      // ...and captures the king straight ahead (any cardinal).
+      for (const [dx, dy] of ORTHO) {
+        const x = piece.x + dx;
+        const y = piece.y + dy;
+        if (isKing(x, y)) {
+          moves.push({ x, y, capture: true });
+        }
+      }
+      break;
     case 'pawn':
     default:
       // Cardinal steps onto empty ground (never a straight capture)...
@@ -66,15 +109,11 @@ function getPieceMoves(piece, state) {
   return moves;
 }
 
-// Tiles where this piece could capture the king — the squares dangerous to
-// stand on (the red threat tint). For every piece except the pawn this is its
-// move set; a pawn only attacks the diagonals.
-function getPieceThreats(piece, state) {
-  if (piece.kind !== 'pawn') {
-    return getPieceMoves(piece, state);
-  }
+// The squares immediately adjacent (in the given directions) a piece threatens —
+// used for pawn-likes, whose capture squares differ from their move squares.
+function adjacentThreats(piece, state, dirs) {
   const threats = [];
-  for (const [dx, dy] of DIAG) {
+  for (const [dx, dy] of dirs) {
     const x = piece.x + dx;
     const y = piece.y + dy;
     if (x < 0 || x >= state.worldSize || y < 0 || y >= state.worldSize) {
@@ -92,7 +131,22 @@ function getPieceThreats(piece, state) {
   return threats;
 }
 
-// Solid (filled) glyphs read clearly on the colored tokens.
+// Tiles where this piece could capture the king — the squares dangerous to stand
+// on (the red threat tint). Pawn-likes capture differently than they move: a pawn
+// attacks the diagonals, the berolina attacks the orthogonals. Everything else
+// threatens exactly where it can move.
+function getPieceThreats(piece, state) {
+  if (piece.kind === 'pawn') {
+    return adjacentThreats(piece, state, DIAG);
+  }
+  if (piece.kind === 'berolina') {
+    return adjacentThreats(piece, state, ORTHO);
+  }
+  return getPieceMoves(piece, state);
+}
+
+// Standard pieces use solid chess glyphs; the fairy / endgame pieces use a single
+// mnemonic letter so they read clearly on the colored tokens.
 function getPieceLabel(kind) {
   const labels = {
     king: '♚',
@@ -101,6 +155,11 @@ function getPieceLabel(kind) {
     bishop: '♝',
     knight: '♞',
     queen: '♛',
+    berolina: 'B', // berolina pawn
+    camel: 'C',
+    archbishop: 'A', // bishop + knight
+    chancellor: 'M', // rook + knight (a.k.a. marshall)
+    amazon: 'Z', // queen + knight
   };
   return labels[kind] ?? '♟';
 }

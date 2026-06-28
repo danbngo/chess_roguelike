@@ -33,6 +33,7 @@
   const titleOptionsButton = document.getElementById('title-options');
   const playAgainButton = document.getElementById('play-again');
   const toTitleButton = document.getElementById('to-title');
+  const victoryContinueButton = document.getElementById('victory-continue');
   const victoryAgainButton = document.getElementById('victory-again');
   const victoryTitleButton = document.getElementById('victory-title');
   const shopCloseButton = document.getElementById('shop-close');
@@ -41,7 +42,15 @@
   const optionsCloseButton = document.getElementById('options-close');
 
   Renderer.init(canvas);
-  const tileSize = canvas.width / WORLD_SIZE;
+
+  // Camera pan controls. `edgePan` is the live direction from the mouse hovering
+  // near a canvas edge; the constants tune the pan / zoom feel.
+  let edgePan = { x: 0, y: 0 };
+  const EDGE_MARGIN = 42; // px from an edge that starts panning
+  const EDGE_PAN_SPEED = 9; // tiles per second while at an edge
+  const KEY_PAN_STEP = 1.4; // tiles per arrow-key press
+  const WHEEL_ZOOM_STEP = 0.12;
+  const KEY_ZOOM_STEP = 0.25;
 
   // screen: 'title' | 'playing' | 'shop' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
@@ -154,6 +163,14 @@
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
     }
+    // First sighting of each terrain type pops an explanatory tip.
+    for (const key of computeVisibleTiles(state)) {
+      const [tx, ty] = key.split(',').map(Number);
+      const type = terrainAt(state, tx, ty);
+      if (TUTORIALS[`terrain-${type}`]) {
+        queueTip(`terrain-${type}`);
+      }
+    }
   }
 
   /* ------------------------------- options ------------------------------- */
@@ -223,6 +240,7 @@
   function continueGame() {
     const saved = loadSave();
     if (saved) {
+      updateDiscovery(saved); // dispel fog around the king (also migrates old saves)
       startGame(saved);
       scanVisibleTips(gameState);
     } else {
@@ -236,10 +254,20 @@
     animTimer = 0;
     pendingAction = null;
     saveGame(gameState);
+    if (gameState.floor > FINAL_FLOOR) {
+      queueTip('newGamePlus');
+    }
     if (gameState.isFinalFloor) {
       queueTip('finalFloor');
     }
     scanVisibleTips(gameState);
+  }
+
+  // Carry the run on past a defeated king into the next floor (new game plus).
+  function continueNewGamePlus() {
+    hideOverlays();
+    screen = 'playing';
+    goNextFloor();
   }
 
   function onGameOver() {
@@ -267,7 +295,9 @@
 
     for (const upgrade of UPGRADES) {
       const owned = upgrade.id === 'jump' && gameState.player.canJump;
-      const maxed = upgrade.id === 'range' && gameState.player.moveRange >= upgrade.max;
+      const maxed =
+        (upgrade.id === 'range' && gameState.player.moveRange >= upgrade.max) ||
+        (upgrade.id === 'vision' && gameState.player.vision >= upgrade.max);
       const affordable = gameState.player.gold >= upgrade.cost;
 
       const row = document.createElement('li');
@@ -322,6 +352,7 @@
     }
 
     applyState(nextState, true);
+    Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
 
     if (nextState.lastAction === 'item') {
       queueTip(nextState.pickupKind === 'gold' ? 'gold' : 'heart');
@@ -396,8 +427,7 @@
     }
     const rect = canvas.getBoundingClientRect();
     const scale = canvas.width / rect.width;
-    const tileX = Math.floor(((event.clientX - rect.left) * scale) / tileSize);
-    const tileY = Math.floor(((event.clientY - rect.top) * scale) / tileSize);
+    const { x: tileX, y: tileY } = Renderer.screenToTile((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
     const reachable = getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
     if (reachable) {
       processPlayerResult(movePlayerTo(gameState, tileX, tileY));
@@ -427,6 +457,11 @@
       }
     }
 
+    // Continuous edge-of-screen panning while playing.
+    if (screen === 'playing' && (edgePan.x || edgePan.y)) {
+      Renderer.panBy(edgePan.x * EDGE_PAN_SPEED * delta, edgePan.y * EDGE_PAN_SPEED * delta);
+    }
+
     Renderer.update(delta);
     Renderer.draw(gameState, isIdle());
     requestAnimationFrame(step);
@@ -439,16 +474,57 @@
     if (move) {
       event.preventDefault();
       handleStep(move[0], move[1]);
+      return;
+    }
+    // Arrow keys pan the camera.
+    const pan = resolvePan(event);
+    if (pan) {
+      event.preventDefault();
+      Renderer.panBy(pan[0] * KEY_PAN_STEP, pan[1] * KEY_PAN_STEP);
+      return;
+    }
+    // Page Up / Page Down zoom in / out.
+    if (event.key === 'PageUp') {
+      event.preventDefault();
+      Renderer.zoomBy(KEY_ZOOM_STEP);
+    } else if (event.key === 'PageDown') {
+      event.preventDefault();
+      Renderer.zoomBy(-KEY_ZOOM_STEP);
     }
   });
 
   canvas.addEventListener('click', handleClick);
+
+  // Mouse wheel zooms toward / away.
+  canvas.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault();
+      Renderer.zoomBy(event.deltaY < 0 ? WHEEL_ZOOM_STEP : -WHEEL_ZOOM_STEP);
+    },
+    { passive: false },
+  );
+
+  // Hovering near a canvas edge pans the camera that way; track the direction.
+  canvas.addEventListener('mousemove', (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    edgePan = {
+      x: x < EDGE_MARGIN ? -1 : x > rect.width - EDGE_MARGIN ? 1 : 0,
+      y: y < EDGE_MARGIN ? -1 : y > rect.height - EDGE_MARGIN ? 1 : 0,
+    };
+  });
+  canvas.addEventListener('mouseleave', () => {
+    edgePan = { x: 0, y: 0 };
+  });
 
   newGameButton.addEventListener('click', newGame);
   continueButton.addEventListener('click', continueGame);
   titleOptionsButton.addEventListener('click', openOptions);
   playAgainButton.addEventListener('click', newGame);
   toTitleButton.addEventListener('click', showTitle);
+  victoryContinueButton.addEventListener('click', continueNewGamePlus);
   victoryAgainButton.addEventListener('click', newGame);
   victoryTitleButton.addEventListener('click', showTitle);
   shopCloseButton.addEventListener('click', closeShop);

@@ -33,12 +33,21 @@ test('movePlayer updates the position and triggers an enemy turn', () => {
   assert.equal(next.enemyTurn, true);
 });
 
-test('visible bounds are centered on the player and match an 8x8 board', () => {
+test('visible bounds are centered on the player and match the starting vision', () => {
   const state = createInitialState();
   const bounds = getVisibleBounds(state);
 
-  assert.equal(bounds.width, 8);
-  assert.equal(bounds.height, 8);
-  assert.equal(bounds.x, 4);
-  assert.equal(bounds.y, 4);
+  // The king starts with a 4x4 sight window (half the old 8), centered on (8,8).
+  assert.equal(bounds.width, 4);
+  assert.equal(bounds.height, 4);
+  assert.equal(bounds.x, 6);
+  assert.equal(bounds.y, 6);
+});
+
+test('a fresh floor reveals fog of war around the king', () => {
+  const state = createInitialState();
+
+  // The king's own tile is explored at floor start; far corners are not.
+  assert.ok(state.explored['8,8']);
+  assert.ok(!state.explored['0,0']);
 });
