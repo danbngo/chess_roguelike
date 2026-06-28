@@ -5,6 +5,9 @@ const STARTING_VISION = 4; // The king starts seeing a 4x4 window (half the old 
 const VISION_MAX = 8; // Sight range upgrades back up to a chessboard's worth.
 const PLAYER_START = { x: 8, y: 8 };
 const STARTING_HP = 5;
+const STARTING_REGEN = 1; // HP mended on descending to the next floor.
+const STARTING_CARD_SLOTS = 1; // Card slots the king begins with.
+const MAX_CARD_SLOTS = 4; // Cap on card slots (the Arsenal altar upgrade).
 
 // Terrain is introduced gradually across the run: floor 1 is empty ground, and
 // each listed floor unlocks a new hazard type that grows denser on deeper floors
@@ -33,15 +36,33 @@ const ENEMY_UNLOCKS = [
   { kind: 'amazon', floor: 10 }, // 2x final floor: the complete endgame set
 ];
 
-// Purchasable in the shop. `repeatable` upgrades can be bought many times;
-// `max` caps a repeatable stat. Costs are flat for simplicity.
-const UPGRADES = [
-  { id: 'heart', name: 'Extra Heart', desc: '+1 max HP (and heal 1)', cost: 14, repeatable: true },
-  { id: 'heal', name: 'Mend Wounds', desc: 'Restore HP to full', cost: 10, repeatable: true },
-  { id: 'range', name: 'Long Stride', desc: '+1 king move range (click to use)', cost: 22, repeatable: true, max: 4 },
-  { id: 'vision', name: 'Keen Eyes', desc: '+1 sight range (see farther)', cost: 16, repeatable: true, max: VISION_MAX },
-  { id: 'jump', name: 'Knight Leap', desc: 'Leap like a knight (click blue tiles)', cost: 38, repeatable: false },
+// Altar upgrades: free, but a given altar grants only one before it goes dormant.
+const ALTAR_UPGRADES = [
+  { id: 'hp', name: 'Vitality', desc: '+1 max HP (and heal 1)' },
+  { id: 'vision', name: 'Keen Eyes', desc: '+1 sight range (see farther)', max: VISION_MAX, stat: 'vision' },
+  { id: 'regen', name: 'Renewal', desc: '+1 HP mended each time you descend' },
+  { id: 'cards', name: 'Arsenal', desc: '+1 card slot', max: MAX_CARD_SLOTS, stat: 'maxCards' },
 ];
+
+// Cards the weapon shop can sell: any seen enemy unit except pawns and the king.
+// Higher cooldowns (and prices) for more powerful pieces. A card lets the king
+// move like that unit once, then it must recharge over `cooldown` turns.
+const CARD_STATS = {
+  knight: { cooldown: 2, cost: 12 },
+  berolina: { cooldown: 2, cost: 12 },
+  camel: { cooldown: 2, cost: 14 },
+  bishop: { cooldown: 3, cost: 16 },
+  rook: { cooldown: 3, cost: 18 },
+  archbishop: { cooldown: 4, cost: 26 },
+  chancellor: { cooldown: 4, cost: 28 },
+  queen: { cooldown: 5, cost: 34 },
+  amazon: { cooldown: 6, cost: 44 },
+};
+
+// Whether an enemy kind can be bought as a card (not pawns, not the enemy king).
+function isCardKind(kind) {
+  return Object.prototype.hasOwnProperty.call(CARD_STATS, kind);
+}
 
 // Movement direction tables, reused by the piece-move generators.
 const ORTHO = [

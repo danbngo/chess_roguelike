@@ -9,6 +9,7 @@ function createEnemy(type, x, y) {
     y,
     awake: false,
     surprised: false,
+    frustrated: false,
   };
 }
 
@@ -107,9 +108,28 @@ function generateFloor(floor, carryPlayer, score) {
 
   const player = carryPlayer
     ? { ...carryPlayer, x: PLAYER_START.x, y: PLAYER_START.y }
-    : { x: PLAYER_START.x, y: PLAYER_START.y, hp: STARTING_HP, maxHp: STARTING_HP, gold: 0, moveRange: 1, vision: STARTING_VISION, canJump: false };
-  // Saves from before vision existed carry no `vision` — fall back to the start value.
+    : {
+        x: PLAYER_START.x,
+        y: PLAYER_START.y,
+        hp: STARTING_HP,
+        maxHp: STARTING_HP,
+        gold: 0,
+        moveRange: 1,
+        vision: STARTING_VISION,
+        canJump: false,
+        regen: STARTING_REGEN,
+        maxCards: STARTING_CARD_SLOTS,
+        cards: [],
+        seenKinds: [],
+        weaponsUnlocked: false,
+      };
+  // Backfill any fields missing from older saves.
   if (player.vision == null) player.vision = STARTING_VISION;
+  if (player.regen == null) player.regen = STARTING_REGEN;
+  if (player.maxCards == null) player.maxCards = STARTING_CARD_SLOTS;
+  if (!Array.isArray(player.cards)) player.cards = [];
+  if (!Array.isArray(player.seenKinds)) player.seenKinds = [];
+  if (player.weaponsUnlocked == null) player.weaponsUnlocked = false;
 
   const state = {
     worldSize: WORLD_SIZE,
@@ -122,7 +142,8 @@ function generateFloor(floor, carryPlayer, score) {
     enemies: [],
     items: [],
     exit: null,
-    shop: null,
+    altar: null, // free, one-use stat shrine
+    weaponShop: null, // sells movement cards (once unlocked)
     floor,
     finalFloor: FINAL_FLOOR,
     isFinalFloor: isFinal,
@@ -131,7 +152,8 @@ function generateFloor(floor, carryPlayer, score) {
     enemyTurn: false,
     gameOver: false,
     won: false,
-    pendingShop: false,
+    pendingAltar: false,
+    pendingWeaponShop: false,
     message: isFinal ? 'The enemy king lurks on this floor. Hunt it down.' : 'A new floor. Seek the exit.',
     lastAction: 'start',
     spawnInterval: Math.max(3, 9 - floor),
@@ -204,10 +226,19 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
-  if (shopTile) {
+  // Every floor holds an altar (free, single-use stat shrine).
+  const altarTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+  if (altarTile) {
     // Hidden under fog of war until the king explores its tile.
-    state.shop = { x: shopTile.x, y: shopTile.y, discovered: false };
+    state.altar = { x: altarTile.x, y: altarTile.y, discovered: false, used: false };
+  }
+
+  // Weapon shops appear once the king has seen his first card-eligible enemy.
+  if (player.weaponsUnlocked) {
+    const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+    if (shopTile) {
+      state.weaponShop = { x: shopTile.x, y: shopTile.y, discovered: false };
+    }
   }
 
   updateDiscovery(state);
@@ -219,9 +250,25 @@ function createInitialState() {
 }
 
 function nextFloor(state) {
-  // Descending mends the king by 1 HP (never above his maximum).
-  const healed = { ...state.player, hp: Math.min(state.player.maxHp, state.player.hp + 1) };
+  // Descending mends the king by his regen rate (never above his maximum).
+  const regen = state.player.regen || STARTING_REGEN;
+  const healed = { ...state.player, hp: Math.min(state.player.maxHp, state.player.hp + regen) };
   return generateFloor(state.floor + 1, healed, state.score);
+}
+
+// Record any enemy kinds the king can currently see, and unlock weapon shops once
+// he has spotted his first card-eligible (non-pawn, non-king) foe.
+function recordSeenEnemies(state) {
+  const p = state.player;
+  if (!Array.isArray(p.seenKinds)) p.seenKinds = [];
+  for (const enemy of getVisibleEnemies(state)) {
+    if (!p.seenKinds.includes(enemy.kind)) {
+      p.seenKinds.push(enemy.kind);
+    }
+    if (isCardKind(enemy.kind)) {
+      p.weaponsUnlocked = true;
+    }
+  }
 }
 
 // Dispel the fog of war over every tile currently in the king's line of sight.
@@ -235,14 +282,19 @@ function revealSeen(state) {
   }
 }
 
-// Reveal newly-seen ground and remember the exit / shop once explored.
+// Reveal newly-seen ground, remember the exit / buildings once explored, and note
+// which enemy kinds the king has laid eyes on.
 function updateDiscovery(state) {
   revealSeen(state);
+  recordSeenEnemies(state);
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) {
     state.exit.discovered = true;
   }
-  if (state.shop && state.explored[`${state.shop.x},${state.shop.y}`]) {
-    state.shop.discovered = true;
+  if (state.altar && state.explored[`${state.altar.x},${state.altar.y}`]) {
+    state.altar.discovered = true;
+  }
+  if (state.weaponShop && state.explored[`${state.weaponShop.x},${state.weaponShop.y}`]) {
+    state.weaponShop.discovered = true;
   }
 }
 
@@ -276,7 +328,7 @@ function getPlayerMoves(state) {
   return moves;
 }
 
-// Resolve the king arriving on (x, y): capture, pick-ups, exit, shop.
+// Resolve the king arriving on (x, y): capture, pick-ups, exit, buildings.
 function applyArrival(next, x, y) {
   next.player.x = x;
   next.player.y = y;
@@ -284,6 +336,13 @@ function applyArrival(next, x, y) {
   next.enemyTurn = true;
   next.lastAction = 'move';
   next.message = 'The king moves.';
+
+  // A turn passes: every card on cooldown recharges by one.
+  for (const card of next.player.cards || []) {
+    if (card.remaining > 0) {
+      card.remaining -= 1;
+    }
+  }
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   if (enemy) {
@@ -321,13 +380,43 @@ function applyArrival(next, x, y) {
     return next;
   }
 
-  if (next.shop && next.shop.x === x && next.shop.y === y) {
-    next.pendingShop = true;
-    next.message = 'A shop! It opens once the enemies have moved.';
+  if (next.altar && next.altar.x === x && next.altar.y === y && !next.altar.used) {
+    next.pendingAltar = true;
+    next.message = 'An altar. It awakens once the enemies have moved.';
+  }
+
+  if (next.weaponShop && next.weaponShop.x === x && next.weaponShop.y === y) {
+    next.pendingWeaponShop = true;
+    next.message = 'A weapon shop! It opens once the enemies have moved.';
   }
 
   updateDiscovery(next);
   return next;
+}
+
+// Play a card: the king moves like the card's unit onto a reachable tile, then
+// that card goes on cooldown. Resolves captures / pick-ups like any move.
+function useCard(state, cardIndex, x, y) {
+  const next = structuredClone(state);
+  const card = next.player.cards[cardIndex];
+  if (!card) {
+    next.message = 'No such card.';
+    next.lastAction = 'blocked';
+    return next;
+  }
+  if (card.remaining > 0) {
+    next.message = 'That card is still recharging.';
+    next.lastAction = 'blocked';
+    return next;
+  }
+  if (!getCardMoves(next, card.kind).some((move) => move.x === x && move.y === y)) {
+    next.message = 'That card cannot reach that tile.';
+    next.lastAction = 'blocked';
+    return next;
+  }
+  const result = applyArrival(next, x, y); // ticks every card's cooldown down by one...
+  result.player.cards[cardIndex].remaining = result.player.cards[cardIndex].cooldown; // ...then this one recharges fully.
+  return result;
 }
 
 // Move the king to a specific reachable tile (click-to-move).
@@ -357,7 +446,11 @@ function movePlayer(state, dx, dy) {
   return movePlayerTo(state, dest.x, dest.y);
 }
 
-// An unseen enemy shuffles one step in a random direction, unaware of the king.
+// An unaware enemy shuffles one tile in a completely random direction. It never
+// steps onto another unit (enemies magically know where each other are), and it
+// tries to dip no more than a single tile into the king's vision before being
+// spotted: if its random pick would carry it into view, it looks for a move
+// heading the same way that intrudes less. (Vision is treated as bidirectional.)
 function wanderEnemy(state, enemy) {
   const unitAt = (x, y) => {
     if (x === state.player.x && y === state.player.y) {
@@ -373,34 +466,50 @@ function wanderEnemy(state, enemy) {
       continue;
     }
     const dest = stops[stops.length - 1];
-    // Wanderers never shuffle into the king's line of sight. That way an enemy
-    // only ever appears in view because the *king* moved, so it is reliably
-    // caught by surprise on that exact turn (see beginEnemyPhase) — rather than a
-    // turn late, or not at all, if it had ambled into view under its own power.
-    if (!unitInSight(state, dest.x, dest.y)) {
-      candidates.push(dest);
+    candidates.push({ x: dest.x, y: dest.y, dx, dy });
+  }
+  if (!candidates.length) {
+    return; // Boxed in — just idle.
+  }
+
+  // A completely random choice among the available shuffles.
+  let pick = candidates[randomInt(candidates.length)];
+
+  // How far into the king's view a tile reaches: 0 when out of sight, larger the
+  // closer it sits to the king once inside it.
+  const intrusion = (tile) =>
+    unitInSight(state, tile.x, tile.y) ? state.worldSize - chebyshev(tile.x, tile.y, state.player.x, state.player.y) : 0;
+
+  if (intrusion(pick) > 0) {
+    // Prefer a move in that exact direction that digs less far into his space, so
+    // the enemy only pokes one tile into view (and is caught by surprise next
+    // turn). If nothing milder exists, keep the original move.
+    for (const c of candidates) {
+      if (Math.sign(c.dx) === Math.sign(pick.dx) && Math.sign(c.dy) === Math.sign(pick.dy) && intrusion(c) < intrusion(pick)) {
+        pick = c;
+      }
     }
   }
-  if (!candidates.length || Math.random() < 0.35) {
-    return; // Often it just idles.
-  }
-  const pick = candidates[randomInt(candidates.length)];
+
   enemy.x = pick.x;
   enemy.y = pick.y;
 }
 
 // Resolve sight at the start of an enemy turn, per piece:
-//   - not in sight        -> sleep (clear awake/surprised) and wander, staying hidden.
+//   - not in sight        -> sleep (clear awake/surprised) and wander.
 //   - newly in sight       -> freeze in surprise for this one turn (awake, no move).
 //   - in sight and aware   -> hostile: it gets to move (hunt / attack).
-// Because wanderers can't step into view, a piece always becomes visible on a
-// turn the king moved, so it is reliably surprised that very turn — then either
-// acts hostile next turn (if still seen) or goes back to wandering (if not).
+// A wanderer only ever pokes one tile into view, so the turn after it appears (or
+// the turn the king steps into view of it) it is reliably caught by surprise,
+// then acts hostile while seen and returns to wandering once out of sight. The
+// transient `frustrated` flag is cleared here so it only ever shows for one turn.
 function beginEnemyPhase(state) {
   const next = structuredClone(state);
   const moverIds = [];
+  recordSeenEnemies(next); // note any kinds that just came into view
 
   for (const enemy of next.enemies) {
+    enemy.frustrated = false;
     if (!unitInSight(next, enemy.x, enemy.y)) {
       enemy.awake = false;
       enemy.surprised = false;
@@ -427,9 +536,15 @@ function moveEnemy(state, enemyId) {
     return next;
   }
 
+  // Hostile preference order: strike the king, else close in as far as possible,
+  // else (if every move only opens distance) move as little further as possible.
+  // getPieceMoves already excludes tiles held by other enemies, so a hostile
+  // piece never tries to step onto a friend. With no legal move at all it holds
+  // still and fumes (the frustrated mark) for this turn.
   const moves = getPieceMoves(enemy, next);
   if (!moves.length) {
-    next.message = 'A cornered piece holds its ground.';
+    enemy.frustrated = true;
+    next.message = 'A cornered piece fumes, unable to move.';
     next.lastAction = 'enemy';
     return next;
   }
@@ -512,50 +627,60 @@ function maybeSpawnEnemy(state) {
   return next;
 }
 
-// Spend gold on a shop upgrade. Returns a new state with a `shopMessage`.
-function buyUpgrade(state, id) {
+// Receive one upgrade from an altar, for free. The altar then goes dormant.
+function useAltar(state, id) {
   const next = structuredClone(state);
-  const def = UPGRADES.find((upgrade) => upgrade.id === id);
   const p = next.player;
-  if (!def) {
+  const def = ALTAR_UPGRADES.find((upgrade) => upgrade.id === id);
+  if (!def || !next.altar || next.altar.used) {
     return next;
   }
-  if (id === 'jump' && p.canJump) {
-    next.shopMessage = 'Already learned.';
-    return next;
-  }
-  if (id === 'range' && p.moveRange >= def.max) {
-    next.shopMessage = 'Move range is maxed out.';
-    return next;
-  }
-  if (id === 'vision' && p.vision >= def.max) {
-    next.shopMessage = 'Sight range is maxed out.';
-    return next;
-  }
-  if (id === 'heal' && p.hp >= p.maxHp) {
-    next.shopMessage = 'Already at full health.';
-    return next;
-  }
-  if (p.gold < def.cost) {
-    next.shopMessage = 'Not enough gold.';
-    return next;
+  if (def.stat && def.max != null && p[def.stat] >= def.max) {
+    next.altarMessage = `${def.name} is already maxed.`;
+    return next; // leave the altar active so another blessing can be chosen
   }
 
-  p.gold -= def.cost;
-  if (id === 'heart') {
+  if (id === 'hp') {
     p.maxHp += 1;
     p.hp += 1;
-  } else if (id === 'heal') {
-    p.hp = p.maxHp;
-  } else if (id === 'range') {
-    p.moveRange += 1;
   } else if (id === 'vision') {
     p.vision += 1;
     next.viewSize = p.vision; // keep the legacy mirror in sync
     updateDiscovery(next); // the wider window may dispel fog immediately
-  } else if (id === 'jump') {
-    p.canJump = true;
+  } else if (id === 'regen') {
+    p.regen += 1;
+  } else if (id === 'cards') {
+    p.maxCards += 1;
   }
-  next.shopMessage = `Purchased ${def.name}.`;
+  next.altar.used = true; // one blessing per altar, then it falls dormant
+  next.altarMessage = `The altar grants ${def.name}.`;
+  return next;
+}
+
+// Buy a movement card from a weapon shop. With a free slot it is added; with all
+// slots full, `replaceIndex` says which existing card to swap out. `shopMessage`
+// reports the result.
+function buyCard(state, kind, replaceIndex) {
+  const next = structuredClone(state);
+  const p = next.player;
+  const stats = CARD_STATS[kind];
+  if (!stats) {
+    return next;
+  }
+  if (p.gold < stats.cost) {
+    next.shopMessage = 'Not enough gold.';
+    return next;
+  }
+  const card = { kind, cooldown: stats.cooldown, remaining: 0 };
+  if (p.cards.length < p.maxCards) {
+    p.cards.push(card);
+  } else if (replaceIndex != null && replaceIndex >= 0 && replaceIndex < p.cards.length) {
+    p.cards[replaceIndex] = card;
+  } else {
+    next.shopMessage = 'Card slots full — choose one to replace.';
+    return next;
+  }
+  p.gold -= stats.cost;
+  next.shopMessage = `Acquired the ${kind} card.`;
   return next;
 }

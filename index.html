@@ -59,14 +59,26 @@
             </div>
           </div>
 
-          <div id="shop-screen" class="overlay hidden">
+          <div id="altar-screen" class="overlay hidden">
             <div class="overlay-card shop-card">
-              <h2 class="overlay-title">Shop</h2>
-              <p id="shop-gold" class="overlay-sub">Gold 0</p>
-              <ul id="shop-list" class="shop-list"></ul>
-              <p id="shop-message" class="shop-message"></p>
+              <h2 class="overlay-title">Altar</h2>
+              <p class="overlay-sub">Choose one blessing — the altar then falls dormant.</p>
+              <ul id="altar-list" class="shop-list"></ul>
+              <p id="altar-message" class="shop-message"></p>
               <div class="overlay-buttons">
-                <button id="shop-close" type="button">Leave Shop</button>
+                <button id="altar-close" type="button">Leave Altar</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="weaponshop-screen" class="overlay hidden">
+            <div class="overlay-card shop-card">
+              <h2 class="overlay-title">Weapon Shop</h2>
+              <p id="weaponshop-gold" class="overlay-sub">Gold 0</p>
+              <ul id="weaponshop-list" class="shop-list"></ul>
+              <p id="weaponshop-message" class="shop-message"></p>
+              <div class="overlay-buttons">
+                <button id="weaponshop-close" type="button">Leave Shop</button>
               </div>
             </div>
           </div>
@@ -95,6 +107,8 @@
             </div>
           </div>
         </div>
+
+        <div id="card-bar" class="card-bar"></div>
 
         <div class="actions">
           <button id="restart" type="button">Restart</button>

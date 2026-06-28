@@ -14,6 +14,9 @@ const Renderer = (function () {
   const SHAKE_DURATION = 0.4;
   const SHAKE_MAGNITUDE = 9;
 
+  // Ever-increasing time accumulator, used for ambient animation (powerup glow).
+  let clock = 0;
+
   // Camera: a movable, zoomable window onto the board. `baseTile` is the on-screen
   // size of a tile at zoom 1 — set so the default view shows half the board (i.e.
   // tiles are 2x the size of the old whole-board view). The camera position is the
@@ -101,6 +104,7 @@ const Renderer = (function () {
       targetY: enemy.y,
       kind: enemy.kind,
       surprised: Boolean(enemy.surprised),
+      frustrated: Boolean(enemy.frustrated),
     }));
     snapCameraToPlayer(state);
   }
@@ -120,6 +124,7 @@ const Renderer = (function () {
       render.targetY = enemy.y;
       render.kind = enemy.kind;
       render.surprised = Boolean(enemy.surprised);
+      render.frustrated = Boolean(enemy.frustrated);
       next.push(render);
     }
     enemyRenders = next;
@@ -137,6 +142,7 @@ const Renderer = (function () {
     camera.x += (camera.targetX - camera.x) * speed;
     camera.y += (camera.targetY - camera.y) * speed;
     camera.zoom += (camera.targetZoom - camera.zoom) * speed;
+    clock += delta; // drives the powerup glow pulse
     if (shake > 0) {
       shake = Math.max(0, shake - delta);
     }
@@ -162,8 +168,8 @@ const Renderer = (function () {
     ctx.fillText(getPieceLabel(kind), cx, cy + tileSize * 0.04);
   }
 
-  // A bright "!" above a piece that has just spotted the king.
-  function drawSurpriseMark(tileX, tileY) {
+  // A small glyph above a piece's head (surprise "!", frustration "✖", etc.).
+  function drawStatusMark(tileX, tileY, glyph, color) {
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize * 0.12;
     ctx.font = `bold ${tileSize * 0.55}px sans-serif`;
@@ -171,9 +177,19 @@ const Renderer = (function () {
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 4;
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.strokeText('!', cx, cy);
-    ctx.fillStyle = '#ffd400';
-    ctx.fillText('!', cx, cy);
+    ctx.strokeText(glyph, cx, cy);
+    ctx.fillStyle = color;
+    ctx.fillText(glyph, cx, cy);
+  }
+
+  // A bright "!" above a piece that has just spotted the king.
+  function drawSurpriseMark(tileX, tileY) {
+    drawStatusMark(tileX, tileY, '!', '#ffd400');
+  }
+
+  // An orange "✖" above a hostile piece that has no legal move and fumes in place.
+  function drawFrustratedMark(tileX, tileY) {
+    drawStatusMark(tileX, tileY, '✖', '#fb923c');
   }
 
   function drawExit(tileX, tileY, faded) {
@@ -193,7 +209,8 @@ const Renderer = (function () {
     ctx.restore();
   }
 
-  function drawShop(tileX, tileY, faded) {
+  // The weapon shop: an amber kiosk marked with "$".
+  function drawWeaponShop(tileX, tileY, faded) {
     const px = tileX * tileSize;
     const py = tileY * tileSize;
     ctx.save();
@@ -208,20 +225,43 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // The altar: a violet shrine marked with a star. Dimmed once spent.
+  function drawAltar(tileX, tileY, faded, used) {
+    const px = tileX * tileSize;
+    const py = tileY * tileSize;
+    ctx.save();
+    ctx.globalAlpha = used ? 0.3 : faded ? 0.45 : 1;
+    ctx.fillStyle = used ? '#4b5563' : '#7c3aed';
+    ctx.fillRect(px + tileSize * 0.15, py + tileSize * 0.15, tileSize * 0.7, tileSize * 0.7);
+    ctx.fillStyle = used ? '#9ca3af' : '#e9d5ff';
+    ctx.font = `bold ${tileSize * 0.55}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✦', px + tileSize / 2, py + tileSize * 0.56);
+    ctx.restore();
+  }
+
   function drawItem(item) {
     const cx = item.x * tileSize + tileSize / 2;
     const cy = item.y * tileSize + tileSize / 2;
+    // A soft pulsing glow so pickups catch the eye.
+    const pulse = 0.5 + 0.5 * Math.sin(clock * 4 + (item.x + item.y));
+    ctx.save();
+    ctx.shadowBlur = tileSize * (0.18 + 0.22 * pulse);
     if (item.kind === 'heart') {
+      ctx.shadowColor = 'rgba(248, 113, 113, 0.9)';
       ctx.fillStyle = '#ef4444';
-      ctx.font = `${tileSize * 0.6}px serif`;
+      ctx.font = `${tileSize * (0.58 + 0.06 * pulse)}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('♥', cx, cy + tileSize * 0.05);
     } else {
+      ctx.shadowColor = 'rgba(251, 191, 36, 0.95)';
       ctx.beginPath();
-      ctx.arc(cx, cy, tileSize * 0.26, 0, Math.PI * 2);
+      ctx.arc(cx, cy, tileSize * (0.24 + 0.03 * pulse), 0, Math.PI * 2);
       ctx.fillStyle = '#fbbf24';
       ctx.fill();
+      ctx.shadowBlur = 0;
       ctx.lineWidth = 2;
       ctx.strokeStyle = '#b45309';
       ctx.stroke();
@@ -231,6 +271,7 @@ const Renderer = (function () {
       ctx.textBaseline = 'middle';
       ctx.fillText('$', cx, cy);
     }
+    ctx.restore();
   }
 
   // A small marker on each tile the king can move to this turn.
@@ -248,6 +289,24 @@ const Renderer = (function () {
     ctx.beginPath();
     ctx.arc(cx, cy, tileSize * 0.12, 0, Math.PI * 2);
     ctx.fillStyle = viaJump ? 'rgba(96, 165, 250, 0.85)' : 'rgba(74, 222, 128, 0.85)';
+    ctx.fill();
+  }
+
+  // A violet marker on tiles a card being aimed can reach (ring = capture).
+  function drawCardHint(tileX, tileY, capture) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    if (capture) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.42, 0, Math.PI * 2);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(216, 180, 254, 0.95)';
+      ctx.stroke();
+      return;
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, tileSize * 0.16, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(168, 85, 247, 0.85)';
     ctx.fill();
   }
 
@@ -358,7 +417,7 @@ const Renderer = (function () {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  function draw(state, showMoves) {
+  function draw(state, showMoves, cardTargets) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!state) {
@@ -464,17 +523,23 @@ const Renderer = (function () {
     ctx.lineWidth = 2;
     ctx.strokeRect(bounds.x * tileSize, bounds.y * tileSize, bounds.width * tileSize, bounds.height * tileSize);
 
-    // Exit and shop: shown when in sight, or faded once discovered.
+    // Exit, altar and weapon shop: shown when in sight, or faded once discovered.
     if (state.exit) {
       const seen = lit(state.exit.x, state.exit.y);
       if (seen || state.exit.discovered) {
         drawExit(state.exit.x, state.exit.y, !seen);
       }
     }
-    if (state.shop) {
-      const seen = lit(state.shop.x, state.shop.y);
-      if (seen || state.shop.discovered) {
-        drawShop(state.shop.x, state.shop.y, !seen);
+    if (state.altar) {
+      const seen = lit(state.altar.x, state.altar.y);
+      if (seen || state.altar.discovered) {
+        drawAltar(state.altar.x, state.altar.y, !seen, state.altar.used);
+      }
+    }
+    if (state.weaponShop) {
+      const seen = lit(state.weaponShop.x, state.weaponShop.y);
+      if (seen || state.weaponShop.discovered) {
+        drawWeaponShop(state.weaponShop.x, state.weaponShop.y, !seen);
       }
     }
 
@@ -485,11 +550,18 @@ const Renderer = (function () {
       }
     }
 
-    // Plain moves are shown by the light-green tile tint above; here we only mark
-    // the special cases: capture targets (ring) and knight-leap tiles (blue dot).
-    for (const move of playerMoves) {
-      if (move.capture || move.viaJump) {
-        drawMoveHint(move.x, move.y, move.viaJump, move.capture);
+    // While aiming a card, show its reachable tiles in violet; otherwise the plain
+    // moves are the light-green tint above and we only mark the special cases:
+    // capture targets (ring) and knight-leap tiles (blue dot).
+    if (cardTargets) {
+      for (const target of cardTargets) {
+        drawCardHint(target.x, target.y, target.capture);
+      }
+    } else {
+      for (const move of playerMoves) {
+        if (move.capture || move.viaJump) {
+          drawMoveHint(move.x, move.y, move.viaJump, move.capture);
+        }
       }
     }
 
@@ -500,6 +572,8 @@ const Renderer = (function () {
       drawPiece(enemy.x, enemy.y, enemy.kind, false);
       if (enemy.surprised) {
         drawSurpriseMark(enemy.x, enemy.y);
+      } else if (enemy.frustrated) {
+        drawFrustratedMark(enemy.x, enemy.y);
       }
     }
 

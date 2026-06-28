@@ -12,21 +12,22 @@ function enemyUnitAt(state, piece) {
   };
 }
 
-// Every tile this piece could legally move onto next turn, given the board.
-function getPieceMoves(piece, state) {
-  const unitAt = enemyUnitAt(state, piece);
-  const isKing = (x, y) => x === state.player.x && y === state.player.y;
+// Core move generator: every tile a piece of `kind` standing at (fromX, fromY)
+// could move onto, given a `unitAt` blocker lookup and an `isTarget` test for
+// which occupied tiles may be captured (and thus moved onto). Shared by enemy
+// pieces (target = the king) and the king's own cards (targets = enemies).
+function generateMoves(kind, state, fromX, fromY, unitAt, isTarget) {
   const moves = [];
 
   const slide = (directions, maxGround) => {
     for (const [dx, dy] of directions) {
-      for (const stop of slideStops(state, piece.x, piece.y, dx, dy, maxGround, unitAt, isKing)) {
+      for (const stop of slideStops(state, fromX, fromY, dx, dy, maxGround, unitAt, isTarget)) {
         moves.push(stop);
       }
     }
   };
 
-  switch (piece.kind) {
+  switch (kind) {
     case 'rook':
       slide(ORTHO, Infinity);
       break;
@@ -40,49 +41,49 @@ function getPieceMoves(piece, state) {
       slide([...ORTHO, ...DIAG], 1);
       break;
     case 'knight':
-      for (const target of jumpTargets(state, piece.x, piece.y, unitAt, isKing)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
         moves.push(target);
       }
       break;
     case 'camel':
       // A (3,1) leaper.
-      for (const target of leapTargets(state, piece.x, piece.y, CAMEL_STEPS, unitAt, isKing)) {
+      for (const target of leapTargets(state, fromX, fromY, CAMEL_STEPS, unitAt, isTarget)) {
         moves.push(target);
       }
       break;
     case 'archbishop':
       // Bishop + knight.
       slide(DIAG, Infinity);
-      for (const target of jumpTargets(state, piece.x, piece.y, unitAt, isKing)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
         moves.push(target);
       }
       break;
     case 'chancellor':
       // Rook + knight.
       slide(ORTHO, Infinity);
-      for (const target of jumpTargets(state, piece.x, piece.y, unitAt, isKing)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
         moves.push(target);
       }
       break;
     case 'amazon':
       // Queen + knight.
       slide([...ORTHO, ...DIAG], Infinity);
-      for (const target of jumpTargets(state, piece.x, piece.y, unitAt, isKing)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
         moves.push(target);
       }
       break;
     case 'berolina':
       // The pawn's mirror: steps diagonally onto empty ground...
       for (const [dx, dy] of DIAG) {
-        for (const stop of slideStops(state, piece.x, piece.y, dx, dy, 1, unitAt, () => false)) {
+        for (const stop of slideStops(state, fromX, fromY, dx, dy, 1, unitAt, () => false)) {
           moves.push(stop);
         }
       }
-      // ...and captures the king straight ahead (any cardinal).
+      // ...and captures straight ahead (any cardinal).
       for (const [dx, dy] of ORTHO) {
-        const x = piece.x + dx;
-        const y = piece.y + dy;
-        if (isKing(x, y)) {
+        const x = fromX + dx;
+        const y = fromY + dy;
+        if (isTarget(x, y)) {
           moves.push({ x, y, capture: true });
         }
       }
@@ -91,15 +92,15 @@ function getPieceMoves(piece, state) {
     default:
       // Cardinal steps onto empty ground (never a straight capture)...
       for (const [dx, dy] of ORTHO) {
-        for (const stop of slideStops(state, piece.x, piece.y, dx, dy, 1, unitAt, () => false)) {
+        for (const stop of slideStops(state, fromX, fromY, dx, dy, 1, unitAt, () => false)) {
           moves.push(stop);
         }
       }
-      // ...and a diagonal capture of the king only.
+      // ...and a diagonal capture only.
       for (const [dx, dy] of DIAG) {
-        const x = piece.x + dx;
-        const y = piece.y + dy;
-        if (isKing(x, y)) {
+        const x = fromX + dx;
+        const y = fromY + dy;
+        if (isTarget(x, y)) {
           moves.push({ x, y, capture: true });
         }
       }
@@ -107,6 +108,21 @@ function getPieceMoves(piece, state) {
   }
 
   return moves;
+}
+
+// Every tile this enemy piece could legally move onto next turn. Targets the king.
+function getPieceMoves(piece, state) {
+  const unitAt = enemyUnitAt(state, piece);
+  const isKing = (x, y) => x === state.player.x && y === state.player.y;
+  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isKing);
+}
+
+// Where the king could move if he played a card of the given kind: he moves like
+// that unit from his own square, and enemies are the capturable targets.
+function getCardMoves(state, kind) {
+  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
+  const isEnemy = (x, y) => Boolean(enemyAt(x, y));
+  return generateMoves(kind, state, state.player.x, state.player.y, enemyAt, isEnemy);
 }
 
 // The squares immediately adjacent (in the given directions) a piece threatens —

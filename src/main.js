@@ -17,10 +17,14 @@
   const gameoverStats = document.getElementById('gameover-stats');
   const victoryScreen = document.getElementById('victory-screen');
   const victoryStats = document.getElementById('victory-stats');
-  const shopScreen = document.getElementById('shop-screen');
-  const shopGold = document.getElementById('shop-gold');
-  const shopList = document.getElementById('shop-list');
-  const shopMessage = document.getElementById('shop-message');
+  const altarScreen = document.getElementById('altar-screen');
+  const altarList = document.getElementById('altar-list');
+  const altarMessage = document.getElementById('altar-message');
+  const weaponshopScreen = document.getElementById('weaponshop-screen');
+  const weaponshopGold = document.getElementById('weaponshop-gold');
+  const weaponshopList = document.getElementById('weaponshop-list');
+  const weaponshopMessage = document.getElementById('weaponshop-message');
+  const cardBar = document.getElementById('card-bar');
   const tutorialScreen = document.getElementById('tutorial-screen');
   const tutorialTitle = document.getElementById('tutorial-title');
   const tutorialText = document.getElementById('tutorial-text');
@@ -36,7 +40,8 @@
   const victoryContinueButton = document.getElementById('victory-continue');
   const victoryAgainButton = document.getElementById('victory-again');
   const victoryTitleButton = document.getElementById('victory-title');
-  const shopCloseButton = document.getElementById('shop-close');
+  const altarCloseButton = document.getElementById('altar-close');
+  const weaponshopCloseButton = document.getElementById('weaponshop-close');
   const tutorialOkButton = document.getElementById('tutorial-ok');
   const tutorialDisableButton = document.getElementById('tutorial-disable');
   const optionsCloseButton = document.getElementById('options-close');
@@ -52,9 +57,14 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'playing' | 'shop' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'playing' | 'altar' | 'weaponshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
+
+  // Card targeting: the index of the card currently awaiting a destination click,
+  // or null when not aiming. `cardTargets` are the tiles it can reach.
+  let cardTargeting = null;
+  let cardTargets = [];
 
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
@@ -82,6 +92,81 @@
     goldLabel.textContent = `Gold ${gameState.player.gold}`;
     scoreLabel.textContent = `Score ${gameState.score}`;
     statusLabel.textContent = gameState.message;
+    renderCards();
+  }
+
+  /* -------------------------------- cards -------------------------------- */
+
+  // Draw the card bar: one slot per `maxCards`, owned cards first. A ready card is
+  // clickable to start aiming; one mid-cooldown shows its countdown.
+  function renderCards() {
+    cardBar.innerHTML = '';
+    if (!gameState) {
+      return;
+    }
+    const { cards, maxCards } = gameState.player;
+    for (let i = 0; i < maxCards; i += 1) {
+      const card = cards[i];
+      const slot = document.createElement('button');
+      slot.type = 'button';
+      slot.className = 'card-slot';
+      if (!card) {
+        slot.classList.add('empty');
+        slot.textContent = 'empty';
+        slot.disabled = true;
+        cardBar.append(slot);
+        continue;
+      }
+      slot.textContent = getPieceLabel(card.kind);
+      slot.title = `${card.kind} card · cooldown ${card.cooldown}`;
+      const onCooldown = card.remaining > 0;
+      if (cardTargeting === i) {
+        slot.classList.add('targeting');
+      } else if (onCooldown) {
+        slot.classList.add('cooldown');
+      } else {
+        slot.classList.add('ready');
+      }
+      if (onCooldown) {
+        const badge = document.createElement('span');
+        badge.className = 'card-cooldown';
+        badge.textContent = String(card.remaining);
+        slot.append(badge);
+      }
+      slot.disabled = onCooldown && cardTargeting !== i;
+      slot.addEventListener('click', () => toggleCardTargeting(i));
+      cardBar.append(slot);
+    }
+  }
+
+  // Start (or cancel) aiming a card. While aiming, its reachable tiles glow.
+  function toggleCardTargeting(index) {
+    if (!isIdle()) {
+      return;
+    }
+    if (cardTargeting === index) {
+      cancelCardTargeting();
+      return;
+    }
+    const card = gameState.player.cards[index];
+    if (!card || card.remaining > 0) {
+      return;
+    }
+    cardTargeting = index;
+    cardTargets = getCardMoves(gameState, card.kind);
+    if (!cardTargets.length) {
+      gameState.message = 'That card has nowhere to go from here.';
+      cancelCardTargeting();
+      updateHud();
+      return;
+    }
+    gameState.message = `Aiming the ${card.kind} card — click a highlighted tile (Esc to cancel).`;
+    updateHud();
+  }
+
+  function cancelCardTargeting() {
+    cardTargeting = null;
+    cardTargets = [];
   }
 
   // Restart the HP counter's damage animation (re-add the class after a reflow).
@@ -202,7 +287,8 @@
     titleScreen.classList.add('hidden');
     gameoverScreen.classList.add('hidden');
     victoryScreen.classList.add('hidden');
-    shopScreen.classList.add('hidden');
+    altarScreen.classList.add('hidden');
+    weaponshopScreen.classList.add('hidden');
     tutorialScreen.classList.add('hidden');
     optionsScreen.classList.add('hidden');
   }
@@ -214,6 +300,8 @@
     animTimer = 0;
     pendingAction = null;
     pendingTips = [];
+    cancelCardTargeting();
+    cardBar.innerHTML = '';
     hideOverlays();
     titleScreen.classList.remove('hidden');
     continueButton.disabled = !hasSave();
@@ -226,6 +314,7 @@
     animTimer = 0;
     pendingAction = null;
     pendingTips = [];
+    cancelCardTargeting();
     screen = 'playing';
     hideOverlays();
   }
@@ -286,19 +375,19 @@
     victoryScreen.classList.remove('hidden');
   }
 
-  /* -------------------------------- shop -------------------------------- */
+  /* ------------------------------- altar -------------------------------- */
 
-  function renderShop() {
-    shopGold.textContent = `Gold ${gameState.player.gold}`;
-    shopMessage.textContent = gameState.shopMessage || '';
-    shopList.innerHTML = '';
+  function statValue(id) {
+    const p = gameState.player;
+    return { vision: p.vision, maxCards: p.maxCards }[id];
+  }
 
-    for (const upgrade of UPGRADES) {
-      const owned = upgrade.id === 'jump' && gameState.player.canJump;
-      const maxed =
-        (upgrade.id === 'range' && gameState.player.moveRange >= upgrade.max) ||
-        (upgrade.id === 'vision' && gameState.player.vision >= upgrade.max);
-      const affordable = gameState.player.gold >= upgrade.cost;
+  function renderAltar() {
+    altarMessage.textContent = gameState.altarMessage || '';
+    altarList.innerHTML = '';
+
+    for (const upgrade of ALTAR_UPGRADES) {
+      const maxed = upgrade.stat && upgrade.max != null && gameState.player[upgrade.stat] >= upgrade.max;
 
       const row = document.createElement('li');
       row.className = 'shop-item';
@@ -307,39 +396,140 @@
       info.className = 'shop-info';
       info.innerHTML = `<span class="shop-name">${upgrade.name}</span><span class="shop-desc">${upgrade.desc}</span>`;
 
-      const buy = document.createElement('button');
-      buy.type = 'button';
-      if (owned) {
-        buy.textContent = 'Owned';
-        buy.disabled = true;
-      } else if (maxed) {
-        buy.textContent = 'Maxed';
-        buy.disabled = true;
+      const take = document.createElement('button');
+      take.type = 'button';
+      if (maxed) {
+        take.textContent = 'Maxed';
+        take.disabled = true;
       } else {
-        buy.textContent = `${upgrade.cost}g`;
-        buy.disabled = !affordable;
-        buy.addEventListener('click', () => {
-          applyState(buyUpgrade(gameState, upgrade.id), true);
-          renderShop();
+        take.textContent = 'Take';
+        take.addEventListener('click', () => {
+          applyState(useAltar(gameState, upgrade.id), true);
+          if (gameState.altar && gameState.altar.used) {
+            closeAltar(); // a blessing was claimed; the altar is spent
+          } else {
+            renderAltar(); // e.g. maxed pick — let them choose again
+          }
         });
       }
 
-      row.append(info, buy);
-      shopList.append(row);
+      row.append(info, take);
+      altarList.append(row);
     }
   }
 
-  function openShop() {
-    screen = 'shop';
-    gameState.shopMessage = '';
-    renderShop();
-    shopScreen.classList.remove('hidden');
-    queueTip('shop');
+  function openAltar() {
+    screen = 'altar';
+    gameState.altarMessage = '';
+    renderAltar();
+    altarScreen.classList.remove('hidden');
+    queueTip('altar');
   }
 
-  function closeShop() {
+  function closeAltar() {
     screen = 'playing';
-    shopScreen.classList.add('hidden');
+    altarScreen.classList.add('hidden');
+    saveGame(gameState);
+  }
+
+  /* ----------------------------- weapon shop ----------------------------- */
+
+  // Buyable cards = card-eligible enemy kinds the king has seen.
+  function shopCardKinds() {
+    return gameState.player.seenKinds.filter((kind) => isCardKind(kind));
+  }
+
+  function renderWeaponShop() {
+    weaponshopGold.textContent = `Gold ${gameState.player.gold}`;
+    weaponshopMessage.textContent = gameState.shopMessage || '';
+    weaponshopList.innerHTML = '';
+
+    const p = gameState.player;
+    const kinds = shopCardKinds();
+    if (!kinds.length) {
+      const empty = document.createElement('li');
+      empty.className = 'shop-item';
+      empty.textContent = 'No wares yet — face more foes to learn their forms.';
+      weaponshopList.append(empty);
+      return;
+    }
+
+    for (const kind of kinds) {
+      const stats = CARD_STATS[kind];
+      const slotsFull = p.cards.length >= p.maxCards;
+
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML = `<span class="shop-name">${getPieceLabel(kind)} ${kind}</span><span class="shop-desc">cooldown ${stats.cooldown} · move like a ${kind}</span>`;
+
+      const buy = document.createElement('button');
+      buy.type = 'button';
+      buy.textContent = `${stats.cost}g`;
+      buy.disabled = p.gold < stats.cost;
+      buy.addEventListener('click', () => {
+        if (slotsFull) {
+          promptReplaceCard(kind);
+        } else {
+          applyState(buyCard(gameState, kind), true);
+          renderWeaponShop();
+        }
+      });
+
+      row.append(info, buy);
+      weaponshopList.append(row);
+    }
+  }
+
+  // With slots full, ask which card to replace (a row of swap buttons), then buy.
+  function promptReplaceCard(kind) {
+    const p = gameState.player;
+    if (p.gold < CARD_STATS[kind].cost) {
+      gameState.shopMessage = 'Not enough gold.';
+      renderWeaponShop();
+      return;
+    }
+    weaponshopMessage.textContent = `Replace which card with the ${kind}?`;
+    weaponshopList.innerHTML = '';
+    p.cards.forEach((card, index) => {
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML = `<span class="shop-name">${getPieceLabel(card.kind)} ${card.kind}</span><span class="shop-desc">cooldown ${card.cooldown}</span>`;
+      const swap = document.createElement('button');
+      swap.type = 'button';
+      swap.textContent = 'Replace';
+      swap.addEventListener('click', () => {
+        applyState(buyCard(gameState, kind, index), true);
+        renderWeaponShop();
+      });
+      row.append(info, swap);
+      weaponshopList.append(row);
+    });
+    const cancel = document.createElement('li');
+    cancel.className = 'shop-item';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', renderWeaponShop);
+    cancel.append(cancelBtn);
+    weaponshopList.append(cancel);
+  }
+
+  function openWeaponShop() {
+    screen = 'weaponshop';
+    gameState.shopMessage = '';
+    renderWeaponShop();
+    weaponshopScreen.classList.remove('hidden');
+    queueTip('weaponShop');
+  }
+
+  function closeWeaponShop() {
+    screen = 'playing';
+    weaponshopScreen.classList.add('hidden');
     saveGame(gameState);
   }
 
@@ -404,17 +594,24 @@
       return;
     }
 
-    // Turn complete: maybe reinforce, persist, then open a shop if stepped on.
+    // Turn complete: maybe reinforce, persist, then open a building if stepped on.
     applyState(maybeSpawnEnemy(gameState), true);
-    const shopPending = gameState.pendingShop;
-    gameState.pendingShop = false;
+    const altarPending = gameState.pendingAltar;
+    const weaponShopPending = gameState.pendingWeaponShop;
+    gameState.pendingAltar = false;
+    gameState.pendingWeaponShop = false;
     saveGame(gameState);
-    if (shopPending) {
-      openShop();
+    if (altarPending) {
+      openAltar();
+    } else if (weaponShopPending) {
+      openWeaponShop();
     }
   }
 
   function handleStep(dx, dy) {
+    if (cardTargeting !== null) {
+      cancelCardTargeting(); // a keyboard move cancels card aiming
+    }
     if (!isIdle()) {
       return;
     }
@@ -428,6 +625,20 @@
     const rect = canvas.getBoundingClientRect();
     const scale = canvas.width / rect.width;
     const { x: tileX, y: tileY } = Renderer.screenToTile((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
+
+    // Aiming a card: a click on a highlighted tile plays it; anything else cancels.
+    if (cardTargeting !== null) {
+      const target = cardTargets.find((move) => move.x === tileX && move.y === tileY);
+      const index = cardTargeting;
+      cancelCardTargeting();
+      if (target) {
+        processPlayerResult(useCard(gameState, index, tileX, tileY));
+      } else {
+        updateHud();
+      }
+      return;
+    }
+
     const reachable = getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
     if (reachable) {
       processPlayerResult(movePlayerTo(gameState, tileX, tileY));
@@ -463,13 +674,23 @@
     }
 
     Renderer.update(delta);
-    Renderer.draw(gameState, isIdle());
+    // While aiming a card, show its reachable tiles instead of the normal moves.
+    const aiming = cardTargeting !== null;
+    Renderer.draw(gameState, isIdle() && !aiming, aiming ? cardTargets : null);
     requestAnimationFrame(step);
   }
 
   /* ------------------------------- wiring -------------------------------- */
 
   document.addEventListener('keydown', (event) => {
+    // Escape cancels card aiming.
+    if (event.key === 'Escape' && cardTargeting !== null) {
+      event.preventDefault();
+      cancelCardTargeting();
+      gameState.message = 'Card cancelled.';
+      updateHud();
+      return;
+    }
     const move = resolveMove(event);
     if (move) {
       event.preventDefault();
@@ -527,7 +748,8 @@
   victoryContinueButton.addEventListener('click', continueNewGamePlus);
   victoryAgainButton.addEventListener('click', newGame);
   victoryTitleButton.addEventListener('click', showTitle);
-  shopCloseButton.addEventListener('click', closeShop);
+  altarCloseButton.addEventListener('click', closeAltar);
+  weaponshopCloseButton.addEventListener('click', closeWeaponShop);
   tutorialOkButton.addEventListener('click', dismissTip);
   tutorialDisableButton.addEventListener('click', disableTipsFromModal);
   optionsButton.addEventListener('click', openOptions);

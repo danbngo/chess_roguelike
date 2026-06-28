@@ -207,3 +207,66 @@ button:disabled {
   color: #fcd34d;
   font-size: 0.9rem;
 }
+
+/* The card bar beneath the board. */
+.card-bar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+  min-height: 3.2rem;
+}
+
+.card-bar:empty {
+  display: none;
+}
+
+.card-slot {
+  position: relative;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(30, 41, 59, 0.9);
+  display: grid;
+  place-items: center;
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.card-slot.empty {
+  color: rgba(148, 163, 184, 0.5);
+  font-size: 0.7rem;
+  border-style: dashed;
+  cursor: default;
+}
+
+.card-slot.ready {
+  border-color: rgba(168, 85, 247, 0.8);
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.45);
+}
+
+.card-slot.targeting {
+  background: rgba(168, 85, 247, 0.45);
+  border-color: #d8b4fe;
+}
+
+.card-slot.cooldown {
+  color: rgba(226, 232, 240, 0.45);
+  cursor: not-allowed;
+}
+
+/* Cooldown countdown badge in the corner of a recharging card. */
+.card-cooldown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.6);
+  color: #f8fafc;
+  font-size: 1.1rem;
+  font-weight: 700;
+}

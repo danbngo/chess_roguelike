@@ -39,18 +39,26 @@ const TUTORIALS = {
   gold: {
     title: 'Gold',
     text:
-      'Gold is spent at shops ($) on upgrades. You also earn a little for every ' +
-      'enemy piece you capture.',
+      'Gold is spent at weapon shops ($) on cards. You also earn a little for ' +
+      'every enemy piece you capture.',
   },
   heart: {
     title: 'Hearts',
     text: 'Hearts restore 1 HP, up to your maximum. Grab them before an enemy tramples them!',
   },
-  shop: {
-    title: 'The shop',
+  altar: {
+    title: 'The altar',
     text:
-      'Spend gold here on upgrades: extra hearts, a quick heal, a longer stride, ' +
-      'or the knight leap. Leave the shop when you are done.',
+      'Altars grant one free blessing — more max HP, sharper sight, faster healing ' +
+      'on descent, or another card slot — then fall dormant. Choose wisely.',
+  },
+  weaponShop: {
+    title: 'The weapon shop',
+    text:
+      'Weapon shops sell cards in the form of enemies you have seen. A card lets ' +
+      'the king move (and capture) like that piece once, then recharges over a few ' +
+      'turns. Click a ready card below the board, then click where to strike. Buy ' +
+      'more card slots at altars.',
   },
   exit: {
     title: 'Descending',
