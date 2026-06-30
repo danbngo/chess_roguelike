@@ -9,18 +9,16 @@
 //   mud    - at most two mud tiles may be crossed in one move, unless jumping.
 //   ice    - you cannot stop on it; you slide to the far end (or until you bump
 //            a unit / hit a wall), moving the maximum distance across it.
-//   mist   - passable, but blocks line of sight (and hides whatever stands in it).
 //
-// Note: "mist" (a terrain tile) is unrelated to the fog of war (the persistent
-// exploration memory tracked in state.explored) — the latter hides unvisited
-// ground entirely.
+// Sight is hidden only by walls and by the fog of war (the persistent exploration
+// memory tracked in state.explored, which conceals unvisited ground entirely).
 
 function terrainAt(state, x, y) {
   return (state.terrain && state.terrain[`${x},${y}`]) || 'normal';
 }
 
 function blocksSight(type) {
-  return type === 'wall' || type === 'mist';
+  return type === 'wall';
 }
 
 // Walls and (deep) water are the terrain nothing may stand on. (Ice can't be
@@ -29,8 +27,8 @@ function isStandable(type) {
   return type !== 'wall' && type !== 'water';
 }
 
-// Symmetric line of sight: clear unless a wall/mist tile lies strictly between
-// the two points (endpoints themselves are not opaque to the look).
+// Symmetric line of sight: clear unless a wall lies strictly between the two
+// points (endpoints themselves are not opaque to the look).
 function hasLineOfSight(state, x0, y0, x1, y1) {
   const dx = Math.abs(x1 - x0);
   const dy = Math.abs(y1 - y0);
@@ -64,11 +62,10 @@ function inLineOfSight(state, x, y) {
   return isWithinBounds(getVisibleBounds(state), x, y) && hasLineOfSight(state, state.player.x, state.player.y, x, y);
 }
 
-// A piece is mutually visible with the king when sight is clear and it is not
-// itself concealed in mist. (Line of sight is symmetric, so this is "it sees you
-// and you see it".)
+// A piece is mutually visible with the king when sight is clear. (Line of sight
+// is symmetric, so this is "it sees you and you see it".)
 function unitInSight(state, x, y) {
-  return inLineOfSight(state, x, y) && terrainAt(state, x, y) !== 'mist';
+  return inLineOfSight(state, x, y);
 }
 
 // The set of tiles the king can currently see (for rendering brightness).

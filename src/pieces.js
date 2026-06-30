@@ -128,7 +128,8 @@ function getPieceMoves(piece, state) {
 // can never carry him farther than he can see (his vision radius).
 function getCardMoves(state, kind) {
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
-  const isEnemy = (x, y) => Boolean(enemyAt(x, y));
+  // Enemies block the card's path, but only capturable ones are valid targets.
+  const isEnemy = (x, y) => capturableAt(state, x, y);
   const range = Math.floor((state.player.vision || state.viewSize) / 2);
   return generateMoves(kind, state, state.player.x, state.player.y, enemyAt, isEnemy).filter(
     (move) => chebyshev(move.x, move.y, state.player.x, state.player.y) <= range,
@@ -161,6 +162,9 @@ function adjacentThreats(piece, state, dirs) {
 // attacks the diagonals, the berolina attacks the orthogonals. Everything else
 // threatens exactly where it can move.
 function getPieceThreats(piece, state) {
+  if (piece.statue) {
+    return []; // an inert statue threatens nothing until it wakes
+  }
   if (piece.kind === 'pawn') {
     return adjacentThreats(piece, state, DIAG);
   }

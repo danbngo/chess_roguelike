@@ -316,6 +316,17 @@ body.in-game canvas {
   font-weight: 600;
 }
 
+.status-line {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #a3e635;
+  min-height: 1.1em;
+}
+
+.status-line:empty {
+  display: none;
+}
+
 .pane-button {
   align-self: flex-start;
 }
@@ -452,6 +463,78 @@ body.in-game canvas {
   gap: 0.25rem;
   font-size: 0.85rem;
   color: #fcd34d;
+}
+
+/* Persistent run history table (title + end screens). */
+.run-table {
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+
+.run-table:empty {
+  display: none;
+}
+
+.score-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: #64748b;
+}
+
+.score-heading {
+  margin: 0 0 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.score-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+}
+
+.score-table th {
+  text-align: right;
+  font-weight: 600;
+  color: #64748b;
+  padding: 0.1rem 0.45rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.score-table th:first-child {
+  text-align: left;
+}
+
+.score-table td {
+  text-align: right;
+  padding: 0.12rem 0.45rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-table td:first-child {
+  text-align: left;
+  color: #64748b;
+}
+
+.score-date {
+  color: #64748b;
+  font-size: 0.74rem;
+}
+
+.score-row-current td {
+  color: #fcd34d;
+  font-weight: 700;
 }
 
 /* Corner pip marking a card that carries a weapon trait. */

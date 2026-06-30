@@ -10,11 +10,21 @@ const STARTING_CARD_SLOTS = 1; // Card slots the king begins with.
 const MAX_UPGRADES_PER_TYPE = 4; // Each altar upgrade type can be taken at most 4 times.
 const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread.
 const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
+const BARKSKIN_TURNS = 5; // Turns the Barkskin potion keeps the king invincible.
+
+// Consumables replace the old hearts: rarer pickups with weighted spawn rates,
+// each an immediate boon or a short status. Weights bias drops toward the humble
+// healing potion; barkskin is the rare prize.
+const CONSUMABLES = {
+  health: { name: 'Potion of Healing', desc: 'Restores all HP.', weight: 5, glyph: '♥', color: '#f472b6' },
+  mana: { name: 'Potion of Mending', desc: 'Recharges every card.', weight: 3, glyph: '✦', color: '#60a5fa' },
+  barkskin: { name: 'Potion of Barkskin', desc: `Invincible for ${BARKSKIN_TURNS} turns.`, weight: 2, glyph: '◈', color: '#a3e635' },
+};
 
 // Terrain is introduced gradually across the run: floor 1 is empty ground, and
 // each listed floor unlocks a new hazard type that grows denser on deeper floors
 // (so the final floor is crowded). The first sighting of each type pops a tip.
-const TERRAIN_UNLOCK = { wall: 2, mud: 3, ice: 4, mist: 5, water: 6 };
+const TERRAIN_UNLOCK = { wall: 2, mud: 3, ice: 4, water: 5 };
 
 const FINAL_FLOOR = 15; // Every multiple of this holds the solo enemy king (15, 30, ...).
 const MAX_ENEMIES = 40; // Hard safety cap so over-time spawning can't run away.
@@ -39,17 +49,28 @@ const ENEMY_UNLOCKS = [
   { kind: 'amazon', floor: 30 }, // 2x final floor: the complete endgame set
 ];
 
-// Altar upgrades: free, but a given altar offers only two of these and grants one
-// before it goes dormant. Each type can be taken at most MAX_UPGRADES_PER_TYPE times.
-const ALTAR_UPGRADES = [
-  { id: 'hp', name: 'Vitality', desc: '+1 max HP (and heal 1)' },
-  { id: 'vision', name: 'Keen Eyes', desc: '+2 sight range (see farther)' },
-  { id: 'regen', name: 'Renewal', desc: '+1 HP mended each time you descend' },
-  { id: 'cards', name: 'Arsenal', desc: '+1 card slot' },
-];
+// Equipment cards: bought (not free) at equipment shops and worn in a limited set
+// of equipment slots, granting a passive stat bonus for as long as they are
+// equipped. Swapping one out removes its bonus, just like a worn item. Vision is
+// deliberately scarcer and pricier (lower weight) so it isn't stacked every floor.
+const STARTING_EQUIP_SLOTS = 2; // Equipment slots the king begins with.
+const EQUIPMENT = {
+  vigor: { name: 'Vigor Charm', stat: 'hp', amount: 1, cost: 4, weight: 3 },
+  renewal: { name: 'Renewal Band', stat: 'regen', amount: 1, cost: 4, weight: 3 },
+  spyglass: { name: 'Spyglass', stat: 'vision', amount: 2, cost: 6, weight: 1 },
+};
+
+function equipDesc(key) {
+  const e = EQUIPMENT[key];
+  if (!e) return '';
+  if (e.stat === 'hp') return `+${e.amount} max HP`;
+  if (e.stat === 'vision') return `+${e.amount} sight range`;
+  if (e.stat === 'regen') return `+${e.amount} HP mended on descent`;
+  return '';
+}
 
 const SHOP_CHOICES = 3; // Cards a weapon shop offers.
-const ALTAR_CHOICES = 2; // Blessings an altar offers.
+const EQUIP_SHOP_CHOICES = 2; // Equipment offered per shop (a weighted sample).
 
 // A card lets the king move once like the given unit. Its gold cost equals the
 // piece's traditional chess value; cards share a fixed cooldown, except pawns

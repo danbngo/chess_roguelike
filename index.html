@@ -17,6 +17,7 @@
               <div id="turn">Turn 0</div>
               <div id="health">HP 3/3</div>
               <div id="gold">Gold 0</div>
+              <div id="status" class="status-line"></div>
             </div>
             <button id="options" type="button" class="pane-button">Options</button>
             <div id="card-bar" class="card-bar"></div>
@@ -37,6 +38,7 @@
               <div class="overlay-buttons">
                 <button id="title-options" type="button">Options</button>
               </div>
+              <div id="title-runtable" class="run-table"></div>
             </div>
           </div>
 
@@ -44,6 +46,7 @@
             <div class="overlay-card">
               <h2 class="overlay-title">The King Has Fallen</h2>
               <div id="gameover-stats" class="run-summary"></div>
+              <div id="gameover-runtable" class="run-table"></div>
               <div class="overlay-buttons">
                 <button id="play-again" type="button">Play Again</button>
                 <button id="to-title" type="button">Title Screen</button>
@@ -55,6 +58,7 @@
             <div class="overlay-card">
               <h2 class="overlay-title">The Realm is Free</h2>
               <p id="victory-stats" class="overlay-sub"></p>
+              <div id="victory-runtable" class="run-table"></div>
               <div class="overlay-buttons">
                 <button id="victory-continue" type="button">New Game +</button>
               </div>
@@ -65,14 +69,14 @@
             </div>
           </div>
 
-          <div id="altar-screen" class="overlay hidden">
+          <div id="equipshop-screen" class="overlay hidden">
             <div class="overlay-card shop-card">
-              <h2 class="overlay-title">Altar</h2>
-              <p class="overlay-sub">Choose one blessing — the altar then falls dormant.</p>
-              <ul id="altar-list" class="shop-list"></ul>
-              <p id="altar-message" class="shop-message"></p>
+              <h2 class="overlay-title">Equipment Shop</h2>
+              <p id="equipshop-gold" class="overlay-sub">Gold 0</p>
+              <ul id="equipshop-list" class="shop-list"></ul>
+              <p id="equipshop-message" class="shop-message"></p>
               <div class="overlay-buttons">
-                <button id="altar-close" type="button">Leave Altar</button>
+                <button id="equipshop-close" type="button">Leave Shop</button>
               </div>
             </div>
           </div>

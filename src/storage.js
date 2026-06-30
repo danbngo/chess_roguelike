@@ -41,6 +41,45 @@ function clearSave() {
   }
 }
 
+/* ------------------------------ run history ------------------------------- */
+
+// A persistent table of finished runs, newest first. Each entry records the
+// final score, depth reached, turns taken, whether the run was won, and when it
+// ended. The list is capped so the store can't grow without bound.
+const SCORES_KEY = 'chess-roguelike-scores-v1';
+const SCORES_MAX = 50;
+
+function readRunScores() {
+  try {
+    const raw = localStorage.getItem(SCORES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Append a finished run and persist. Returns the stored entry (with its id /
+// timestamp filled in) so the caller can highlight it in the table.
+function recordRunScore(entry) {
+  const record = {
+    score: Math.max(0, Math.round(entry.score || 0)),
+    floor: entry.floor || 1,
+    turns: entry.turns || 0,
+    won: Boolean(entry.won),
+    date: Date.now(),
+    id: `run-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+  };
+  try {
+    const scores = readRunScores();
+    scores.unshift(record);
+    localStorage.setItem(SCORES_KEY, JSON.stringify(scores.slice(0, SCORES_MAX)));
+  } catch {
+    /* ignore */
+  }
+  return record;
+}
+
 /* ----------------------------- tutorial prefs ----------------------------- */
 
 const TUTORIAL_ENABLED_KEY = 'chess-roguelike-tutorial-enabled';

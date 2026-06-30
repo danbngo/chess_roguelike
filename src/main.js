@@ -7,6 +7,7 @@
   const turnLabel = document.getElementById('turn');
   const healthLabel = document.getElementById('health');
   const goldLabel = document.getElementById('gold');
+  const statusLabel = document.getElementById('status');
   const logEl = document.getElementById('log');
   const examineEl = document.getElementById('examine');
   const restartButton = document.getElementById('restart');
@@ -17,9 +18,13 @@
   const gameoverStats = document.getElementById('gameover-stats');
   const victoryScreen = document.getElementById('victory-screen');
   const victoryStats = document.getElementById('victory-stats');
-  const altarScreen = document.getElementById('altar-screen');
-  const altarList = document.getElementById('altar-list');
-  const altarMessage = document.getElementById('altar-message');
+  const titleRunTable = document.getElementById('title-runtable');
+  const gameoverRunTable = document.getElementById('gameover-runtable');
+  const victoryRunTable = document.getElementById('victory-runtable');
+  const equipShopScreen = document.getElementById('equipshop-screen');
+  const equipShopGold = document.getElementById('equipshop-gold');
+  const equipShopList = document.getElementById('equipshop-list');
+  const equipShopMessage = document.getElementById('equipshop-message');
   const weaponshopScreen = document.getElementById('weaponshop-screen');
   const weaponshopGold = document.getElementById('weaponshop-gold');
   const weaponshopList = document.getElementById('weaponshop-list');
@@ -41,7 +46,7 @@
   const victoryContinueButton = document.getElementById('victory-continue');
   const victoryAgainButton = document.getElementById('victory-again');
   const victoryTitleButton = document.getElementById('victory-title');
-  const altarCloseButton = document.getElementById('altar-close');
+  const equipShopCloseButton = document.getElementById('equipshop-close');
   const weaponshopCloseButton = document.getElementById('weaponshop-close');
   const tutorialOkButton = document.getElementById('tutorial-ok');
   const tutorialDisableButton = document.getElementById('tutorial-disable');
@@ -58,7 +63,7 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'playing' | 'altar' | 'weaponshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'playing' | 'equipshop' | 'weaponshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
 
@@ -97,7 +102,21 @@
     // Dread rises as the king lingers and as his health falls.
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
+    updateStatusLine();
     renderCards();
+  }
+
+  // Show any active timed statuses (e.g. Barkskin) with their remaining turns.
+  function updateStatusLine() {
+    if (!statusLabel) {
+      return;
+    }
+    const statuses = (gameState && gameState.player && gameState.player.statuses) || {};
+    const parts = [];
+    if (statuses.barkskin > 0) {
+      parts.push(`Barkskin ${statuses.barkskin}`);
+    }
+    statusLabel.textContent = parts.join(' · ');
   }
 
   /* -------------------------------- log --------------------------------- */
@@ -242,7 +261,6 @@
     water: 'Water — impassable, but clear to see through',
     mud: 'Mud — cross at most two in a move',
     ice: 'Ice — slippery, you slide across',
-    mist: 'Mist — passable but blocks sight',
   };
 
   // Build a human description of a tile (or null if there is nothing to say).
@@ -253,7 +271,7 @@
     if (!(gameState.explored && gameState.explored[`${tx},${ty}`])) {
       return 'Unexplored — shrouded in fog of war.';
     }
-    const visible = inLineOfSight(gameState, tx, ty) && terrainAt(gameState, tx, ty) !== 'mist';
+    const visible = inLineOfSight(gameState, tx, ty);
     const lines = [];
     if (gameState.player.x === tx && gameState.player.y === ty) {
       lines.push('Your king');
@@ -263,20 +281,31 @@
     if (visible) {
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
-        const tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
+        let tag;
+        if (enemy.statue) {
+          tag = ' (statue — wakes if you step beside it)';
+        } else if (enemy.turret) {
+          tag = ' (turret — fixed, fires its pattern)';
+        } else if (enemy.boss && bossShielded(gameState)) {
+          tag = ' (boss — invulnerable while guards remain)';
+        } else if (enemy.boss) {
+          tag = ' (boss — vulnerable!)';
+        } else {
+          tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
+        }
         lines.push(`Enemy: ${enemy.kind}${tag}`);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
       if (item) {
-        lines.push(item.kind === 'heart' ? 'Heart — restores 1 HP' : `Gold — ${item.amount}`);
+        lines.push(item.kind === 'consumable' ? potionLabel(item.potion) : `Gold — ${item.amount}`);
       }
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
       lines.push('Stairs down to the next floor');
     }
-    if (onBuilding(gameState.altar)) {
-      lines.push(gameState.altar.used ? 'Altar — already spent' : 'Altar — a free blessing');
+    if (onBuilding(gameState.equipShop)) {
+      lines.push('Equipment shop — buy passive gear');
     }
     if (onBuilding(gameState.weaponShop)) {
       lines.push('Weapon shop — buy cards');
@@ -322,6 +351,12 @@
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
   };
 
+  // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
+  function potionLabel(potion) {
+    const info = CONSUMABLES[potion];
+    return info ? `${info.name} — ${info.desc}` : 'A mysterious potion.';
+  }
+
   function setExamineEmpty(text) {
     examineEl.innerHTML = '';
     const p = document.createElement('p');
@@ -357,7 +392,7 @@
       return;
     }
     examineEl.innerHTML = '';
-    const visible = inLineOfSight(gameState, tx, ty) && terrainAt(gameState, tx, ty) !== 'mist';
+    const visible = inLineOfSight(gameState, tx, ty);
     const terrain = terrainAt(gameState, tx, ty);
     addExamineBlock(`Tile (${tx}, ${ty})`, TERRAIN_NAMES[terrain] || terrain);
 
@@ -381,7 +416,7 @@
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
       if (item) {
-        addExamineBlock('Item', item.kind === 'heart' ? 'Heart — restores 1 HP.' : `Gold — worth ${item.amount}.`);
+        addExamineBlock('Item', item.kind === 'consumable' ? potionLabel(item.potion) : `Gold — worth ${item.amount}.`);
       }
     }
 
@@ -389,8 +424,8 @@
     if (onBuilding(gameState.exit)) {
       addExamineBlock('Stairs', 'Descend to the next floor (the king mends a little).');
     }
-    if (onBuilding(gameState.altar)) {
-      addExamineBlock('Altar', gameState.altar.used ? 'Already spent — dormant.' : 'A free blessing: pick one of two upgrades.');
+    if (onBuilding(gameState.equipShop)) {
+      addExamineBlock('Equipment shop', 'Buy passive equipment (worn in your equipment slots) for gold.');
     }
     if (onBuilding(gameState.weaponShop)) {
       addExamineBlock('Weapon Shop', 'Buy movement cards drawn from foes you have seen.');
@@ -529,6 +564,15 @@
     if (visible.some((enemy) => enemy.kind === 'king')) {
       queueTip('enemyKing');
     }
+    if (visible.some((enemy) => enemy.statue)) {
+      queueTip('statue');
+    }
+    if (visible.some((enemy) => enemy.turret)) {
+      queueTip('turret');
+    }
+    if (visible.some((enemy) => enemy.boss)) {
+      queueTip('boss');
+    }
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
     }
@@ -575,7 +619,7 @@
     titleScreen.classList.add('hidden');
     gameoverScreen.classList.add('hidden');
     victoryScreen.classList.add('hidden');
-    altarScreen.classList.add('hidden');
+    equipShopScreen.classList.add('hidden');
     weaponshopScreen.classList.add('hidden');
     tutorialScreen.classList.add('hidden');
     optionsScreen.classList.add('hidden');
@@ -596,6 +640,7 @@
     hideOverlays();
     titleScreen.classList.remove('hidden');
     continueButton.disabled = !hasSave();
+    renderRunTable(titleRunTable, null);
     logEl.innerHTML = '';
     lastLogged = null;
   }
@@ -666,12 +711,82 @@
     }
   }
 
+  // Compact date label for the run table (e.g. "Jun 30").
+  function shortDate(ts) {
+    try {
+      return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  }
+
+  // Build one labelled scores table (a heading plus rows). Highlights the row
+  // whose id matches `highlightId` (the run that just finished).
+  function buildScoreTable(heading, rows, highlightId) {
+    const wrap = document.createElement('div');
+    wrap.className = 'score-block';
+    const h = document.createElement('p');
+    h.className = 'score-heading';
+    h.textContent = heading;
+    wrap.append(h);
+
+    const table = document.createElement('table');
+    table.className = 'score-table';
+    table.innerHTML = '<thead><tr><th>#</th><th>Score</th><th>Floor</th><th>Turns</th></tr></thead>';
+    const body = document.createElement('tbody');
+    rows.forEach((run, i) => {
+      const tr = document.createElement('tr');
+      if (run.id && run.id === highlightId) {
+        tr.className = 'score-row-current';
+      }
+      const mark = run.won ? ' ♚' : '';
+      tr.innerHTML =
+        `<td>${i + 1}</td>` +
+        `<td>${run.score}${mark}</td>` +
+        `<td>${run.floor}</td>` +
+        `<td>${run.turns}</td>` +
+        `<td class="score-date">${shortDate(run.date)}</td>`;
+      body.append(tr);
+    });
+    table.append(body);
+    wrap.append(table);
+    return wrap;
+  }
+
+  // Render the persistent run history into a container: best runs of all time,
+  // and the most recent runs. `highlightId` flags the just-finished run.
+  function renderRunTable(container, highlightId) {
+    if (!container) {
+      return;
+    }
+    container.innerHTML = '';
+    const scores = readRunScores();
+    if (!scores.length) {
+      const empty = document.createElement('p');
+      empty.className = 'score-empty';
+      empty.textContent = 'No runs yet — descend and make your mark.';
+      container.append(empty);
+      return;
+    }
+    const best = scores.slice().sort((a, b) => b.score - a.score).slice(0, 5);
+    const recent = scores.slice(0, 5); // stored newest-first already
+    container.append(buildScoreTable('Best runs', best, highlightId));
+    container.append(buildScoreTable('Recent runs', recent, highlightId));
+  }
+
   function onGameOver() {
     screen = 'gameover';
     document.body.classList.remove('in-game');
     hideTilePopover();
     clearSave();
+    const entry = recordRunScore({
+      score: finalScore(gameState),
+      floor: gameState.floor,
+      turns: gameState.player.totalTurns,
+      won: false,
+    });
     fillRunSummary(gameoverStats);
+    renderRunTable(gameoverRunTable, entry.id);
     hideOverlays();
     gameoverScreen.classList.remove('hidden');
   }
@@ -681,65 +796,122 @@
     document.body.classList.remove('in-game');
     hideTilePopover();
     clearSave();
-    victoryStats.textContent = `Score ${gameState.score} · ${gameState.turn} turns on the final floor.`;
+    const score = finalScore(gameState);
+    const entry = recordRunScore({
+      score,
+      floor: gameState.floor,
+      turns: gameState.player.totalTurns,
+      won: true,
+    });
+    victoryStats.textContent = `Reached floor ${gameState.floor} in ${gameState.player.totalTurns} turns · Score ${score}`;
+    renderRunTable(victoryRunTable, entry.id);
     hideOverlays();
     victoryScreen.classList.remove('hidden');
   }
 
-  /* ------------------------------- altar -------------------------------- */
+  /* --------------------------- equipment shop --------------------------- */
 
-  function renderAltar() {
-    altarMessage.textContent = gameState.altarMessage || '';
-    altarList.innerHTML = '';
+  // The king's currently worn equipment, as a short summary line.
+  function wornEquipmentSummary() {
+    const worn = gameState.player.equipment || [];
+    if (!worn.length) {
+      return 'Nothing equipped.';
+    }
+    return `Worn: ${worn.map((w) => EQUIPMENT[w.key].name).join(', ')}`;
+  }
 
-    const offers = (gameState.altar && gameState.altar.offers) || [];
-    const counts = gameState.player.upgradeCounts || {};
-    for (const id of offers) {
-      const upgrade = ALTAR_UPGRADES.find((u) => u.id === id);
-      if (!upgrade) continue;
-      const taken = counts[id] || 0;
-      const maxed = taken >= MAX_UPGRADES_PER_TYPE;
+  function renderEquipShop() {
+    equipShopGold.textContent = `Gold ${gameState.player.gold} · Slots ${gameState.player.equipment.length}/${gameState.player.maxEquipment}`;
+    equipShopMessage.textContent = gameState.shopMessage || wornEquipmentSummary();
+    equipShopList.innerHTML = '';
+
+    const p = gameState.player;
+    const offers = (gameState.equipShop && gameState.equipShop.offers) || [];
+    offers.forEach((offer, index) => {
+      const def = EQUIPMENT[offer.key];
+      if (!def) return;
+      const slotsFull = p.equipment.length >= p.maxEquipment;
 
       const row = document.createElement('li');
       row.className = 'shop-item';
 
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${upgrade.name} <small>(${taken}/${MAX_UPGRADES_PER_TYPE})</small></span><span class="shop-desc">${upgrade.desc}</span>`;
+      info.innerHTML = `<span class="shop-name">${def.name}</span><span class="shop-desc">${equipDesc(offer.key)}</span>`;
 
-      const take = document.createElement('button');
-      take.type = 'button';
-      if (maxed) {
-        take.textContent = 'Maxed';
-        take.disabled = true;
+      const buy = document.createElement('button');
+      buy.type = 'button';
+      if (offer.sold) {
+        buy.textContent = 'Sold';
+        buy.disabled = true;
       } else {
-        take.textContent = 'Take';
-        take.addEventListener('click', () => {
-          applyState(useAltar(gameState, id), true);
-          if (gameState.altar && gameState.altar.used) {
-            closeAltar(); // a blessing was claimed; the altar is spent
+        buy.textContent = `${def.cost}g`;
+        buy.disabled = p.gold < def.cost;
+        buy.addEventListener('click', () => {
+          if (slotsFull) {
+            promptReplaceEquipment(index);
           } else {
-            renderAltar(); // e.g. maxed pick — let them choose again
+            applyState(buyEquipment(gameState, index), true);
+            renderEquipShop();
           }
         });
       }
 
-      row.append(info, take);
-      altarList.append(row);
+      row.append(info, buy);
+      equipShopList.append(row);
+    });
+  }
+
+  // With equipment slots full, ask which worn piece to swap out, then buy.
+  function promptReplaceEquipment(offerIndex) {
+    const p = gameState.player;
+    const offer = gameState.equipShop.offers[offerIndex];
+    const def = EQUIPMENT[offer.key];
+    if (p.gold < def.cost) {
+      gameState.shopMessage = 'Not enough gold.';
+      renderEquipShop();
+      return;
     }
+    equipShopMessage.textContent = `Replace which piece with the ${def.name}?`;
+    equipShopList.innerHTML = '';
+    p.equipment.forEach((worn, index) => {
+      const wornDef = EQUIPMENT[worn.key];
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML = `<span class="shop-name">${wornDef.name}</span><span class="shop-desc">${equipDesc(worn.key)}</span>`;
+      const swap = document.createElement('button');
+      swap.type = 'button';
+      swap.textContent = 'Replace';
+      swap.addEventListener('click', () => {
+        applyState(buyEquipment(gameState, offerIndex, index), true);
+        renderEquipShop();
+      });
+      row.append(info, swap);
+      equipShopList.append(row);
+    });
+    const cancel = document.createElement('li');
+    cancel.className = 'shop-item';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', renderEquipShop);
+    cancel.append(cancelBtn);
+    equipShopList.append(cancel);
   }
 
-  function openAltar() {
-    screen = 'altar';
-    gameState.altarMessage = '';
-    renderAltar();
-    altarScreen.classList.remove('hidden');
-    queueTip('altar');
+  function openEquipShop() {
+    screen = 'equipshop';
+    gameState.shopMessage = '';
+    renderEquipShop();
+    equipShopScreen.classList.remove('hidden');
+    queueTip('equipshop');
   }
 
-  function closeAltar() {
+  function closeEquipShop() {
     screen = 'playing';
-    altarScreen.classList.add('hidden');
+    equipShopScreen.classList.add('hidden');
     saveGame(gameState);
   }
 
@@ -871,7 +1043,7 @@
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
 
     if (nextState.lastAction === 'item') {
-      queueTip(nextState.pickupKind === 'gold' ? 'gold' : 'heart');
+      queueTip(nextState.pickupKind === 'gold' ? 'gold' : 'consumable');
     }
     if (nextState.won) {
       onVictory();
@@ -922,13 +1094,13 @@
 
     // Turn complete: maybe reinforce, persist, then open a building if stepped on.
     applyState(maybeSpawnEnemy(gameState), true);
-    const altarPending = gameState.pendingAltar;
+    const equipShopPending = gameState.pendingEquipShop;
     const weaponShopPending = gameState.pendingWeaponShop;
-    gameState.pendingAltar = false;
+    gameState.pendingEquipShop = false;
     gameState.pendingWeaponShop = false;
     saveGame(gameState);
-    if (altarPending) {
-      openAltar();
+    if (equipShopPending) {
+      openEquipShop();
     } else if (weaponShopPending) {
       openWeaponShop();
     }
@@ -1136,7 +1308,7 @@
   toTitleButton.addEventListener('click', showTitle);
   victoryAgainButton.addEventListener('click', newGame);
   victoryTitleButton.addEventListener('click', showTitle);
-  altarCloseButton.addEventListener('click', closeAltar);
+  equipShopCloseButton.addEventListener('click', closeEquipShop);
   weaponshopCloseButton.addEventListener('click', closeWeaponShop);
   tutorialOkButton.addEventListener('click', dismissTip);
   tutorialDisableButton.addEventListener('click', disableTipsFromModal);

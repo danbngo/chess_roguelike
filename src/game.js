@@ -10,7 +10,47 @@ function createEnemy(type, x, y) {
     awake: false,
     surprised: false,
     frustrated: false,
+    // Special states (all default off — a plain hunting piece):
+    //   statue - inert stone until the king steps beside it, then it wakes.
+    //   turret - a fixed emplacement that fires its piece pattern; never moves
+    //            and cannot be destroyed.
+    //   boss   - the floor's guardian; cannot be captured while killable guards
+    //            remain in the king's sight, and its fall opens the descent.
+    statue: false,
+    turret: false,
+    boss: false,
   };
+}
+
+// A non-boss, killable piece (not a statue or turret) that is currently in the
+// king's sight — i.e. a guard that still shields the floor's boss.
+function shieldsBoss(state, enemy) {
+  return !enemy.boss && !enemy.statue && !enemy.turret && unitInSight(state, enemy.x, enemy.y);
+}
+
+// True while any guard still stands in view, keeping the boss invulnerable.
+function bossShielded(state) {
+  return state.enemies.some((e) => shieldsBoss(state, e));
+}
+
+// Whether a given enemy can be captured right now: statues and turrets never
+// can, and a boss only once its guards have fallen out of sight.
+function isCapturable(state, enemy) {
+  if (!enemy) return false;
+  if (enemy.statue || enemy.turret) return false;
+  if (enemy.boss && bossShielded(state)) return false;
+  return true;
+}
+
+// The capturable enemy on a tile (or false) — what the king may legally land on.
+function capturableAt(state, x, y) {
+  return isCapturable(state, state.enemies.find((e) => e.x === x && e.y === y));
+}
+
+// Has the floor's boss been defeated? True when no boss piece remains. (A floor
+// with no boss at all counts as cleared.)
+function bossDefeated(state) {
+  return !state.enemies.some((e) => e.boss);
 }
 
 // The spawn pool for a floor: every enemy kind unlocked at or before it. The king
@@ -26,6 +66,58 @@ function randomEnemyKind(floor) {
   return pool[randomInt(pool.length)];
 }
 
+// Pick a consumable kind by spawn weight (common healing, rare barkskin).
+function randomConsumable() {
+  const entries = Object.entries(CONSUMABLES);
+  const total = entries.reduce((sum, [, c]) => sum + c.weight, 0);
+  let roll = Math.random() * total;
+  for (const [key, c] of entries) {
+    roll -= c.weight;
+    if (roll < 0) {
+      return key;
+    }
+  }
+  return entries[0][0];
+}
+
+// The king is immune to harm while warded (a one-turn Riposte) or under a timed
+// invincibility status (Barkskin).
+function isInvincible(player) {
+  return Boolean(player.warded) || (player.statuses && player.statuses.barkskin > 0);
+}
+
+// Drink a consumable: an immediate boon or a short status. Sets the floor message.
+function applyConsumable(state, potion) {
+  const p = state.player;
+  if (!p.statuses) p.statuses = {};
+  if (potion === 'health') {
+    p.hp = p.maxHp;
+    state.message = 'A Potion of Healing restores you to full health.';
+  } else if (potion === 'mana') {
+    for (const card of p.cards || []) {
+      card.remaining = 0;
+    }
+    state.message = 'A Potion of Mending recharges every card.';
+  } else if (potion === 'barkskin') {
+    p.statuses.barkskin = BARKSKIN_TURNS;
+    state.message = `Barkskin hardens your hide — invincible for ${BARKSKIN_TURNS} turns.`;
+  }
+}
+
+// Age the king's timed statuses by one turn, dropping any that have run out.
+function tickStatuses(player) {
+  if (!player.statuses) {
+    player.statuses = {};
+    return;
+  }
+  for (const key of Object.keys(player.statuses)) {
+    player.statuses[key] -= 1;
+    if (player.statuses[key] <= 0) {
+      delete player.statuses[key];
+    }
+  }
+}
+
 // Return up to `count` distinct random members of `items` (a shuffled sample).
 function pickSome(items, count) {
   const pool = items.slice();
@@ -36,19 +128,76 @@ function pickSome(items, count) {
   return picked;
 }
 
-// Altar upgrade ids the king can still take (not yet at the per-type cap). The
-// card-slot upgrade is withheld until he actually owns a card.
-function availableAltarUpgrades(player) {
-  const counts = player.upgradeCounts || {};
-  return ALTAR_UPGRADES.filter((upgrade) => {
-    if ((counts[upgrade.id] || 0) >= MAX_UPGRADES_PER_TYPE) {
-      return false;
+// A weighted sample of `count` distinct equipment keys (vision is scarce, so it
+// surfaces less often than the cheaper hp / regen charms).
+function sampleEquipment(count) {
+  const pool = Object.entries(EQUIPMENT).map(([key, e]) => ({ key, weight: e.weight }));
+  const picked = [];
+  while (pool.length && picked.length < count) {
+    const total = pool.reduce((sum, p) => sum + p.weight, 0);
+    let roll = Math.random() * total;
+    let idx = 0;
+    for (let i = 0; i < pool.length; i += 1) {
+      roll -= pool[i].weight;
+      if (roll < 0) {
+        idx = i;
+        break;
+      }
     }
-    if (upgrade.id === 'cards' && (!player.cards || player.cards.length === 0)) {
-      return false;
+    picked.push(pool.splice(idx, 1)[0].key);
+  }
+  return picked;
+}
+
+// Apply (sign +1) or remove (sign -1) a worn equipment's passive stat bonus.
+function applyEquipBonus(state, item, sign) {
+  const p = state.player;
+  if (item.stat === 'hp') {
+    p.maxHp += sign * item.amount;
+    if (sign > 0) {
+      p.hp += item.amount; // donning a vigor charm heals you for its value
     }
-    return true;
-  }).map((upgrade) => upgrade.id);
+    if (p.hp > p.maxHp) p.hp = p.maxHp; // removing one may force a clamp
+    if (p.hp < 1) p.hp = 1;
+  } else if (item.stat === 'vision') {
+    p.vision += sign * item.amount;
+    state.viewSize = p.vision; // keep the legacy mirror in sync
+  } else if (item.stat === 'regen') {
+    p.regen += sign * item.amount;
+  }
+}
+
+// Buy an equipment-shop offer, donning it in a free slot or swapping out the worn
+// piece at `replaceIndex` when slots are full. `shopMessage` reports the result.
+function buyEquipment(state, offerIndex, replaceIndex) {
+  const next = structuredClone(state);
+  const p = next.player;
+  const offer = next.equipShop && next.equipShop.offers && next.equipShop.offers[offerIndex];
+  if (!offer || offer.sold || !EQUIPMENT[offer.key]) {
+    return next;
+  }
+  const def = EQUIPMENT[offer.key];
+  if (p.gold < def.cost) {
+    next.shopMessage = 'Not enough gold.';
+    return next;
+  }
+  const worn = { key: offer.key, stat: def.stat, amount: def.amount };
+  if (p.equipment.length < p.maxEquipment) {
+    p.equipment.push(worn);
+  } else if (replaceIndex != null && replaceIndex >= 0 && replaceIndex < p.equipment.length) {
+    applyEquipBonus(next, p.equipment[replaceIndex], -1); // shed the old piece's bonus
+    p.equipment[replaceIndex] = worn;
+  } else {
+    next.shopMessage = 'Equipment slots full — choose one to replace.';
+    return next;
+  }
+  applyEquipBonus(next, worn, 1);
+  p.gold -= def.cost;
+  p.boughtEquipment = true;
+  offer.sold = true;
+  next.shopMessage = `Equipped the ${def.name}.`;
+  updateDiscovery(next); // a Spyglass may dispel fog immediately
+  return next;
 }
 
 // Roll a weapon trait for a card bought on this floor: none on floor 1, scaling up
@@ -127,7 +276,6 @@ function generateTerrain(floor, player) {
   if (tiers('mud')) blob('mud', 2 * tiers('mud'), 4);
   if (tiers('water')) blob('water', 2 * tiers('water'), 4);
   if (tiers('ice')) blob('ice', 2 * tiers('ice'), 4);
-  if (tiers('mist')) blob('mist', 2 * tiers('mist'), 4);
   if (tiers('wall')) wallLine(2 * tiers('wall'), 3); // Walls last so they win any overlap.
   return terrain;
 }
@@ -148,10 +296,13 @@ function generateFloor(floor, carryPlayer, score) {
         regen: STARTING_REGEN,
         maxCards: STARTING_CARD_SLOTS,
         cards: [],
+        maxEquipment: STARTING_EQUIP_SLOTS,
+        equipment: [], // worn equipment cards, each {key, stat, amount}
         seenKinds: [],
         weaponsUnlocked: false,
         upgradeCounts: { hp: 0, vision: 0, regen: 0, cards: 0 },
         warded: false,
+        statuses: {}, // active timed effects (e.g. barkskin), keyed to turns left
         totalTurns: 0,
         // Conduct trackers (for end-of-run honours; never affect score).
         usedAltar: false,
@@ -164,9 +315,12 @@ function generateFloor(floor, carryPlayer, score) {
   if (player.regen == null) player.regen = STARTING_REGEN;
   if (player.maxCards == null) player.maxCards = STARTING_CARD_SLOTS;
   if (!Array.isArray(player.cards)) player.cards = [];
+  if (player.maxEquipment == null) player.maxEquipment = STARTING_EQUIP_SLOTS;
+  if (!Array.isArray(player.equipment)) player.equipment = [];
   if (!Array.isArray(player.seenKinds)) player.seenKinds = [];
   if (player.weaponsUnlocked == null) player.weaponsUnlocked = false;
   if (!player.upgradeCounts) player.upgradeCounts = { hp: 0, vision: 0, regen: 0, cards: 0 };
+  if (!player.statuses) player.statuses = {};
   if (player.totalTurns == null) player.totalTurns = 0;
 
   const state = {
@@ -184,7 +338,7 @@ function generateFloor(floor, carryPlayer, score) {
     items: [],
     spatters: [], // decaying blood marks left by kills / the king being struck
     exit: null,
-    altar: null, // free, one-use stat shrine
+    equipShop: null, // sells passive equipment cards
     weaponShop: null, // sells movement cards (once unlocked)
     floor,
     turn: 0,
@@ -192,7 +346,7 @@ function generateFloor(floor, carryPlayer, score) {
     enemyTurn: false,
     gameOver: false,
     won: false,
-    pendingAltar: false,
+    pendingEquipShop: false,
     pendingWeaponShop: false,
     message: 'A new floor. Seek the exit.',
     lastAction: 'start',
@@ -237,11 +391,13 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  // Items are placed once, at floor creation, and never respawn.
-  for (let i = 0; i < 2; i += 1) {
+  // Items are placed once, at floor creation, and never respawn. Consumables are
+  // rarer than the old hearts: usually one per floor, occasionally two.
+  const consumableCount = 1 + (randomInt(3) === 0 ? 1 : 0);
+  for (let i = 0; i < consumableCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (tile) {
-      state.items.push({ id: `heart-${floor}-${i}`, kind: 'heart', x: tile.x, y: tile.y });
+      state.items.push({ id: `potion-${floor}-${i}`, kind: 'consumable', potion: randomConsumable(), x: tile.x, y: tile.y });
     }
   }
   for (let i = 0; i < 3 + floor; i += 1) {
@@ -260,14 +416,13 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  // Every floor holds an altar (free, single-use stat shrine) that offers two of
-  // the still-available blessings.
-  const altarOffers = pickSome(availableAltarUpgrades(player), ALTAR_CHOICES);
-  if (altarOffers.length) {
-    const altarTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
-    if (altarTile) {
+  // Every floor holds an equipment shop selling a weighted sample of passive gear.
+  {
+    const offers = sampleEquipment(EQUIP_SHOP_CHOICES).map((key) => ({ key, sold: false }));
+    const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+    if (shopTile) {
       // Hidden under fog of war until the king explores its tile.
-      state.altar = { x: altarTile.x, y: altarTile.y, discovered: false, used: false, offers: altarOffers };
+      state.equipShop = { x: shopTile.x, y: shopTile.y, discovered: false, offers };
     }
   }
 
@@ -284,6 +439,56 @@ function generateFloor(floor, carryPlayer, score) {
       const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
       if (shopTile) {
         state.weaponShop = { x: shopTile.x, y: shopTile.y, discovered: false, offers: shopOffers };
+      }
+    }
+  }
+
+  // Tiles whose surroundings must stay safe — no turret may threaten a feature,
+  // and statues may stand guard a step away from one.
+  const featureTiles = [];
+  for (const f of [state.exit, state.equipShop, state.weaponShop]) {
+    if (f) featureTiles.push(`${f.x},${f.y}`);
+  }
+  const featureSet = new Set(featureTiles);
+
+  const addStatue = (type, x, y) => {
+    const e = createEnemy(type, x, y);
+    e.statue = true;
+    state.enemies.push(e);
+  };
+
+  // Statues: inert pieces scattered out of sight, plus the occasional sentinel
+  // standing a tile away from a feature (a nasty surprise for a careless king).
+  const statueCount = 2 + randomInt(3);
+  for (let i = 0; i < statueCount; i += 1) {
+    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 3);
+    if (tile) addStatue(randomEnemyKind(floor), tile.x, tile.y);
+  }
+  for (const key of featureTiles) {
+    if (Math.random() < 0.5) continue;
+    const [fx, fy] = key.split(',').map(Number);
+    const spot = place((x, y) => standable(x, y) && chebyshev(x, y, fx, fy) === 1 && chebyshev(x, y, player.x, player.y) >= 2);
+    if (spot) addStatue(randomEnemyKind(floor), spot.x, spot.y);
+  }
+
+  // Turrets: fixed emplacements, introduced a few floors in. A candidate is only
+  // accepted if its fire covers no feature tile and not the king's start, so the
+  // exit / shops / altar are never made deadly to reach.
+  if (floor >= 3) {
+    const turretCount = 1 + randomInt(2);
+    const startKey = `${player.x},${player.y}`;
+    for (let i = 0; i < turretCount; i += 1) {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const tile = findFreeTile(occupied, (x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
+        if (!tile) break;
+        const probe = createEnemy(randomEnemyKind(floor), tile.x, tile.y);
+        probe.turret = true;
+        const threats = getPieceThreats(probe, state);
+        const unsafe = threats.some((t) => featureSet.has(`${t.x},${t.y}`) || `${t.x},${t.y}` === startKey);
+        if (unsafe) continue;
+        occupied.add(tile.key);
+        state.enemies.push(probe);
+        break;
       }
     }
   }
@@ -336,12 +541,9 @@ function rememberItems(state) {
   if (!state.itemMemory) state.itemMemory = {};
   for (const key of computeVisibleTiles(state)) {
     const [x, y] = key.split(',').map(Number);
-    if (terrainAt(state, x, y) === 'mist') {
-      continue; // can't make out what's inside mist
-    }
     const item = state.items.find((i) => i.x === x && i.y === y);
     if (item) {
-      state.itemMemory[key] = { kind: item.kind, amount: item.amount };
+      state.itemMemory[key] = { kind: item.kind, amount: item.amount, potion: item.potion };
     } else {
       delete state.itemMemory[key];
     }
@@ -368,8 +570,8 @@ function updateDiscovery(state) {
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) {
     state.exit.discovered = true;
   }
-  if (state.altar && state.explored[`${state.altar.x},${state.altar.y}`]) {
-    state.altar.discovered = true;
+  if (state.equipShop && state.explored[`${state.equipShop.x},${state.equipShop.y}`]) {
+    state.equipShop.discovered = true;
   }
   if (state.weaponShop && state.explored[`${state.weaponShop.x},${state.weaponShop.y}`]) {
     state.weaponShop.discovered = true;
@@ -381,7 +583,9 @@ function updateDiscovery(state) {
 function getPlayerMoves(state) {
   const p = state.player;
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
-  const isEnemy = (x, y) => Boolean(enemyAt(x, y));
+  // Every enemy blocks the king's path, but only capturable ones may be landed
+  // on (statues, turrets, and a shielded boss block without being a target).
+  const isEnemy = (x, y) => capturableAt(state, x, y);
   const moves = [];
   const seen = new Set();
   const add = (tile) => {
@@ -425,6 +629,7 @@ function applyArrival(next, x, y) {
   }
   next.spatters = decaySpatters(next.spatters);
   next.player.warded = false;
+  tickStatuses(next.player);
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   if (enemy) {
@@ -439,14 +644,14 @@ function applyArrival(next, x, y) {
   const itemIndex = next.items.findIndex((item) => item.x === x && item.y === y);
   if (itemIndex >= 0) {
     const [item] = next.items.splice(itemIndex, 1);
-    if (item.kind === 'heart') {
-      next.player.hp = Math.min(next.player.maxHp, next.player.hp + 1);
-      next.message = 'A heart restores 1 HP.';
+    if (item.kind === 'consumable') {
+      applyConsumable(next, item.potion);
+      next.pickupKind = item.potion;
     } else {
       next.player.gold += item.amount;
       next.message = `You collect ${item.amount} gold.`;
+      next.pickupKind = item.kind;
     }
-    next.pickupKind = item.kind;
     next.lastAction = 'item';
   }
 
@@ -456,14 +661,26 @@ function applyArrival(next, x, y) {
     return next;
   }
 
-  if (next.altar && next.altar.x === x && next.altar.y === y && !next.altar.used) {
-    next.pendingAltar = true;
-    next.message = 'An altar. It awakens once the enemies have moved.';
+  if (next.equipShop && next.equipShop.x === x && next.equipShop.y === y) {
+    next.pendingEquipShop = true;
+    next.message = 'An equipment shop! It opens once the enemies have moved.';
   }
 
   if (next.weaponShop && next.weaponShop.x === x && next.weaponShop.y === y) {
     next.pendingWeaponShop = true;
     next.message = 'A weapon shop! It opens once the enemies have moved.';
+  }
+
+  // Statues wake the moment the king steps beside them, becoming ordinary pieces
+  // that the coming enemy phase catches by surprise (one turn frozen, then hunt).
+  for (const e of next.enemies) {
+    if (e.statue && chebyshev(e.x, e.y, x, y) <= 1) {
+      e.statue = false;
+      e.awake = false;
+      e.surprised = false;
+      next.awokeStatue = true;
+      next.message = `A ${e.kind} statue cracks to life!`;
+    }
   }
 
   updateDiscovery(next);
@@ -509,8 +726,8 @@ function useCard(state, cardIndex, x, y) {
 // if an enemy was there.
 function slayEnemyAt(state, tx, ty) {
   const enemy = state.enemies.find((e) => e.x === tx && e.y === ty);
-  if (!enemy) {
-    return false;
+  if (!enemy || !isCapturable(state, enemy)) {
+    return false; // statues, turrets, and a shielded boss shrug off area attacks
   }
   state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
   state.player.killedEnemy = true;
@@ -622,12 +839,19 @@ function beginEnemyPhase(state) {
 
   for (const enemy of next.enemies) {
     enemy.frustrated = false;
+    if (enemy.statue) {
+      continue; // inert stone — never wakes from sight, only from proximity
+    }
     if (!unitInSight(next, enemy.x, enemy.y)) {
       enemy.awake = false;
       enemy.surprised = false;
-      wanderEnemy(next, enemy);
+      if (!enemy.turret) {
+        wanderEnemy(next, enemy); // turrets are fixed; everything else wanders
+      }
       continue;
     }
+    // In sight: freeze in surprise for one turn (telegraphing its threat), then
+    // act. Turrets "act" by firing from where they stand; others move/hunt.
     if (!enemy.awake) {
       enemy.awake = true;
       enemy.surprised = true;
@@ -646,12 +870,45 @@ function beginEnemyPhase(state) {
   return { state: next, moverIds };
 }
 
+// A turret's turn: it holds its ground and fires along its piece pattern. If the
+// king stands on one of its threatened tiles he is struck (unless warded); the
+// turret is never expended, so it keeps watch indefinitely.
+function fireTurret(state, turret) {
+  const hitsKing = getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
+  if (!hitsKing) {
+    state.message = `A ${turret.kind} turret takes aim.`;
+    state.lastAction = 'enemy';
+    return state;
+  }
+  if (isInvincible(state.player)) {
+    state.message = `The king shrugs off a ${turret.kind} turret's shot!`;
+    state.lastAction = 'enemy';
+    return state;
+  }
+  state.player.hp -= 1;
+  state.player.wasHit = true;
+  addSpatter(state, state.player.x, state.player.y);
+  state.message = `A ${turret.kind} turret blasts the king!`;
+  state.lastAction = 'hit';
+  if (state.player.hp <= 0) {
+    state.gameOver = true;
+    state.message = 'The king falls.';
+  }
+  return state;
+}
+
 // Move a single (seen, aware) enemy: capture the king if possible, else close in.
 function moveEnemy(state, enemyId) {
   const next = structuredClone(state);
   const enemy = next.enemies.find((piece) => piece.id === enemyId);
   if (!enemy) {
     return next;
+  }
+
+  // Turrets never move: they fire along their piece's pattern, striking the king
+  // if he stands on a threatened tile, and persist (they are never expended).
+  if (enemy.turret) {
+    return fireTurret(next, enemy);
   }
 
   // Hostile preference order: strike the king, else close in as far as possible,
@@ -687,15 +944,16 @@ function moveEnemy(state, enemyId) {
   enemy.y = chosen.y;
 
   if (enemy.x === next.player.x && enemy.y === next.player.y) {
-    const warded = Boolean(next.player.warded); // Riposte: no damage this turn
-    if (!warded) {
+    const riposte = Boolean(next.player.warded); // Riposte: no damage this turn
+    const immune = isInvincible(next.player); // riposte or barkskin
+    if (!immune) {
       next.player.hp -= 1;
       next.player.wasHit = true; // breaks the untouchable conduct
       addSpatter(next, next.player.x, next.player.y); // the king's own blood
     }
     next.enemies = next.enemies.filter((piece) => piece.id !== enemyId); // the attacker spends itself
-    if (warded) {
-      next.message = `The king ripostes a ${enemy.kind}!`;
+    if (immune) {
+      next.message = riposte ? `The king ripostes a ${enemy.kind}!` : `Barkskin turns aside a ${enemy.kind}!`;
       next.lastAction = 'enemy';
     } else {
       next.message = `A ${enemy.kind} strikes the king!`;
@@ -714,7 +972,7 @@ function moveEnemy(state, enemyId) {
   if (itemIndex >= 0) {
     const [item] = next.items.splice(itemIndex, 1);
     if (unitInSight(next, enemy.x, enemy.y)) {
-      next.message = `An enemy tramples ${item.kind === 'heart' ? 'a heart' : 'some gold'}.`;
+      next.message = `An enemy tramples ${item.kind === 'consumable' ? 'a potion' : 'some gold'}.`;
       next.lastAction = 'enemy';
       return next;
     }
@@ -753,39 +1011,6 @@ function maybeSpawnEnemy(state) {
   if (tile) {
     next.enemies.push(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y));
   }
-  return next;
-}
-
-// Receive one upgrade from an altar, for free. The altar then goes dormant.
-function useAltar(state, id) {
-  const next = structuredClone(state);
-  const p = next.player;
-  const def = ALTAR_UPGRADES.find((upgrade) => upgrade.id === id);
-  if (!def || !next.altar || next.altar.used || !(next.altar.offers || []).includes(id)) {
-    return next;
-  }
-  if (!p.upgradeCounts) p.upgradeCounts = { hp: 0, vision: 0, regen: 0, cards: 0 };
-  if ((p.upgradeCounts[id] || 0) >= MAX_UPGRADES_PER_TYPE) {
-    next.altarMessage = `${def.name} is already maxed.`;
-    return next; // leave the altar active so the other blessing can be chosen
-  }
-
-  if (id === 'hp') {
-    p.maxHp += 1;
-    p.hp += 1;
-  } else if (id === 'vision') {
-    p.vision += VISION_STEP;
-    next.viewSize = p.vision; // keep the legacy mirror in sync
-    updateDiscovery(next); // the wider window may dispel fog immediately
-  } else if (id === 'regen') {
-    p.regen += 1;
-  } else if (id === 'cards') {
-    p.maxCards += 1;
-  }
-  p.upgradeCounts[id] = (p.upgradeCounts[id] || 0) + 1;
-  p.usedAltar = true; // breaks the atheist conduct
-  next.altar.used = true; // one blessing per altar, then it falls dormant
-  next.altarMessage = `The altar grants ${def.name}.`;
   return next;
 }
 

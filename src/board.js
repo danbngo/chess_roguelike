@@ -18,7 +18,7 @@ function isWithinBounds(bounds, x, y) {
   return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y && y < bounds.y + bounds.height;
 }
 
-// Enemies the king can actually see (clear line of sight, not hidden in mist).
+// Enemies the king can actually see (clear line of sight).
 function getVisibleEnemies(state) {
   return state.enemies.filter((enemy) => unitInSight(state, enemy.x, enemy.y));
 }

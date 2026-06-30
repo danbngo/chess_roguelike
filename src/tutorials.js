@@ -33,8 +33,8 @@ const TUTORIALS = {
   hp: {
     title: 'Taking damage',
     text:
-      'That strike cost you 1 HP. Lose every heart and the run is over. Collect ' +
-      '♥ hearts to recover, and you also mend 1 HP each time you descend.',
+      'That strike cost you 1 HP. Lose every point and the run is over. Drink ' +
+      'potions to recover, and you also mend a little each time you descend.',
   },
   gold: {
     title: 'Gold',
@@ -42,23 +42,28 @@ const TUTORIALS = {
       'Gold is spent at weapon shops ($) on cards. You also earn a little for ' +
       'every enemy piece you capture.',
   },
-  heart: {
-    title: 'Hearts',
-    text: 'Hearts restore 1 HP, up to your maximum. Grab them before an enemy tramples them!',
-  },
-  altar: {
-    title: 'The altar',
+  consumable: {
+    title: 'Potions',
     text:
-      'Altars grant one free blessing — more max HP, sharper sight, faster healing ' +
-      'on descent, or another card slot — then fall dormant. Choose wisely.',
+      'Potions are one-use boons — healing (full HP), mending (recharge every ' +
+      'card), or barkskin (a few turns of invincibility). They are scarce, and ' +
+      'an enemy will trample one left in the open, so grab them while you can.',
+  },
+  equipshop: {
+    title: 'The equipment shop',
+    text:
+      'Equipment shops sell passive gear — a Vigor Charm (more max HP), a Renewal ' +
+      'Band (faster healing on descent), or a Spyglass (sharper sight). Worn pieces ' +
+      'fill your equipment slots and boost you for as long as you keep them; with ' +
+      'slots full you can swap one out (losing its bonus). Sharp eyes are scarce, ' +
+      'so a Spyglass is a prize.',
   },
   weaponShop: {
     title: 'The weapon shop',
     text:
       'Weapon shops sell cards in the form of enemies you have seen. A card lets ' +
       'the king move (and capture) like that piece once, then recharges over a few ' +
-      'turns. Click a ready card below the board, then click where to strike. Buy ' +
-      'more card slots at altars.',
+      'turns. Click a ready card below the board, then click where to strike.',
   },
   exit: {
     title: 'Descending',
@@ -79,6 +84,27 @@ const TUTORIALS = {
       'The realm runs deeper than one king. Stranger pieces now appear — berolina ' +
       'pawns, camels, and the great compound pieces (archbishop, chancellor, ' +
       'amazon) — and another enemy king waits below. How far can you descend?',
+  },
+  statue: {
+    title: 'Statues',
+    text:
+      'A statue stands inert and cannot be captured — until the king steps onto ' +
+      'a neighbouring tile, when it cracks to life and joins the hunt. They lurk ' +
+      'at random and often stand guard beside stairs and shops.',
+  },
+  turret: {
+    title: 'Turrets',
+    text:
+      'A turret is a fixed emplacement that cannot be moved or destroyed. Each ' +
+      'turn it fires along its piece’s pattern (its red threat tiles), striking ' +
+      'the king if he stands in the line. Stay off the red and slip past.',
+  },
+  boss: {
+    title: 'The floor guardian',
+    text:
+      'A crowned boss guards the way down. It is invulnerable while any of its ' +
+      'guards still stand in your sight (a blue ring). Clear the guards, and the ' +
+      'ring turns gold — then strike it down to open the descent.',
   },
   danger: {
     title: 'The longer you linger...',
@@ -113,11 +139,5 @@ const TUTORIALS = {
     text:
       'You cannot stop on ice. Step onto it and you slide in that direction ' +
       'until you hit a wall, a unit, or solid ground.',
-  },
-  'terrain-mist': {
-    title: 'Mist',
-    text:
-      'Mist is passable but blocks line of sight, concealing whatever stands ' +
-      'within it. Step carefully — an enemy could be lurking inside.',
   },
 };

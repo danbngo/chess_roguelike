@@ -12,9 +12,23 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'board.js', 'game.js'];
 
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
-const { createInitialState, movePlayer, getVisibleBounds } = new Function(
-  `${source}\nreturn { createInitialState, movePlayer, getVisibleBounds };`,
+const { createInitialState, movePlayer, getVisibleBounds, getPlayerMoves, capturableAt } = new Function(
+  `${source}\nreturn { createInitialState, movePlayer, getVisibleBounds, getPlayerMoves, capturableAt };`,
 )();
+
+// Build a bare enemy with the default state flags, overridden by `extra`.
+function makeEnemy(extra) {
+  return {
+    id: `t-${extra.x}-${extra.y}`,
+    awake: false,
+    surprised: false,
+    frustrated: false,
+    statue: false,
+    turret: false,
+    boss: false,
+    ...extra,
+  };
+}
 
 test('createInitialState starts the king at the center and spawns enemies', () => {
   const state = createInitialState();
@@ -50,4 +64,39 @@ test('a fresh floor reveals fog of war around the king', () => {
   // The king's own tile is explored at floor start; far corners are not.
   assert.ok(state.explored['8,8']);
   assert.ok(!state.explored['0,0']);
+});
+
+test('statues block the king but cannot be captured', () => {
+  const state = createInitialState();
+  state.terrain = {};
+  state.enemies = [makeEnemy({ kind: 'queen', x: 9, y: 8, statue: true })];
+
+  assert.equal(capturableAt(state, 9, 8), false);
+  // The king (at 8,8) may not land on the statue's tile.
+  assert.ok(!getPlayerMoves(state).some((m) => m.x === 9 && m.y === 8));
+});
+
+test('turrets cannot be captured', () => {
+  const state = createInitialState();
+  state.terrain = {};
+  state.enemies = [makeEnemy({ kind: 'rook', x: 9, y: 8, turret: true, awake: true })];
+
+  assert.equal(capturableAt(state, 9, 8), false);
+  assert.ok(!getPlayerMoves(state).some((m) => m.x === 9 && m.y === 8));
+});
+
+test('a boss is shielded while a visible guard remains, then becomes vulnerable', () => {
+  const state = createInitialState();
+  state.terrain = {};
+  state.enemies = [
+    makeEnemy({ kind: 'amazon', x: 9, y: 8, boss: true, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 8, y: 9, awake: true }),
+  ];
+
+  // The pawn guard is in sight, so the boss cannot be captured.
+  assert.equal(capturableAt(state, 9, 8), false);
+
+  // With the guard gone, the boss is vulnerable.
+  state.enemies = state.enemies.filter((e) => e.kind !== 'pawn');
+  assert.equal(capturableAt(state, 9, 8), true);
 });

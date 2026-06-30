@@ -115,6 +115,9 @@ const Renderer = (function () {
       kind: enemy.kind,
       surprised: Boolean(enemy.surprised),
       frustrated: Boolean(enemy.frustrated),
+      statue: Boolean(enemy.statue),
+      turret: Boolean(enemy.turret),
+      boss: Boolean(enemy.boss),
     }));
     snapCameraToPlayer(state);
   }
@@ -135,6 +138,9 @@ const Renderer = (function () {
       render.kind = enemy.kind;
       render.surprised = Boolean(enemy.surprised);
       render.frustrated = Boolean(enemy.frustrated);
+      render.statue = Boolean(enemy.statue);
+      render.turret = Boolean(enemy.turret);
+      render.boss = Boolean(enemy.boss);
       next.push(render);
     }
     enemyRenders = next;
@@ -158,20 +164,51 @@ const Renderer = (function () {
     }
   }
 
-  function drawPiece(tileX, tileY, kind, isPlayer) {
+  function drawPiece(tileX, tileY, kind, isPlayer, opts) {
+    const o = opts || {};
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
-    const radius = tileSize * 0.4;
+    const radius = tileSize * (o.boss ? 0.46 : 0.4);
+
+    // Token body / outline, tinted by special state.
+    let fill = isPlayer ? '#f7e7b8' : '#111118';
+    let stroke = isPlayer ? '#8a6a26' : '#dadada';
+    let glyph = isPlayer ? '#3a2c0a' : '#f3f1e7';
+    if (o.statue) {
+      fill = '#5b6470'; // dull stone
+      stroke = '#8b95a3';
+      glyph = '#cdd5df';
+    } else if (o.turret) {
+      fill = '#2c2f3a'; // dark steel
+      stroke = '#e0894b'; // warm danger ring
+      glyph = '#f1c9a0';
+    } else if (o.boss) {
+      fill = '#1a0f1f'; // deep royal
+      stroke = '#e0b341'; // gold
+      glyph = '#ffe9a8';
+    }
+
+    // Boss aura: a soft outer ring, cyan while shielded (invulnerable), gold once
+    // its guards have fallen and it can be struck.
+    if (o.boss) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius + tileSize * 0.12, 0, Math.PI * 2);
+      ctx.strokeStyle = o.shielded ? 'rgba(56, 189, 248, 0.85)' : 'rgba(224, 179, 65, 0.85)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
 
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.fillStyle = isPlayer ? '#f7e7b8' : '#111118';
+    ctx.fillStyle = fill;
     ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = isPlayer ? '#8a6a26' : '#dadada';
+    ctx.lineWidth = o.boss ? 3 : 2;
+    ctx.strokeStyle = stroke;
     ctx.stroke();
 
-    ctx.fillStyle = isPlayer ? '#3a2c0a' : '#f3f1e7';
+    ctx.fillStyle = glyph;
     ctx.font = `${tileSize * 0.62}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -280,28 +317,37 @@ const Renderer = (function () {
     ctx.restore();
   }
 
-  // The altar: a pale stone plinth with a glowing flame. Dimmed once spent.
-  function drawAltar(tileX, tileY, faded, used) {
+  // The equipment shop: a banded treasure chest with a glinting lock.
+  function drawEquipShop(tileX, tileY, faded) {
     const px = tileX * tileSize;
     const py = tileY * tileSize;
     ctx.save();
-    ctx.globalAlpha = used ? 0.35 : faded ? 0.45 : 1;
-    // Plinth base + top slab.
-    ctx.fillStyle = used ? '#6b7280' : '#cbd5e1';
-    ctx.fillRect(px + tileSize * 0.28, py + tileSize * 0.46, tileSize * 0.44, tileSize * 0.36);
-    ctx.fillStyle = used ? '#9ca3af' : '#e2e8f0';
-    ctx.fillRect(px + tileSize * 0.22, py + tileSize * 0.4, tileSize * 0.56, tileSize * 0.12);
-    if (!used) {
-      // A violet flame floating above it.
-      const cx = px + tileSize / 2;
-      const fy = py + tileSize * 0.36;
-      ctx.beginPath();
-      ctx.moveTo(cx, fy - tileSize * 0.22);
-      ctx.quadraticCurveTo(cx + tileSize * 0.14, fy - tileSize * 0.02, cx, fy);
-      ctx.quadraticCurveTo(cx - tileSize * 0.14, fy - tileSize * 0.02, cx, fy - tileSize * 0.22);
-      ctx.fillStyle = '#a855f7';
-      ctx.fill();
-    }
+    ctx.globalAlpha = faded ? 0.45 : 1;
+    const left = px + tileSize * 0.2;
+    const top = py + tileSize * 0.34;
+    const w = tileSize * 0.6;
+    const h = tileSize * 0.42;
+    // Chest body.
+    ctx.fillStyle = '#7c4a1e';
+    ctx.fillRect(left, top + h * 0.32, w, h * 0.68);
+    // Domed lid.
+    ctx.fillStyle = '#9a5f2a';
+    ctx.beginPath();
+    ctx.moveTo(left, top + h * 0.36);
+    ctx.quadraticCurveTo(left + w / 2, top - h * 0.18, left + w, top + h * 0.36);
+    ctx.closePath();
+    ctx.fill();
+    // Iron bands.
+    ctx.strokeStyle = '#3f2a14';
+    ctx.lineWidth = Math.max(1.5, tileSize * 0.04);
+    ctx.strokeRect(left, top + h * 0.32, w, h * 0.68);
+    ctx.beginPath();
+    ctx.moveTo(left + w * 0.5, top - h * 0.04);
+    ctx.lineTo(left + w * 0.5, top + h);
+    ctx.stroke();
+    // Gold lock.
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(left + w * 0.42, top + h * 0.4, w * 0.16, h * 0.22);
     ctx.restore();
   }
 
@@ -316,13 +362,14 @@ const Renderer = (function () {
       ctx.globalAlpha = 0.5;
     }
     ctx.shadowBlur = animated ? tileSize * (0.18 + 0.22 * pulse) : 0;
-    if (item.kind === 'heart') {
-      ctx.shadowColor = 'rgba(244, 114, 182, 0.9)';
-      ctx.fillStyle = '#f472b6'; // pink
-      ctx.font = `${tileSize * (0.58 + 0.06 * pulse)}px serif`;
+    if (item.kind === 'consumable') {
+      const info = (typeof CONSUMABLES !== 'undefined' && CONSUMABLES[item.potion]) || { glyph: '!', color: '#f472b6' };
+      ctx.shadowColor = info.color;
+      ctx.fillStyle = info.color;
+      ctx.font = `${tileSize * (0.56 + 0.06 * pulse)}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('♥', cx, cy + tileSize * 0.05);
+      ctx.fillText(info.glyph, cx, cy + tileSize * 0.05);
     } else {
       ctx.shadowColor = 'rgba(251, 191, 36, 0.95)';
       ctx.beginPath();
@@ -428,8 +475,6 @@ const Renderer = (function () {
         return isDark ? '#5a4a30' : '#6e5a3c'; // murky brown
       case 'wall':
         return isDark ? '#5a4f45' : '#6b5e52'; // warm brown stone
-      case 'mist':
-        return isDark ? '#9c9586' : '#b1a999'; // warm taupe
       default:
         return isDark ? '#6b4a2b' : '#e9cfa0'; // cream/brown ground
     }
@@ -499,18 +544,6 @@ const Renderer = (function () {
         ctx.stroke();
         break;
       }
-      case 'mist': {
-        // Soft drifting blobs.
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
-        for (let i = 0; i < 3; i += 1) {
-          const rx = tileHash(x * 3 + i, y + 7);
-          const ry = tileHash(x + 7, y * 3 + i);
-          ctx.beginPath();
-          ctx.arc(px + tileSize * (0.2 + rx * 0.6), py + tileSize * (0.2 + ry * 0.6), tileSize * 0.18, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        break;
-      }
       default: {
         // Open ground: scattered grit specks.
         ctx.fillStyle = isDark ? 'rgba(0, 0, 0, 0.13)' : 'rgba(120, 80, 40, 0.16)';
@@ -558,7 +591,7 @@ const Renderer = (function () {
     const bounds = getVisibleBounds(state);
     const threatened = getThreatenedTiles(state);
     const visible = computeVisibleTiles(state);
-    const lit = (x, y) => visible.has(`${x},${y}`) && terrainAt(state, x, y) !== 'mist';
+    const lit = (x, y) => visible.has(`${x},${y}`);
 
     // Fog of war: ground the king has never seen on this floor stays hidden.
     const explored = state.explored || {};
@@ -647,17 +680,18 @@ const Renderer = (function () {
       }
     }
 
-    // Exit, altar and weapon shop: shown when in sight, or faded once discovered.
+    // Exit, equipment shop and weapon shop: shown when in sight, or faded once
+    // discovered.
     if (state.exit) {
       const seen = lit(state.exit.x, state.exit.y);
       if (seen || state.exit.discovered) {
         drawExit(state.exit.x, state.exit.y, !seen);
       }
     }
-    if (state.altar) {
-      const seen = lit(state.altar.x, state.altar.y);
-      if (seen || state.altar.discovered) {
-        drawAltar(state.altar.x, state.altar.y, !seen, state.altar.used);
+    if (state.equipShop) {
+      const seen = lit(state.equipShop.x, state.equipShop.y);
+      if (seen || state.equipShop.discovered) {
+        drawEquipShop(state.equipShop.x, state.equipShop.y, !seen);
       }
     }
     if (state.weaponShop) {
@@ -679,7 +713,7 @@ const Renderer = (function () {
     for (const key in memory) {
       const [mx, my] = key.split(',').map(Number);
       if (isExplored(mx, my) && !lit(mx, my)) {
-        drawItem({ x: mx, y: my, kind: memory[key].kind, amount: memory[key].amount }, false);
+        drawItem({ x: mx, y: my, kind: memory[key].kind, amount: memory[key].amount, potion: memory[key].potion }, false);
       }
     }
 
@@ -706,8 +740,14 @@ const Renderer = (function () {
     const visibleEnemies = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY));
     const isMoving = (enemy) => Math.abs(enemy.x - enemy.targetX) + Math.abs(enemy.y - enemy.targetY) > 0.05;
     const ordered = [...visibleEnemies.filter((enemy) => !isMoving(enemy)), ...visibleEnemies.filter(isMoving)];
+    const bossWarded = typeof bossShielded === 'function' ? bossShielded(state) : false;
     for (const enemy of ordered) {
-      drawPiece(enemy.x, enemy.y, enemy.kind, false);
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, {
+        statue: enemy.statue,
+        turret: enemy.turret,
+        boss: enemy.boss,
+        shielded: enemy.boss && bossWarded,
+      });
       if (enemy.surprised) {
         drawSurpriseMark(enemy.x, enemy.y);
       } else if (enemy.frustrated) {
