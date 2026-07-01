@@ -9,10 +9,24 @@ const Renderer = (function () {
   let playerRender = { x: 0, y: 0, targetX: 0, targetY: 0 };
   let enemyRenders = [];
 
-  // Hit feedback: a brief screen shake + red flash, both easing out from 1 -> 0.
+  // Hit feedback: a brief screen shake + colored full-screen flash, easing out.
   let shake = 0;
+  let flash = 0; // 0 -> 1, decays each frame
+  let flashColor = '220, 38, 38';
+  let flashPeak = 0.5; // max wash opacity for the current flash
   const SHAKE_DURATION = 0.4;
   const SHAKE_MAGNITUDE = 9;
+  const FLASH_DURATION = 0.5;
+
+  // Feedback presets: each fires a tinted flash (and, for impacts, a shake).
+  const EFFECTS = {
+    hit: { color: '220, 38, 38', peak: 0.5, shake: SHAKE_DURATION }, // red
+    death: { color: '153, 27, 27', peak: 0.85, shake: SHAKE_DURATION * 1.8 }, // deep crimson
+    kill: { color: '248, 250, 252', peak: 0.18, shake: SHAKE_DURATION * 0.45 }, // pale impact
+    heal: { color: '34, 197, 94', peak: 0.4, shake: 0 }, // green
+    powerup: { color: '168, 85, 247', peak: 0.45, shake: 0 }, // violet (altar / level-up)
+    victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
+  };
 
   // Ever-increasing time accumulator, used for ambient animation (powerup glow).
   let clock = 0;
@@ -41,9 +55,21 @@ const Renderer = (function () {
     tileSize = baseTile * camera.zoom;
   }
 
-  // Kick off the on-hit shake/flash.
+  // Fire a feedback effect by name (see EFFECTS): a tinted flash and optional shake.
+  function effect(kind) {
+    const e = EFFECTS[kind];
+    if (!e) return;
+    flash = 1;
+    flashColor = e.color;
+    flashPeak = e.peak;
+    if (e.shake) {
+      shake = Math.max(shake, e.shake);
+    }
+  }
+
+  // Back-compat: a plain on-hit shake/flash.
   function hit() {
-    shake = SHAKE_DURATION;
+    effect('hit');
   }
 
   // Snap the camera onto the king instantly (keeps the current zoom level).
@@ -115,9 +141,7 @@ const Renderer = (function () {
       kind: enemy.kind,
       surprised: Boolean(enemy.surprised),
       frustrated: Boolean(enemy.frustrated),
-      statue: Boolean(enemy.statue),
-      turret: Boolean(enemy.turret),
-      boss: Boolean(enemy.boss),
+      role: typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal',
     }));
     snapCameraToPlayer(state);
   }
@@ -138,9 +162,7 @@ const Renderer = (function () {
       render.kind = enemy.kind;
       render.surprised = Boolean(enemy.surprised);
       render.frustrated = Boolean(enemy.frustrated);
-      render.statue = Boolean(enemy.statue);
-      render.turret = Boolean(enemy.turret);
-      render.boss = Boolean(enemy.boss);
+      render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       next.push(render);
     }
     enemyRenders = next;
@@ -162,35 +184,51 @@ const Renderer = (function () {
     if (shake > 0) {
       shake = Math.max(0, shake - delta);
     }
+    if (flash > 0) {
+      flash = Math.max(0, flash - delta / FLASH_DURATION);
+    }
   }
 
   function drawPiece(tileX, tileY, kind, isPlayer, opts) {
     const o = opts || {};
+    const role = o.role || 'normal';
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
-    const radius = tileSize * (o.boss ? 0.46 : 0.4);
+    const radius = tileSize * (role === 'boss' ? 0.46 : 0.4);
 
-    // Token body / outline, tinted by special state.
+    // Token body / outline, tinted by special role.
     let fill = isPlayer ? '#f7e7b8' : '#111118';
     let stroke = isPlayer ? '#8a6a26' : '#dadada';
     let glyph = isPlayer ? '#3a2c0a' : '#f3f1e7';
-    if (o.statue) {
+    if (role === 'statue') {
       fill = '#5b6470'; // dull stone
       stroke = '#8b95a3';
       glyph = '#cdd5df';
-    } else if (o.turret) {
+    } else if (role === 'turret') {
       fill = '#2c2f3a'; // dark steel
       stroke = '#e0894b'; // warm danger ring
       glyph = '#f1c9a0';
-    } else if (o.boss) {
+    } else if (role === 'boss') {
       fill = '#1a0f1f'; // deep royal
       stroke = '#e0b341'; // gold
       glyph = '#ffe9a8';
+    } else if (role === 'armored') {
+      fill = '#1f2937'; // iron
+      stroke = '#9aa6b2';
+    } else if (role === 'skirmisher') {
+      stroke = '#f59e0b'; // amber — quick and slippery
+    } else if (role === 'summoner') {
+      fill = '#241733'; // arcane violet
+      stroke = '#a855f7';
+      glyph = '#e9d5ff';
+    } else if (role === 'summoned') {
+      stroke = '#9ca3af';
+      glyph = '#cbd5e1';
     }
 
     // Boss aura: a soft outer ring, cyan while shielded (invulnerable), gold once
     // its guards have fallen and it can be struck.
-    if (o.boss) {
+    if (role === 'boss') {
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, radius + tileSize * 0.12, 0, Math.PI * 2);
@@ -204,7 +242,7 @@ const Renderer = (function () {
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
     ctx.fillStyle = fill;
     ctx.fill();
-    ctx.lineWidth = o.boss ? 3 : 2;
+    ctx.lineWidth = role === 'boss' ? 3 : 2;
     ctx.strokeStyle = stroke;
     ctx.stroke();
 
@@ -213,6 +251,34 @@ const Renderer = (function () {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(getPieceLabel(kind), cx, cy + tileSize * 0.04);
+  }
+
+  // At-a-glance role icons: a small badge in the lower-right of a piece's token.
+  const ROLE_BADGE = {
+    statue: { glyph: '◇', color: '#cdd5df' },
+    turret: { glyph: '◎', color: '#e0894b' },
+    boss: { glyph: '♛', color: '#ffe9a8' },
+    skirmisher: { glyph: '»', color: '#f59e0b' },
+    armored: { glyph: '▣', color: '#9aa6b2' },
+    summoner: { glyph: '✦', color: '#c084fc' },
+    summoned: { glyph: '·', color: '#cbd5e1' },
+  };
+  function drawRoleBadge(tileX, tileY, role) {
+    const badge = ROLE_BADGE[role];
+    if (!badge) return;
+    const bx = tileX * tileSize + tileSize * 0.74;
+    const by = tileY * tileSize + tileSize * 0.76;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(bx, by, tileSize * 0.17, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.85)';
+    ctx.fill();
+    ctx.font = `bold ${tileSize * 0.22}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = badge.color;
+    ctx.fillText(badge.glyph, bx, by + tileSize * 0.01);
+    ctx.restore();
   }
 
   // A small glyph above a piece's head (surprise "!", frustration "✖", etc.).
@@ -262,7 +328,7 @@ const Renderer = (function () {
   }
 
   // The exit: a dark stairwell of pale steps receding downward.
-  function drawExit(tileX, tileY, faded) {
+  function drawExit(tileX, tileY, faded, locked) {
     const px = tileX * tileSize;
     const py = tileY * tileSize;
     ctx.save();
@@ -277,6 +343,19 @@ const Renderer = (function () {
       const top = py + tileSize * (0.2 + i * 0.16);
       ctx.fillStyle = `rgb(${150 - i * 28}, ${168 - i * 30}, ${190 - i * 30})`;
       ctx.fillRect(px + tileSize * inset, top, tileSize * (1 - inset * 2), tileSize * 0.1);
+    }
+    // A barred stair (boss-locked) is crossed by heavy crimson bars.
+    if (locked) {
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = Math.max(2, tileSize * 0.08);
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 3; i += 1) {
+        const bx = px + tileSize * (0.26 + i * 0.24);
+        ctx.beginPath();
+        ctx.moveTo(bx, py + tileSize * 0.16);
+        ctx.lineTo(bx, py + tileSize * 0.84);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -313,6 +392,29 @@ const Renderer = (function () {
       ctx.moveTo(dir * tileSize * 0.14, tileSize * 0.1);
       ctx.lineTo(dir * tileSize * 0.26, tileSize * 0.22);
       ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // The class altar: a pale stone plinth with a violet flame. Dimmed once spent.
+  function drawClassAltar(tileX, tileY, faded, used) {
+    const px = tileX * tileSize;
+    const py = tileY * tileSize;
+    ctx.save();
+    ctx.globalAlpha = used ? 0.35 : faded ? 0.45 : 1;
+    ctx.fillStyle = used ? '#6b7280' : '#cbd5e1';
+    ctx.fillRect(px + tileSize * 0.28, py + tileSize * 0.46, tileSize * 0.44, tileSize * 0.36);
+    ctx.fillStyle = used ? '#9ca3af' : '#e2e8f0';
+    ctx.fillRect(px + tileSize * 0.22, py + tileSize * 0.4, tileSize * 0.56, tileSize * 0.12);
+    if (!used) {
+      const cx = px + tileSize / 2;
+      const fy = py + tileSize * 0.36;
+      ctx.beginPath();
+      ctx.moveTo(cx, fy - tileSize * 0.22);
+      ctx.quadraticCurveTo(cx + tileSize * 0.14, fy - tileSize * 0.02, cx, fy);
+      ctx.quadraticCurveTo(cx - tileSize * 0.14, fy - tileSize * 0.02, cx, fy - tileSize * 0.22);
+      ctx.fillStyle = '#a855f7';
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -685,7 +787,13 @@ const Renderer = (function () {
     if (state.exit) {
       const seen = lit(state.exit.x, state.exit.y);
       if (seen || state.exit.discovered) {
-        drawExit(state.exit.x, state.exit.y, !seen);
+        drawExit(state.exit.x, state.exit.y, !seen, state.exit.locked);
+      }
+    }
+    if (state.altar) {
+      const seen = lit(state.altar.x, state.altar.y);
+      if (seen || state.altar.discovered) {
+        drawClassAltar(state.altar.x, state.altar.y, !seen, state.altar.used);
       }
     }
     if (state.equipShop) {
@@ -742,12 +850,11 @@ const Renderer = (function () {
     const ordered = [...visibleEnemies.filter((enemy) => !isMoving(enemy)), ...visibleEnemies.filter(isMoving)];
     const bossWarded = typeof bossShielded === 'function' ? bossShielded(state) : false;
     for (const enemy of ordered) {
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, {
-        statue: enemy.statue,
-        turret: enemy.turret,
-        boss: enemy.boss,
-        shielded: enemy.boss && bossWarded,
-      });
+      const role = enemy.role || 'normal';
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, shielded: role === 'boss' && bossWarded });
+      if (role !== 'normal') {
+        drawRoleBadge(enemy.x, enemy.y, role);
+      }
       if (enemy.surprised) {
         drawSurpriseMark(enemy.x, enemy.y);
       } else if (enemy.frustrated) {
@@ -762,13 +869,12 @@ const Renderer = (function () {
 
     ctx.restore();
 
-    if (shake > 0) {
-      // Red wash over the whole canvas, fading with the shake.
-      const t = shake / SHAKE_DURATION;
-      ctx.fillStyle = `rgba(220, 38, 38, ${0.5 * t})`;
+    if (flash > 0) {
+      // A tinted wash over the whole canvas, fading out (color set by effect()).
+      ctx.fillStyle = `rgba(${flashColor}, ${flashPeak * flash})`;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
   }
 
-  return { init, reset, sync, update, draw, hit, centerOn, panBy, panByPixels, zoomBy, screenToTile };
+  return { init, reset, sync, update, draw, hit, effect, centerOn, panBy, panByPixels, zoomBy, screenToTile };
 })();

@@ -21,6 +21,10 @@
   const titleRunTable = document.getElementById('title-runtable');
   const gameoverRunTable = document.getElementById('gameover-runtable');
   const victoryRunTable = document.getElementById('victory-runtable');
+  const altarScreen = document.getElementById('altar-screen');
+  const altarList = document.getElementById('altar-list');
+  const altarMessage = document.getElementById('altar-message');
+  const altarCloseButton = document.getElementById('altar-close');
   const equipShopScreen = document.getElementById('equipshop-screen');
   const equipShopGold = document.getElementById('equipshop-gold');
   const equipShopList = document.getElementById('equipshop-list');
@@ -63,7 +67,7 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'playing' | 'equipshop' | 'weaponshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'playing' | 'altar' | 'equipshop' | 'weaponshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
 
@@ -290,6 +294,14 @@
           tag = ' (boss — invulnerable while guards remain)';
         } else if (enemy.boss) {
           tag = ' (boss — vulnerable!)';
+        } else if (enemy.skirmisher) {
+          tag = ' (skirmisher — strikes and darts away)';
+        } else if (enemy.armored) {
+          tag = ' (armored — one hit shatters its armor & flings you back)';
+        } else if (enemy.summoner) {
+          tag = ' (summoner — conjures minions)';
+        } else if (enemy.summoned) {
+          tag = ' (summoned — fades without a summoner near)';
         } else {
           tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
@@ -302,7 +314,10 @@
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      lines.push('Stairs down to the next floor');
+      lines.push(gameState.exit.locked ? 'Stairs down — barred until the guardian falls' : 'Stairs down to the next floor');
+    }
+    if (onBuilding(gameState.altar)) {
+      lines.push(gameState.altar.used ? 'Class altar — spent' : 'Class altar — take a class perk');
     }
     if (onBuilding(gameState.equipShop)) {
       lines.push('Equipment shop — buy passive gear');
@@ -343,12 +358,21 @@
     bishop: 'Slides any distance diagonally.',
     rook: 'Slides any distance orthogonally.',
     queen: 'Slides any distance in any direction.',
-    camel: 'Leaps in a (3,1) pattern, clear over anything between.',
     archbishop: 'Moves as a bishop or a knight.',
     chancellor: 'Moves as a rook or a knight.',
-    amazon: 'Moves as a queen or a knight.',
-    nightrider: 'Rides repeated knight leaps in a straight line.',
+    amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
+  };
+
+  // One-line descriptions of each special enemy role (for the examine pane).
+  const ROLE_INFO = {
+    statue: 'Statue — inert until you step beside it, then it wakes.',
+    turret: 'Turret — fixed; fires its piece pattern, cannot be destroyed.',
+    boss: 'Boss — invulnerable while its guards remain in sight.',
+    skirmisher: 'Skirmisher — strikes, then retreats to its spawn.',
+    armored: 'Armored — first hit shatters its armor and flings you back; slow.',
+    summoner: 'Summoner — conjures minions while it sees you.',
+    summoned: 'Summoned — vanishes when no summoner is in sight.',
   };
 
   // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
@@ -398,7 +422,21 @@
 
     if (gameState.player.x === tx && gameState.player.y === ty) {
       const p = gameState.player;
-      addExamineBlock('Your King', [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Gold ${p.gold}`, `Card slots ${p.maxCards}`]);
+      const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Gold ${p.gold}`];
+      stats.push(`Weapon slots ${p.maxCards} · Equip slots ${p.maxEquipment}`);
+      if (p.evade) stats.push(`Evasion ${Math.round(p.evade * 100)}%`);
+      addExamineBlock('Your King', stats);
+
+      // Classes the king has taken, with their level.
+      const classes = Object.keys(p.classLevels || {}).filter((k) => p.classLevels[k] > 0);
+      if (classes.length) {
+        const lines = classes.map((k) => `${CLASSES[k].name} Lv ${p.classLevels[k]}`);
+        addExamineBlock('Classes', lines);
+      }
+      // Worn equipment.
+      if ((p.equipment || []).length) {
+        addExamineBlock('Equipment', p.equipment.map((w) => `${equipItemName(w)} — ${equipItemDesc(w)}`));
+      }
     }
 
     if (visible) {
@@ -412,7 +450,7 @@
               ? 'Hostile — hunting the king'
               : 'Unaware — wandering';
         const buyable = isCardKind(enemy.kind) ? 'Can be bought as a card.' : null;
-        addExamineBlock(`Enemy — ${enemy.kind}`, [PIECE_INFO[enemy.kind] || '', state, buyable]);
+        addExamineBlock(`Enemy — ${enemy.kind}`, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, state, buyable]);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
       if (item) {
@@ -422,7 +460,18 @@
 
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      addExamineBlock('Stairs', 'Descend to the next floor (the king mends a little).');
+      addExamineBlock(
+        'Stairs',
+        gameState.exit.locked
+          ? 'Barred by the floor’s guardian — defeat the boss to unbar it.'
+          : 'Descend to the next floor (the king mends a little).',
+      );
+    }
+    if (onBuilding(gameState.altar)) {
+      addExamineBlock(
+        'Class Altar',
+        gameState.altar.used ? 'Spent — dormant.' : 'Embrace one class path: a rule-changing perk for your build.',
+      );
     }
     if (onBuilding(gameState.equipShop)) {
       addExamineBlock('Equipment shop', 'Buy passive equipment (worn in your equipment slots) for gold.');
@@ -573,6 +622,15 @@
     if (visible.some((enemy) => enemy.boss)) {
       queueTip('boss');
     }
+    if (visible.some((enemy) => enemy.skirmisher)) {
+      queueTip('skirmisher');
+    }
+    if (visible.some((enemy) => enemy.armored)) {
+      queueTip('armored');
+    }
+    if (visible.some((enemy) => enemy.summoner)) {
+      queueTip('summoner');
+    }
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
     }
@@ -619,6 +677,7 @@
     titleScreen.classList.add('hidden');
     gameoverScreen.classList.add('hidden');
     victoryScreen.classList.add('hidden');
+    altarScreen.classList.add('hidden');
     equipShopScreen.classList.add('hidden');
     weaponshopScreen.classList.add('hidden');
     tutorialScreen.classList.add('hidden');
@@ -807,9 +866,76 @@
     renderRunTable(victoryRunTable, entry.id);
     hideOverlays();
     victoryScreen.classList.remove('hidden');
+    queueTip('newGamePlus');
+  }
+
+  // New Game + : having won, press on into the endless depths, build intact.
+  function continueAfterVictory() {
+    screen = 'playing';
+    gameState.won = false;
+    document.body.classList.add('in-game');
+    document.body.classList.remove('on-title');
+    hideOverlays();
+    goNextFloor();
+  }
+
+  /* ----------------------------- class altar ---------------------------- */
+
+  function renderAltar() {
+    altarMessage.textContent = gameState.altarMessage || '';
+    altarList.innerHTML = '';
+    const offers = (gameState.altar && gameState.altar.offers) || [];
+    const levels = gameState.player.classLevels || {};
+    for (const classKey of offers) {
+      const cls = CLASSES[classKey];
+      if (!cls) continue;
+      const level = levels[classKey] || 0;
+      const perk = cls.perks[level];
+      if (!perk) continue;
+
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML =
+        `<span class="shop-name">${cls.name} <small>Lv ${level + 1}/${cls.perks.length}</small></span>` +
+        `<span class="shop-desc">${perk.name} — ${perk.desc}</span>`;
+      const take = document.createElement('button');
+      take.type = 'button';
+      take.textContent = 'Take';
+      take.addEventListener('click', () => {
+        applyState(useClassAltar(gameState, classKey), true);
+        Renderer.effect('powerup');
+        closeAltar(); // one perk per altar, then it's spent
+      });
+      row.append(info, take);
+      altarList.append(row);
+    }
+  }
+
+  function openAltar() {
+    screen = 'altar';
+    gameState.altarMessage = '';
+    renderAltar();
+    altarScreen.classList.remove('hidden');
+    queueTip('classAltar');
+  }
+
+  function closeAltar() {
+    screen = 'playing';
+    altarScreen.classList.add('hidden');
+    saveGame(gameState);
   }
 
   /* --------------------------- equipment shop --------------------------- */
+
+  // Names / descriptions that fold in a rare armor enchantment, if present.
+  function equipItemName(it) {
+    return EQUIPMENT[it.key].name + (it.enchant ? ` ${it.enchant.name}` : '');
+  }
+  function equipItemDesc(it) {
+    return equipDesc(it.key) + (it.enchant ? ` · ${bonusDesc(it.enchant.stat, it.enchant.amount)}` : '');
+  }
 
   // The king's currently worn equipment, as a short summary line.
   function wornEquipmentSummary() {
@@ -817,7 +943,7 @@
     if (!worn.length) {
       return 'Nothing equipped.';
     }
-    return `Worn: ${worn.map((w) => EQUIPMENT[w.key].name).join(', ')}`;
+    return `Worn: ${worn.map((w) => equipItemName(w)).join(', ')}`;
   }
 
   function renderEquipShop() {
@@ -837,7 +963,7 @@
 
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${def.name}</span><span class="shop-desc">${equipDesc(offer.key)}</span>`;
+      info.innerHTML = `<span class="shop-name">${equipItemName(offer)}</span><span class="shop-desc">${equipItemDesc(offer)}</span>`;
 
       const buy = document.createElement('button');
       buy.type = 'button';
@@ -852,6 +978,7 @@
             promptReplaceEquipment(index);
           } else {
             applyState(buyEquipment(gameState, index), true);
+            Renderer.effect('powerup');
             renderEquipShop();
           }
         });
@@ -875,12 +1002,11 @@
     equipShopMessage.textContent = `Replace which piece with the ${def.name}?`;
     equipShopList.innerHTML = '';
     p.equipment.forEach((worn, index) => {
-      const wornDef = EQUIPMENT[worn.key];
       const row = document.createElement('li');
       row.className = 'shop-item';
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${wornDef.name}</span><span class="shop-desc">${equipDesc(worn.key)}</span>`;
+      info.innerHTML = `<span class="shop-name">${equipItemName(worn)}</span><span class="shop-desc">${equipItemDesc(worn)}</span>`;
       const swap = document.createElement('button');
       swap.type = 'button';
       swap.textContent = 'Replace';
@@ -1042,11 +1168,21 @@
     applyState(nextState, true);
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
 
+    // Feedback flashes for what just happened.
+    if (nextState.lastAction === 'combat') {
+      Renderer.effect('kill');
+    } else if (nextState.lastAction === 'item' && nextState.pickupKind !== 'gold') {
+      Renderer.effect('heal');
+    }
+
     if (nextState.lastAction === 'item') {
       queueTip(nextState.pickupKind === 'gold' ? 'gold' : 'consumable');
     }
     if (nextState.won) {
-      onVictory();
+      // Let the victory flash play for a beat before the overlay drops.
+      Renderer.effect('victory');
+      pendingAction = 'victory';
+      animTimer = PLAYER_MOVE_TIME * 3;
       return;
     }
     if (nextState.gameOver) {
@@ -1077,7 +1213,7 @@
       const hpBefore = gameState.player.hp;
       applyState(moveEnemy(gameState, id), true);
       if (gameState.player.hp < hpBefore) {
-        Renderer.hit();
+        Renderer.effect(gameState.gameOver ? 'death' : 'hit');
         flashHealth();
         if (!gameState.gameOver) {
           queueTip('hp');
@@ -1085,7 +1221,9 @@
       }
       if (gameState.gameOver) {
         enemyQueue = [];
-        onGameOver();
+        // Let the death flash/shake play for a beat before the overlay drops.
+        pendingAction = 'gameover';
+        animTimer = ENEMY_MOVE_TIME * 2.5;
         return;
       }
       animTimer = ENEMY_MOVE_TIME;
@@ -1094,12 +1232,16 @@
 
     // Turn complete: maybe reinforce, persist, then open a building if stepped on.
     applyState(maybeSpawnEnemy(gameState), true);
+    const altarPending = gameState.pendingAltar;
     const equipShopPending = gameState.pendingEquipShop;
     const weaponShopPending = gameState.pendingWeaponShop;
+    gameState.pendingAltar = false;
     gameState.pendingEquipShop = false;
     gameState.pendingWeaponShop = false;
     saveGame(gameState);
-    if (equipShopPending) {
+    if (altarPending) {
+      openAltar();
+    } else if (equipShopPending) {
       openEquipShop();
     } else if (weaponShopPending) {
       openWeaponShop();
@@ -1164,6 +1306,12 @@
         if (pendingAction === 'floor') {
           pendingAction = null;
           goNextFloor();
+        } else if (pendingAction === 'gameover') {
+          pendingAction = null;
+          onGameOver();
+        } else if (pendingAction === 'victory') {
+          pendingAction = null;
+          onVictory();
         } else {
           advanceEnemyQueue();
         }
@@ -1306,8 +1454,10 @@
   titleOptionsButton.addEventListener('click', openOptions);
   playAgainButton.addEventListener('click', newGame);
   toTitleButton.addEventListener('click', showTitle);
+  victoryContinueButton.addEventListener('click', continueAfterVictory);
   victoryAgainButton.addEventListener('click', newGame);
   victoryTitleButton.addEventListener('click', showTitle);
+  altarCloseButton.addEventListener('click', closeAltar);
   equipShopCloseButton.addEventListener('click', closeEquipShop);
   weaponshopCloseButton.addEventListener('click', closeWeaponShop);
   tutorialOkButton.addEventListener('click', dismissTip);

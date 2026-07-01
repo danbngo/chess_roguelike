@@ -26,7 +26,7 @@ const CONSUMABLES = {
 // (so the final floor is crowded). The first sighting of each type pops a tip.
 const TERRAIN_UNLOCK = { wall: 2, mud: 3, ice: 4, water: 5 };
 
-const FINAL_FLOOR = 15; // Every multiple of this holds the solo enemy king (15, 30, ...).
+const FINAL_FLOOR = 15; // Every multiple of this is a final-boss floor: the Amazon, and victory (15, 30, ...).
 const MAX_ENEMIES = 40; // Hard safety cap so over-time spawning can't run away.
 
 // Enemy variety ramps with depth. A floor's spawn pool is every kind unlocked at
@@ -41,12 +41,10 @@ const ENEMY_UNLOCKS = [
   { kind: 'bishop', floor: 6 },
   { kind: 'rook', floor: 9 },
   { kind: 'queen', floor: 12 }, // full standard set in hand before the final floor (15)
-  { kind: 'berolina', floor: 16 }, // just past the final floor
-  { kind: 'camel', floor: 19 },
+  { kind: 'berolina', floor: 16 }, // endgame fairies appear only in New Game +
   { kind: 'archbishop', floor: 22 },
   { kind: 'chancellor', floor: 25 },
-  { kind: 'nightrider', floor: 28 },
-  { kind: 'amazon', floor: 30 }, // 2x final floor: the complete endgame set
+  // The amazon is intentionally absent here: she exists ONLY as the final boss.
 ];
 
 // Equipment cards: bought (not free) at equipment shops and worn in a limited set
@@ -55,22 +53,107 @@ const ENEMY_UNLOCKS = [
 // deliberately scarcer and pricier (lower weight) so it isn't stacked every floor.
 const STARTING_EQUIP_SLOTS = 2; // Equipment slots the king begins with.
 const EQUIPMENT = {
+  // Common boons.
   vigor: { name: 'Vigor Charm', stat: 'hp', amount: 1, cost: 4, weight: 3 },
   renewal: { name: 'Renewal Band', stat: 'regen', amount: 1, cost: 4, weight: 3 },
+  // Armor: defensive, and the only gear that may roll a rare bonus enchantment.
+  plate: { name: 'Plate Armor', stat: 'hp', amount: 2, cost: 7, weight: 2, armor: true },
+  buckler: { name: 'Buckler', stat: 'evade', amount: 0.15, cost: 6, weight: 2, armor: true },
+  // Rare utility (sight and movement are deliberately scarce and pricey).
   spyglass: { name: 'Spyglass', stat: 'vision', amount: 2, cost: 6, weight: 1 },
+  boots: { name: 'Swift Boots', stat: 'moveRange', amount: 1, cost: 9, weight: 1 },
 };
+
+// Rare bonus enchantments an armor offer may carry (a second, smaller boon).
+const EQUIP_ENCHANTS = [
+  { stat: 'regen', amount: 1, name: 'of Renewal' },
+  { stat: 'evade', amount: 0.1, name: 'of Warding' },
+  { stat: 'hp', amount: 1, name: 'of Vigor' },
+  { stat: 'vision', amount: 1, name: 'of Farsight' },
+];
+const EQUIP_ENCHANT_CHANCE = 0.3; // chance a given armor offer is enchanted
+
+// A human-readable phrase for any equipment stat bonus.
+function bonusDesc(stat, amount) {
+  if (stat === 'hp') return `+${amount} max HP`;
+  if (stat === 'vision') return `+${amount} sight range`;
+  if (stat === 'regen') return `+${amount} HP mended on descent`;
+  if (stat === 'evade') return `+${Math.round(amount * 100)}% evade`;
+  if (stat === 'moveRange') return `+${amount} move range`;
+  return '';
+}
 
 function equipDesc(key) {
   const e = EQUIPMENT[key];
-  if (!e) return '';
-  if (e.stat === 'hp') return `+${e.amount} max HP`;
-  if (e.stat === 'vision') return `+${e.amount} sight range`;
-  if (e.stat === 'regen') return `+${e.amount} HP mended on descent`;
-  return '';
+  return e ? bonusDesc(e.stat, e.amount) : '';
 }
 
 const SHOP_CHOICES = 3; // Cards a weapon shop offers.
 const EQUIP_SHOP_CHOICES = 2; // Equipment offered per shop (a weighted sample).
+
+// Class altars (shrines) let the king invest in a play-style. Each class is a
+// ladder of perks taken in order (D&D-style: level 2 needs level 1). Perks are
+// rule-changers that lean into a fantasy and weave through the other systems —
+// weapon traits on melee captures, card cooldown / range, movement, sight, slots,
+// evasion. An altar offers a few classes' next perks, always including the next
+// rung of the king's strongest class so a build can keep climbing.
+const CLASS_ALTAR_CHOICES = 3;
+const CLASSES = {
+  warrior: {
+    name: 'Warrior',
+    blurb: 'Unyielding in the press of battle.',
+    perks: [
+      { id: 'war1', name: 'Toughness', desc: '+3 max HP', grants: { maxHp: 3 } },
+      { id: 'war2', name: 'Stalwart', desc: '20% chance to shrug off a hit', grants: { evade: 0.2 } },
+      { id: 'war3', name: 'Juggernaut', desc: '+1 equipment slot', grants: { maxEquipment: 1 } },
+    ],
+  },
+  barbarian: {
+    name: 'Barbarian',
+    blurb: 'Strikes again and again, and again.',
+    perks: [
+      { id: 'bar1', name: 'Cleave', desc: 'Melee captures also slay the 4 cardinal neighbours', grants: { meleeTrait: 'thrust' } },
+      { id: 'bar2', name: 'Plunder', desc: '+3 gold per capture', grants: { goldPerKill: 3 } },
+      { id: 'bar3', name: 'Long Reach', desc: '+1 move range (step & strike farther)', grants: { moveRange: 1 } },
+    ],
+  },
+  thief: {
+    name: 'Thief',
+    blurb: 'Finds the gold and slips the blade.',
+    perks: [
+      { id: 'thi1', name: 'Treasure Sense', desc: 'Sense every item on the floor', grants: { detectItems: true } },
+      { id: 'thi2', name: 'Nimble', desc: '25% chance to evade a hit', grants: { evade: 0.25 } },
+      { id: 'thi3', name: 'Acrobat', desc: '+1 move range', grants: { moveRange: 1 } },
+    ],
+  },
+  ranger: {
+    name: 'Ranger',
+    blurb: 'Master of sight and the long shot.',
+    perks: [
+      { id: 'ran1', name: 'Eagle Eye', desc: '+2 sight range', grants: { vision: 2 } },
+      { id: 'ran2', name: 'Quiver', desc: '+1 weapon card slot', grants: { maxCards: 1 } },
+      { id: 'ran3', name: 'Far Shot', desc: 'Weapon cards reach 1 tile farther', grants: { cardRangeBonus: 1 } },
+    ],
+  },
+  mage: {
+    name: 'Mage',
+    blurb: 'Bends arcane bursts to the fray.',
+    perks: [
+      { id: 'mag1', name: 'Spark', desc: 'Melee captures also slay the 4 diagonal neighbours', grants: { meleeTrait: 'slash' } },
+      { id: 'mag2', name: 'Channeling', desc: 'Weapon cards recharge 1 turn faster', grants: { cooldownReduction: 1 } },
+      { id: 'mag3', name: 'Arcane Nova', desc: 'Melee captures surprise every visible foe', grants: { meleeTrait: 'flourish' } },
+    ],
+  },
+  witch: {
+    name: 'Witch',
+    blurb: 'Trickster of wards and glamours.',
+    perks: [
+      { id: 'wit1', name: 'Witch Sight', desc: 'Sense items, +1 sight range', grants: { detectItems: true, vision: 1 } },
+      { id: 'wit2', name: 'Riposte Ward', desc: 'After a melee kill, take no damage next turn', grants: { meleeTrait: 'riposte' } },
+      { id: 'wit3', name: 'Glamour', desc: '25% chance to evade a hit', grants: { evade: 0.25 } },
+    ],
+  },
+};
 
 // A card lets the king move once like the given unit. Its gold cost equals the
 // piece's traditional chess value; cards share a fixed cooldown, except pawns
@@ -79,15 +162,13 @@ const EQUIP_SHOP_CHOICES = 2; // Equipment offered per shop (a weighted sample).
 const CARD_POINTS = {
   pawn: 1,
   berolina: 1,
-  camel: 2,
   knight: 3,
   bishop: 3,
   rook: 5,
-  nightrider: 5,
   archbishop: 7,
   chancellor: 8,
   queen: 9,
-  amazon: 12,
+  amazon: 12, // never sold (no amazon enemies to learn from); kept for the final boss
   king: 2,
 };
 const CARD_COOLDOWN = 3; // Fixed recharge for most cards.
@@ -146,17 +227,6 @@ const KNIGHT_STEPS = [
   [2, -1],
   [-1, -2],
   [-2, -1],
-];
-// Camel: a (3,1) leaper.
-const CAMEL_STEPS = [
-  [3, 1],
-  [1, 3],
-  [-3, 1],
-  [-1, 3],
-  [3, -1],
-  [1, -3],
-  [-3, -1],
-  [-1, -3],
 ];
 
 // localStorage key for the single save slot.

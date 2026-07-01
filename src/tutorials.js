@@ -49,6 +49,15 @@ const TUTORIALS = {
       'card), or barkskin (a few turns of invincibility). They are scarce, and ' +
       'an enemy will trample one left in the open, so grab them while you can.',
   },
+  classAltar: {
+    title: 'Class altars',
+    text:
+      'Class altars let you embrace a play-style — Warrior, Barbarian, Thief, ' +
+      'Ranger, Mage, or Witch. Each grants one rule-changing perk, and you must ' +
+      'climb a class in order (level 2 needs level 1). An altar always offers the ' +
+      'next rung of your strongest class, so a build keeps growing. Perks weave ' +
+      'into your weapons, movement, and sight — mix classes or specialise deep.',
+  },
   equipshop: {
     title: 'The equipment shop',
     text:
@@ -82,8 +91,8 @@ const TUTORIALS = {
     title: 'New Game +',
     text:
       'The realm runs deeper than one king. Stranger pieces now appear — berolina ' +
-      'pawns, camels, and the great compound pieces (archbishop, chancellor, ' +
-      'amazon) — and another enemy king waits below. How far can you descend?',
+      'berolina pawns and the great compound pieces (archbishop, chancellor) — ' +
+      'and the dungeon runs ever deeper. How far can you descend?',
   },
   statue: {
     title: 'Statues',
@@ -98,6 +107,28 @@ const TUTORIALS = {
       'A turret is a fixed emplacement that cannot be moved or destroyed. Each ' +
       'turn it fires along its piece’s pattern (its red threat tiles), striking ' +
       'the king if he stands in the line. Stay off the red and slip past.',
+  },
+  skirmisher: {
+    title: 'Skirmishers',
+    text:
+      'A skirmisher (» badge) is a hit-and-run fighter: half the time it darts to ' +
+      'a random nearby tile, and whenever it strikes you it immediately bounds ' +
+      'back to where it started. Corner it or it will whittle you down.',
+  },
+  armored: {
+    title: 'Armored foes',
+    text:
+      'An armored piece (▣ badge) shrugs off your first blow — the hit only ' +
+      'shatters its armor, and the recoil hurls you back to where you entered the ' +
+      'floor. It then fights on as an ordinary piece. Armored foes are slow, ' +
+      'moving only every other turn.',
+  },
+  summoner: {
+    title: 'Summoners',
+    text:
+      'A summoner (✦ badge) conjures fresh minions beside it while it can see you. ' +
+      'Its summoned pieces wink out of existence once no summoner is in sight — so ' +
+      'cut down the summoner and its brood goes with it.',
   },
   boss: {
     title: 'The floor guardian',

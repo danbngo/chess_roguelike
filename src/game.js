@@ -7,19 +7,60 @@ function createEnemy(type, x, y) {
     kind: type,
     x,
     y,
+    homeX: x, // spawn tile (skirmishers retreat here after a strike)
+    homeY: y,
     awake: false,
     surprised: false,
     frustrated: false,
-    // Special states (all default off — a plain hunting piece):
-    //   statue - inert stone until the king steps beside it, then it wakes.
-    //   turret - a fixed emplacement that fires its piece pattern; never moves
-    //            and cannot be destroyed.
-    //   boss   - the floor's guardian; cannot be captured while killable guards
-    //            remain in the king's sight, and its fall opens the descent.
+    // Special roles — at most one per piece (the "status"). All default off:
+    //   statue     - inert stone until the king steps beside it, then it wakes.
+    //   turret     - a fixed emplacement that fires its piece pattern; never
+    //                moves and cannot be destroyed.
+    //   boss       - the floor's guardian; cannot be captured while killable
+    //                guards remain in sight, and its fall opens the descent.
+    //   skirmisher - hits and runs: retreats to its spawn after striking; half
+    //                the time it darts about instead of closing in.
+    //   armored    - shrugs off the first hit (losing the armor and flinging the
+    //                king back to his start); lumbers, moving only on odd turns.
+    //   summoner   - conjures fresh pieces beside it and fights warily.
+    //   summoned   - conjured; vanishes when no summoner is in sight.
     statue: false,
     turret: false,
     boss: false,
+    skirmisher: false,
+    armored: false,
+    summoner: false,
+    summoned: false,
   };
+}
+
+// The single special role a piece carries (or 'normal'), for display / icons.
+function enemyRole(enemy) {
+  if (enemy.boss) return 'boss';
+  if (enemy.statue) return 'statue';
+  if (enemy.turret) return 'turret';
+  if (enemy.skirmisher) return 'skirmisher';
+  if (enemy.armored) return 'armored';
+  if (enemy.summoner) return 'summoner';
+  if (enemy.summoned) return 'summoned';
+  return 'normal';
+}
+
+// Roll a special role for an ordinary spawn (or null). Roles arrive with depth
+// and stay rare. Pawns are never skirmishers (too weak to hit-and-run).
+function rollEnemyRole(floor, kind) {
+  const roll = Math.random();
+  if (floor >= 6 && roll < 0.1) return 'summoner';
+  if (floor >= 4 && roll < 0.22) return 'armored';
+  if (floor >= 2 && roll < 0.34 && kind !== 'pawn') return 'skirmisher';
+  return null;
+}
+
+// Give a freshly-created ordinary enemy a rolled role (mutates and returns it).
+function withRolledRole(enemy, floor) {
+  const role = rollEnemyRole(floor, enemy.kind);
+  if (role) enemy[role] = true;
+  return enemy;
 }
 
 // A non-boss, killable piece (not a statue or turret) that is currently in the
@@ -66,6 +107,43 @@ function randomEnemyKind(floor) {
   return pool[randomInt(pool.length)];
 }
 
+// A floor whose number is a multiple of FINAL_FLOOR holds the realm's final boss.
+function isFinalBossFloor(floor) {
+  return floor % FINAL_FLOOR === 0;
+}
+
+// The kind of piece guarding a floor's exit: the amazon on every final-boss floor
+// (she exists nowhere else), otherwise the strongest piece in the floor's roster —
+// allowed to be one tier above what ordinarily spawns there.
+function bossKindForFloor(floor) {
+  if (isFinalBossFloor(floor)) {
+    return 'amazon';
+  }
+  const pool = enemyRosterForFloor(floor).slice();
+  const upcoming = ENEMY_UNLOCKS.filter((e) => floor < e.floor).sort((a, b) => a.floor - b.floor)[0];
+  if (upcoming) {
+    pool.push(upcoming.kind); // a guardian a cut above the rank and file
+  }
+  return pool.reduce((best, k) => ((CARD_POINTS[k] || 0) > (CARD_POINTS[best] || 0) ? k : best), pool[0] || 'queen');
+}
+
+// The chance an ordinary floor's exit is boss-guarded (climbs slightly with depth).
+function bossChance(floor) {
+  return Math.min(0.5, 0.3 + floor * 0.015);
+}
+
+// Resolve the floor's boss being defeated: the final boss wins the run, any other
+// unbars the stair it was guarding.
+function defeatBoss(state, x, y) {
+  if (isFinalBossFloor(state.floor)) {
+    state.won = true;
+    state.message = 'The Amazon guardian falls — the realm is free!';
+  } else if (state.exit) {
+    state.exit.locked = false;
+    state.message = 'The guardian falls — the stair below is unbarred!';
+  }
+}
+
 // Pick a consumable kind by spawn weight (common healing, rare barkskin).
 function randomConsumable() {
   const entries = Object.entries(CONSUMABLES);
@@ -80,10 +158,13 @@ function randomConsumable() {
   return entries[0][0];
 }
 
-// The king is immune to harm while warded (a one-turn Riposte) or under a timed
-// invincibility status (Barkskin).
-function isInvincible(player) {
-  return Boolean(player.warded) || (player.statuses && player.statuses.barkskin > 0);
+// Resolve whether an incoming hit is shrugged off, and how: a guaranteed block
+// (riposte / barkskin), a rolled evasion (class perks), or null (the hit lands).
+function rollMitigation(player) {
+  if (player.warded) return 'riposte';
+  if (player.statuses && player.statuses.barkskin > 0) return 'barkskin';
+  if (player.evade && Math.random() < player.evade) return 'evade';
+  return null;
 }
 
 // Drink a consumable: an immediate boon or a short status. Sets the floor message.
@@ -149,22 +230,133 @@ function sampleEquipment(count) {
   return picked;
 }
 
-// Apply (sign +1) or remove (sign -1) a worn equipment's passive stat bonus.
-function applyEquipBonus(state, item, sign) {
-  const p = state.player;
-  if (item.stat === 'hp') {
-    p.maxHp += sign * item.amount;
-    if (sign > 0) {
-      p.hp += item.amount; // donning a vigor charm heals you for its value
-    }
-    if (p.hp > p.maxHp) p.hp = p.maxHp; // removing one may force a clamp
-    if (p.hp < 1) p.hp = 1;
-  } else if (item.stat === 'vision') {
-    p.vision += sign * item.amount;
-    state.viewSize = p.vision; // keep the legacy mirror in sync
-  } else if (item.stat === 'regen') {
-    p.regen += sign * item.amount;
+// Apply (sign +1) or remove (sign -1) one stat bonus to the king.
+function applyOneBonus(player, stat, amount, sign) {
+  if (stat === 'hp') {
+    player.maxHp += sign * amount;
+    if (sign > 0) player.hp += amount; // donning heals you for its value
+    if (player.hp > player.maxHp) player.hp = player.maxHp; // removing may force a clamp
+    if (player.hp < 1) player.hp = 1;
+  } else if (stat === 'vision') {
+    player.vision += sign * amount;
+  } else if (stat === 'regen') {
+    player.regen += sign * amount;
+  } else if (stat === 'evade') {
+    player.evade = (player.evade || 0) + sign * amount;
+  } else if (stat === 'moveRange') {
+    player.moveRange += sign * amount;
   }
+}
+
+// Apply (sign +1) or remove (sign -1) a worn equipment's bonuses (base + enchant).
+function applyEquipBonus(state, item, sign) {
+  applyOneBonus(state.player, item.stat, item.amount, sign);
+  if (item.enchant) {
+    applyOneBonus(state.player, item.enchant.stat, item.enchant.amount, sign);
+  }
+  state.viewSize = state.player.vision; // keep the legacy mirror in sync
+}
+
+// An equipment shop offer: a key, plus (for armor, rarely) a bonus enchantment.
+function makeEquipOffer(key) {
+  const def = EQUIPMENT[key];
+  const enchant = def && def.armor && Math.random() < EQUIP_ENCHANT_CHANCE ? EQUIP_ENCHANTS[randomInt(EQUIP_ENCHANTS.length)] : null;
+  return { key, sold: false, enchant };
+}
+
+/* ------------------------------ class perks ------------------------------- */
+
+// Classes the king can still advance (the next perk in their ladder exists).
+function availableClasses(player) {
+  return Object.keys(CLASSES).filter((k) => ((player.classLevels && player.classLevels[k]) || 0) < CLASSES[k].perks.length);
+}
+
+// The class the king has invested in most (or null if none yet / it is maxed).
+function highestClass(player) {
+  const levels = player.classLevels || {};
+  let best = null;
+  let bestLv = 0;
+  for (const k of Object.keys(CLASSES)) {
+    const lv = levels[k] || 0;
+    if (lv > bestLv && lv < CLASSES[k].perks.length) {
+      bestLv = lv;
+      best = k;
+    }
+  }
+  return best;
+}
+
+// The next perk in a class's ladder for this king (or null if maxed).
+function nextClassPerk(player, classKey) {
+  const cls = CLASSES[classKey];
+  if (!cls) return null;
+  const level = (player.classLevels && player.classLevels[classKey]) || 0;
+  return cls.perks[level] || null;
+}
+
+// Choose which classes a class altar offers: always the next rung of the king's
+// strongest class (so a main build keeps climbing), then random others.
+function rollClassAltarOffers(player, count) {
+  const avail = availableClasses(player);
+  const offers = [];
+  const high = highestClass(player);
+  if (high && avail.includes(high)) {
+    offers.push(high);
+  }
+  const rest = avail.filter((k) => !offers.includes(k));
+  while (offers.length < count && rest.length) {
+    offers.push(rest.splice(randomInt(rest.length), 1)[0]);
+  }
+  return offers;
+}
+
+// Apply a perk's bundled stat / rule grants to the king.
+function applyPerk(state, grants) {
+  const p = state.player;
+  if (grants.maxHp) {
+    p.maxHp += grants.maxHp;
+    p.hp += grants.maxHp;
+  }
+  if (grants.regen) p.regen += grants.regen;
+  if (grants.vision) {
+    p.vision += grants.vision;
+    state.viewSize = p.vision;
+  }
+  if (grants.moveRange) p.moveRange += grants.moveRange;
+  if (grants.maxCards) p.maxCards += grants.maxCards;
+  if (grants.maxEquipment) p.maxEquipment += grants.maxEquipment;
+  if (grants.evade) p.evade = (p.evade || 0) + grants.evade;
+  if (grants.cooldownReduction) p.cooldownReduction = (p.cooldownReduction || 0) + grants.cooldownReduction;
+  if (grants.cardRangeBonus) p.cardRangeBonus = (p.cardRangeBonus || 0) + grants.cardRangeBonus;
+  if (grants.goldPerKill) p.goldPerKill = (p.goldPerKill || 0) + grants.goldPerKill;
+  if (grants.meleeTrait) {
+    if (!Array.isArray(p.meleeTraits)) p.meleeTraits = [];
+    p.meleeTraits.push(grants.meleeTrait);
+  }
+  if (grants.detectItems) p.detectItems = true;
+}
+
+// Take the next perk of a class at the altar. The altar then falls dormant.
+function useClassAltar(state, classKey) {
+  const next = structuredClone(state);
+  const p = next.player;
+  if (!next.altar || next.altar.used) {
+    return next;
+  }
+  const perk = nextClassPerk(p, classKey);
+  if (!perk) {
+    return next;
+  }
+  applyPerk(next, perk.grants);
+  if (!p.classLevels) p.classLevels = {};
+  p.classLevels[classKey] = (p.classLevels[classKey] || 0) + 1;
+  if (!Array.isArray(p.perks)) p.perks = [];
+  p.perks.push(perk.id);
+  p.usedAltar = true; // breaks the atheist conduct
+  next.altar.used = true;
+  next.altarMessage = `You embrace the ${CLASSES[classKey].name}: ${perk.name}.`;
+  updateDiscovery(next); // a sight perk may dispel fog immediately
+  return next;
 }
 
 // Buy an equipment-shop offer, donning it in a free slot or swapping out the worn
@@ -181,7 +373,7 @@ function buyEquipment(state, offerIndex, replaceIndex) {
     next.shopMessage = 'Not enough gold.';
     return next;
   }
-  const worn = { key: offer.key, stat: def.stat, amount: def.amount };
+  const worn = { key: offer.key, stat: def.stat, amount: def.amount, enchant: offer.enchant || null };
   if (p.equipment.length < p.maxEquipment) {
     p.equipment.push(worn);
   } else if (replaceIndex != null && replaceIndex >= 0 && replaceIndex < p.equipment.length) {
@@ -303,6 +495,15 @@ function generateFloor(floor, carryPlayer, score) {
         upgradeCounts: { hp: 0, vision: 0, regen: 0, cards: 0 },
         warded: false,
         statuses: {}, // active timed effects (e.g. barkskin), keyed to turns left
+        // Class-perk effects (all start neutral):
+        goldPerKill: 0, // bonus gold per capture
+        evade: 0, // chance to shrug off an incoming hit
+        cooldownReduction: 0, // turns shaved off weapon-card recharge
+        cardRangeBonus: 0, // extra reach on weapon cards
+        meleeTraits: [], // weapon traits that fire on the king's own melee captures
+        detectItems: false, // sense items across the floor
+        classLevels: {}, // perks taken per class (class key -> count)
+        perks: [], // perk ids owned
         totalTurns: 0,
         // Conduct trackers (for end-of-run honours; never affect score).
         usedAltar: false,
@@ -321,6 +522,14 @@ function generateFloor(floor, carryPlayer, score) {
   if (player.weaponsUnlocked == null) player.weaponsUnlocked = false;
   if (!player.upgradeCounts) player.upgradeCounts = { hp: 0, vision: 0, regen: 0, cards: 0 };
   if (!player.statuses) player.statuses = {};
+  if (player.goldPerKill == null) player.goldPerKill = 0;
+  if (player.evade == null) player.evade = 0;
+  if (player.cooldownReduction == null) player.cooldownReduction = 0;
+  if (player.cardRangeBonus == null) player.cardRangeBonus = 0;
+  if (!Array.isArray(player.meleeTraits)) player.meleeTraits = [];
+  if (player.detectItems == null) player.detectItems = false;
+  if (!player.classLevels) player.classLevels = {};
+  if (!Array.isArray(player.perks)) player.perks = [];
   if (player.totalTurns == null) player.totalTurns = 0;
 
   const state = {
@@ -338,6 +547,7 @@ function generateFloor(floor, carryPlayer, score) {
     items: [],
     spatters: [], // decaying blood marks left by kills / the king being struck
     exit: null,
+    altar: null, // class altar (perk shrine)
     equipShop: null, // sells passive equipment cards
     weaponShop: null, // sells movement cards (once unlocked)
     floor,
@@ -346,6 +556,7 @@ function generateFloor(floor, carryPlayer, score) {
     enemyTurn: false,
     gameOver: false,
     won: false,
+    pendingAltar: false,
     pendingEquipShop: false,
     pendingWeaponShop: false,
     message: 'A new floor. Seek the exit.',
@@ -369,6 +580,9 @@ function generateFloor(floor, carryPlayer, score) {
   function addEnemy(type, x, y, surprised) {
     const enemy = createEnemy(type, x, y);
     enemy.surprised = Boolean(surprised);
+    if (!surprised && floor >= 2) {
+      withRolledRole(enemy, floor); // wandering spawns may carry a special role
+    }
     state.enemies.push(enemy);
   }
 
@@ -407,29 +621,81 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  // Every floor has a portal down; it starts out of sight, so it must be found.
+  // Every floor has a stair down; it starts out of sight, so it must be found.
   {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
     if (tile) {
       // Hidden under fog of war until the king explores its tile.
-      state.exit = { x: tile.x, y: tile.y, discovered: false };
+      state.exit = { x: tile.x, y: tile.y, discovered: false, locked: false };
     }
   }
 
-  // Every floor holds an equipment shop selling a weighted sample of passive gear.
-  {
-    const offers = sampleEquipment(EQUIP_SHOP_CHOICES).map((key) => ({ key, sold: false }));
+  // A boss may guard the stair — a chance on ordinary floors, always on a final-
+  // boss floor. The exit stays barred until the guardian falls. Its lair is a
+  // small walled keep (a castle) holding the boss and a few sleeping bodyguards.
+  if (state.exit && (isFinalBossFloor(floor) || Math.random() < bossChance(floor))) {
+    const ex = state.exit.x;
+    const ey = state.exit.y;
+    state.exit.locked = true;
+
+    // Ring of walls two tiles out (the keep), leaving one gap as the gate.
+    const ring = [];
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dy = -2; dy <= 2; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) === 2) ring.push([ex + dx, ey + dy]);
+      }
+    }
+    const gate = randomInt(ring.length);
+    ring.forEach(([wx, wy], i) => {
+      if (i === gate) return; // the one way in
+      if (wx < 1 || wx >= WORLD_SIZE - 1 || wy < 1 || wy >= WORLD_SIZE - 1) return;
+      if (chebyshev(wx, wy, player.x, player.y) <= 2) return; // never wall the king in
+      state.terrain[`${wx},${wy}`] = 'wall';
+      occupied.add(`${wx},${wy}`);
+    });
+
+    // The boss, beside the stair.
+    const bossSpot = place((x, y) => standable(x, y) && chebyshev(x, y, ex, ey) === 1);
+    const boss = createEnemy(bossKindForFloor(floor), bossSpot ? bossSpot.x : ex, bossSpot ? bossSpot.y : ey);
+    boss.boss = true;
+    state.enemies.push(boss);
+
+    // Bodyguards: sleeping pieces packed into the keep.
+    const guardCount = Math.min(6, 2 + Math.floor(floor / 4) + (isFinalBossFloor(floor) ? 2 : 0));
+    for (let i = 0; i < guardCount; i += 1) {
+      const spot = place((x, y) => standable(x, y) && chebyshev(x, y, ex, ey) <= 1);
+      if (!spot) break;
+      addEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
+    }
+  }
+
+  // Buildings no longer appear on every floor — each rolls a chance, so floors
+  // vary and never feel bloated. (The boss / its keep above is separate.)
+
+  // A class altar offering a few classes' next perks (incl. the king's strongest).
+  if (Math.random() < 0.55) {
+    const offers = rollClassAltarOffers(player, CLASS_ALTAR_CHOICES);
+    if (offers.length) {
+      const altarTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+      if (altarTile) {
+        state.altar = { x: altarTile.x, y: altarTile.y, discovered: false, used: false, offers };
+      }
+    }
+  }
+
+  // An equipment shop selling a weighted sample of passive gear.
+  if (Math.random() < 0.5) {
+    const offers = sampleEquipment(EQUIP_SHOP_CHOICES).map((key) => makeEquipOffer(key));
     const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (shopTile) {
-      // Hidden under fog of war until the king explores its tile.
       state.equipShop = { x: shopTile.x, y: shopTile.y, discovered: false, offers };
     }
   }
 
   // Weapon shops appear once the king has seen his first card-eligible enemy, and
-  // each offers three cards drawn from the kinds he has seen. Each offer may carry
-  // a weapon trait (pawn / king / berolina cards always do).
-  if (player.weaponsUnlocked) {
+  // each offers cards drawn from the kinds he has seen. Each offer may carry a
+  // weapon trait (pawn / king / berolina cards always do).
+  if (player.weaponsUnlocked && Math.random() < 0.5) {
     const kinds = pickSome(
       player.seenKinds.filter((kind) => isCardKind(kind)),
       SHOP_CHOICES,
@@ -446,7 +712,7 @@ function generateFloor(floor, carryPlayer, score) {
   // Tiles whose surroundings must stay safe — no turret may threaten a feature,
   // and statues may stand guard a step away from one.
   const featureTiles = [];
-  for (const f of [state.exit, state.equipShop, state.weaponShop]) {
+  for (const f of [state.exit, state.altar, state.equipShop, state.weaponShop]) {
     if (f) featureTiles.push(`${f.x},${f.y}`);
   }
   const featureSet = new Set(featureTiles);
@@ -570,8 +836,19 @@ function updateDiscovery(state) {
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) {
     state.exit.discovered = true;
   }
+  if (state.altar && state.explored[`${state.altar.x},${state.altar.y}`]) {
+    state.altar.discovered = true;
+  }
   if (state.equipShop && state.explored[`${state.equipShop.x},${state.equipShop.y}`]) {
     state.equipShop.discovered = true;
+  }
+  // Treasure Sense: remember every item on the floor, wherever it lies.
+  if (state.player && state.player.detectItems) {
+    if (!state.itemMemory) state.itemMemory = {};
+    for (const item of state.items) {
+      state.explored[`${item.x},${item.y}`] = true;
+      state.itemMemory[`${item.x},${item.y}`] = { kind: item.kind, amount: item.amount, potion: item.potion };
+    }
   }
   if (state.weaponShop && state.explored[`${state.weaponShop.x},${state.weaponShop.y}`]) {
     state.weaponShop.discovered = true;
@@ -612,6 +889,8 @@ function getPlayerMoves(state) {
 
 // Resolve the king arriving on (x, y): capture, pick-ups, exit, buildings.
 function applyArrival(next, x, y) {
+  const fromX = next.player.x; // where the king struck from (for melee-trait effects)
+  const fromY = next.player.y;
   next.player.x = x;
   next.player.y = y;
   next.turn += 1;
@@ -632,13 +911,35 @@ function applyArrival(next, x, y) {
   tickStatuses(next.player);
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
+  if (enemy && enemy.armored) {
+    // The first blow only shatters the armor: the piece survives (now ordinary)
+    // and the recoil flings the king back to his floor-start tile.
+    enemy.armored = false;
+    next.player.x = PLAYER_START.x;
+    next.player.y = PLAYER_START.y;
+    addSpatter(next, x, y);
+    next.message = `The king shatters a ${enemy.kind}'s armor and is hurled back!`;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
   if (enemy) {
     next.enemies = next.enemies.filter((e) => e.id !== enemy.id);
-    next.player.gold += 2;
+    next.player.gold += 2 + (next.player.goldPerKill || 0);
     next.player.killedEnemy = true; // breaks the pacifist conduct
     addSpatter(next, x, y); // the fallen piece's blood
     next.message = `The king defeats a ${enemy.kind}.`;
     next.lastAction = 'combat';
+    if (enemy.boss) {
+      defeatBoss(next, x, y);
+    }
+    // Class melee perks (Cleave, Spark, Arcane Nova, Riposte Ward) fire on the
+    // king's own captures, reusing the weapon-trait effects.
+    if (!next.gameOver && !next.won) {
+      for (const trait of next.player.meleeTraits || []) {
+        applyCardTrait(next, trait, x, y, fromX, fromY);
+      }
+    }
   }
 
   const itemIndex = next.items.findIndex((item) => item.x === x && item.y === y);
@@ -656,9 +957,18 @@ function applyArrival(next, x, y) {
   }
 
   if (next.exit && next.exit.x === x && next.exit.y === y) {
-    next.lastAction = 'exit';
-    next.message = 'You step onto the stair and descend...';
-    return next;
+    if (next.exit.locked) {
+      next.message = 'The stair is barred — the guardian must fall first.';
+    } else {
+      next.lastAction = 'exit';
+      next.message = 'You step onto the stair and descend...';
+      return next;
+    }
+  }
+
+  if (next.altar && next.altar.x === x && next.altar.y === y && !next.altar.used) {
+    next.pendingAltar = true;
+    next.message = 'A class altar. It awakens once the enemies have moved.';
   }
 
   if (next.equipShop && next.equipShop.x === x && next.equipShop.y === y) {
@@ -713,7 +1023,9 @@ function useCard(state, cardIndex, x, y) {
   const struck = Boolean(next.enemies.find((e) => e.x === x && e.y === y)); // a kill this card scores
 
   const result = applyArrival(next, x, y); // ticks every card's cooldown down by one...
-  result.player.cards[cardIndex].remaining = result.player.cards[cardIndex].cooldown; // ...then this one recharges fully.
+  // ...then this one recharges fully, less any Channeling (cooldownReduction) perk.
+  const reduction = result.player.cooldownReduction || 0;
+  result.player.cards[cardIndex].remaining = Math.max(1, result.player.cards[cardIndex].cooldown - reduction);
 
   // Weapon traits fire only when the card itself scores a kill (and the run goes on).
   if (struck && trait && !result.gameOver) {
@@ -732,6 +1044,9 @@ function slayEnemyAt(state, tx, ty) {
   state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
   state.player.killedEnemy = true;
   addSpatter(state, tx, ty);
+  if (enemy.boss) {
+    defeatBoss(state, tx, ty);
+  }
   return true;
 }
 
@@ -834,7 +1149,7 @@ function wanderEnemy(state, enemy) {
 // transient `frustrated` flag is cleared here so it only ever shows for one turn.
 function beginEnemyPhase(state) {
   const next = structuredClone(state);
-  const moverIds = [];
+  let moverIds = [];
   recordSeenEnemies(next); // note any kinds that just came into view
 
   for (const enemy of next.enemies) {
@@ -857,7 +1172,21 @@ function beginEnemyPhase(state) {
       enemy.surprised = true;
     } else {
       enemy.surprised = false;
+      if (enemy.armored && next.turn % 2 === 0) {
+        continue; // armored pieces lumber — they act only on odd turns
+      }
       moverIds.push(enemy.id);
+    }
+  }
+
+  // Conjured minions wink out of existence when no summoner is in the king's
+  // sight to sustain them (only those he can see vanish — for a visible effect).
+  const summonerSeen = next.enemies.some((e) => e.summoner && unitInSight(next, e.x, e.y));
+  if (!summonerSeen) {
+    const before = next.enemies.length;
+    next.enemies = next.enemies.filter((e) => !(e.summoned && unitInSight(next, e.x, e.y)));
+    if (next.enemies.length !== before) {
+      moverIds = moverIds.filter((id) => next.enemies.some((e) => e.id === id));
     }
   }
 
@@ -880,8 +1209,12 @@ function fireTurret(state, turret) {
     state.lastAction = 'enemy';
     return state;
   }
-  if (isInvincible(state.player)) {
-    state.message = `The king shrugs off a ${turret.kind} turret's shot!`;
+  const mit = rollMitigation(state.player);
+  if (mit) {
+    state.message =
+      mit === 'evade'
+        ? `The king dodges a ${turret.kind} turret's shot!`
+        : `The king shrugs off a ${turret.kind} turret's shot!`;
     state.lastAction = 'enemy';
     return state;
   }
@@ -897,6 +1230,158 @@ function fireTurret(state, turret) {
   return state;
 }
 
+// Pick a hostile destination: pounce on the king if reachable, else close in as
+// far as possible (ties broken randomly).
+function chooseHostileMove(moves, px, py) {
+  const key = `${px},${py}`;
+  let chosen = moves.find((m) => `${m.x},${m.y}` === key);
+  if (!chosen) {
+    let best = Infinity;
+    for (const m of moves) {
+      const d = distanceSq(m.x, m.y, px, py);
+      if (d < best || (d === best && Math.random() < 0.5)) {
+        best = d;
+        chosen = m;
+      }
+    }
+  }
+  return chosen;
+}
+
+// Resolve an enemy (already moved onto the king's tile) striking him: apply
+// damage unless mitigated, and remove the attacker if it expends itself (normal
+// melee) or is cut down by a Riposte. Returns true if the attacker is gone.
+function strikeKing(state, enemy, expend) {
+  const mit = rollMitigation(state.player);
+  if (!mit) {
+    state.player.hp -= 1;
+    state.player.wasHit = true; // breaks the untouchable conduct
+    addSpatter(state, state.player.x, state.player.y);
+  }
+  const removed = expend || mit === 'riposte'; // riposte cuts the attacker down
+  if (removed) {
+    state.enemies = state.enemies.filter((p) => p.id !== enemy.id);
+  }
+  if (mit) {
+    state.message =
+      mit === 'riposte'
+        ? `The king ripostes a ${enemy.kind}!`
+        : mit === 'barkskin'
+          ? `Barkskin turns aside a ${enemy.kind}!`
+          : `The king dodges a ${enemy.kind}!`;
+    state.lastAction = 'enemy';
+  } else {
+    state.message = `A ${enemy.kind} strikes the king!`;
+    state.lastAction = 'hit';
+    if (state.player.hp <= 0) {
+      state.gameOver = true;
+      state.message = 'The king falls.';
+    }
+  }
+  return removed;
+}
+
+// A skirmisher (sitting on the king's tile after a strike) bounds back to its
+// spawn — or, failing that, any free neighbour; if truly boxed in, it is spent.
+function retreatSkirmisher(state, enemy) {
+  const occupiedAt = (x, y) =>
+    (x === state.player.x && y === state.player.y) || state.enemies.some((e) => e.id !== enemy.id && e.x === x && e.y === y);
+  const free = (x, y) =>
+    x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE && isStandable(terrainAt(state, x, y)) && !occupiedAt(x, y);
+  if (free(enemy.homeX, enemy.homeY)) {
+    enemy.x = enemy.homeX;
+    enemy.y = enemy.homeY;
+    return;
+  }
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    if (free(enemy.x + dx, enemy.y + dy)) {
+      enemy.x += dx;
+      enemy.y += dy;
+      return;
+    }
+  }
+  state.enemies = state.enemies.filter((e) => e.id !== enemy.id); // nowhere to flee
+}
+
+// Skirmisher turn: half the time it darts to a random reachable tile, half the
+// time it closes in / strikes — and after any strike it retreats to its spawn.
+function skirmisherMove(state, enemy) {
+  const moves = getPieceMoves(enemy, state);
+  if (!moves.length) {
+    enemy.frustrated = true;
+    state.message = 'A skirmisher is hemmed in.';
+    state.lastAction = 'enemy';
+    return state;
+  }
+  const chosen = Math.random() < 0.5 ? chooseHostileMove(moves, state.player.x, state.player.y) : moves[randomInt(moves.length)];
+  enemy.x = chosen.x;
+  enemy.y = chosen.y;
+  if (enemy.x === state.player.x && enemy.y === state.player.y) {
+    const removed = strikeKing(state, enemy, false);
+    if (!removed && !state.gameOver) {
+      retreatSkirmisher(state, enemy);
+      state.message = `A ${enemy.kind} skirmisher strikes and darts away!`;
+      state.lastAction = 'enemy';
+    }
+    return state;
+  }
+  state.message = 'A skirmisher repositions.';
+  state.lastAction = 'enemy';
+  return state;
+}
+
+// Conjure a fresh (weak) piece on a free tile beside the summoner. Returns true
+// if one was placed.
+function summonAdjacent(state, summoner) {
+  const dirs = [...ORTHO, ...DIAG];
+  for (let i = dirs.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1);
+    [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+  }
+  for (const [dx, dy] of dirs) {
+    const x = summoner.x + dx;
+    const y = summoner.y + dy;
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+    if (!isStandable(terrainAt(state, x, y))) continue;
+    if (x === state.player.x && y === state.player.y) continue;
+    if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
+    const minion = createEnemy('pawn', x, y); // conjured minions are weak pawns
+    minion.summoned = true;
+    minion.awake = true; // already roused to the fight
+    state.enemies.push(minion);
+    return true;
+  }
+  return false;
+}
+
+// Summoner turn: a third of the time conjure a minion, a third dart randomly, a
+// third close in / strike.
+function summonerMove(state, enemy) {
+  const roll = Math.random();
+  if (roll < 0.34 && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, enemy)) {
+    state.message = `A ${enemy.kind} summoner conjures a minion!`;
+    state.lastAction = 'enemy';
+    return state;
+  }
+  const moves = getPieceMoves(enemy, state);
+  if (!moves.length) {
+    enemy.frustrated = true;
+    state.message = 'A summoner is hemmed in.';
+    state.lastAction = 'enemy';
+    return state;
+  }
+  const chosen = roll < 0.67 ? moves[randomInt(moves.length)] : chooseHostileMove(moves, state.player.x, state.player.y);
+  enemy.x = chosen.x;
+  enemy.y = chosen.y;
+  if (enemy.x === state.player.x && enemy.y === state.player.y) {
+    strikeKing(state, enemy, true);
+    return state;
+  }
+  state.message = 'A summoner shifts.';
+  state.lastAction = 'enemy';
+  return state;
+}
+
 // Move a single (seen, aware) enemy: capture the king if possible, else close in.
 function moveEnemy(state, enemyId) {
   const next = structuredClone(state);
@@ -905,17 +1390,19 @@ function moveEnemy(state, enemyId) {
     return next;
   }
 
-  // Turrets never move: they fire along their piece's pattern, striking the king
-  // if he stands on a threatened tile, and persist (they are never expended).
+  // Role-specific turns.
   if (enemy.turret) {
-    return fireTurret(next, enemy);
+    return fireTurret(next, enemy); // fixed emplacement; fires its pattern
+  }
+  if (enemy.skirmisher) {
+    return skirmisherMove(next, enemy);
+  }
+  if (enemy.summoner) {
+    return summonerMove(next, enemy);
   }
 
-  // Hostile preference order: strike the king, else close in as far as possible,
-  // else (if every move only opens distance) move as little further as possible.
-  // getPieceMoves already excludes tiles held by other enemies, so a hostile
-  // piece never tries to step onto a friend. With no legal move at all it holds
-  // still and fumes (the frustrated mark) for this turn.
+  // Ordinary hostile: getPieceMoves already excludes friend-held tiles, so it
+  // never steps onto an ally. With no legal move it holds still and fumes.
   const moves = getPieceMoves(enemy, next);
   if (!moves.length) {
     enemy.frustrated = true;
@@ -924,45 +1411,12 @@ function moveEnemy(state, enemyId) {
     return next;
   }
 
-  const playerKey = `${next.player.x},${next.player.y}`;
-  let chosen = moves.find((move) => `${move.x},${move.y}` === playerKey);
-
-  if (!chosen) {
-    let best = Infinity;
-    for (const move of moves) {
-      const d = distanceSq(move.x, move.y, next.player.x, next.player.y);
-      if (d < best || (d === best && Math.random() < 0.5)) {
-        best = d;
-        chosen = move;
-      }
-    }
-  }
-
-  const fromX = enemy.x;
-  const fromY = enemy.y;
+  const chosen = chooseHostileMove(moves, next.player.x, next.player.y);
   enemy.x = chosen.x;
   enemy.y = chosen.y;
 
   if (enemy.x === next.player.x && enemy.y === next.player.y) {
-    const riposte = Boolean(next.player.warded); // Riposte: no damage this turn
-    const immune = isInvincible(next.player); // riposte or barkskin
-    if (!immune) {
-      next.player.hp -= 1;
-      next.player.wasHit = true; // breaks the untouchable conduct
-      addSpatter(next, next.player.x, next.player.y); // the king's own blood
-    }
-    next.enemies = next.enemies.filter((piece) => piece.id !== enemyId); // the attacker spends itself
-    if (immune) {
-      next.message = riposte ? `The king ripostes a ${enemy.kind}!` : `Barkskin turns aside a ${enemy.kind}!`;
-      next.lastAction = 'enemy';
-    } else {
-      next.message = `A ${enemy.kind} strikes the king!`;
-      next.lastAction = 'hit';
-      if (next.player.hp <= 0) {
-        next.gameOver = true;
-        next.message = 'The king falls.';
-      }
-    }
+    strikeKing(next, enemy, true);
     return next;
   }
 
@@ -1009,7 +1463,7 @@ function maybeSpawnEnemy(state) {
   }
   const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y));
   if (tile) {
-    next.enemies.push(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y));
+    next.enemies.push(withRolledRole(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y), next.floor));
   }
   return next;
 }

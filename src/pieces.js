@@ -45,18 +45,6 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget) {
         moves.push(target);
       }
       break;
-    case 'camel':
-      // A (3,1) leaper.
-      for (const target of leapTargets(state, fromX, fromY, CAMEL_STEPS, unitAt, isTarget)) {
-        moves.push(target);
-      }
-      break;
-    case 'nightrider':
-      // Rides repeated knight leaps in a line until blocked.
-      for (const target of riderTargets(state, fromX, fromY, KNIGHT_STEPS, unitAt, isTarget)) {
-        moves.push(target);
-      }
-      break;
     case 'archbishop':
       // Bishop + knight.
       slide(DIAG, Infinity);
@@ -130,7 +118,7 @@ function getCardMoves(state, kind) {
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
   // Enemies block the card's path, but only capturable ones are valid targets.
   const isEnemy = (x, y) => capturableAt(state, x, y);
-  const range = Math.floor((state.player.vision || state.viewSize) / 2);
+  const range = Math.floor((state.player.vision || state.viewSize) / 2) + (state.player.cardRangeBonus || 0);
   return generateMoves(kind, state, state.player.x, state.player.y, enemyAt, isEnemy).filter(
     (move) => chebyshev(move.x, move.y, state.player.x, state.player.y) <= range,
   );
@@ -185,11 +173,9 @@ function getPieceLabel(kind) {
     knight: '♞',
     queen: '♛',
     berolina: 'B', // berolina pawn
-    camel: 'C',
     archbishop: 'A', // bishop + knight
     chancellor: 'M', // rook + knight (a.k.a. marshall)
-    amazon: 'Z', // queen + knight
-    nightrider: 'N', // rides repeated knight leaps
+    amazon: 'Z', // queen + knight (the final boss)
   };
   return labels[kind] ?? '♟';
 }
