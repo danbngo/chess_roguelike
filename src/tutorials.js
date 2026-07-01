@@ -47,10 +47,12 @@ const TUTORIALS = {
   potionShop: {
     title: 'The apothecary',
     text:
-      'Potions are no longer found on the ground — buy them here into your ' +
-      'satchel, then drink them later by clicking them in the panel (which costs a ' +
-      'turn). Healing restores all HP, Mending recharges your cards, and Barkskin ' +
-      'grants a few turns of invincibility. The Alchemist class makes them mightier.',
+      'Buy potions and scrolls here into your satchel, then use them later by ' +
+      'clicking them in the panel (costs a turn). Healing / Mending / Barkskin ' +
+      'mend, recharge, and shield you. Scrolls bend space: a Fog Scroll blinds the ' +
+      'area, Invisibility hides you, a Teleport Scroll flings you anywhere, and a ' +
+      'Blink Scroll lets you click a visible tile to hop to. The Alchemist class ' +
+      'empowers potions and makes them free to use.',
   },
   consumable: {
     title: 'Potions',

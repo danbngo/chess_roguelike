@@ -86,6 +86,11 @@
   let cardTargets = [];
   let cardCursor = null;
 
+  // Blink-scroll targeting: the satchel index of the blink scroll being aimed (or
+  // null), and the tiles it may hop to.
+  let blinkTargeting = null;
+  let blinkTiles = [];
+
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
   let animTimer = 0;
@@ -132,6 +137,12 @@
     const parts = [];
     if (statuses.barkskin > 0) {
       parts.push(`Barkskin ${statuses.barkskin}`);
+    }
+    if (statuses.invisible > 0) {
+      parts.push(`Invisible ${statuses.invisible}`);
+    }
+    if (gameState && gameState.fogClouds && Object.keys(gameState.fogClouds).length) {
+      parts.push('Fogged');
     }
     statusLabel.textContent = parts.join(' · ');
   }
@@ -251,6 +262,11 @@
   function useConsumableAt(index) {
     if (!isIdle()) return;
     cancelCardTargeting();
+    // The blink scroll needs a target tile — enter aiming mode instead.
+    if (gameState.player.consumables[index] === 'blink') {
+      startBlinkTargeting(index);
+      return;
+    }
     const result = consumeItem(gameState, index);
     if (result.lastAction === 'blocked') {
       applyState(result, false);
@@ -262,6 +278,40 @@
       return;
     }
     processPlayerResult(result); // costs a turn — enemies then move
+  }
+
+  function startBlinkTargeting(index) {
+    blinkTiles = blinkTargets(gameState);
+    if (!blinkTiles.length) {
+      gameState.message = 'Nowhere in sight to blink to.';
+      updateHud();
+      return;
+    }
+    blinkTargeting = index;
+    gameState.message = 'Blink: click a tile you can see.';
+    updateHud();
+  }
+
+  function cancelBlinkTargeting() {
+    blinkTargeting = null;
+    blinkTiles = [];
+  }
+
+  // Resolve a blink to the chosen tile (costs a turn unless Quick Draw).
+  function confirmBlink(tileX, tileY) {
+    const index = blinkTargeting;
+    cancelBlinkTargeting();
+    const result = useBlink(gameState, index, tileX, tileY);
+    if (result.lastAction === 'blocked') {
+      applyState(result, false);
+      return;
+    }
+    Renderer.effect('powerup');
+    if (result.lastAction === 'consume-free') {
+      applyState(result, true);
+    } else {
+      processPlayerResult(result);
+    }
   }
 
   // Start (or cancel) aiming a card. While aiming, its reachable tiles glow.
@@ -314,6 +364,8 @@
     cardTargeting = null;
     cardTargets = [];
     cardCursor = null;
+    blinkTargeting = null; // never aim a card and a blink at once
+    blinkTiles = [];
   }
 
   /* ------------------------------ tile popover --------------------------- */
@@ -1396,6 +1448,21 @@
     const scale = canvas.width / rect.width;
     const { x: tileX, y: tileY } = Renderer.screenToTile((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
 
+    // Aiming a blink scroll: a click on a lit tile blinks there; else cancels.
+    if (blinkTargeting !== null) {
+      if (!isIdle()) {
+        return;
+      }
+      const target = blinkTiles.find((t) => t.x === tileX && t.y === tileY);
+      if (target) {
+        confirmBlink(tileX, tileY);
+      } else {
+        cancelBlinkTargeting();
+        examineTile(tileX, tileY);
+      }
+      return;
+    }
+
     // Aiming a card: a click on a highlighted tile plays it; anything else cancels.
     if (cardTargeting !== null) {
       if (!isIdle()) {
@@ -1457,15 +1524,28 @@
     }
 
     Renderer.update(delta);
-    // While aiming a card, show its reachable tiles instead of the normal moves.
+    // While aiming a card or a blink, show its reachable tiles instead of moves.
     const aiming = cardTargeting !== null;
-    Renderer.draw(gameState, isIdle() && !aiming, aiming ? cardTargets : null, aiming ? cardCursor : null);
+    const blinking = blinkTargeting !== null;
+    const targets = aiming ? cardTargets : blinking ? blinkTiles : null;
+    Renderer.draw(gameState, isIdle() && !aiming && !blinking, targets, aiming ? cardCursor : null);
     requestAnimationFrame(step);
   }
 
   /* ------------------------------- wiring -------------------------------- */
 
   document.addEventListener('keydown', (event) => {
+    // While aiming a blink scroll (click-targeted): Escape cancels; swallow the rest.
+    if (blinkTargeting !== null) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelBlinkTargeting();
+        gameState.message = 'Blink cancelled.';
+        updateHud();
+      }
+      return;
+    }
+
     // While aiming a card: movement keys steer the cursor, Enter/Space confirm,
     // Escape cancels.
     if (cardTargeting !== null) {

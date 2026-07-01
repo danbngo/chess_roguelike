@@ -27,8 +27,10 @@ const {
   movePlayerTo,
   beginEnemyPhase,
   floorGoldReward,
+  moveEnemy,
+  getPieceThreats,
 } = new Function(
-  `${source}\nreturn { createInitialState, movePlayer, getVisibleBounds, getPlayerMoves, capturableAt, generateFloor, defeatBoss, bossKindForFloor, useClassAltar, rollClassAltarOffers, highestClass, movePlayerTo, beginEnemyPhase, floorGoldReward };`,
+  `${source}\nreturn { createInitialState, movePlayer, getVisibleBounds, getPlayerMoves, capturableAt, generateFloor, defeatBoss, bossKindForFloor, useClassAltar, rollClassAltarOffers, highestClass, movePlayerTo, beginEnemyPhase, floorGoldReward, moveEnemy, getPieceThreats };`,
 )();
 
 // Build a bare enemy with the default state flags, overridden by `extra`.
@@ -157,6 +159,28 @@ test('the descend reward decays about 1% per turn to zero', () => {
 
   assert.ok(t0 > t50 && t50 > t100);
   assert.equal(t100, 0);
+});
+
+test('a mage fires, then cannot fire the very next turn (no two acts in a row)', () => {
+  const state = createInitialState();
+  state.terrain = {};
+  // A rook-mage on the king's file, charged.
+  state.enemies = [makeEnemy({ kind: 'rook', x: 8, y: 5, mage: true, charged: true })];
+
+  const afterFire = moveEnemy(state, state.enemies[0].id);
+  assert.ok(afterFire.player.hp < state.player.hp, 'the bolt hits');
+  assert.equal(afterFire.enemies[0].charged, false, 'it is spent');
+
+  const afterRecharge = moveEnemy(afterFire, afterFire.enemies[0].id);
+  assert.equal(afterRecharge.player.hp, afterFire.player.hp, 'it cannot fire again immediately');
+  assert.equal(afterRecharge.enemies[0].charged, true, 'it recharges');
+});
+
+test('a mage only marks tiles as dangerous while it is charged', () => {
+  const state = createInitialState();
+  state.terrain = {};
+  assert.ok(getPieceThreats(makeEnemy({ kind: 'rook', x: 8, y: 5, mage: true, charged: true }), state).length > 0);
+  assert.equal(getPieceThreats(makeEnemy({ kind: 'rook', x: 8, y: 5, mage: true, charged: false }), state).length, 0);
 });
 
 test('an armored foe survives the first hit, shedding armor and flinging the king home', () => {

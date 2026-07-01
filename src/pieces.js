@@ -153,6 +153,13 @@ function getPieceThreats(piece, state) {
   if (piece.statue) {
     return []; // an inert statue threatens nothing until it wakes
   }
+  if (piece.summoner) {
+    return []; // summoners never strike the king directly
+  }
+  if (piece.mage) {
+    // A mage only threatens when charged, and its bolt pierces (mage tiles).
+    return piece.charged ? magePierceTiles(state, piece) : [];
+  }
   if (piece.kind === 'pawn') {
     return adjacentThreats(piece, state, DIAG);
   }

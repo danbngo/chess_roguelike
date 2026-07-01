@@ -50,8 +50,8 @@ function hasLineOfSight(state, x0, y0, x1, y1) {
     if (x === x1 && y === y1) {
       break;
     }
-    if (blocksSight(terrainAt(state, x, y))) {
-      return false;
+    if (blocksSight(terrainAt(state, x, y)) || (state.fogClouds && state.fogClouds[`${x},${y}`])) {
+      return false; // walls and drifting fog clouds both block the look
     }
   }
   return true;

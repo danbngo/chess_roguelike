@@ -35,6 +35,7 @@ function createEnemy(type, x, y) {
     summoned: false,
     mage: false,
     ability: null, // boss special ability id (see bossAbilityForFloor)
+    charged: true, // mages/summoners can act only when charged (not two turns running)
   };
 }
 
@@ -240,6 +241,27 @@ function applyConsumable(state, potion) {
     const turns = potent ? BARKSKIN_TURNS + 3 : BARKSKIN_TURNS;
     p.statuses.barkskin = turns;
     state.message = `Barkskin hardens your hide — invincible for ${turns} turns.`;
+  } else if (potion === 'invis') {
+    const turns = potent ? INVIS_TURNS + 3 : INVIS_TURNS;
+    p.statuses.invisible = turns;
+    state.message = `You fade from sight for ${turns} turns.`;
+  } else if (potion === 'fog') {
+    if (!state.fogClouds) state.fogClouds = {};
+    for (const key of computeVisibleTiles(state)) {
+      const [x, y] = key.split(',').map(Number);
+      if (x === p.x && y === p.y) continue; // never fog your own tile
+      if (terrainAt(state, x, y) === 'wall') continue;
+      state.fogClouds[key] = true;
+    }
+    state.message = 'A Fog Scroll blankets your surroundings in cloud.';
+  } else if (potion === 'teleport') {
+    const occupied = new Set(state.enemies.map((e) => `${e.x},${e.y}`));
+    const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, p.x, p.y) >= 1);
+    if (tile) {
+      p.x = tile.x;
+      p.y = tile.y;
+    }
+    state.message = 'A Teleport Scroll whisks you across the floor.';
   }
 }
 
@@ -608,6 +630,7 @@ function generateFloor(floor, carryPlayer, score) {
     enemies: [],
     items: [],
     spatters: [], // decaying blood marks left by kills / the king being struck
+    fogClouds: {}, // temporary sight-blocking clouds from a Fog Scroll ("x,y" -> true)
     exit: null,
     altar: null, // class altar (perk shrine)
     equipShop: null, // sells passive equipment cards
@@ -867,6 +890,29 @@ function decaySpatters(spatters) {
   return spatters.map((s) => ({ ...s, life: s.life - 1 })).filter((s) => s.life > 0);
 }
 
+// Each turn, every drifting fog cloud has a chance to dissipate.
+function decayFog(state) {
+  if (!state.fogClouds) return;
+  for (const key of Object.keys(state.fogClouds)) {
+    if (Math.random() < FOG_DISSIPATE) delete state.fogClouds[key];
+  }
+}
+
+// Advance the world by one turn's upkeep: age the turn counters, recharge cards,
+// fade blood, lapse the Riposte ward, tick timed statuses, and drift the fog.
+function passTurn(state) {
+  const p = state.player;
+  state.turn += 1;
+  p.totalTurns = (p.totalTurns || 0) + 1;
+  for (const card of p.cards || []) {
+    if (card.remaining > 0) card.remaining -= 1;
+  }
+  state.spatters = decaySpatters(state.spatters);
+  p.warded = false;
+  tickStatuses(p);
+  decayFog(state);
+}
+
 // Record any enemy kinds the king can currently see, and unlock weapon shops once
 // he has spotted his first card-eligible foe.
 function recordSeenEnemies(state) {
@@ -974,26 +1020,12 @@ function getPlayerMoves(state) {
 
 // Resolve the king arriving on (x, y): capture, pick-ups, exit, buildings.
 function applyArrival(next, x, y) {
-  const fromX = next.player.x; // where the king struck from (for melee-trait effects)
-  const fromY = next.player.y;
   next.player.x = x;
   next.player.y = y;
-  next.turn += 1;
-  next.player.totalTurns = (next.player.totalTurns || 0) + 1;
+  passTurn(next); // one turn's upkeep (cards, blood, ward, statuses, fog)
   next.enemyTurn = true;
   next.lastAction = 'move';
   next.message = 'The king moves.';
-
-  // A turn passes: every card on cooldown recharges by one, blood fades, and any
-  // lingering Riposte ward from last turn lapses.
-  for (const card of next.player.cards || []) {
-    if (card.remaining > 0) {
-      card.remaining -= 1;
-    }
-  }
-  next.spatters = decaySpatters(next.spatters);
-  next.player.warded = false;
-  tickStatuses(next.player);
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   const pl = next.player;
@@ -1011,6 +1043,7 @@ function applyArrival(next, x, y) {
   }
   if (enemy) {
     next.enemies = next.enemies.filter((e) => e.id !== enemy.id);
+    if (pl.statuses) pl.statuses.invisible = 0; // attacking reveals you
     pl.gold += pl.pillage ? CARD_POINTS[enemy.kind] || 2 : 2; // Pillage pays the piece's value
     pl.killedEnemy = true; // breaks the pacifist conduct
     addSpatter(next, x, y); // the fallen piece's blood
@@ -1208,10 +1241,13 @@ function movePlayer(state, dx, dy) {
 // never wanders into the king's line of sight — so a piece only ever enters view
 // because the *king* moved, and is then reliably caught by surprise on that exact
 // turn (rather than appearing un-surprised and freezing a turn late).
-function wanderEnemy(state, enemy) {
+// When `invisible` is true the king can't be seen, so the enemy shuffles about
+// with no regard for staying hidden, and may even blunder onto his tile — which
+// the caller resolves as an accidental bump. Returns 'bump' in that case.
+function wanderEnemy(state, enemy, invisible) {
   const unitAt = (x, y) => {
-    if (x === state.player.x && y === state.player.y) {
-      return 'player';
+    if (!invisible && x === state.player.x && y === state.player.y) {
+      return 'player'; // while invisible the king is not a blocker (can be bumped)
     }
     return state.enemies.find((other) => other.id !== enemy.id && other.x === x && other.y === y) || null;
   };
@@ -1223,16 +1259,45 @@ function wanderEnemy(state, enemy) {
       continue;
     }
     const dest = stops[stops.length - 1];
-    if (!unitInSight(state, dest.x, dest.y)) {
-      candidates.push(dest); // stay hidden until the king comes to us
+    if (invisible || !unitInSight(state, dest.x, dest.y)) {
+      candidates.push(dest); // stay hidden until the king comes to us (unless he's unseen)
     }
   }
   if (!candidates.length) {
-    return; // Boxed in (or hemmed against the king's view) — just idle.
+    return null; // Boxed in (or hemmed against the king's view) — just idle.
   }
   const pick = candidates[randomInt(candidates.length)];
+  if (invisible && pick.x === state.player.x && pick.y === state.player.y) {
+    return 'bump'; // blundered into the unseen king — don't move onto him
+  }
   enemy.x = pick.x;
   enemy.y = pick.y;
+  return null;
+}
+
+// Resolve an enemy blundering into the invisible king: a hit (unless mitigated),
+// the king is revealed, and the clumsy attacker spends itself.
+function resolveBump(state, enemy) {
+  const mit = rollMitigation(state.player);
+  if (!mit) {
+    state.player.hp -= 1;
+    state.player.wasHit = true;
+    if (state.player.retaliate) state.player.warded = true;
+    addSpatter(state, state.player.x, state.player.y);
+  }
+  if (state.player.statuses) state.player.statuses.invisible = 0; // revealed by contact
+  state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
+  if (mit) {
+    state.message = `A ${enemy.kind} blunders into the unseen king, who shrugs it off!`;
+    state.lastAction = 'enemy';
+  } else {
+    state.message = `A ${enemy.kind} stumbles into the king, revealing him!`;
+    state.lastAction = 'hit';
+    if (state.player.hp <= 0) {
+      state.gameOver = true;
+      state.message = 'The king falls.';
+    }
+  }
 }
 
 // Resolve sight at the start of an enemy turn, per piece:
@@ -1246,13 +1311,27 @@ function wanderEnemy(state, enemy) {
 function beginEnemyPhase(state) {
   const next = structuredClone(state);
   let moverIds = [];
-  recordSeenEnemies(next); // note any kinds that just came into view
+  const invisible = Boolean(next.player.statuses && next.player.statuses.invisible > 0);
+  if (!invisible) {
+    recordSeenEnemies(next); // note any kinds that just came into view
+  }
 
   for (const enemy of next.enemies) {
     const wasSurprised = enemy.surprised; // its state entering this phase
     enemy.frustrated = false;
     if (enemy.statue) {
       continue; // inert stone — never wakes from sight, only from proximity
+    }
+    // While the king is invisible, every piece is unaware: it wanders (and may
+    // blunder into him), and turrets hold their fire.
+    if (invisible) {
+      enemy.awake = false;
+      enemy.surprised = false;
+      if (!enemy.turret && wanderEnemy(next, enemy, true) === 'bump') {
+        resolveBump(next, enemy);
+        if (next.gameOver) break;
+      }
+      continue;
     }
     if (!unitInSight(next, enemy.x, enemy.y)) {
       enemy.awake = false;
@@ -1278,15 +1357,12 @@ function beginEnemyPhase(state) {
     }
   }
 
-  // Conjured minions wink out of existence when no summoner is in the king's
-  // sight to sustain them (only those he can see vanish — for a visible effect).
-  const summonerSeen = next.enemies.some((e) => e.summoner && unitInSight(next, e.x, e.y));
-  if (!summonerSeen) {
-    const before = next.enemies.length;
-    next.enemies = next.enemies.filter((e) => !(e.summoned && unitInSight(next, e.x, e.y)));
-    if (next.enemies.length !== before) {
-      moverIds = moverIds.filter((id) => next.enemies.some((e) => e.id === id));
-    }
+  // Conjured minions wink out of existence the moment they drift off the king's
+  // screen (out of his sight).
+  const before = next.enemies.length;
+  next.enemies = next.enemies.filter((e) => !(e.summoned && !unitInSight(next, e.x, e.y)));
+  if (next.enemies.length !== before) {
+    moverIds = moverIds.filter((id) => next.enemies.some((e) => e.id === id));
   }
 
   // Hostile pieces act in a random order each turn (Fisher-Yates shuffle).
@@ -1393,12 +1469,14 @@ function slideDirsFor(kind) {
   }
 }
 
-// If the king lies on one of a piece's straight firing lines (walls block the
-// line), return the tiles strictly between and whether any unit blocks it. Knight
-// leapers can also "line up" one leap away (never blocked). Otherwise null.
+// If the king lies on one of a piece's firing lines, return the tiles strictly
+// between and whether a unit blocks it. Prefers an UNBLOCKED path (a clear slide
+// line, or a knight leap — leaps are never blocked) over a blocked one. Null if
+// the king is off every line. Walls always stop a line.
 function lineToPlayer(state, piece) {
   const px = state.player.x;
   const py = state.player.y;
+  let blockedResult = null;
   for (const [dx, dy] of slideDirsFor(piece.kind)) {
     let x = piece.x;
     let y = piece.y;
@@ -1410,11 +1488,14 @@ function lineToPlayer(state, piece) {
       if (terrainAt(state, x, y) === 'wall') break;
       if (x === px && y === py) {
         const blocked = between.some((t) => state.enemies.some((e) => e.x === t.x && e.y === t.y));
-        return { between, blocked };
+        if (!blocked) return { between, blocked: false };
+        blockedResult = { between, blocked: true };
+        break;
       }
       between.push({ x, y });
     }
   }
+  // Knight-style leaps (for knights and the compound pieces) never blockable.
   if (['knight', 'archbishop', 'chancellor', 'amazon'].includes(piece.kind)) {
     for (const [dx, dy] of KNIGHT_STEPS) {
       if (piece.x + dx === px && piece.y + dy === py) {
@@ -1422,7 +1503,34 @@ function lineToPlayer(state, piece) {
       }
     }
   }
-  return null;
+  return blockedResult;
+}
+
+// Every tile a mage's piercing bolt can reach (it pierces units, stopped only by
+// walls / board edge, plus knight-leap landing tiles). Used for threat display.
+function magePierceTiles(state, piece) {
+  const tiles = [];
+  for (const [dx, dy] of slideDirsFor(piece.kind)) {
+    let x = piece.x;
+    let y = piece.y;
+    while (true) {
+      x += dx;
+      y += dy;
+      if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) break;
+      if (terrainAt(state, x, y) === 'wall') break;
+      tiles.push({ x, y });
+    }
+  }
+  if (['knight', 'archbishop', 'chancellor', 'amazon'].includes(piece.kind)) {
+    for (const [dx, dy] of KNIGHT_STEPS) {
+      const x = piece.x + dx;
+      const y = piece.y + dy;
+      if (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE && terrainAt(state, x, y) !== 'wall') {
+        tiles.push({ x, y });
+      }
+    }
+  }
+  return tiles;
 }
 
 // Shared wandering-hostile turn: 50% close in on the king, 50% step at random. If
@@ -1449,13 +1557,15 @@ function moveTowardOrRandom(state, enemy, allowAttack) {
   return state;
 }
 
-// Mage turn: on odd turns it fires a piercing blast down its firing line, slaying
-// EVERY unit between it and the king (friend or foe) and striking the king. On
-// other turns (or with no line) it repositions and never melees.
+// Mage turn: when CHARGED it fires a piercing bolt down its firing line, slaying
+// EVERY unit between it and the king (friend or foe) and striking the king — then
+// it must recharge (it can never attack two turns running). Uncharged, or with no
+// line, it repositions (and recharges) and never melees.
 function mageMove(state, enemy) {
-  if (state.turn % 2 === 1) {
+  if (enemy.charged) {
     const line = lineToPlayer(state, enemy);
     if (line) {
+      enemy.charged = false; // spent — cannot fire again next turn
       state.lastShot = { fromX: enemy.x, fromY: enemy.y, toX: state.player.x, toY: state.player.y, role: 'mage' };
       for (const t of line.between) {
         slayEnemyAt(state, t.x, t.y); // the bolt pierces everything in its path
@@ -1479,27 +1589,33 @@ function mageMove(state, enemy) {
       return state;
     }
   }
+  enemy.charged = true; // didn't fire — recharge for next turn
   return moveTowardOrRandom(state, enemy, false);
 }
 
-// Skirmisher turn: on odd turns, if it has a CLEAR firing line to the king (no
-// units in the way), it darts in, strikes, and bounds back to its spawn. On other
-// turns (or when blocked) it repositions and never melees head-on.
+// Skirmisher turn: it can strike EVERY turn (no cooldown). With a clear firing
+// line (or a knight leap) it darts in, strikes, and bounds back to its spawn.
+// With a line that is blocked by a unit it fumes (frustrated). With no line at
+// all it repositions.
 function skirmisherMove(state, enemy) {
-  if (state.turn % 2 === 1) {
-    const line = lineToPlayer(state, enemy);
-    if (line && !line.blocked) {
-      state.lastShot = { fromX: enemy.x, fromY: enemy.y, toX: state.player.x, toY: state.player.y, role: 'skirmisher' };
-      strikeKing(state, enemy, false); // strikes from range, does not expend itself
-      if (!state.gameOver) {
-        retreatSkirmisher(state, enemy);
-        if (state.lastAction !== 'enemy') {
-          state.message = `A ${enemy.kind} skirmisher strikes and darts away!`;
-          state.lastAction = 'enemy';
-        }
+  const line = lineToPlayer(state, enemy);
+  if (line && !line.blocked) {
+    state.lastShot = { fromX: enemy.x, fromY: enemy.y, toX: state.player.x, toY: state.player.y, role: 'skirmisher' };
+    strikeKing(state, enemy, false); // strikes from range, does not expend itself
+    if (!state.gameOver) {
+      retreatSkirmisher(state, enemy);
+      if (state.lastAction !== 'enemy') {
+        state.message = `A ${enemy.kind} skirmisher strikes and darts away!`;
+        state.lastAction = 'enemy';
       }
-      return state;
     }
+    return state;
+  }
+  if (line && line.blocked) {
+    enemy.frustrated = true; // has a line but a unit is in the way
+    state.message = `A ${enemy.kind} skirmisher's line is blocked.`;
+    state.lastAction = 'enemy';
+    return state;
   }
   return moveTowardOrRandom(state, enemy, false);
 }
@@ -1549,14 +1665,24 @@ function summonAdjacent(state, summoner) {
   return false;
 }
 
-// Summoner turn: conjures a minion on odd turns; otherwise repositions. It never
-// strikes the king directly.
+// Summoner turn: when CHARGED it conjures a minion on an adjacent tile, then must
+// recharge (never two turns running). If charged but no adjacent tile is free it
+// fumes (frustrated). Uncharged it repositions. It never strikes the king.
 function summonerMove(state, enemy) {
-  if (state.turn % 2 === 1 && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, enemy)) {
-    state.message = `A ${enemy.kind} summoner conjures a minion!`;
+  if (enemy.charged) {
+    if (state.enemies.length < MAX_ENEMIES && summonAdjacent(state, enemy)) {
+      enemy.charged = false;
+      state.message = `A ${enemy.kind} summoner conjures a minion!`;
+      state.lastAction = 'enemy';
+      return state;
+    }
+    // Wanted to summon but hemmed in — fume, and recharge for next turn.
+    enemy.frustrated = true;
+    state.message = `A ${enemy.kind} summoner is hemmed in, unable to conjure.`;
     state.lastAction = 'enemy';
     return state;
   }
+  enemy.charged = true; // didn't summon — recharge for next turn
   return moveTowardOrRandom(state, enemy, false);
 }
 
@@ -1607,9 +1733,12 @@ function bossMove(state, boss) {
   const parts = BOSS_ABILITY_PARTS[boss.ability] || [];
   const has = (a) => parts.includes(a);
   const king = state.player;
+  const canSummon = boss.charged;
+  boss.charged = true; // recharge by default; summoning spends it
 
-  // Odd-turn reinforcement (a fresh guard also re-shields the boss).
-  if (has('summon') && state.turn % 2 === 1 && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, boss)) {
+  // Reinforcement (a fresh guard also re-shields the boss) — never two turns running.
+  if (has('summon') && canSummon && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, boss)) {
+    boss.charged = false;
     state.message = `The ${boss.kind} guardian summons a defender!`;
     state.lastAction = 'enemy';
     return state;
@@ -1811,19 +1940,53 @@ function consumeItem(state, index) {
     updateDiscovery(next);
     return next;
   }
-  // A turn passes: recharge cards, fade blood, lapse the ward, age statuses.
-  next.turn += 1;
-  p.totalTurns = (p.totalTurns || 0) + 1;
+  passTurn(next); // one turn's upkeep, then the potion takes effect
   next.enemyTurn = true;
-  for (const card of p.cards || []) {
-    if (card.remaining > 0) card.remaining -= 1;
-  }
-  next.spatters = decaySpatters(next.spatters);
-  p.warded = false;
-  tickStatuses(p);
   applyConsumable(next, potion); // sets next.message; may set barkskin (after the tick)
   p.consumables.splice(index, 1);
   next.lastAction = 'consume';
+  updateDiscovery(next);
+  return next;
+}
+
+// Passable, unoccupied tiles the king can currently see — valid Blink targets.
+function blinkTargets(state) {
+  const tiles = [];
+  for (const key of computeVisibleTiles(state)) {
+    const [x, y] = key.split(',').map(Number);
+    if (x === state.player.x && y === state.player.y) continue;
+    if (!isStandable(terrainAt(state, x, y))) continue;
+    if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
+    tiles.push({ x, y });
+  }
+  return tiles;
+}
+
+// Use a Blink Scroll (held at `index`) to hop to a chosen visible tile. Costs a
+// turn unless Quick Draw makes it free.
+function useBlink(state, index, x, y) {
+  const next = structuredClone(state);
+  const p = next.player;
+  if (!Array.isArray(p.consumables) || p.consumables[index] !== 'blink') {
+    next.message = 'No blink scroll ready.';
+    next.lastAction = 'blocked';
+    return next;
+  }
+  if (!blinkTargets(next).some((t) => t.x === x && t.y === y)) {
+    next.message = 'You cannot blink there.';
+    next.lastAction = 'blocked';
+    return next;
+  }
+  const free = Boolean(p.freePotion);
+  if (!free) {
+    passTurn(next);
+  }
+  p.x = x;
+  p.y = y;
+  p.consumables.splice(index, 1);
+  next.enemyTurn = !free;
+  next.lastAction = free ? 'consume-free' : 'consume';
+  next.message = 'You blink across the chamber.';
   updateDiscovery(next);
   return next;
 }

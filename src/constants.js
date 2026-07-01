@@ -11,14 +11,19 @@ const MAX_UPGRADES_PER_TYPE = 4; // Each altar upgrade type can be taken at most
 const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread.
 const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
 const BARKSKIN_TURNS = 5; // Turns the Barkskin potion keeps the king invincible.
+const INVIS_TURNS = 6; // Turns the Invisibility potion hides the king.
+const FOG_DISSIPATE = 0.33; // Per-turn chance each fog cloud clears.
 
-// Consumables replace the old hearts: rarer pickups with weighted spawn rates,
-// each an immediate boon or a short status. Weights bias drops toward the humble
-// healing potion; barkskin is the rare prize.
+// Consumables are bought at the apothecary and drunk from the satchel. `blink`
+// needs a target tile (handled by the UI); the rest apply at once.
 const CONSUMABLES = {
-  health: { name: 'Potion of Healing', desc: 'Restores all HP.', cost: 4, weight: 5, glyph: '♥', color: '#f472b6' },
-  mana: { name: 'Potion of Mending', desc: 'Recharges every card.', cost: 5, weight: 3, glyph: '✦', color: '#60a5fa' },
-  barkskin: { name: 'Potion of Barkskin', desc: `Invincible for ${BARKSKIN_TURNS} turns.`, cost: 7, weight: 2, glyph: '◈', color: '#a3e635' },
+  health: { name: 'Potion of Healing', desc: 'Restores all HP.', cost: 4, glyph: '♥', color: '#f472b6' },
+  mana: { name: 'Potion of Mending', desc: 'Recharges every card.', cost: 5, glyph: '✦', color: '#60a5fa' },
+  barkskin: { name: 'Potion of Barkskin', desc: `Invincible for ${BARKSKIN_TURNS} turns.`, cost: 7, glyph: '◈', color: '#a3e635' },
+  fog: { name: 'Fog Scroll', desc: 'Cloaks your sight in fog clouds that block line of sight.', cost: 5, glyph: '☁', color: '#cbd5e1' },
+  invis: { name: 'Potion of Invisibility', desc: `Enemies lose track of you for ${INVIS_TURNS} turns.`, cost: 8, glyph: '◍', color: '#818cf8' },
+  teleport: { name: 'Teleport Scroll', desc: 'Whisk to a random tile on the floor.', cost: 6, glyph: '⇢', color: '#f0abfc' },
+  blink: { name: 'Blink Scroll', desc: 'Step to any tile you can see.', cost: 6, glyph: '✧', color: '#38bdf8', targeted: true },
 };
 const CONSUMABLE_SHOP_CHOICES = 3; // Potions offered per consumable shop.
 const STARTING_CONSUMABLE_SLOTS = 3; // How many potions the king can carry.

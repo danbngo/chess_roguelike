@@ -153,6 +153,7 @@ const Renderer = (function () {
       surprised: Boolean(enemy.surprised),
       frustrated: Boolean(enemy.frustrated),
       awake: Boolean(enemy.awake),
+      charged: enemy.charged !== false,
       role: typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal',
     }));
     snapCameraToPlayer(state);
@@ -175,6 +176,7 @@ const Renderer = (function () {
       render.surprised = Boolean(enemy.surprised);
       render.frustrated = Boolean(enemy.frustrated);
       render.awake = Boolean(enemy.awake);
+      render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       next.push(render);
     }
@@ -212,6 +214,11 @@ const Renderer = (function () {
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
     const radius = tileSize * (role === 'boss' ? 0.46 : 0.4);
+
+    ctx.save();
+    // Spent (recharging) casters are faded; an invisible king is ghostly.
+    if (o.inactive) ctx.globalAlpha = 0.4;
+    if (o.invisible) ctx.globalAlpha = 0.35;
 
     // Token body / outline, tinted by special role.
     let fill = isPlayer ? '#f7e7b8' : '#111118';
@@ -268,6 +275,7 @@ const Renderer = (function () {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(getPieceLabel(kind), cx, cy + tileSize * 0.04);
+    ctx.restore();
   }
 
   // At-a-glance ROLE indicator: a colored cap sitting atop the piece token.
@@ -312,6 +320,26 @@ const Renderer = (function () {
       drawStatusMark(tileX, tileY, '✖', '#fca5a5');
     } else if (mainState === 'hostile') {
       drawStatusMark(tileX, tileY, '›', '#ef4444');
+    }
+  }
+
+  // Draw drifting fog clouds (from a Fog Scroll) over their tiles.
+  function drawFogClouds(state) {
+    if (!state.fogClouds) return;
+    for (const key in state.fogClouds) {
+      const [x, y] = key.split(',').map(Number);
+      const px = x * tileSize;
+      const py = y * tileSize;
+      ctx.save();
+      ctx.fillStyle = 'rgba(203, 213, 225, 0.7)';
+      for (let i = 0; i < 3; i += 1) {
+        const rx = tileHash(x * 3 + i, y + 9);
+        const ry = tileHash(x + 9, y * 3 + i);
+        ctx.beginPath();
+        ctx.arc(px + tileSize * (0.25 + rx * 0.5), py + tileSize * (0.25 + ry * 0.5), tileSize * 0.34, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
     }
   }
 
@@ -933,7 +961,10 @@ const Renderer = (function () {
     const bossWarded = typeof bossShielded === 'function' ? bossShielded(state) : false;
     for (const enemy of ordered) {
       const role = enemy.role || 'normal';
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, shielded: role === 'boss' && bossWarded });
+      // Mages/summoners that are spent (recharging) can't act next turn — drawn
+      // faded so the player can read who is dangerous this turn.
+      const inactive = (role === 'mage' || role === 'summoner') && !enemy.charged;
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, shielded: role === 'boss' && bossWarded, inactive });
       if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
       }
@@ -944,11 +975,13 @@ const Renderer = (function () {
       }
     }
 
-    drawPiece(playerRender.x, playerRender.y, 'king', true);
+    const invisible = Boolean(state.player.statuses && state.player.statuses.invisible > 0);
+    drawPiece(playerRender.x, playerRender.y, 'king', true, { invisible });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);
     }
 
+    drawFogClouds(state);
     drawProjectiles();
 
     ctx.restore();
