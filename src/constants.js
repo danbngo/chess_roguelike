@@ -16,9 +16,25 @@ const BARKSKIN_TURNS = 5; // Turns the Barkskin potion keeps the king invincible
 // each an immediate boon or a short status. Weights bias drops toward the humble
 // healing potion; barkskin is the rare prize.
 const CONSUMABLES = {
-  health: { name: 'Potion of Healing', desc: 'Restores all HP.', weight: 5, glyph: '♥', color: '#f472b6' },
-  mana: { name: 'Potion of Mending', desc: 'Recharges every card.', weight: 3, glyph: '✦', color: '#60a5fa' },
-  barkskin: { name: 'Potion of Barkskin', desc: `Invincible for ${BARKSKIN_TURNS} turns.`, weight: 2, glyph: '◈', color: '#a3e635' },
+  health: { name: 'Potion of Healing', desc: 'Restores all HP.', cost: 4, weight: 5, glyph: '♥', color: '#f472b6' },
+  mana: { name: 'Potion of Mending', desc: 'Recharges every card.', cost: 5, weight: 3, glyph: '✦', color: '#60a5fa' },
+  barkskin: { name: 'Potion of Barkskin', desc: `Invincible for ${BARKSKIN_TURNS} turns.`, cost: 7, weight: 2, glyph: '◈', color: '#a3e635' },
+};
+const CONSUMABLE_SHOP_CHOICES = 3; // Potions offered per consumable shop.
+const STARTING_CONSUMABLE_SLOTS = 3; // How many potions the king can carry.
+
+// Speed-based floor reward: gold you claim by descending, decaying ~1% of its
+// base each turn you linger (hits zero around MAX_TURNS_SCARY turns).
+const FLOOR_GOLD_BASE = 30; // plus a per-floor bonus (see floorGoldReward)
+
+// Minimum floor each enemy role may first appear on — roles ramp in gradually.
+const ROLE_MIN_FLOOR = {
+  statue: 2,
+  skirmisher: 3,
+  armored: 4,
+  mage: 5,
+  summoner: 6,
+  boss: 2, // ordinary (non-final) bosses start guarding exits from floor 2
 };
 
 // Terrain is introduced gradually across the run: floor 1 is empty ground, and
@@ -26,25 +42,44 @@ const CONSUMABLES = {
 // (so the final floor is crowded). The first sighting of each type pops a tip.
 const TERRAIN_UNLOCK = { wall: 2, mud: 3, ice: 4, water: 5 };
 
-const FINAL_FLOOR = 15; // Every multiple of this is a final-boss floor: the Amazon, and victory (15, 30, ...).
+const FINAL_FLOOR = 10; // A ten-floor run: floors 1-5 standard pieces, 6-10 add fairies. Amazon boss + victory on 10 (and 20, 30…).
 const MAX_ENEMIES = 40; // Hard safety cap so over-time spawning can't run away.
 
+// Named themes per floor, shown in the HUD. Beyond the tenth floor (New Game +)
+// the cycle repeats.
+const FLOOR_NAMES = [
+  'The Threshold',
+  'Mossy Halls',
+  'The Sunken Ward',
+  'Frostbitten Vault',
+  'The Ember Deep',
+  'Whispering Catacombs',
+  'The Shifting Maze',
+  'Hall of Mirrors',
+  'The Obsidian Reach',
+  'Throne of the Amazon',
+];
+
+function floorName(floor) {
+  const base = FLOOR_NAMES[(floor - 1) % FLOOR_NAMES.length];
+  const cycle = Math.floor((floor - 1) / FLOOR_NAMES.length);
+  return cycle > 0 ? `${base} +${cycle}` : base;
+}
+
 // Enemy variety ramps with depth. A floor's spawn pool is every kind unlocked at
-// or before it, each chosen with equal probability (so spawn rates are even per
-// unit). The enemy king is now an ordinary foe present from the very first floor
-// (no longer a boss). The full standard set arrives before floor 15, berolina
-// pawns just after, and the whole endgame set by floor 30.
+// or before it, each chosen with equal probability. Floors 1-5 hold the standard
+// pieces; the fairy pieces mix in over floors 6-10. The amazon is intentionally
+// absent — she exists ONLY as the final boss.
 const ENEMY_UNLOCKS = [
   { kind: 'pawn', floor: 1 },
   { kind: 'king', floor: 1 }, // a common, weak enemy — moves one tile, worth capturing
-  { kind: 'knight', floor: 3 },
-  { kind: 'bishop', floor: 6 },
-  { kind: 'rook', floor: 9 },
-  { kind: 'queen', floor: 12 }, // full standard set in hand before the final floor (15)
-  { kind: 'berolina', floor: 16 }, // endgame fairies appear only in New Game +
-  { kind: 'archbishop', floor: 22 },
-  { kind: 'chancellor', floor: 25 },
-  // The amazon is intentionally absent here: she exists ONLY as the final boss.
+  { kind: 'knight', floor: 2 },
+  { kind: 'bishop', floor: 3 },
+  { kind: 'rook', floor: 4 },
+  { kind: 'queen', floor: 5 }, // full standard set in hand by the halfway mark
+  { kind: 'berolina', floor: 6 }, // fairies mix in over the back half
+  { kind: 'archbishop', floor: 8 },
+  { kind: 'chancellor', floor: 10 },
 ];
 
 // Equipment cards: bought (not free) at equipment shops and worn in a limited set
@@ -98,59 +133,62 @@ const EQUIP_SHOP_CHOICES = 2; // Equipment offered per shop (a weighted sample).
 // evasion. An altar offers a few classes' next perks, always including the next
 // rung of the king's strongest class so a build can keep climbing.
 const CLASS_ALTAR_CHOICES = 3;
+// Perks are rule-changers that lean into a fantasy and interact with the run's
+// other systems (cards, gold, consumables, defense). None is a plain +stat, and
+// none duplicates a weapon or armor trait.
 const CLASSES = {
   warrior: {
     name: 'Warrior',
-    blurb: 'Unyielding in the press of battle.',
+    blurb: 'Weathers blows others could not.',
     perks: [
-      { id: 'war1', name: 'Toughness', desc: '+3 max HP', grants: { maxHp: 3 } },
-      { id: 'war2', name: 'Stalwart', desc: '20% chance to shrug off a hit', grants: { evade: 0.2 } },
-      { id: 'war3', name: 'Juggernaut', desc: '+1 equipment slot', grants: { maxEquipment: 1 } },
+      { id: 'war1', name: 'Bulwark', desc: 'The first hit each floor is negated', grants: { firstHitShield: true } },
+      { id: 'war2', name: 'Retaliation', desc: 'After a hit lands, you take no more damage this enemy phase', grants: { retaliate: true } },
+      { id: 'war3', name: 'Second Wind', desc: `Descending grants ${BARKSKIN_TURNS} turns of Barkskin`, grants: { wardOnDescend: true } },
     ],
   },
   barbarian: {
     name: 'Barbarian',
-    blurb: 'Strikes again and again, and again.',
+    blurb: 'Feeds on the frenzy of the kill.',
     perks: [
-      { id: 'bar1', name: 'Cleave', desc: 'Melee captures also slay the 4 cardinal neighbours', grants: { meleeTrait: 'thrust' } },
-      { id: 'bar2', name: 'Plunder', desc: '+3 gold per capture', grants: { goldPerKill: 3 } },
-      { id: 'bar3', name: 'Long Reach', desc: '+1 move range (step & strike farther)', grants: { moveRange: 1 } },
-    ],
-  },
-  thief: {
-    name: 'Thief',
-    blurb: 'Finds the gold and slips the blade.',
-    perks: [
-      { id: 'thi1', name: 'Treasure Sense', desc: 'Sense every item on the floor', grants: { detectItems: true } },
-      { id: 'thi2', name: 'Nimble', desc: '25% chance to evade a hit', grants: { evade: 0.25 } },
-      { id: 'thi3', name: 'Acrobat', desc: '+1 move range', grants: { moveRange: 1 } },
+      { id: 'bar1', name: 'Pillage', desc: 'Captures pay gold equal to the piece’s value', grants: { pillage: true } },
+      { id: 'bar2', name: 'Frenzy', desc: 'Each capture shaves 1 turn off every card cooldown', grants: { frenzy: true } },
+      { id: 'bar3', name: 'Bloodlust', desc: 'Capturing below half HP heals 1', grants: { bloodlust: true } },
     ],
   },
   ranger: {
     name: 'Ranger',
-    blurb: 'Master of sight and the long shot.',
+    blurb: 'Carries a fuller quiver, and a longer reach.',
     perks: [
-      { id: 'ran1', name: 'Eagle Eye', desc: '+2 sight range', grants: { vision: 2 } },
-      { id: 'ran2', name: 'Quiver', desc: '+1 weapon card slot', grants: { maxCards: 1 } },
-      { id: 'ran3', name: 'Far Shot', desc: 'Weapon cards reach 1 tile farther', grants: { cardRangeBonus: 1 } },
+      { id: 'ran1', name: 'Quiver', desc: '+1 weapon card slot', grants: { maxCards: 1 } },
+      { id: 'ran2', name: 'Far Shot', desc: 'Weapon cards reach 1 tile farther', grants: { cardRangeBonus: 1 } },
+      { id: 'ran3', name: 'Twin Quiver', desc: '+1 weapon card slot', grants: { maxCards: 1 } },
     ],
   },
   mage: {
     name: 'Mage',
-    blurb: 'Bends arcane bursts to the fray.',
+    blurb: 'Keeps the arcane close at hand.',
     perks: [
-      { id: 'mag1', name: 'Spark', desc: 'Melee captures also slay the 4 diagonal neighbours', grants: { meleeTrait: 'slash' } },
-      { id: 'mag2', name: 'Channeling', desc: 'Weapon cards recharge 1 turn faster', grants: { cooldownReduction: 1 } },
-      { id: 'mag3', name: 'Arcane Nova', desc: 'Melee captures surprise every visible foe', grants: { meleeTrait: 'flourish' } },
+      { id: 'mag1', name: 'Channeling', desc: 'Weapon cards recharge 1 turn faster', grants: { cooldownReduction: 1 } },
+      { id: 'mag2', name: 'Arcane Recovery', desc: 'Descending refreshes every card', grants: { descendRefresh: true } },
+      { id: 'mag3', name: 'Focus', desc: 'Weapon cards recharge 1 more turn faster', grants: { cooldownReduction: 1 } },
     ],
   },
   witch: {
     name: 'Witch',
-    blurb: 'Trickster of wards and glamours.',
+    blurb: 'Slips blows and cloaks herself in kills.',
     perks: [
-      { id: 'wit1', name: 'Witch Sight', desc: 'Sense items, +1 sight range', grants: { detectItems: true, vision: 1 } },
-      { id: 'wit2', name: 'Riposte Ward', desc: 'After a melee kill, take no damage next turn', grants: { meleeTrait: 'riposte' } },
-      { id: 'wit3', name: 'Glamour', desc: '25% chance to evade a hit', grants: { evade: 0.25 } },
+      { id: 'wit1', name: 'Glamour', desc: '20% chance to evade a hit', grants: { evade: 0.2 } },
+      { id: 'wit2', name: 'Shadowstep', desc: 'After a capture, take no damage next enemy phase', grants: { wardOnKill: true } },
+      { id: 'wit3', name: 'Veil', desc: '20% more chance to evade a hit', grants: { evade: 0.2 } },
+    ],
+  },
+  alchemist: {
+    name: 'Alchemist',
+    blurb: 'Turns a satchel of potions into an arsenal.',
+    perks: [
+      { id: 'alc1', name: 'Bandolier', desc: '+2 potion slots', grants: { maxConsumables: 2 } },
+      { id: 'alc2', name: 'Quick Draw', desc: 'Drinking a potion no longer costs a turn', grants: { freePotion: true } },
+      { id: 'alc3', name: 'Potent Brews', desc: 'Potions are empowered (healing also wards, mending also heals…)', grants: { potionPotency: true } },
     ],
   },
 };

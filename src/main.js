@@ -4,10 +4,13 @@
 (function () {
   const canvas = document.getElementById('game');
   const floorLabel = document.getElementById('floor');
+  const floorNameLabel = document.getElementById('floor-name');
   const turnLabel = document.getElementById('turn');
   const healthLabel = document.getElementById('health');
   const goldLabel = document.getElementById('gold');
+  const rewardLabel = document.getElementById('reward');
   const statusLabel = document.getElementById('status');
+  const consumableBar = document.getElementById('consumable-bar');
   const logEl = document.getElementById('log');
   const examineEl = document.getElementById('examine');
   const restartButton = document.getElementById('restart');
@@ -29,6 +32,11 @@
   const equipShopGold = document.getElementById('equipshop-gold');
   const equipShopList = document.getElementById('equipshop-list');
   const equipShopMessage = document.getElementById('equipshop-message');
+  const potionShopScreen = document.getElementById('potionshop-screen');
+  const potionShopGold = document.getElementById('potionshop-gold');
+  const potionShopList = document.getElementById('potionshop-list');
+  const potionShopMessage = document.getElementById('potionshop-message');
+  const potionShopCloseButton = document.getElementById('potionshop-close');
   const weaponshopScreen = document.getElementById('weaponshop-screen');
   const weaponshopGold = document.getElementById('weaponshop-gold');
   const weaponshopList = document.getElementById('weaponshop-list');
@@ -67,7 +75,7 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'playing' | 'altar' | 'equipshop' | 'weaponshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'playing' | 'altar' | 'equipshop' | 'weaponshop' | 'potionshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
 
@@ -98,16 +106,21 @@
       return;
     }
     floorLabel.textContent = `Floor ${gameState.floor}`;
+    if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
     turnLabel.textContent = `Turn ${gameState.turn}`;
     healthLabel.textContent = `HP ${gameState.player.hp}/${gameState.player.maxHp}`;
     goldLabel.textContent = `Gold ${gameState.player.gold}`;
+    if (rewardLabel) rewardLabel.textContent = `Descend reward ${floorGoldReward(gameState)}`;
     logMessage(gameState.message);
 
     // Dread rises as the king lingers and as his health falls.
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
+    // The descend reward also bleeds from green to red as it decays.
+    if (rewardLabel) rewardLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     updateStatusLine();
     renderCards();
+    renderConsumables();
   }
 
   // Show any active timed statuses (e.g. Barkskin) with their remaining turns.
@@ -205,6 +218,52 @@
     }
   }
 
+  // The held-potion bar: click a potion to drink it (costs a turn, unless the
+  // Alchemist's Quick Draw makes it free).
+  function renderConsumables() {
+    if (!consumableBar) return;
+    consumableBar.innerHTML = '';
+    if (!gameState) return;
+    const { consumables, maxConsumables } = gameState.player;
+    for (let i = 0; i < maxConsumables; i += 1) {
+      const key = consumables[i];
+      const slot = document.createElement('button');
+      slot.type = 'button';
+      slot.className = 'card-slot consumable-slot';
+      if (!key) {
+        slot.classList.add('empty');
+        slot.textContent = '·';
+        slot.disabled = true;
+        consumableBar.append(slot);
+        continue;
+      }
+      const info = CONSUMABLES[key];
+      slot.textContent = info.glyph;
+      slot.style.color = info.color;
+      slot.title = `${info.name} — ${info.desc} (click to drink)`;
+      slot.classList.add('ready');
+      slot.disabled = !isIdle();
+      slot.addEventListener('click', () => useConsumableAt(i));
+      consumableBar.append(slot);
+    }
+  }
+
+  function useConsumableAt(index) {
+    if (!isIdle()) return;
+    cancelCardTargeting();
+    const result = consumeItem(gameState, index);
+    if (result.lastAction === 'blocked') {
+      applyState(result, false);
+      return;
+    }
+    Renderer.effect('heal');
+    if (result.lastAction === 'consume-free') {
+      applyState(result, true); // Quick Draw: no enemy phase
+      return;
+    }
+    processPlayerResult(result); // costs a turn — enemies then move
+  }
+
   // Start (or cancel) aiming a card. While aiming, its reachable tiles glow.
   function toggleCardTargeting(index) {
     if (!isIdle()) {
@@ -294,6 +353,8 @@
           tag = ' (boss — invulnerable while guards remain)';
         } else if (enemy.boss) {
           tag = ' (boss — vulnerable!)';
+        } else if (enemy.mage) {
+          tag = ' (mage — piercing bolt on odd turns)';
         } else if (enemy.skirmisher) {
           tag = ' (skirmisher — strikes and darts away)';
         } else if (enemy.armored) {
@@ -324,6 +385,9 @@
     }
     if (onBuilding(gameState.weaponShop)) {
       lines.push('Weapon shop — buy cards');
+    }
+    if (onBuilding(gameState.potionShop)) {
+      lines.push('Apothecary — buy potions');
     }
     return lines.join('\n');
   }
@@ -369,10 +433,20 @@
     statue: 'Statue — inert until you step beside it, then it wakes.',
     turret: 'Turret — fixed; fires its piece pattern, cannot be destroyed.',
     boss: 'Boss — invulnerable while its guards remain in sight.',
-    skirmisher: 'Skirmisher — strikes, then retreats to its spawn.',
+    mage: 'Mage — fires a piercing bolt down its line (odd turns), slaying all in the way.',
+    skirmisher: 'Skirmisher — strikes from a clear line (odd turns), then retreats.',
     armored: 'Armored — first hit shatters its armor and flings you back; slow.',
-    summoner: 'Summoner — conjures minions while it sees you.',
+    summoner: 'Summoner — conjures minions (odd turns); never attacks directly.',
     summoned: 'Summoned — vanishes when no summoner is in sight.',
+  };
+
+  // Boss ability descriptions, keyed by ability id.
+  const BOSS_ABILITY_INFO = {
+    summon: 'Conjures a fresh guardian to shield itself.',
+    blink: 'Teleports next to the king and strikes.',
+    pierce: 'Looses a searing bolt down its line.',
+    warden: 'Summons guardians and looses piercing bolts.',
+    sovereign: 'Summons, blinks, and pierces — the realm’s mightiest.',
   };
 
   // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
@@ -450,7 +524,8 @@
               ? 'Hostile — hunting the king'
               : 'Unaware — wandering';
         const buyable = isCardKind(enemy.kind) ? 'Can be bought as a card.' : null;
-        addExamineBlock(`Enemy — ${enemy.kind}`, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, state, buyable]);
+        const bossLine = enemy.boss && enemy.ability ? BOSS_ABILITY_INFO[enemy.ability] : null;
+        addExamineBlock(`Enemy — ${enemy.kind}`, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, bossLine, state, buyable]);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
       if (item) {
@@ -478,6 +553,9 @@
     }
     if (onBuilding(gameState.weaponShop)) {
       addExamineBlock('Weapon Shop', 'Buy movement cards drawn from foes you have seen.');
+    }
+    if (onBuilding(gameState.potionShop)) {
+      addExamineBlock('Apothecary', 'Buy potions into your satchel, to drink later (costs a turn).');
     }
   }
 
@@ -622,6 +700,9 @@
     if (visible.some((enemy) => enemy.boss)) {
       queueTip('boss');
     }
+    if (visible.some((enemy) => enemy.mage)) {
+      queueTip('mage');
+    }
     if (visible.some((enemy) => enemy.skirmisher)) {
       queueTip('skirmisher');
     }
@@ -679,6 +760,7 @@
     victoryScreen.classList.add('hidden');
     altarScreen.classList.add('hidden');
     equipShopScreen.classList.add('hidden');
+    potionShopScreen.classList.add('hidden');
     weaponshopScreen.classList.add('hidden');
     tutorialScreen.classList.add('hidden');
     optionsScreen.classList.add('hidden');
@@ -924,6 +1006,49 @@
   function closeAltar() {
     screen = 'playing';
     altarScreen.classList.add('hidden');
+    saveGame(gameState);
+  }
+
+  /* ---------------------------- apothecary ------------------------------ */
+
+  function renderPotionShop() {
+    const p = gameState.player;
+    potionShopGold.textContent = `Gold ${p.gold} · Satchel ${p.consumables.length}/${p.maxConsumables}`;
+    potionShopMessage.textContent = gameState.shopMessage || 'Potions are used later from your satchel.';
+    potionShopList.innerHTML = '';
+    const offers = (gameState.potionShop && gameState.potionShop.offers) || [];
+    offers.forEach((offer, index) => {
+      const def = CONSUMABLES[offer.key];
+      if (!def) return;
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML = `<span class="shop-name" style="color:${def.color}">${def.glyph} ${def.name}</span><span class="shop-desc">${def.desc}</span>`;
+      const buy = document.createElement('button');
+      buy.type = 'button';
+      buy.textContent = `${def.cost}g`;
+      buy.disabled = p.gold < def.cost || p.consumables.length >= p.maxConsumables;
+      buy.addEventListener('click', () => {
+        applyState(buyConsumable(gameState, index), true);
+        renderPotionShop();
+      });
+      row.append(info, buy);
+      potionShopList.append(row);
+    });
+  }
+
+  function openPotionShop() {
+    screen = 'potionshop';
+    gameState.shopMessage = '';
+    renderPotionShop();
+    potionShopScreen.classList.remove('hidden');
+    queueTip('potionShop');
+  }
+
+  function closePotionShop() {
+    screen = 'playing';
+    potionShopScreen.classList.add('hidden');
     saveGame(gameState);
   }
 
@@ -1212,6 +1337,10 @@
       }
       const hpBefore = gameState.player.hp;
       applyState(moveEnemy(gameState, id), true);
+      if (gameState.lastShot) {
+        const s = gameState.lastShot;
+        Renderer.rangedShot(s.fromX, s.fromY, s.toX, s.toY, s.role);
+      }
       if (gameState.player.hp < hpBefore) {
         Renderer.effect(gameState.gameOver ? 'death' : 'hit');
         flashHealth();
@@ -1235,9 +1364,11 @@
     const altarPending = gameState.pendingAltar;
     const equipShopPending = gameState.pendingEquipShop;
     const weaponShopPending = gameState.pendingWeaponShop;
+    const potionShopPending = gameState.pendingPotionShop;
     gameState.pendingAltar = false;
     gameState.pendingEquipShop = false;
     gameState.pendingWeaponShop = false;
+    gameState.pendingPotionShop = false;
     saveGame(gameState);
     if (altarPending) {
       openAltar();
@@ -1245,6 +1376,8 @@
       openEquipShop();
     } else if (weaponShopPending) {
       openWeaponShop();
+    } else if (potionShopPending) {
+      openPotionShop();
     }
   }
 
@@ -1459,6 +1592,7 @@
   victoryTitleButton.addEventListener('click', showTitle);
   altarCloseButton.addEventListener('click', closeAltar);
   equipShopCloseButton.addEventListener('click', closeEquipShop);
+  potionShopCloseButton.addEventListener('click', closePotionShop);
   weaponshopCloseButton.addEventListener('click', closeWeaponShop);
   tutorialOkButton.addEventListener('click', dismissTip);
   tutorialDisableButton.addEventListener('click', disableTipsFromModal);

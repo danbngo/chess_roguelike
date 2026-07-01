@@ -37,10 +37,20 @@ const TUTORIALS = {
       'potions to recover, and you also mend a little each time you descend.',
   },
   gold: {
-    title: 'Gold',
+    title: 'Gold & the descend reward',
     text:
-      'Gold is spent at weapon shops ($) on cards. You also earn a little for ' +
-      'every enemy piece you capture.',
+      'Gold is no longer strewn about — instead each floor holds a purse you claim ' +
+      'by reaching the stair, and it shrinks about 1% every turn you linger (watch ' +
+      'the "Descend reward" in the panel). Capturing foes still pays a little. ' +
+      'Spend gold at weapon, equipment, and potion shops.',
+  },
+  potionShop: {
+    title: 'The apothecary',
+    text:
+      'Potions are no longer found on the ground — buy them here into your ' +
+      'satchel, then drink them later by clicking them in the panel (which costs a ' +
+      'turn). Healing restores all HP, Mending recharges your cards, and Barkskin ' +
+      'grants a few turns of invincibility. The Alchemist class makes them mightier.',
   },
   consumable: {
     title: 'Potions',
@@ -108,17 +118,25 @@ const TUTORIALS = {
       'turn it fires along its piece’s pattern (its red threat tiles), striking ' +
       'the king if he stands in the line. Stay off the red and slip past.',
   },
+  mage: {
+    title: 'Mages',
+    text:
+      'A mage (violet cap) fires a piercing bolt down its line on odd turns — a ' +
+      'rook-mage along ranks and files, a bishop-mage along diagonals. The bolt ' +
+      'slays EVERY unit between it and you (even its own kin), then strikes you. ' +
+      'Break its line of fire, or put a wall between you.',
+  },
   skirmisher: {
     title: 'Skirmishers',
     text:
-      'A skirmisher (» badge) is a hit-and-run fighter: half the time it darts to ' +
-      'a random nearby tile, and whenever it strikes you it immediately bounds ' +
-      'back to where it started. Corner it or it will whittle you down.',
+      'A skirmisher (amber cap) strikes from a clear firing line on odd turns, ' +
+      'then bounds back to where it started. Unlike a mage its shot is blocked by ' +
+      'anything in the way — keep a unit between you and it, or close the gap.',
   },
   armored: {
     title: 'Armored foes',
     text:
-      'An armored piece (▣ badge) shrugs off your first blow — the hit only ' +
+      'An armored piece (steel cap) shrugs off your first blow — the hit only ' +
       'shatters its armor, and the recoil hurls you back to where you entered the ' +
       'floor. It then fights on as an ordinary piece. Armored foes are slow, ' +
       'moving only every other turn.',
@@ -126,9 +144,9 @@ const TUTORIALS = {
   summoner: {
     title: 'Summoners',
     text:
-      'A summoner (✦ badge) conjures fresh minions beside it while it can see you. ' +
-      'Its summoned pieces wink out of existence once no summoner is in sight — so ' +
-      'cut down the summoner and its brood goes with it.',
+      'A summoner (violet cap) conjures fresh minions beside it on odd turns and ' +
+      'never strikes you itself. Its summoned pieces wink out once no summoner is ' +
+      'in sight — so cut down the summoner and its brood goes with it.',
   },
   boss: {
     title: 'The floor guardian',

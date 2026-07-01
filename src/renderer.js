@@ -31,6 +31,12 @@ const Renderer = (function () {
   // Ever-increasing time accumulator, used for ambient animation (powerup glow).
   let clock = 0;
 
+  // In-flight ranged projectiles (turret / mage / boss bolts), each easing from a
+  // source tile to a target tile over its lifetime.
+  let projectiles = [];
+  const PROJECTILE_TIME = 0.16;
+  const PROJECTILE_COLOR = { turret: '#e0894b', mage: '#c084fc', skirmisher: '#f59e0b', boss: '#ffe9a8' };
+
   // Camera: a movable, zoomable window onto the board. `baseTile` is the on-screen
   // size of a tile at zoom 1 — set so the default view shows half the board (i.e.
   // tiles are 2x the size of the old whole-board view). The camera position is the
@@ -70,6 +76,11 @@ const Renderer = (function () {
   // Back-compat: a plain on-hit shake/flash.
   function hit() {
     effect('hit');
+  }
+
+  // Launch an animated bolt from one tile to another (ranged enemy attacks).
+  function rangedShot(fromX, fromY, toX, toY, role) {
+    projectiles.push({ fromX, fromY, toX, toY, t: 0, color: PROJECTILE_COLOR[role] || '#ffffff' });
   }
 
   // Snap the camera onto the king instantly (keeps the current zoom level).
@@ -141,6 +152,7 @@ const Renderer = (function () {
       kind: enemy.kind,
       surprised: Boolean(enemy.surprised),
       frustrated: Boolean(enemy.frustrated),
+      awake: Boolean(enemy.awake),
       role: typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal',
     }));
     snapCameraToPlayer(state);
@@ -162,6 +174,7 @@ const Renderer = (function () {
       render.kind = enemy.kind;
       render.surprised = Boolean(enemy.surprised);
       render.frustrated = Boolean(enemy.frustrated);
+      render.awake = Boolean(enemy.awake);
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       next.push(render);
     }
@@ -186,6 +199,10 @@ const Renderer = (function () {
     }
     if (flash > 0) {
       flash = Math.max(0, flash - delta / FLASH_DURATION);
+    }
+    if (projectiles.length) {
+      for (const p of projectiles) p.t += delta / PROJECTILE_TIME;
+      projectiles = projectiles.filter((p) => p.t < 1);
     }
   }
 
@@ -253,32 +270,65 @@ const Renderer = (function () {
     ctx.fillText(getPieceLabel(kind), cx, cy + tileSize * 0.04);
   }
 
-  // At-a-glance role icons: a small badge in the lower-right of a piece's token.
-  const ROLE_BADGE = {
-    statue: { glyph: '◇', color: '#cdd5df' },
-    turret: { glyph: '◎', color: '#e0894b' },
-    boss: { glyph: '♛', color: '#ffe9a8' },
-    skirmisher: { glyph: '»', color: '#f59e0b' },
-    armored: { glyph: '▣', color: '#9aa6b2' },
-    summoner: { glyph: '✦', color: '#c084fc' },
-    summoned: { glyph: '·', color: '#cbd5e1' },
+  // At-a-glance ROLE indicator: a colored cap sitting atop the piece token.
+  const ROLE_HAT = {
+    statue: '#94a3b8', // stone
+    turret: '#e0894b', // rust
+    boss: '#e0b341', // gold
+    skirmisher: '#f59e0b', // amber
+    armored: '#9aa6b2', // steel
+    summoner: '#a855f7', // violet
+    summoned: '#6b7280', // gray
+    mage: '#c084fc', // arcane
   };
-  function drawRoleBadge(tileX, tileY, role) {
-    const badge = ROLE_BADGE[role];
-    if (!badge) return;
-    const bx = tileX * tileSize + tileSize * 0.74;
-    const by = tileY * tileSize + tileSize * 0.76;
+  function drawRoleHat(tileX, tileY, role) {
+    const color = ROLE_HAT[role];
+    if (!color) return;
+    const cx = tileX * tileSize + tileSize / 2;
+    const topY = tileY * tileSize + tileSize * 0.14;
+    const w = tileSize * 0.34;
     ctx.save();
+    // A little peaked cap with a brim.
+    ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(bx, by, tileSize * 0.17, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(2, 6, 23, 0.85)';
+    ctx.moveTo(cx, topY - tileSize * 0.06);
+    ctx.lineTo(cx - w / 2, topY + tileSize * 0.12);
+    ctx.lineTo(cx + w / 2, topY + tileSize * 0.12);
+    ctx.closePath();
     ctx.fill();
-    ctx.font = `bold ${tileSize * 0.22}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = badge.color;
-    ctx.fillText(badge.glyph, bx, by + tileSize * 0.01);
+    ctx.fillRect(cx - w * 0.62, topY + tileSize * 0.1, w * 1.24, tileSize * 0.05);
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
     ctx.restore();
+  }
+
+  // At-a-glance STATE icon above a piece: surprise, hostility, or frustration.
+  // (Sleeping / wandering pieces are out of sight, so they are never drawn.)
+  function drawStateIcon(tileX, tileY, mainState) {
+    if (mainState === 'surprised') {
+      drawStatusMark(tileX, tileY, '!', '#ffd400');
+    } else if (mainState === 'frustrated') {
+      drawStatusMark(tileX, tileY, '✖', '#fca5a5');
+    } else if (mainState === 'hostile') {
+      drawStatusMark(tileX, tileY, '›', '#ef4444');
+    }
+  }
+
+  // Draw the in-flight ranged bolts (world space).
+  function drawProjectiles() {
+    for (const p of projectiles) {
+      const x = (p.fromX + (p.toX - p.fromX) * p.t + 0.5) * tileSize;
+      const y = (p.fromY + (p.toY - p.fromY) * p.t + 0.5) * tileSize;
+      ctx.save();
+      ctx.shadowBlur = tileSize * 0.3;
+      ctx.shadowColor = p.color;
+      ctx.beginPath();
+      ctx.arc(x, y, tileSize * 0.13, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   // A small glyph above a piece's head (surprise "!", frustration "✖", etc.).
@@ -416,6 +466,32 @@ const Renderer = (function () {
       ctx.fillStyle = '#a855f7';
       ctx.fill();
     }
+    ctx.restore();
+  }
+
+  // The apothecary: a bubbling flask on a little stand.
+  function drawPotionShop(tileX, tileY, faded) {
+    const px = tileX * tileSize;
+    const py = tileY * tileSize;
+    const cx = px + tileSize / 2;
+    ctx.save();
+    ctx.globalAlpha = faded ? 0.45 : 1;
+    // Flask body.
+    ctx.fillStyle = '#22c55e';
+    ctx.beginPath();
+    ctx.arc(cx, py + tileSize * 0.6, tileSize * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Neck.
+    ctx.fillStyle = '#86efac';
+    ctx.fillRect(cx - tileSize * 0.06, py + tileSize * 0.28, tileSize * 0.12, tileSize * 0.2);
+    // Cork.
+    ctx.fillStyle = '#b45309';
+    ctx.fillRect(cx - tileSize * 0.07, py + tileSize * 0.24, tileSize * 0.14, tileSize * 0.06);
+    // A rising bubble.
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath();
+    ctx.arc(cx + tileSize * 0.05, py + tileSize * 0.55, tileSize * 0.03, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -808,6 +884,12 @@ const Renderer = (function () {
         drawWeaponShop(state.weaponShop.x, state.weaponShop.y, !seen);
       }
     }
+    if (state.potionShop) {
+      const seen = lit(state.potionShop.x, state.potionShop.y);
+      if (seen || state.potionShop.discovered) {
+        drawPotionShop(state.potionShop.x, state.potionShop.y, !seen);
+      }
+    }
 
     // Live items in current view: drawn from reality, animated.
     for (const item of state.items) {
@@ -853,12 +935,12 @@ const Renderer = (function () {
       const role = enemy.role || 'normal';
       drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, shielded: role === 'boss' && bossWarded });
       if (role !== 'normal') {
-        drawRoleBadge(enemy.x, enemy.y, role);
+        drawRoleHat(enemy.x, enemy.y, role);
       }
-      if (enemy.surprised) {
-        drawSurpriseMark(enemy.x, enemy.y);
-      } else if (enemy.frustrated) {
-        drawFrustratedMark(enemy.x, enemy.y);
+      // Main-AI-state icon (statues stay dormant, so show no state for them).
+      if (role !== 'statue' && role !== 'turret') {
+        const mainState = enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : null;
+        if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }
     }
 
@@ -866,6 +948,8 @@ const Renderer = (function () {
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);
     }
+
+    drawProjectiles();
 
     ctx.restore();
 
@@ -876,5 +960,5 @@ const Renderer = (function () {
     }
   }
 
-  return { init, reset, sync, update, draw, hit, effect, centerOn, panBy, panByPixels, zoomBy, screenToTile };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, panBy, panByPixels, zoomBy, screenToTile };
 })();

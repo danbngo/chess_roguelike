@@ -25,8 +25,10 @@ const {
   rollClassAltarOffers,
   highestClass,
   movePlayerTo,
+  beginEnemyPhase,
+  floorGoldReward,
 } = new Function(
-  `${source}\nreturn { createInitialState, movePlayer, getVisibleBounds, getPlayerMoves, capturableAt, generateFloor, defeatBoss, bossKindForFloor, useClassAltar, rollClassAltarOffers, highestClass, movePlayerTo };`,
+  `${source}\nreturn { createInitialState, movePlayer, getVisibleBounds, getPlayerMoves, capturableAt, generateFloor, defeatBoss, bossKindForFloor, useClassAltar, rollClassAltarOffers, highestClass, movePlayerTo, beginEnemyPhase, floorGoldReward };`,
 )();
 
 // Build a bare enemy with the default state flags, overridden by `extra`.
@@ -117,13 +119,13 @@ test('a boss is shielded while a visible guard remains, then becomes vulnerable'
 test('class altars advance a ladder and always offer the strongest class next', () => {
   let state = createInitialState();
 
-  // Two rungs of Barbarian: Cleave (a melee trait) then Plunder (+3 gold/kill).
+  // Two rungs of Barbarian: Pillage (a rule flag) then Frenzy.
   state.altar = { x: 1, y: 1, used: false, offers: ['barbarian'] };
   state = useClassAltar(state, 'barbarian');
-  assert.deepEqual(state.player.meleeTraits, ['thrust']);
+  assert.equal(state.player.pillage, true);
   state.altar = { x: 1, y: 1, used: false, offers: ['barbarian'] };
   state = useClassAltar(state, 'barbarian');
-  assert.equal(state.player.goldPerKill, 3);
+  assert.equal(state.player.frenzy, true);
   assert.equal(state.player.classLevels.barbarian, 2);
 
   // Barbarian is now the strongest class, so every altar offers its next rung.
@@ -131,6 +133,30 @@ test('class altars advance a ladder and always offer the strongest class next', 
   for (let i = 0; i < 12; i += 1) {
     assert.ok(rollClassAltarOffers(state.player, 3).includes('barbarian'));
   }
+});
+
+test('an enemy is never surprised two enemy phases in a row', () => {
+  const state = createInitialState();
+  state.terrain = {};
+  // A rook that was already surprised last phase, still in sight.
+  state.enemies = [makeEnemy({ kind: 'rook', x: 9, y: 8, awake: false, surprised: true })];
+
+  const phase = beginEnemyPhase(state);
+  const e = phase.state.enemies[0];
+  assert.equal(e.surprised, false, 'it acts this phase rather than freezing again');
+  assert.ok(phase.moverIds.includes(e.id));
+});
+
+test('the descend reward decays about 1% per turn to zero', () => {
+  const s = createInitialState();
+  const t0 = floorGoldReward(s);
+  s.turn = 50;
+  const t50 = floorGoldReward(s);
+  s.turn = 100;
+  const t100 = floorGoldReward(s);
+
+  assert.ok(t0 > t50 && t50 > t100);
+  assert.equal(t100, 0);
 });
 
 test('an armored foe survives the first hit, shedding armor and flinging the king home', () => {
@@ -148,10 +174,10 @@ test('an armored foe survives the first hit, shedding armor and flinging the kin
 
 test('the final floor is guarded by an amazon boss behind a barred stair', () => {
   const player = createInitialState().player;
-  const state = generateFloor(15, player, 0);
+  const state = generateFloor(10, player, 0);
   const boss = state.enemies.find((e) => e.boss);
 
-  assert.equal(bossKindForFloor(15), 'amazon');
+  assert.equal(bossKindForFloor(10), 'amazon');
   assert.ok(boss && boss.kind === 'amazon');
   assert.ok(state.exit && state.exit.locked === true);
 });
@@ -167,7 +193,7 @@ test('defeating a boss unbars the stair, and the final boss wins the run', () =>
   assert.equal(Boolean(mid.won), false);
 
   // A final boss floor: defeating the boss wins.
-  const last = generateFloor(15, player, 0);
+  const last = generateFloor(10, player, 0);
   defeatBoss(last, last.exit.x, last.exit.y);
   assert.equal(last.won, true);
 });

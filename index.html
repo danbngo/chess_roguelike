@@ -14,12 +14,15 @@
           <aside class="pane left-pane">
             <div class="info-panel">
               <div id="floor">Floor 1</div>
+              <div id="floor-name" class="floor-name"></div>
               <div id="turn">Turn 0</div>
               <div id="health">HP 3/3</div>
               <div id="gold">Gold 0</div>
+              <div id="reward" class="reward-line">Descend reward 0</div>
               <div id="status" class="status-line"></div>
             </div>
             <button id="options" type="button" class="pane-button">Options</button>
+            <div id="consumable-bar" class="card-bar consumable-bar"></div>
             <div id="card-bar" class="card-bar"></div>
             <div id="log" class="log"></div>
           </aside>
@@ -77,6 +80,18 @@
               <p id="altar-message" class="shop-message"></p>
               <div class="overlay-buttons">
                 <button id="altar-close" type="button">Leave Altar</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="potionshop-screen" class="overlay hidden">
+            <div class="overlay-card shop-card">
+              <h2 class="overlay-title">Apothecary</h2>
+              <p id="potionshop-gold" class="overlay-sub">Gold 0</p>
+              <ul id="potionshop-list" class="shop-list"></ul>
+              <p id="potionshop-message" class="shop-message"></p>
+              <div class="overlay-buttons">
+                <button id="potionshop-close" type="button">Leave Shop</button>
               </div>
             </div>
           </div>
