@@ -4,27 +4,40 @@
 //   normal - open ground.
 //   wall   - solid; nothing may stand on it, it blocks line of sight, and it
 //            cannot be leapt over.
-//   water  - impassable (nothing may stand on it), but it does NOT block sight;
-//            leapers can still jump clean over it.
-//   mud    - at most two mud tiles may be crossed in one move, unless jumping.
+//   lava   - impassable (nothing may stand on it), but it does NOT block sight;
+//            leapers can still jump clean over it. (Demon realm only, floor 5+.)
+//   mud    - at most ONE mud tile may be crossed in a move, unless jumping/shooting.
 //   ice    - you cannot stop on it; you slide to the far end (or until you bump
-//            a unit / hit a wall), moving the maximum distance across it.
+//            a unit / hit a wall). Jumps and weapon shots ignore ice.
+//   brush  - blocks line of sight and blocks sliding through, but is trampled back
+//            to open ground the moment a unit steps onto it (in the king's sight).
 //
-// Sight is hidden only by walls and by the fog of war (the persistent exploration
-// memory tracked in state.explored, which conceals unvisited ground entirely).
+// Sight is hidden by walls, brush, drifting fog clouds, and the fog of war.
 
 function terrainAt(state, x, y) {
   return (state.terrain && state.terrain[`${x},${y}`]) || 'normal';
 }
 
 function blocksSight(type) {
-  return type === 'wall';
+  return type === 'wall' || type === 'brush' || type === 'trees';
 }
 
-// Walls and (deep) water are the terrain nothing may stand on. (Ice can't be
-// *stopped* on, which is handled separately in slideStops.)
+// Whether a mover may enter/stop on a tile, given its options (flying / lavaOk).
+// Walls stop everything. Flyers cross anything but walls. Lava is passable only to
+// flyers and lava-walkers (demonic enemies); water only to flyers. Brush/trees/
+// ice/mud/normal are walkable.
+function standableFor(type, opts) {
+  if (type === 'wall') return false;
+  const o = opts || {};
+  if (o.flying) return true;
+  if (type === 'lava') return Boolean(o.lavaOk);
+  if (type === 'water') return false;
+  return true;
+}
+
+// Context-free standability (used for placement): a plain walker.
 function isStandable(type) {
-  return type !== 'wall' && type !== 'water';
+  return standableFor(type, {});
 }
 
 // Symmetric line of sight: clear unless a wall lies strictly between the two
@@ -86,7 +99,10 @@ function computeVisibleTiles(state) {
 // slide (you can't stop on it); mud caps at two crossed tiles; walls and water
 // are solid. `unitAt(x,y)` returns a blocking unit (or null); `isTarget(x,y)`
 // reports whether a unit there may be captured (and thus stopped on).
-function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
+function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
+  const o = opts || {};
+  const immune = Boolean(o.terrainImmune) || Boolean(o.flying); // ignore ice/mud/brush effects
+  const iceSlides = !immune && !o.ignoreIce; // weapon shots (ignoreIce) don't slide
   const stops = [];
   let x = sx;
   let y = sy;
@@ -102,8 +118,8 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
       break;
     }
     const terrain = terrainAt(state, nx, ny);
-    if (terrain === 'wall' || terrain === 'water') {
-      // Solid: walls and (deep) water cannot be entered on the ground.
+    if (!standableFor(terrain, o)) {
+      // Solid for this mover (walls always; water/lava unless it flies / walks lava).
       if (onIce) stops.push({ x, y, capture: false });
       break;
     }
@@ -123,28 +139,28 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget) {
       }
       break;
     }
-    if (terrain === 'mud' && mudUsed >= 2) {
+    if (terrain === 'mud' && !immune && mudUsed >= 1) {
       if (onIce) stops.push({ x, y, capture: false });
-      break;
+      break; // may cross at most ONE mud tile per move
     }
     const cost = onIce ? 0 : 1;
     if (cost === 1 && groundUsed >= maxGround) {
       break; // Out of range on solid ground.
     }
     groundUsed += cost;
-    if (terrain === 'mud') {
+    if (terrain === 'mud' && !immune) {
       mudUsed += 1;
     }
     const wasOnIce = onIce;
     x = nx;
     y = ny;
-    if (terrain === 'ice') {
+    if (terrain === 'ice' && iceSlides) {
       onIce = true; // Keep sliding; ice is never a resting tile.
     } else {
       stops.push({ x, y, capture: false });
       onIce = false;
-      if (wasOnIce) {
-        break; // Slid off the ice onto solid ground — stop at its edge.
+      if (wasOnIce || (terrain === 'brush' && !immune)) {
+        break; // stopped at the edge of ice, or trampled into blocking brush
       }
     }
   }
@@ -163,7 +179,7 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'water') {
+    if (terrain === 'wall' || terrain === 'lava') {
       continue; // Can't land on a wall or in deep water.
     }
     if (terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall') {
@@ -193,7 +209,7 @@ function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'water') {
+    if (terrain === 'wall' || terrain === 'lava') {
       continue; // Can't land on a wall or in deep water.
     }
     const unit = unitAt(x, y);
@@ -221,7 +237,7 @@ function riderTargets(state, fromX, fromY, steps, unitAt, isTarget) {
         break;
       }
       const terrain = terrainAt(state, x, y);
-      if (terrain === 'wall' || terrain === 'water') {
+      if (terrain === 'wall' || terrain === 'lava') {
         break; // Can't land on a wall or in deep water, and can't ride past it.
       }
       const unit = unitAt(x, y);

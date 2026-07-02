@@ -220,11 +220,18 @@ const Renderer = (function () {
     if (o.inactive) ctx.globalAlpha = 0.4;
     if (o.invisible) ctx.globalAlpha = 0.35;
 
-    // Token body / outline, tinted by special role.
+    // Token body / outline, tinted by special role / class / allegiance.
     let fill = isPlayer ? '#f7e7b8' : '#111118';
     let stroke = isPlayer ? '#8a6a26' : '#dadada';
     let glyph = isPlayer ? '#3a2c0a' : '#f3f1e7';
-    if (role === 'statue') {
+    if (isPlayer && o.classColor) {
+      stroke = o.classColor; // the king's outline is tinted by his strongest class
+    }
+    if (o.ally) {
+      fill = '#0b3b2e'; // a friendly summon — teal
+      stroke = '#34d399';
+      glyph = '#a7f3d0';
+    } else if (role === 'statue') {
       fill = '#5b6470'; // dull stone
       stroke = '#8b95a3';
       glyph = '#cdd5df';
@@ -266,7 +273,7 @@ const Renderer = (function () {
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
     ctx.fillStyle = fill;
     ctx.fill();
-    ctx.lineWidth = role === 'boss' ? 3 : 2;
+    ctx.lineWidth = role === 'boss' || (isPlayer && o.classColor) ? 3 : 2;
     ctx.strokeStyle = stroke;
     ctx.stroke();
 
@@ -288,6 +295,8 @@ const Renderer = (function () {
     summoner: '#a855f7', // violet
     summoned: '#6b7280', // gray
     mage: '#c084fc', // arcane
+    flying: '#7dd3fc', // sky
+    mounted: '#b45309', // saddle brown
   };
   function drawRoleHat(tileX, tileY, role) {
     const color = ROLE_HAT[role];
@@ -314,12 +323,12 @@ const Renderer = (function () {
   // At-a-glance STATE icon above a piece: surprise, hostility, or frustration.
   // (Sleeping / wandering pieces are out of sight, so they are never drawn.)
   function drawStateIcon(tileX, tileY, mainState) {
+    // Hostile is the default state (no icon, to avoid clutter). Only the transient
+    // surprised / frustrated states show a mark.
     if (mainState === 'surprised') {
       drawStatusMark(tileX, tileY, '!', '#ffd400');
     } else if (mainState === 'frustrated') {
       drawStatusMark(tileX, tileY, '✖', '#fca5a5');
-    } else if (mainState === 'hostile') {
-      drawStatusMark(tileX, tileY, '›', '#ef4444');
     }
   }
 
@@ -523,39 +532,6 @@ const Renderer = (function () {
     ctx.restore();
   }
 
-  // The equipment shop: a banded treasure chest with a glinting lock.
-  function drawEquipShop(tileX, tileY, faded) {
-    const px = tileX * tileSize;
-    const py = tileY * tileSize;
-    ctx.save();
-    ctx.globalAlpha = faded ? 0.45 : 1;
-    const left = px + tileSize * 0.2;
-    const top = py + tileSize * 0.34;
-    const w = tileSize * 0.6;
-    const h = tileSize * 0.42;
-    // Chest body.
-    ctx.fillStyle = '#7c4a1e';
-    ctx.fillRect(left, top + h * 0.32, w, h * 0.68);
-    // Domed lid.
-    ctx.fillStyle = '#9a5f2a';
-    ctx.beginPath();
-    ctx.moveTo(left, top + h * 0.36);
-    ctx.quadraticCurveTo(left + w / 2, top - h * 0.18, left + w, top + h * 0.36);
-    ctx.closePath();
-    ctx.fill();
-    // Iron bands.
-    ctx.strokeStyle = '#3f2a14';
-    ctx.lineWidth = Math.max(1.5, tileSize * 0.04);
-    ctx.strokeRect(left, top + h * 0.32, w, h * 0.68);
-    ctx.beginPath();
-    ctx.moveTo(left + w * 0.5, top - h * 0.04);
-    ctx.lineTo(left + w * 0.5, top + h);
-    ctx.stroke();
-    // Gold lock.
-    ctx.fillStyle = '#fbbf24';
-    ctx.fillRect(left + w * 0.42, top + h * 0.4, w * 0.16, h * 0.22);
-    ctx.restore();
-  }
 
   // Draw a pickup. `animated` items (in current view) pulse and glow; remembered
   // ones (out of view) are static and dimmed.
@@ -675,12 +651,18 @@ const Renderer = (function () {
     switch (type) {
       case 'ice':
         return isDark ? '#c2cccc' : '#e0e7e3'; // pale frost
+      case 'lava':
+        return isDark ? '#7a1f10' : '#a6321a'; // molten rock
       case 'water':
-        return isDark ? '#2f5d78' : '#386b8a'; // deep, impassable blue
+        return isDark ? '#1e4d6b' : '#2f6f97'; // deep water
       case 'mud':
         return isDark ? '#5a4a30' : '#6e5a3c'; // murky brown
       case 'wall':
         return isDark ? '#5a4f45' : '#6b5e52'; // warm brown stone
+      case 'brush':
+        return isDark ? '#2f5233' : '#3b6b40'; // dense green thicket
+      case 'trees':
+        return isDark ? '#24402a' : '#2e5335'; // deep woods
       default:
         return isDark ? '#6b4a2b' : '#e9cfa0'; // cream/brown ground
     }
@@ -697,15 +679,52 @@ const Renderer = (function () {
   function drawTexture(type, px, py, isDark, x, y) {
     ctx.save();
     switch (type) {
-      case 'water': {
-        // Gentle horizontal ripples.
-        ctx.strokeStyle = 'rgba(220, 240, 255, 0.18)';
-        ctx.lineWidth = 1;
+      case 'lava': {
+        // Glowing molten cracks.
+        ctx.strokeStyle = 'rgba(255, 196, 90, 0.7)';
+        ctx.lineWidth = 1.5;
         for (let i = 1; i <= 2; i += 1) {
           const ly = py + tileSize * (0.28 * i + 0.12);
           ctx.beginPath();
           ctx.moveTo(px + tileSize * 0.12, ly);
-          ctx.quadraticCurveTo(px + tileSize * 0.5, ly - tileSize * 0.07, px + tileSize * 0.88, ly);
+          ctx.quadraticCurveTo(px + tileSize * 0.5, ly - tileSize * 0.09, px + tileSize * 0.88, ly);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'brush': {
+        // Little tufts of foliage.
+        ctx.strokeStyle = 'rgba(20, 60, 25, 0.6)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 5; i += 1) {
+          const bx = px + tileSize * (0.15 + tileHash(x * 5 + i, y) * 0.7);
+          const by = py + tileSize * (0.55 + tileHash(x, y * 5 + i) * 0.3);
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.lineTo(bx, by - tileSize * 0.28);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'trees': {
+        // A rounded canopy over a short trunk.
+        ctx.fillStyle = 'rgba(30, 70, 40, 0.85)';
+        ctx.beginPath();
+        ctx.arc(px + tileSize * 0.5, py + tileSize * 0.42, tileSize * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(60, 42, 22, 0.9)';
+        ctx.fillRect(px + tileSize * 0.45, py + tileSize * 0.6, tileSize * 0.1, tileSize * 0.22);
+        break;
+      }
+      case 'water': {
+        // Gentle ripples catching the light.
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i <= 2; i += 1) {
+          const wy = py + tileSize * (0.3 * i + 0.1);
+          ctx.beginPath();
+          ctx.moveTo(px + tileSize * 0.15, wy);
+          ctx.quadraticCurveTo(px + tileSize * 0.5, wy + tileSize * 0.08, px + tileSize * 0.85, wy);
           ctx.stroke();
         }
         break;
@@ -900,12 +919,6 @@ const Renderer = (function () {
         drawClassAltar(state.altar.x, state.altar.y, !seen, state.altar.used);
       }
     }
-    if (state.equipShop) {
-      const seen = lit(state.equipShop.x, state.equipShop.y);
-      if (seen || state.equipShop.discovered) {
-        drawEquipShop(state.equipShop.x, state.equipShop.y, !seen);
-      }
-    }
     if (state.weaponShop) {
       const seen = lit(state.weaponShop.x, state.weaponShop.y);
       if (seen || state.weaponShop.discovered) {
@@ -975,8 +988,19 @@ const Renderer = (function () {
       }
     }
 
+    // The king's summoned allies (friendly pieces), drawn only where visible.
+    for (const ally of state.allies || []) {
+      if (lit(ally.x, ally.y)) {
+        drawPiece(ally.x, ally.y, ally.kind, false, { ally: true });
+      }
+    }
+
     const invisible = Boolean(state.player.statuses && state.player.statuses.invisible > 0);
-    drawPiece(playerRender.x, playerRender.y, 'king', true, { invisible });
+    const classColor =
+      typeof highestClass === 'function' && typeof CLASSES !== 'undefined'
+        ? (CLASSES[highestClass(state.player)] || {}).color
+        : null;
+    drawPiece(playerRender.x, playerRender.y, 'king', true, { invisible, classColor });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);
     }

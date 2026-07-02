@@ -70,15 +70,6 @@ const TUTORIALS = {
       'next rung of your strongest class, so a build keeps growing. Perks weave ' +
       'into your weapons, movement, and sight — mix classes or specialise deep.',
   },
-  equipshop: {
-    title: 'The equipment shop',
-    text:
-      'Equipment shops sell passive gear — a Vigor Charm (more max HP), a Renewal ' +
-      'Band (faster healing on descent), or a Spyglass (sharper sight). Worn pieces ' +
-      'fill your equipment slots and boost you for as long as you keep them; with ' +
-      'slots full you can swap one out (losing its bonus). Sharp eyes are scarce, ' +
-      'so a Spyglass is a prize.',
-  },
   weaponShop: {
     title: 'The weapon shop',
     text:
@@ -140,8 +131,21 @@ const TUTORIALS = {
     text:
       'An armored piece (steel cap) shrugs off your first blow — the hit only ' +
       'shatters its armor, and the recoil hurls you back to where you entered the ' +
-      'floor. It then fights on as an ordinary piece. Armored foes are slow, ' +
-      'moving only every other turn.',
+      'floor. It then fights on as an ordinary piece.',
+  },
+  mounted: {
+    title: 'Mounted foes',
+    text:
+      'A mounted piece (bronze cap) charges you down — it barrels INTO your tile ' +
+      'and tramples you back a square. If the space behind you is blocked, it ' +
+      'strikes as an ordinary piece instead. Leapers are never mounted.',
+  },
+  flying: {
+    title: 'Flying foes',
+    text:
+      'A flying piece (sky-blue cap) soars over any terrain but stone walls — ' +
+      'water, lava, mud, brush and ice mean nothing to it. Only a wall (or ' +
+      'another unit) will halt its line.',
   },
   summoner: {
     title: 'Summoners',
@@ -177,7 +181,21 @@ const TUTORIALS = {
     title: 'Water',
     text:
       'Deep water is impassable — you cannot wade in. It does not block your ' +
-      'sight, though, and leapers can still jump clean over it.',
+      'sight, though; leapers jump clean over it and flyers soar across.',
+  },
+  'terrain-lava': {
+    title: 'Lava',
+    text:
+      'Molten rock scars the demon depths. You cannot cross it — but demonic ' +
+      'foes wade through unharmed, and flyers pass over it. Keep it between you ' +
+      'and them where you can.',
+  },
+  'terrain-trees': {
+    title: 'Trees',
+    text:
+      'A stand of trees blocks line of sight — neither you nor your foes can see ' +
+      'through it — but you may walk right through. Use the cover to break a ' +
+      'mage’s bolt or slip past a sentry.',
   },
   'terrain-mud': {
     title: 'Mud',

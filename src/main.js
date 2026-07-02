@@ -28,10 +28,6 @@
   const altarList = document.getElementById('altar-list');
   const altarMessage = document.getElementById('altar-message');
   const altarCloseButton = document.getElementById('altar-close');
-  const equipShopScreen = document.getElementById('equipshop-screen');
-  const equipShopGold = document.getElementById('equipshop-gold');
-  const equipShopList = document.getElementById('equipshop-list');
-  const equipShopMessage = document.getElementById('equipshop-message');
   const potionShopScreen = document.getElementById('potionshop-screen');
   const potionShopGold = document.getElementById('potionshop-gold');
   const potionShopList = document.getElementById('potionshop-list');
@@ -50,6 +46,9 @@
   const optionsStatus = document.getElementById('options-tutorial-status');
   const optionsToggle = document.getElementById('options-toggle-tutorial');
 
+  const classScreen = document.getElementById('class-screen');
+  const classList = document.getElementById('class-list');
+  const classBackButton = document.getElementById('class-back');
   const newGameButton = document.getElementById('new-game');
   const continueButton = document.getElementById('continue-game');
   const titleOptionsButton = document.getElementById('title-options');
@@ -58,7 +57,6 @@
   const victoryContinueButton = document.getElementById('victory-continue');
   const victoryAgainButton = document.getElementById('victory-again');
   const victoryTitleButton = document.getElementById('victory-title');
-  const equipShopCloseButton = document.getElementById('equipshop-close');
   const weaponshopCloseButton = document.getElementById('weaponshop-close');
   const tutorialOkButton = document.getElementById('tutorial-ok');
   const tutorialDisableButton = document.getElementById('tutorial-disable');
@@ -75,7 +73,7 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'playing' | 'altar' | 'equipshop' | 'weaponshop' | 'potionshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'class' | 'playing' | 'altar' | 'weaponshop' | 'potionshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
 
@@ -90,6 +88,7 @@
   // null), and the tiles it may hop to.
   let blinkTargeting = null;
   let blinkTiles = [];
+  let blinkKind = null; // 'blink' | 'digging'
 
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
@@ -110,12 +109,14 @@
     if (!gameState) {
       return;
     }
-    floorLabel.textContent = `Floor ${gameState.floor}`;
+    const p = gameState.player;
+    const cls = CLASSES[highestClass(p)];
+    floorLabel.textContent = `Floor ${gameState.floor}${cls ? ' · ' + cls.name : ''}`;
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
-    turnLabel.textContent = `Turn ${gameState.turn}`;
-    healthLabel.textContent = `HP ${gameState.player.hp}/${gameState.player.maxHp}`;
-    goldLabel.textContent = `Gold ${gameState.player.gold}`;
-    if (rewardLabel) rewardLabel.textContent = `Descend reward ${floorGoldReward(gameState)}`;
+    turnLabel.textContent = `Turn ${gameState.turn} · ${p.exp || 0} exp`;
+    healthLabel.textContent = `HP ${p.hp}/${p.maxHp}`;
+    goldLabel.textContent = `Gold ${p.gold}`;
+    if (rewardLabel) rewardLabel.textContent = `Boss bounty ${floorGoldReward(gameState)}`;
     logMessage(gameState.message);
 
     // Dread rises as the king lingers and as his health falls.
@@ -201,7 +202,8 @@
         continue;
       }
       slot.textContent = getPieceLabel(card.kind);
-      slot.title = card.trait ? `${card.kind} card · ${TRAIT_INFO[card.trait].name}` : `${card.kind} card`;
+      const traits = card.traits || [];
+      slot.title = traits.length ? `${card.kind} card · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : `${card.kind} card`;
       const onCooldown = card.remaining > 0;
       if (cardTargeting === i) {
         slot.classList.add('targeting');
@@ -210,11 +212,11 @@
       } else {
         slot.classList.add('ready');
       }
-      if (card.trait) {
-        // A small corner pip marks a card that carries a weapon trait.
+      if (traits.length) {
+        // A small corner pip marks a card that carries weapon traits.
         const pip = document.createElement('span');
         pip.className = 'card-trait';
-        pip.textContent = TRAIT_INFO[card.trait].name[0];
+        pip.textContent = traits.length > 1 ? String(traits.length) : TRAIT_INFO[traits[0]].name[0];
         slot.append(pip);
       }
       if (onCooldown) {
@@ -262,9 +264,10 @@
   function useConsumableAt(index) {
     if (!isIdle()) return;
     cancelCardTargeting();
-    // The blink scroll needs a target tile — enter aiming mode instead.
-    if (gameState.player.consumables[index] === 'blink') {
-      startBlinkTargeting(index);
+    // Blink and digging scrolls need a target tile — enter aiming mode instead.
+    const key = gameState.player.consumables[index];
+    if (key === 'blink' || key === 'digging') {
+      startScrollTargeting(index, key);
       return;
     }
     const result = consumeItem(gameState, index);
@@ -280,28 +283,31 @@
     processPlayerResult(result); // costs a turn — enemies then move
   }
 
-  function startBlinkTargeting(index) {
-    blinkTiles = blinkTargets(gameState);
+  function startScrollTargeting(index, kind) {
+    blinkKind = kind;
+    blinkTiles = kind === 'digging' ? diggingTargets(gameState) : blinkTargets(gameState);
     if (!blinkTiles.length) {
-      gameState.message = 'Nowhere in sight to blink to.';
+      gameState.message = kind === 'digging' ? 'Nothing to dig.' : 'Nowhere in sight to blink to.';
       updateHud();
       return;
     }
     blinkTargeting = index;
-    gameState.message = 'Blink: click a tile you can see.';
+    gameState.message = kind === 'digging' ? 'Dig: click along a straight line.' : 'Blink: click a tile you can see.';
     updateHud();
   }
 
   function cancelBlinkTargeting() {
     blinkTargeting = null;
     blinkTiles = [];
+    blinkKind = null;
   }
 
-  // Resolve a blink to the chosen tile (costs a turn unless Quick Draw).
+  // Resolve a blink/dig to the chosen tile (costs a turn unless Quick Draw).
   function confirmBlink(tileX, tileY) {
     const index = blinkTargeting;
+    const kind = blinkKind;
     cancelBlinkTargeting();
-    const result = useBlink(gameState, index, tileX, tileY);
+    const result = kind === 'digging' ? useDigging(gameState, index, tileX, tileY) : useBlink(gameState, index, tileX, tileY);
     if (result.lastAction === 'blocked') {
       applyState(result, false);
       return;
@@ -348,9 +354,9 @@
   // Show the card being aimed (movement + any trait) in the right-hand pane.
   function showCardInfo(card) {
     examineEl.innerHTML = '';
-    addExamineBlock(`${card.kind} card`, [PIECE_INFO[card.kind] || '', `Cooldown ${card.cooldown} turns`]);
-    if (card.trait) {
-      addExamineBlock(`Trait — ${TRAIT_INFO[card.trait].name}`, TRAIT_INFO[card.trait].desc);
+    addExamineBlock(`${card.kind} weapon`, [PIECE_INFO[card.kind] || '', 'Strikes an enemy only.', `Cooldown ${card.cooldown} turns`]);
+    for (const t of card.traits || []) {
+      addExamineBlock(`Trait — ${TRAIT_INFO[t].name}`, TRAIT_INFO[t].desc);
     }
   }
 
@@ -373,9 +379,12 @@
   const TERRAIN_NAMES = {
     normal: 'Open ground',
     wall: 'Wall — blocks sight & movement',
+    lava: 'Lava — you cannot cross it (demons can); clear to see through',
     water: 'Water — impassable, but clear to see through',
-    mud: 'Mud — cross at most two in a move',
+    mud: 'Mud — cross at most one per move',
     ice: 'Ice — slippery, you slide across',
+    brush: 'Brush — blocks sight; trampled when stepped on',
+    trees: 'Trees — block sight, but you can move through',
   };
 
   // Build a human description of a tile (or null if there is nothing to say).
@@ -411,6 +420,10 @@
           tag = ' (skirmisher — strikes and darts away)';
         } else if (enemy.armored) {
           tag = ' (armored — one hit shatters its armor & flings you back)';
+        } else if (enemy.mounted) {
+          tag = ' (mounted — charges & tramples you back)';
+        } else if (enemy.flying) {
+          tag = ' (flying — crosses any terrain but walls)';
         } else if (enemy.summoner) {
           tag = ' (summoner — conjures minions)';
         } else if (enemy.summoned) {
@@ -427,13 +440,10 @@
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      lines.push(gameState.exit.locked ? 'Stairs down — barred until the guardian falls' : 'Stairs down to the next floor');
+      lines.push('Stairs down to the next floor');
     }
     if (onBuilding(gameState.altar)) {
-      lines.push(gameState.altar.used ? 'Class altar — spent' : 'Class altar — take a class perk');
-    }
-    if (onBuilding(gameState.equipShop)) {
-      lines.push('Equipment shop — buy passive gear');
+      lines.push(gameState.altar.used ? 'Class altar — spent' : 'Class altar — spend exp on a perk');
     }
     if (onBuilding(gameState.weaponShop)) {
       lines.push('Weapon shop — buy cards');
@@ -487,18 +497,25 @@
     boss: 'Boss — invulnerable while its guards remain in sight.',
     mage: 'Mage — fires a piercing bolt down its line (odd turns), slaying all in the way.',
     skirmisher: 'Skirmisher — strikes from a clear line (odd turns), then retreats.',
-    armored: 'Armored — first hit shatters its armor and flings you back; slow.',
+    armored: 'Armored — first hit shatters its armor and flings you back.',
+    mounted: 'Mounted — charges into you and shoves you back a tile.',
+    flying: 'Flying — moves over any terrain except walls.',
     summoner: 'Summoner — conjures minions (odd turns); never attacks directly.',
     summoned: 'Summoned — vanishes when no summoner is in sight.',
   };
 
   // Boss ability descriptions, keyed by ability id.
   const BOSS_ABILITY_INFO = {
-    summon: 'Conjures a fresh guardian to shield itself.',
-    blink: 'Teleports next to the king and strikes.',
-    pierce: 'Looses a searing bolt down its line.',
-    warden: 'Summons guardians and looses piercing bolts.',
-    sovereign: 'Summons, blinks, and pierces — the realm’s mightiest.',
+    rally: 'Rally — calls up an armored soldier when first roused.',
+    trueshot: 'Trueshot — looses arrows straight through wood and units.',
+    frostwake: 'Frostwake — a charger that freezes the ground in its wake.',
+    siege: 'Siege — smashes through walls and never loses your trail.',
+    aquatic: 'Aquatic — glides over water; only a ranged blow can fell it.',
+    necromancy: 'Necromancy — raises horrors while you keep your distance; reforms when struck.',
+    gore: 'Gore — a mounted terror that tramples for heavy damage.',
+    gaze: 'Gaze — sears you whenever it sees you; pierces down its line.',
+    bonehide: 'Bonehide — impervious to ranged blows; strike it adjacent.',
+    inferno: 'Inferno — burns you while adjacent; spits demons when you flee.',
   };
 
   // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
@@ -548,20 +565,15 @@
 
     if (gameState.player.x === tx && gameState.player.y === ty) {
       const p = gameState.player;
-      const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Gold ${p.gold}`];
-      stats.push(`Weapon slots ${p.maxCards} · Equip slots ${p.maxEquipment}`);
-      if (p.evade) stats.push(`Evasion ${Math.round(p.evade * 100)}%`);
+      const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Gold ${p.gold} · ${p.exp || 0} exp`];
+      stats.push(`Weapon slots ${p.maxCards} · Potion slots ${p.maxConsumables}`);
       addExamineBlock('Your King', stats);
 
-      // Classes the king has taken, with their level.
+      // Classes the king has invested in, with their level and perks.
       const classes = Object.keys(p.classLevels || {}).filter((k) => p.classLevels[k] > 0);
       if (classes.length) {
         const lines = classes.map((k) => `${CLASSES[k].name} Lv ${p.classLevels[k]}`);
         addExamineBlock('Classes', lines);
-      }
-      // Worn equipment.
-      if ((p.equipment || []).length) {
-        addExamineBlock('Equipment', p.equipment.map((w) => `${equipItemName(w)} — ${equipItemDesc(w)}`));
       }
     }
 
@@ -576,8 +588,9 @@
               ? 'Hostile — hunting the king'
               : 'Unaware — wandering';
         const buyable = isCardKind(enemy.kind) ? 'Can be bought as a card.' : null;
-        const bossLine = enemy.boss && enemy.ability ? BOSS_ABILITY_INFO[enemy.ability] : null;
-        addExamineBlock(`Enemy — ${enemy.kind}`, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, bossLine, state, buyable]);
+        const bossLine = enemy.boss && enemy.special ? BOSS_ABILITY_INFO[enemy.special] : null;
+        const title = enemy.boss && enemy.bossName ? `Boss — ${enemy.bossName.replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
+        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, bossLine, state, buyable]);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
       if (item) {
@@ -597,11 +610,8 @@
     if (onBuilding(gameState.altar)) {
       addExamineBlock(
         'Class Altar',
-        gameState.altar.used ? 'Spent — dormant.' : 'Embrace one class path: a rule-changing perk for your build.',
+        gameState.altar.used ? 'Spent — dormant.' : 'Spend exp to learn a class perk (1 exp per floor descended).',
       );
-    }
-    if (onBuilding(gameState.equipShop)) {
-      addExamineBlock('Equipment shop', 'Buy passive equipment (worn in your equipment slots) for gold.');
     }
     if (onBuilding(gameState.weaponShop)) {
       addExamineBlock('Weapon Shop', 'Buy movement cards drawn from foes you have seen.');
@@ -761,6 +771,12 @@
     if (visible.some((enemy) => enemy.armored)) {
       queueTip('armored');
     }
+    if (visible.some((enemy) => enemy.mounted)) {
+      queueTip('mounted');
+    }
+    if (visible.some((enemy) => enemy.flying)) {
+      queueTip('flying');
+    }
     if (visible.some((enemy) => enemy.summoner)) {
       queueTip('summoner');
     }
@@ -808,10 +824,10 @@
 
   function hideOverlays() {
     titleScreen.classList.add('hidden');
+    classScreen.classList.add('hidden');
     gameoverScreen.classList.add('hidden');
     victoryScreen.classList.add('hidden');
     altarScreen.classList.add('hidden');
-    equipShopScreen.classList.add('hidden');
     potionShopScreen.classList.add('hidden');
     weaponshopScreen.classList.add('hidden');
     tutorialScreen.classList.add('hidden');
@@ -852,8 +868,33 @@
     hideOverlays();
   }
 
-  function newGame() {
-    startGame(createInitialState());
+  // Open the class-select screen (the "New Game" entry point).
+  function openClassSelect() {
+    screen = 'class';
+    hideOverlays();
+    classScreen.classList.remove('hidden');
+    classList.innerHTML = '';
+    for (const key of Object.keys(CLASSES)) {
+      const cls = CLASSES[key];
+      const weapon = cls.weapon ? `${cls.weapon.kind}${cls.weapon.traits.length ? ' (' + cls.weapon.traits.join(', ') + ')' : ''}` : 'random potions';
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML =
+        `<span class="shop-name" style="color:${cls.color}">${cls.name}</span>` +
+        `<span class="shop-desc">${cls.blurb} · starts: ${weapon}; L1 ${cls.perks[0].name} — ${cls.perks[0].desc}</span>`;
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.textContent = 'Choose';
+      pick.addEventListener('click', () => newGame(key));
+      row.append(info, pick);
+      classList.append(row);
+    }
+  }
+
+  function newGame(classKey) {
+    startGame(createInitialState(classKey || 'valkyrie'));
     saveGame(gameState);
     queueTip('welcome');
     scanVisibleTips(gameState);
@@ -1104,133 +1145,18 @@
     saveGame(gameState);
   }
 
-  /* --------------------------- equipment shop --------------------------- */
-
-  // Names / descriptions that fold in a rare armor enchantment, if present.
-  function equipItemName(it) {
-    return EQUIPMENT[it.key].name + (it.enchant ? ` ${it.enchant.name}` : '');
-  }
-  function equipItemDesc(it) {
-    return equipDesc(it.key) + (it.enchant ? ` · ${bonusDesc(it.enchant.stat, it.enchant.amount)}` : '');
-  }
-
-  // The king's currently worn equipment, as a short summary line.
-  function wornEquipmentSummary() {
-    const worn = gameState.player.equipment || [];
-    if (!worn.length) {
-      return 'Nothing equipped.';
-    }
-    return `Worn: ${worn.map((w) => equipItemName(w)).join(', ')}`;
-  }
-
-  function renderEquipShop() {
-    equipShopGold.textContent = `Gold ${gameState.player.gold} · Slots ${gameState.player.equipment.length}/${gameState.player.maxEquipment}`;
-    equipShopMessage.textContent = gameState.shopMessage || wornEquipmentSummary();
-    equipShopList.innerHTML = '';
-
-    const p = gameState.player;
-    const offers = (gameState.equipShop && gameState.equipShop.offers) || [];
-    offers.forEach((offer, index) => {
-      const def = EQUIPMENT[offer.key];
-      if (!def) return;
-      const slotsFull = p.equipment.length >= p.maxEquipment;
-
-      const row = document.createElement('li');
-      row.className = 'shop-item';
-
-      const info = document.createElement('div');
-      info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${equipItemName(offer)}</span><span class="shop-desc">${equipItemDesc(offer)}</span>`;
-
-      const buy = document.createElement('button');
-      buy.type = 'button';
-      if (offer.sold) {
-        buy.textContent = 'Sold';
-        buy.disabled = true;
-      } else {
-        buy.textContent = `${def.cost}g`;
-        buy.disabled = p.gold < def.cost;
-        buy.addEventListener('click', () => {
-          if (slotsFull) {
-            promptReplaceEquipment(index);
-          } else {
-            applyState(buyEquipment(gameState, index), true);
-            Renderer.effect('powerup');
-            renderEquipShop();
-          }
-        });
-      }
-
-      row.append(info, buy);
-      equipShopList.append(row);
-    });
-  }
-
-  // With equipment slots full, ask which worn piece to swap out, then buy.
-  function promptReplaceEquipment(offerIndex) {
-    const p = gameState.player;
-    const offer = gameState.equipShop.offers[offerIndex];
-    const def = EQUIPMENT[offer.key];
-    if (p.gold < def.cost) {
-      gameState.shopMessage = 'Not enough gold.';
-      renderEquipShop();
-      return;
-    }
-    equipShopMessage.textContent = `Replace which piece with the ${def.name}?`;
-    equipShopList.innerHTML = '';
-    p.equipment.forEach((worn, index) => {
-      const row = document.createElement('li');
-      row.className = 'shop-item';
-      const info = document.createElement('div');
-      info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${equipItemName(worn)}</span><span class="shop-desc">${equipItemDesc(worn)}</span>`;
-      const swap = document.createElement('button');
-      swap.type = 'button';
-      swap.textContent = 'Replace';
-      swap.addEventListener('click', () => {
-        applyState(buyEquipment(gameState, offerIndex, index), true);
-        renderEquipShop();
-      });
-      row.append(info, swap);
-      equipShopList.append(row);
-    });
-    const cancel = document.createElement('li');
-    cancel.className = 'shop-item';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', renderEquipShop);
-    cancel.append(cancelBtn);
-    equipShopList.append(cancel);
-  }
-
-  function openEquipShop() {
-    screen = 'equipshop';
-    gameState.shopMessage = '';
-    renderEquipShop();
-    equipShopScreen.classList.remove('hidden');
-    queueTip('equipshop');
-  }
-
-  function closeEquipShop() {
-    screen = 'playing';
-    equipShopScreen.classList.add('hidden');
-    saveGame(gameState);
-  }
 
   /* ----------------------------- weapon shop ----------------------------- */
 
-  // A "knight · Slash" style label for a card / offer.
-  function cardName(kind, trait) {
-    const traitName = trait ? ` · ${TRAIT_INFO[trait].name}` : '';
-    return `${getPieceLabel(kind)} ${kind}${traitName}`;
+  // A "knight · Cleave, Leech" style label for a card / offer.
+  function cardName(kind, traits) {
+    const list = traits && traits.length ? ` · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : '';
+    return `${getPieceLabel(kind)} ${kind}${list}`;
   }
 
-  function cardDesc(kind, trait) {
+  function cardDesc(kind, traits) {
     const parts = [`cooldown ${cardCooldown(kind)}`];
-    if (trait) {
-      parts.push(TRAIT_INFO[trait].desc);
-    }
+    for (const t of traits || []) parts.push(TRAIT_INFO[t].desc);
     return parts.join(' · ');
   }
 
@@ -1250,7 +1176,7 @@
     }
 
     offers.forEach((offer, index) => {
-      const cost = cardCost(offer.kind, Boolean(offer.trait));
+      const cost = cardCost(offer.kind, (offer.traits || []).length);
       const slotsFull = p.cards.length >= p.maxCards;
 
       const row = document.createElement('li');
@@ -1258,7 +1184,7 @@
 
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${cardName(offer.kind, offer.trait)}</span><span class="shop-desc">${cardDesc(offer.kind, offer.trait)}</span>`;
+      info.innerHTML = `<span class="shop-name">${cardName(offer.kind, offer.traits)}</span><span class="shop-desc">${cardDesc(offer.kind, offer.traits)}</span>`;
 
       const buy = document.createElement('button');
       buy.type = 'button';
@@ -1287,7 +1213,7 @@
   function promptReplaceCard(offerIndex) {
     const p = gameState.player;
     const offer = gameState.weaponShop.offers[offerIndex];
-    if (p.gold < cardCost(offer.kind, Boolean(offer.trait))) {
+    if (p.gold < cardCost(offer.kind, (offer.traits || []).length)) {
       gameState.shopMessage = 'Not enough gold.';
       renderWeaponShop();
       return;
@@ -1299,7 +1225,7 @@
       row.className = 'shop-item';
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${cardName(card.kind, card.trait)}</span><span class="shop-desc">${cardDesc(card.kind, card.trait)}</span>`;
+      info.innerHTML = `<span class="shop-name">${cardName(card.kind, card.traits)}</span><span class="shop-desc">${cardDesc(card.kind, card.traits)}</span>`;
       const swap = document.createElement('button');
       swap.type = 'button';
       swap.textContent = 'Replace';
@@ -1346,15 +1272,10 @@
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
 
     // Feedback flashes for what just happened.
-    if (nextState.lastAction === 'combat') {
+    if (nextState.lastAction === 'combat' || nextState.lastAction === 'move-free') {
       Renderer.effect('kill');
-    } else if (nextState.lastAction === 'item' && nextState.pickupKind !== 'gold') {
-      Renderer.effect('heal');
     }
 
-    if (nextState.lastAction === 'item') {
-      queueTip(nextState.pickupKind === 'gold' ? 'gold' : 'consumable');
-    }
     if (nextState.won) {
       // Let the victory flash play for a beat before the overlay drops.
       Renderer.effect('victory');
@@ -1370,6 +1291,10 @@
       queueTip('exit');
       pendingAction = 'floor';
       animTimer = PLAYER_MOVE_TIME;
+      return;
+    }
+    // Quick weapons / Bloodrush kills / free potions cost no turn — no enemy phase.
+    if (nextState.enemyTurn === false || nextState.lastAction === 'card-free' || nextState.lastAction === 'move-free' || nextState.lastAction === 'consume-free') {
       return;
     }
 
@@ -1414,18 +1339,14 @@
     // Turn complete: maybe reinforce, persist, then open a building if stepped on.
     applyState(maybeSpawnEnemy(gameState), true);
     const altarPending = gameState.pendingAltar;
-    const equipShopPending = gameState.pendingEquipShop;
     const weaponShopPending = gameState.pendingWeaponShop;
     const potionShopPending = gameState.pendingPotionShop;
     gameState.pendingAltar = false;
-    gameState.pendingEquipShop = false;
     gameState.pendingWeaponShop = false;
     gameState.pendingPotionShop = false;
     saveGame(gameState);
     if (altarPending) {
       openAltar();
-    } else if (equipShopPending) {
-      openEquipShop();
     } else if (weaponShopPending) {
       openWeaponShop();
     } else if (potionShopPending) {
@@ -1582,11 +1503,11 @@
       Renderer.panBy(pan[0] * KEY_PAN_STEP, pan[1] * KEY_PAN_STEP);
       return;
     }
-    // Page Up / Page Down zoom in / out.
-    if (event.key === 'PageUp') {
+    // Zoom: Page Up / '+' / '=' zoom in; Page Down / '-' / '_' zoom out.
+    if (event.key === 'PageUp' || event.key === '+' || event.key === '=') {
       event.preventDefault();
       Renderer.zoomBy(KEY_ZOOM_STEP);
-    } else if (event.key === 'PageDown') {
+    } else if (event.key === 'PageDown' || event.key === '-' || event.key === '_') {
       event.preventDefault();
       Renderer.zoomBy(-KEY_ZOOM_STEP);
     }
@@ -1662,16 +1583,16 @@
     hideTilePopover();
   });
 
-  newGameButton.addEventListener('click', newGame);
+  newGameButton.addEventListener('click', openClassSelect);
+  classBackButton.addEventListener('click', showTitle);
   continueButton.addEventListener('click', continueGame);
   titleOptionsButton.addEventListener('click', openOptions);
-  playAgainButton.addEventListener('click', newGame);
+  playAgainButton.addEventListener('click', openClassSelect);
   toTitleButton.addEventListener('click', showTitle);
   victoryContinueButton.addEventListener('click', continueAfterVictory);
-  victoryAgainButton.addEventListener('click', newGame);
+  victoryAgainButton.addEventListener('click', openClassSelect);
   victoryTitleButton.addEventListener('click', showTitle);
   altarCloseButton.addEventListener('click', closeAltar);
-  equipShopCloseButton.addEventListener('click', closeEquipShop);
   potionShopCloseButton.addEventListener('click', closePotionShop);
   weaponshopCloseButton.addEventListener('click', closeWeaponShop);
   tutorialOkButton.addEventListener('click', dismissTip);

@@ -16,12 +16,12 @@ function enemyUnitAt(state, piece) {
 // could move onto, given a `unitAt` blocker lookup and an `isTarget` test for
 // which occupied tiles may be captured (and thus moved onto). Shared by enemy
 // pieces (target = the king) and the king's own cards (targets = enemies).
-function generateMoves(kind, state, fromX, fromY, unitAt, isTarget) {
+function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
   const moves = [];
 
   const slide = (directions, maxGround) => {
     for (const [dx, dy] of directions) {
-      for (const stop of slideStops(state, fromX, fromY, dx, dy, maxGround, unitAt, isTarget)) {
+      for (const stop of slideStops(state, fromX, fromY, dx, dy, maxGround, unitAt, isTarget, opts)) {
         moves.push(stop);
       }
     }
@@ -105,10 +105,12 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget) {
 }
 
 // Every tile this enemy piece could legally move onto next turn. Targets the king.
+// Enemies may walk over lava (demonic); a flyer crosses any non-wall terrain.
 function getPieceMoves(piece, state) {
   const unitAt = enemyUnitAt(state, piece);
   const isKing = (x, y) => x === state.player.x && y === state.player.y;
-  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isKing);
+  const opts = { lavaOk: true, flying: Boolean(piece.flying) };
+  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isKing, opts);
 }
 
 // Where the king could move if he played a card of the given kind: he moves like
@@ -116,11 +118,15 @@ function getPieceMoves(piece, state) {
 // can never carry him farther than he can see (his vision radius).
 function getCardMoves(state, kind) {
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
-  // Enemies block the card's path, but only capturable ones are valid targets.
   const isEnemy = (x, y) => capturableAt(state, x, y);
-  const range = Math.floor((state.player.vision || state.viewSize) / 2) + (state.player.cardRangeBonus || 0);
-  return generateMoves(kind, state, state.player.x, state.player.y, enemyAt, isEnemy).filter(
-    (move) => chebyshev(move.x, move.y, state.player.x, state.player.y) <= range,
+  // Sorcerer's Piercing lets a weapon target THROUGH units (nothing blocks it).
+  const blocker = state.player.pierceTargeting ? () => null : enemyAt;
+  const range = Math.floor((state.player.vision || state.viewSize) / 2);
+  // Weapon shots ignore ice (no slide); a Ranger's Pathfinder ignores all terrain.
+  const opts = { ignoreIce: true, terrainImmune: Boolean(state.player.terrainImmune) };
+  // Weapons can ONLY strike, so keep the capture squares within reach.
+  return generateMoves(kind, state, state.player.x, state.player.y, blocker, isEnemy, opts).filter(
+    (move) => move.capture && chebyshev(move.x, move.y, state.player.x, state.player.y) <= range,
   );
 }
 
