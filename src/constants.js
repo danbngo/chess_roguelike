@@ -92,10 +92,9 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 //            (leaps excepted).
 //   spell  - the king holds his tile; the bolt pierces everything on its path,
 //            and costs 2x cooldown.
-// King & pawn cards are melee-only. There are no traits or ratings any more; card
-// power comes from class perks instead.
-const CARD_CATEGORIES = ['melee', 'ranged', 'spell'];
-const MELEE_ONLY_KINDS = ['king', 'pawn'];
+// A card's category is NOT stored per card — it is a property of the player's
+// CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
+// classCategory(). There are no traits or ratings; card power comes from perks.
 const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach 1; sliders reach 3
 const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon'];
 const CARD_COOLDOWN = 3;
@@ -103,8 +102,10 @@ const CARD_COOLDOWN = 3;
 function isCardKind(kind) {
   return CARD_KINDS.includes(kind);
 }
-function kindAllowsCategory(kind, category) {
-  return category === 'melee' || !MELEE_ONLY_KINDS.includes(kind);
+
+// The card category shared by every card of a given class (defaults to melee).
+function classCategory(className) {
+  return (CLASSES[className] && CLASSES[className].category) || 'melee';
 }
 
 // How far a card reaches: steppers/knights 1 tile/leap; sliders 3 tiles. A Farsight
@@ -130,7 +131,8 @@ const CLASSES = {
     name: 'Warrior',
     blurb: 'A frontline fighter who wades in and trades blows.',
     color: '#dc2626',
-    start: { kind: 'king', category: 'melee' },
+    category: 'melee', // every Warrior card strikes by moving onto the target
+    start: 'king',
     perks: [
       { id: 'w_hp', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 }, repeatable: true },
       { id: 'w_reach', name: 'Long Arms', desc: '+1 card reach', grants: { cardReach: 1 } },
@@ -141,15 +143,16 @@ const CLASSES = {
       { id: 'w_leech', name: 'Vampiric Edge', desc: 'A melee-card kill heals 1 HP', grants: { meleeLeech: true } },
       { id: 'w_rush', name: 'Bloodrush', desc: 'A normal move that kills costs no turn', grants: { freeKillMove: true } },
       { id: 'w_undying', name: 'Undying', desc: 'Revive once per floor at your start', grants: { extraLife: true } },
-      { id: 'w_knight', name: 'Cavalier', desc: 'Gain a melee knight card', grants: { gainCard: { kind: 'knight', category: 'melee' } } },
-      { id: 'w_rook', name: 'Warhammer', desc: 'Gain a melee rook card', grants: { gainCard: { kind: 'rook', category: 'melee' } } },
+      { id: 'w_knight', name: 'Cavalier', desc: 'Gain a knight card', grants: { gainCard: 'knight' } },
+      { id: 'w_rook', name: 'Warhammer', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
     ],
   },
   ranger: {
     name: 'Ranger',
     blurb: 'A hunter who fells foes from across the room.',
     color: '#65a30d',
-    start: { kind: 'knight', category: 'ranged' },
+    category: 'ranged', // every Ranger card fires from afar (blocked by cover)
+    start: 'knight',
     perks: [
       { id: 'r_hp', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 }, repeatable: true },
       { id: 'r_eyes', name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 }, repeatable: true },
@@ -159,15 +162,16 @@ const CLASSES = {
       { id: 'r_path', name: 'Pathfinder', desc: 'Immune to slow terrain (water)', grants: { terrainImmune: true } },
       { id: 'r_stealth', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
       { id: 'r_eagle', name: 'Eagle Eye', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
-      { id: 'r_bow', name: 'Shortbow', desc: 'Gain a ranged bishop card', grants: { gainCard: { kind: 'bishop', category: 'ranged' } } },
-      { id: 'r_longbow', name: 'Longbow', desc: 'Gain a ranged rook card', grants: { gainCard: { kind: 'rook', category: 'ranged' } } },
+      { id: 'r_bow', name: 'Shortbow', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
+      { id: 'r_longbow', name: 'Longbow', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
     ],
   },
   sorcerer: {
     name: 'Sorcerer',
     blurb: 'A caster whose bolts pierce straight through the ranks.',
     color: '#a855f7',
-    start: { kind: 'rook', category: 'spell' },
+    category: 'spell', // every Sorcerer card is a bolt that pierces the whole path
+    start: 'rook',
     perks: [
       { id: 's_hp', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 }, repeatable: true },
       { id: 's_eyes', name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 }, repeatable: true },
@@ -177,8 +181,8 @@ const CLASSES = {
       { id: 's_dazzle', name: 'Dazzle', desc: 'Enemies beside those a spell slays are caught by surprise', grants: { spellDazzle: true } },
       { id: 's_cata', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
       { id: 's_reflect', name: 'Reflection', desc: 'Reflect missiles and spells back at the attacker', grants: { reflect: true } },
-      { id: 's_wand', name: 'Wand', desc: 'Gain a spell bishop card', grants: { gainCard: { kind: 'bishop', category: 'spell' } } },
-      { id: 's_staff', name: 'Archstaff', desc: 'Gain a spell queen card', grants: { gainCard: { kind: 'queen', category: 'spell' } } },
+      { id: 's_wand', name: 'Wand', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
+      { id: 's_staff', name: 'Archstaff', desc: 'Gain a queen card', grants: { gainCard: 'queen' } },
     ],
   },
 };

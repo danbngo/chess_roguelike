@@ -23,10 +23,11 @@ const Renderer = (function () {
   // Feedback presets: each fires a tinted flash (and, for impacts, a shake).
   const EFFECTS = {
     hit: { color: '220, 38, 38', peak: 0.5, shake: SHAKE_DURATION }, // red
+    deflect: { color: '125, 211, 252', peak: 0.4, shake: SHAKE_DURATION * 0.4 }, // sky blue — blocked
     death: { color: '153, 27, 27', peak: 0.85, shake: SHAKE_DURATION * 1.8 }, // deep crimson
     kill: { color: '248, 250, 252', peak: 0.18, shake: SHAKE_DURATION * 0.45 }, // pale impact
     heal: { color: '34, 197, 94', peak: 0.4, shake: 0 }, // green
-    powerup: { color: '168, 85, 247', peak: 0.45, shake: 0 }, // violet (altar / level-up)
+    powerup: { color: '168, 85, 247', peak: 0.45, shake: 0 }, // violet (level-up)
     victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
   };
 
@@ -231,13 +232,9 @@ const Renderer = (function () {
     let stroke = isPlayer ? '#8a6a26' : '#dadada';
     let glyph = isPlayer ? '#3a2c0a' : '#f3f1e7';
     if (isPlayer && o.classColor) {
-      stroke = o.classColor; // the king's outline is tinted by his strongest class
+      stroke = o.classColor; // the king's outline is tinted by his class
     }
-    if (o.ally) {
-      fill = '#0b3b2e'; // a friendly summon — teal
-      stroke = '#34d399';
-      glyph = '#a7f3d0';
-    } else if (role === 'statue') {
+    if (role === 'statue') {
       fill = '#5b6470'; // dull stone
       stroke = '#8b95a3';
       glyph = '#cdd5df';
@@ -783,8 +780,10 @@ const Renderer = (function () {
 
         const threatCount = inView ? threatened.get(`${x},${y}`) || 0 : 0;
         const canMove = reachable.has(`${x},${y}`);
-        if (canMove && threatCount > 0) {
-          // Dangerous: the king can step here, but an enemy covers it too. Red,
+        const isKingTile = x === state.player.x && y === state.player.y;
+        if ((canMove || isKingTile) && threatCount > 0) {
+          // Dangerous: the king could stand here and an enemy covers it too (his
+          // OWN tile counts — being captured in place is a real threat). Red,
           // deepening where more enemies converge.
           const alpha = Math.min(0.62, 0.32 + 0.12 * threatCount);
           ctx.fillStyle = `rgba(220, 38, 38, ${alpha})`;

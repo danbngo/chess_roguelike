@@ -141,12 +141,12 @@ function cardSlideDirs(kind) {
 //            BLOCKED by the first unit in the way.
 //   spell  - a bolt that pierces EVERY unit on its path (ignores obstructions).
 // Leaps ignore whatever they jump over. Steppers/knights reach 1, sliders reach 3
-// (+ a Farsight perk). Targets must be in sight (a Ranger's Eagle Eye lets sight —
-// and thus shots — pass through any terrain but walls).
+// (+ a Farsight perk). Targets must be in sight. The category comes from the
+// player's class, not the card.
 function getCardMoves(state, card) {
   const p = state.player;
   const kind = card.kind;
-  const category = card.category || 'melee';
+  const category = classCategory(p.className);
   const reach = cardReach(kind, p.cardReach || 0);
   const dirs = cardSlideDirs(kind);
   const hasLeap = isJumperKind(kind);

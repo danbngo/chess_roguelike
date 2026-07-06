@@ -38,11 +38,15 @@ test('createInitialState starts the king at the center and spawns enemies', () =
   assert.ok(state.enemies.length >= 3);
 });
 
-test('each class starts with its one category-appropriate card', () => {
-  assert.deepEqual({ ...createPlayer('warrior').cards[0], cooldown: undefined, remaining: undefined }, { kind: 'king', category: 'melee', cooldown: undefined, remaining: undefined });
-  assert.equal(createPlayer('ranger').cards[0].category, 'ranged');
+test('category is a class property; each class starts with its one card', () => {
+  // Cards no longer carry a category — it is derived from the owning class.
+  assert.equal(createPlayer('warrior').cards[0].kind, 'king');
+  assert.equal(createPlayer('warrior').cards[0].category, undefined);
+  assert.equal(CLASSES.warrior.category, 'melee');
   assert.equal(createPlayer('ranger').cards[0].kind, 'knight');
-  assert.equal(createPlayer('sorcerer').cards[0].category, 'spell');
+  assert.equal(CLASSES.ranger.category, 'ranged');
+  assert.equal(createPlayer('sorcerer').cards[0].kind, 'rook');
+  assert.equal(CLASSES.sorcerer.category, 'spell');
   assert.equal(createPlayer('warrior').cards.length, 1);
 });
 
@@ -201,7 +205,7 @@ test('descending queues a level-up; taking a stat perk and a card perk both appl
   card.pendingLevelUp = true;
   card = learnPerk(card, 'w_knight');
   assert.equal(card.player.cards.length, cards0 + 1);
-  assert.ok(card.player.cards.some((c) => c.kind === 'knight' && c.category === 'melee'));
+  assert.ok(card.player.cards.some((c) => c.kind === 'knight'));
 });
 
 test('rollLevelPerks offers three from the class pool and skips taken uniques', () => {

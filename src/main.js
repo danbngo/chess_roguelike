@@ -8,7 +8,6 @@
   const turnLabel = document.getElementById('turn');
   const healthLabel = document.getElementById('health');
   const levelLabel = document.getElementById('level');
-  const statusLabel = document.getElementById('status');
   const consumableBar = document.getElementById('consumable-bar');
   const logEl = document.getElementById('log');
   const examineEl = document.getElementById('examine');
@@ -68,7 +67,7 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'class' | 'playing' | 'altar' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'class' | 'playing' | 'levelup' | 'character' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
 
@@ -110,28 +109,8 @@
     // Dread rises as the king lingers and as his health falls.
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
-    updateStatusLine();
     renderCards();
     renderConsumables();
-  }
-
-  // Show any active timed statuses (e.g. Barkskin) with their remaining turns.
-  function updateStatusLine() {
-    if (!statusLabel) {
-      return;
-    }
-    const statuses = (gameState && gameState.player && gameState.player.statuses) || {};
-    const parts = [];
-    if (statuses.barkskin > 0) {
-      parts.push(`Barkskin ${statuses.barkskin}`);
-    }
-    if (statuses.invisible > 0) {
-      parts.push(`Invisible ${statuses.invisible}`);
-    }
-    if (gameState && gameState.fogClouds && Object.keys(gameState.fogClouds).length) {
-      parts.push('Fogged');
-    }
-    statusLabel.textContent = parts.join(' · ');
   }
 
   /* -------------------------------- log --------------------------------- */
@@ -184,7 +163,7 @@
   }
 
   function makeCardSlot(card, i) {
-    const cat = card.category || 'melee';
+    const cat = classCategory(gameState.player.className);
     const slot = document.createElement('button');
     slot.type = 'button';
     slot.className = 'card-slot';
@@ -289,7 +268,7 @@
       .slice()
       .sort((a, b) => distToKing(a) - distToKing(b))[0];
     cardCursor = { x: cardCursor.x, y: cardCursor.y };
-    gameState.message = `Aiming the ${card.category || 'melee'} ${card.kind} — click a target or steer with the numpad, then Enter (Esc to cancel).`;
+    gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — click a target or steer with the numpad, then Enter (Esc to cancel).`;
     showCardInfo(card);
     updateHud();
   }
@@ -297,7 +276,7 @@
   // Show the card being aimed (category, movement) in the pane.
   function showCardInfo(card) {
     examineEl.innerHTML = '';
-    const cat = card.category || 'melee';
+    const cat = classCategory(gameState.player.className);
     const verb = cat === 'melee' ? 'Strikes by moving onto the foe.' : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.' : 'A bolt that pierces everything on its path; you hold your tile.';
     addExamineBlock(`${card.kind} — ${cat}`, [PIECE_INFO[card.kind] || '', verb, `Cooldown ${card.cooldown} turns`]);
   }
@@ -459,9 +438,8 @@
 
     if (gameState.player.x === tx && gameState.player.y === ty) {
       const p = gameState.player;
-      const byCat = (cat) => (p.cards || []).filter((c) => (c.category || 'melee') === cat).length;
       const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Level ${p.level || 1}`];
-      stats.push(`Cards — melee ${byCat('melee')} · ranged ${byCat('ranged')} · spell ${byCat('spell')}`);
+      stats.push(`Cards — ${(p.cards || []).length} ${classCategory(p.className)}`);
       stats.push(`Potion slots ${p.maxConsumables}`);
       const cls = CLASSES[p.className];
       addExamineBlock(cls ? `${cls.name} King` : 'Your King', stats);
@@ -473,13 +451,15 @@
     if (visible) {
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
-        const st = enemy.surprised
-          ? 'Surprised — frozen this turn'
-          : enemy.frustrated
-            ? 'Frustrated — no legal move'
-            : enemy.awake
-              ? 'Hostile — hunting the king'
-              : 'Unaware — wandering';
+        const st = enemy.boss && enemy.dormant
+          ? 'Dormant — guarding the stair'
+          : enemy.surprised
+            ? 'Surprised — frozen this turn'
+            : enemy.frustrated
+              ? 'Frustrated — no legal move'
+              : enemy.awake
+                ? 'Hostile — hunting the king'
+                : 'Unaware — wandering';
         const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp}` : null;
         const title = enemy.boss ? `Boss — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
         addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, hpLine, st]);
@@ -723,9 +703,9 @@
     ]));
 
     const cards = p.cards || [];
-    characterBody.append(characterBlock(`Cards (${cards.length})`, cards.length
+    const cat = classCategory(p.className);
+    characterBody.append(characterBlock(`Cards (${cards.length}, ${cat})`, cards.length
       ? cards.map((c) => {
-          const cat = c.category || 'melee';
           const ready = c.remaining > 0 ? `cooldown ${c.remaining}` : 'ready';
           return { text: `${getPieceLabel(c.kind)}  ${c.kind} — ${cat} (${ready})`, color: CATEGORY_COLOR[cat] };
         })
@@ -811,7 +791,7 @@
   function classDetailText(key) {
     const cls = CLASSES[key];
     const lines = [cls.name, cls.blurb, ''];
-    lines.push(`• Starts with a ${cls.start.category} ${cls.start.kind} card`);
+    lines.push(`• All cards are ${cls.category}; starts with a ${cls.start} card`);
     lines.push(`• Every descent, pick one of three ${cls.name} boons:`);
     cls.perks.forEach((perk) => lines.push(`   – ${perk.name}: ${perk.desc}`));
     return lines.join('\n');
@@ -1131,6 +1111,9 @@
         if (!gameState.gameOver) {
           queueTip('hp');
         }
+      } else if (gameState.player.deflected) {
+        // A blow landed but was warded/parried away — flash a blue block.
+        Renderer.effect('deflect');
       }
       if (gameState.gameOver) {
         enemyQueue = [];

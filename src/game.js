@@ -53,6 +53,13 @@ function capturableAt(state, x, y) {
   return isCapturable(state, state.enemies.find((e) => e.x === x && e.y === y));
 }
 
+// Whether felling this piece should trigger the king's on-kill perks (cleave, leech,
+// Quick Draw, Dazzle, Bloodrush). Only real enemy pieces count — NOT summoning
+// circles or other structures (and never a mere non-lethal hit, handled by callers).
+function isKillablePiece(enemy) {
+  return Boolean(enemy) && !enemy.statue && !enemy.turret && !enemy.summonCircle;
+}
+
 // Has the floor's boss been defeated? True when no boss piece remains.
 function bossDefeated(state) {
   return !state.enemies.some((e) => e.boss);
@@ -89,6 +96,7 @@ function createBoss(floor, x, y) {
   boss.bossName = spec.name;
   boss.maxHp = spec.hp || 4;
   boss.hp = boss.maxHp;
+  boss.dormant = true; // holds the stair until the king strikes it or draws adjacent
   return boss;
 }
 
@@ -143,14 +151,18 @@ function checkDeath(state) {
 }
 
 // Resolve whether an incoming hit is shrugged off: a Bulwark ward (first hit each
-// turn), or a Parry ward from a strike last turn. Null means the hit lands.
+// turn), or a Parry ward from a strike last turn. Null means the hit lands. When a
+// hit IS deflected, `player.deflected` is flagged so the view can flash a block.
 function rollMitigation(player) {
-  if (player.warded) return 'parry';
-  if (player.firstHitEachTurn && !player.firstHitUsedThisTurn) {
+  let mit = null;
+  if (player.warded) {
+    mit = 'parry';
+  } else if (player.firstHitEachTurn && !player.firstHitUsedThisTurn) {
     player.firstHitUsedThisTurn = true;
-    return 'ward';
+    mit = 'ward';
   }
-  return null;
+  if (mit) player.deflected = true;
+  return mit;
 }
 function mitigationMessage(mit, kind) {
   if (mit === 'parry') return `The king parries a ${kind}!`;
@@ -195,9 +207,10 @@ const PERK_FLAGS = [
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
 ];
 
-// Build a card record.
+// Build a card record. The category (from the owning class) sets the cooldown but
+// is NOT stored on the card — it is re-derived from the class wherever needed.
 function makeCard(kind, category) {
-  return { kind, category: category || 'melee', cooldown: cardCooldown(kind, category || 'melee'), remaining: 0 };
+  return { kind, cooldown: cardCooldown(kind, category || 'melee'), remaining: 0 };
 }
 
 // Apply a perk's grants to a player (stat bumps, a card, or a rule flag).
@@ -211,7 +224,7 @@ function applyPerk(player, grants) {
   if (grants.moveRange) player.moveRange += grants.moveRange;
   if (grants.cardReach) player.cardReach = (player.cardReach || 0) + grants.cardReach;
   if (grants.maxConsumables) player.maxConsumables += grants.maxConsumables;
-  if (grants.gainCard) player.cards.push(makeCard(grants.gainCard.kind, grants.gainCard.category));
+  if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className)));
   for (const flag of PERK_FLAGS) {
     if (grants[flag]) player[flag] = true;
   }
@@ -245,7 +258,7 @@ function createPlayer(classKey) {
     wasHit: false,
   };
   for (const flag of PERK_FLAGS) player[flag] = false;
-  player.cards.push(makeCard(cls.start.kind, cls.start.category));
+  player.cards.push(makeCard(cls.start, cls.category));
   return player;
 }
 
@@ -424,8 +437,8 @@ function generateFloor(floor, carryPlayer, score) {
   }
   delete state.terrain[`${doorX},${doorY}`];
 
-  const bossSpot = place((x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) === 1 && chebyshev(x, y, player.x, player.y) >= 3);
-  if (bossSpot) state.enemies.push(createBoss(floor, bossSpot.x, bossSpot.y));
+  // The boss stands ON the stair, guarding the way down until roused.
+  state.enemies.push(createBoss(floor, ax, ay));
 
   const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 5 && chebyshev(x, y, player.x, player.y) >= 3;
   // Sleeping backup pieces near the boss.
@@ -444,12 +457,13 @@ function generateFloor(floor, carryPlayer, score) {
       }
     }
   }
-  // A summoning circle or two (from floor 2).
+  // A summoning circle or two (from floor 2). Its shown piece type is the ONLY
+  // kind it conjures.
   if (floor >= 2) {
     for (let i = 0; i < 1 + Math.floor(floor / 4); i += 1) {
       const spot = place(nearChamber);
       if (spot) {
-        const c = createEnemy('pawn', spot.x, spot.y);
+        const c = createEnemy(randomEnemyKind(floor), spot.x, spot.y);
         c.summonCircle = true;
         state.enemies.push(c);
       }
@@ -524,7 +538,7 @@ function passTurn(state) {
   const calmHaste = Boolean(p.spellHaste) && getVisibleEnemies(state).length === 0;
   for (const card of p.cards || []) {
     if (card.remaining > 0) {
-      const tick = calmHaste && (card.category || 'melee') === 'spell' ? 2 : 1;
+      const tick = calmHaste && classCategory(p.className) === 'spell' ? 2 : 1;
       card.remaining = Math.max(0, card.remaining - tick);
     }
   }
@@ -595,6 +609,11 @@ function applyArrival(next, x, y) {
       pl.x = x;
       pl.y = y;
       pl.killedEnemy = true;
+      // The boss guards the stair — felling it puts the king on it: descend at once.
+      if (tryDescend(next)) {
+        updateDiscovery(next);
+        return next;
+      }
     }
     if (result === 'slain' && pl.freeKillMove) {
       next.enemyTurn = false;
@@ -614,11 +633,11 @@ function applyArrival(next, x, y) {
   next.message = 'The king moves.';
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
-  let killed = false;
+  let realKill = false;
   if (enemy) {
+    realKill = isKillablePiece(enemy); // a circle is destroyed, but not an on-kill trigger
     resolveKill(next, enemy);
     pl.attacked = true;
-    killed = true;
     next.message = enemy.summonCircle ? 'The king shatters a summoning circle!' : `The king defeats a ${enemy.kind}.`;
     next.lastAction = 'combat';
   }
@@ -636,11 +655,7 @@ function applyArrival(next, x, y) {
     }
   }
 
-  if (next.exit && next.exit.x === x && next.exit.y === y) {
-    next.lastAction = 'exit';
-    next.message = 'You step onto the stair and descend...';
-    return next;
-  }
+  if (tryDescend(next)) return next;
 
   // Statues wake the moment the king steps beside them.
   for (const e of next.enemies) {
@@ -653,7 +668,7 @@ function applyArrival(next, x, y) {
     }
   }
 
-  if (killed && pl.freeKillMove) {
+  if (realKill && pl.freeKillMove) {
     next.enemyTurn = false;
     next.lastAction = 'move-free';
   } else {
@@ -678,21 +693,33 @@ function resolveKill(state, enemy) {
 }
 
 // Strike a tile WITHOUT moving the king (spell path, ranged shot, cleave). Handles
-// bosses (HP) and ordinary foes. Returns true if a unit was slain.
+// bosses (HP) and ordinary foes. Returns the slain enemy (or null if nothing fell).
 function attackTile(state, tx, ty) {
   const e = state.enemies.find((en) => en.x === tx && en.y === ty);
   if (e && isCapturable(state, e)) {
-    if (e.boss) return damageBoss(state, e, 1) === 'slain';
+    if (e.boss) return damageBoss(state, e, 1) === 'slain' ? e : null;
     resolveKill(state, e);
-    return true;
+    return e;
   }
-  return false;
+  return null;
 }
 
 function cleaveAdjacent(state, x, y) {
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     if (attackTile(state, x + dx, y + dy)) return;
   }
+}
+
+// If the king now stands on the stair (and the run isn't already won/over), flag the
+// descent so the controller drops to the next floor. Returns true when it fires.
+function tryDescend(next) {
+  if (next.won || next.gameOver) return false;
+  if (next.exit && next.player.x === next.exit.x && next.player.y === next.exit.y) {
+    next.lastAction = 'exit';
+    next.message = 'You step onto the stair and descend...';
+    return true;
+  }
+  return false;
 }
 
 // The tiles strictly between two points along a straight (8-direction) line.
@@ -748,12 +775,13 @@ function useCard(state, cardIndex, x, y) {
     return next;
   }
 
-  const category = card.category || 'melee';
+  const category = classCategory(p.className);
   const fromX = p.x;
   const fromY = p.y;
   const mainTarget = next.enemies.find((e) => e.x === x && e.y === y);
-  let scored = false;
-  const slain = [];
+  let scored = false; // struck the main target (for the flavour message)
+  let realKill = false; // felled a real enemy piece (gates the on-kill perks)
+  const kills = []; // real pieces felled this cast (for Dazzle)
   p.attacked = true;
 
   if (category === 'melee') {
@@ -767,33 +795,29 @@ function useCard(state, cardIndex, x, y) {
       p.y = y;
     }
     scored = Boolean(mainTarget) && !survived;
-    if (scored) slain.push({ x, y });
+    realKill = scored && isKillablePiece(mainTarget); // shattering a circle is not an on-kill
     if (!next.gameOver && !next.won) {
-      if (scored && p.meleeCleave) cleaveAdjacent(next, x, y);
-      if (scored && p.meleeLeech) p.hp = Math.min(p.maxHp, p.hp + 1);
+      if (realKill && p.meleeCleave) cleaveAdjacent(next, x, y);
+      if (realKill && p.meleeLeech) p.hp = Math.min(p.maxHp, p.hp + 1);
     }
   } else {
-    if (category === 'spell') {
-      if (!move.viaJump) {
-        for (const t of straightPath(fromX, fromY, x, y)) {
-          if (attackTile(next, t.x, t.y)) slain.push(t);
-        }
+    if (category === 'spell' && !move.viaJump) {
+      for (const t of straightPath(fromX, fromY, x, y)) {
+        const felled = attackTile(next, t.x, t.y);
+        if (felled && isKillablePiece(felled)) kills.push(felled);
       }
     }
-    if (attackTile(next, x, y)) {
+    const mainFelled = attackTile(next, x, y);
+    if (mainFelled) {
       scored = true;
-      slain.push({ x, y });
+      if (isKillablePiece(mainFelled)) kills.push(mainFelled);
     }
-    if (!next.gameOver && !next.won) {
-      if (category === 'ranged' && p.rangedRapid && scored) {
-        // fall through — the free follow-up is handled by the cooldown/turn logic
-      }
-      if (category === 'spell' && p.spellDazzle) {
-        for (const s of slain) {
-          for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-            const e = next.enemies.find((en) => en.x === s.x + dx && en.y === s.y + dy);
-            if (e && !e.boss && !e.statue && unitInSight(next, e.x, e.y)) e.awake = false;
-          }
+    realKill = kills.length > 0;
+    if (!next.gameOver && !next.won && category === 'spell' && p.spellDazzle) {
+      for (const s of kills) {
+        for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+          const e = next.enemies.find((en) => en.x === s.x + dx && en.y === s.y + dy);
+          if (e && !e.boss && !e.statue && unitInSight(next, e.x, e.y)) e.awake = false;
         }
       }
     }
@@ -805,10 +829,16 @@ function useCard(state, cardIndex, x, y) {
     }
   }
 
-  // Quick Draw (rangedRapid): a kill grants ONE immediate free follow-up.
+  // A melee card that fells the guardian leaves the king on the stair: descend.
+  if (tryDescend(next)) {
+    updateDiscovery(next);
+    return next;
+  }
+
+  // Quick Draw (rangedRapid): a real-piece kill grants ONE immediate free follow-up.
   const rapidFollowup = Boolean(card.rapidReady);
   card.rapidReady = false;
-  const rapidTrigger = category === 'ranged' && p.rangedRapid && scored && !rapidFollowup;
+  const rapidTrigger = category === 'ranged' && p.rangedRapid && realKill && !rapidFollowup;
   if (rapidTrigger) card.rapidReady = true;
 
   const free = (category === 'spell' && p.freeSpell) || rapidTrigger;
@@ -928,7 +958,9 @@ function pursueLastSeen(state, enemy) {
 
 // A stationary object (turret / summoning circle) never wanders.
 function isStationary(enemy) {
-  return enemy.turret || enemy.summonCircle;
+  // A dormant guardian holds the stair like a turret does — it only stirs (in
+  // bossMove) once the king strikes it or steps adjacent.
+  return enemy.turret || enemy.summonCircle || (enemy.boss && enemy.dormant);
 }
 
 // Resolve sight at the start of an enemy turn, per piece, and collect the pieces
@@ -1018,8 +1050,8 @@ function fireTurret(state, turret) {
   return state;
 }
 
-// Conjure a fresh minion on a free tile beside `origin`.
-function summonAdjacent(state, origin) {
+// Conjure a fresh minion of `kind` on a free tile beside `origin`.
+function summonAdjacent(state, origin, kind) {
   const dirs = [...ORTHO, ...DIAG];
   for (let i = dirs.length - 1; i > 0; i -= 1) {
     const j = randomInt(i + 1);
@@ -1032,7 +1064,7 @@ function summonAdjacent(state, origin) {
     if (!isStandable(terrainAt(state, x, y))) continue;
     if (x === state.player.x && y === state.player.y) continue;
     if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
-    const minion = createEnemy(randomEnemyKind(state.floor), x, y);
+    const minion = createEnemy(kind || randomEnemyKind(state.floor), x, y);
     minion.summoned = true;
     minion.awake = true;
     state.enemies.push(minion);
@@ -1041,10 +1073,10 @@ function summonAdjacent(state, origin) {
   return false;
 }
 
-// A summoning circle's turn: while the king can see it, it conjures a minion on
-// charged turns (never two turns running). It never moves and never strikes.
+// A summoning circle's turn: while the king can see it, it conjures a minion of its
+// OWN piece type on charged turns (never two running). It never moves or strikes.
 function summonCircleTurn(state, circle) {
-  if (circle.charged && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, circle)) {
+  if (circle.charged && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, circle, circle.kind)) {
     circle.charged = false;
     state.message = 'A summoning circle conjures a minion!';
     state.lastAction = 'enemy';
@@ -1176,6 +1208,17 @@ function strikeKing(state, enemy) {
 // A boss's turn: hunt like its piece, and strike ONLY if it can capture the king.
 function bossMove(state, boss) {
   const king = state.player;
+  // A dormant guardian holds the stair until the king strikes it (hp < maxHp) or
+  // steps adjacent — then it rouses for good.
+  if (boss.dormant) {
+    if (boss.hp < boss.maxHp || chebyshev(boss.x, boss.y, king.x, king.y) <= 1) {
+      boss.dormant = false;
+    } else {
+      state.message = `${bossTitle(boss)} guards the stair, unmoving.`;
+      state.lastAction = 'enemy';
+      return state;
+    }
+  }
   const moves = getPieceMoves(boss, state);
   const canCapture = moves.some((m) => m.x === king.x && m.y === king.y);
   if (canCapture) {
@@ -1201,6 +1244,7 @@ function bossMove(state, boss) {
 function moveEnemy(state, enemyId) {
   const next = structuredClone(state);
   next.lastShot = null;
+  next.player.deflected = false; // set true only if THIS enemy's blow is deflected
   const enemy = next.enemies.find((piece) => piece.id === enemyId);
   if (!enemy) return next;
   if (enemy.boss) return bossMove(next, enemy);

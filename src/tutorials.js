@@ -72,9 +72,9 @@ const TUTORIALS = {
   boss: {
     title: 'The floor guardian',
     text:
-      'A crowned boss guards the way down — a high-mobility piece with a HP bar. It ' +
-      'takes several blows to fell (each hit chips the bar). You may also just slip ' +
-      'past it down the stair.',
+      'A crowned boss sits ON the stair down — a high-mobility piece with a HP bar. ' +
+      'It holds still until you strike it or step adjacent, then hunts. Fell it (each ' +
+      'hit chips the bar) and you descend the moment it drops.',
   },
   danger: {
     title: 'The longer you linger...',
