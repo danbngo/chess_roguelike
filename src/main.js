@@ -7,8 +7,7 @@
   const floorNameLabel = document.getElementById('floor-name');
   const turnLabel = document.getElementById('turn');
   const healthLabel = document.getElementById('health');
-  const goldLabel = document.getElementById('gold');
-  const rewardLabel = document.getElementById('reward');
+  const levelLabel = document.getElementById('level');
   const statusLabel = document.getElementById('status');
   const consumableBar = document.getElementById('consumable-bar');
   const logEl = document.getElementById('log');
@@ -28,15 +27,6 @@
   const altarList = document.getElementById('altar-list');
   const altarMessage = document.getElementById('altar-message');
   const altarCloseButton = document.getElementById('altar-close');
-  const potionShopScreen = document.getElementById('potionshop-screen');
-  const potionShopGold = document.getElementById('potionshop-gold');
-  const potionShopList = document.getElementById('potionshop-list');
-  const potionShopMessage = document.getElementById('potionshop-message');
-  const potionShopCloseButton = document.getElementById('potionshop-close');
-  const weaponshopScreen = document.getElementById('weaponshop-screen');
-  const weaponshopGold = document.getElementById('weaponshop-gold');
-  const weaponshopList = document.getElementById('weaponshop-list');
-  const weaponshopMessage = document.getElementById('weaponshop-message');
   const cardBar = document.getElementById('card-bar');
   const tilePopover = document.getElementById('tile-popover');
   const tutorialScreen = document.getElementById('tutorial-screen');
@@ -45,6 +35,12 @@
   const optionsScreen = document.getElementById('options-screen');
   const optionsStatus = document.getElementById('options-tutorial-status');
   const optionsToggle = document.getElementById('options-toggle-tutorial');
+  const optionsCharacterButton = document.getElementById('options-character');
+
+  const characterScreen = document.getElementById('character-screen');
+  const characterSub = document.getElementById('character-sub');
+  const characterBody = document.getElementById('character-body');
+  const characterCloseButton = document.getElementById('character-close');
 
   const classScreen = document.getElementById('class-screen');
   const classList = document.getElementById('class-list');
@@ -57,7 +53,6 @@
   const victoryContinueButton = document.getElementById('victory-continue');
   const victoryAgainButton = document.getElementById('victory-again');
   const victoryTitleButton = document.getElementById('victory-title');
-  const weaponshopCloseButton = document.getElementById('weaponshop-close');
   const tutorialOkButton = document.getElementById('tutorial-ok');
   const tutorialDisableButton = document.getElementById('tutorial-disable');
   const optionsCloseButton = document.getElementById('options-close');
@@ -73,7 +68,7 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'class' | 'playing' | 'altar' | 'weaponshop' | 'potionshop' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'class' | 'playing' | 'altar' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
 
@@ -83,12 +78,6 @@
   let cardTargeting = null;
   let cardTargets = [];
   let cardCursor = null;
-
-  // Blink-scroll targeting: the satchel index of the blink scroll being aimed (or
-  // null), and the tiles it may hop to.
-  let blinkTargeting = null;
-  let blinkTiles = [];
-  let blinkKind = null; // 'blink' | 'digging'
 
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
@@ -115,15 +104,12 @@
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
     turnLabel.textContent = `Turn ${gameState.turn}`;
     healthLabel.textContent = `HP ${p.hp}/${p.maxHp}`;
-    if (goldLabel) goldLabel.textContent = `Level ${p.level || 1}`;
-    if (rewardLabel) rewardLabel.textContent = '';
+    if (levelLabel) levelLabel.textContent = `Level ${p.level || 1}`;
     logMessage(gameState.message);
 
     // Dread rises as the king lingers and as his health falls.
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
-    // The descend reward also bleeds from green to red as it decays.
-    if (rewardLabel) rewardLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     updateStatusLine();
     renderCards();
     renderConsumables();
@@ -277,43 +263,6 @@
     processPlayerResult(result); // costs a turn — enemies then move
   }
 
-  function startScrollTargeting(index, kind) {
-    blinkKind = kind;
-    blinkTiles = kind === 'digging' ? diggingTargets(gameState) : blinkTargets(gameState);
-    if (!blinkTiles.length) {
-      gameState.message = kind === 'digging' ? 'Nothing to dig.' : 'Nowhere in sight to blink to.';
-      updateHud();
-      return;
-    }
-    blinkTargeting = index;
-    gameState.message = kind === 'digging' ? 'Dig: click along a straight line.' : 'Blink: click a tile you can see.';
-    updateHud();
-  }
-
-  function cancelBlinkTargeting() {
-    blinkTargeting = null;
-    blinkTiles = [];
-    blinkKind = null;
-  }
-
-  // Resolve a blink/dig to the chosen tile (costs a turn unless Quick Draw).
-  function confirmBlink(tileX, tileY) {
-    const index = blinkTargeting;
-    const kind = blinkKind;
-    cancelBlinkTargeting();
-    const result = kind === 'digging' ? useDigging(gameState, index, tileX, tileY) : useBlink(gameState, index, tileX, tileY);
-    if (result.lastAction === 'blocked') {
-      applyState(result, false);
-      return;
-    }
-    Renderer.effect('powerup');
-    if (result.lastAction === 'consume-free') {
-      applyState(result, true);
-    } else {
-      processPlayerResult(result);
-    }
-  }
-
   // Start (or cancel) aiming a card. While aiming, its reachable tiles glow.
   function toggleCardTargeting(index) {
     if (!isIdle()) {
@@ -363,8 +312,6 @@
     cardTargeting = null;
     cardTargets = [];
     cardCursor = null;
-    blinkTargeting = null; // never aim a card and a blink at once
-    blinkTiles = [];
   }
 
   /* ------------------------------ tile popover --------------------------- */
@@ -416,9 +363,6 @@
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
       lines.push('Stairs down to the next floor');
-    }
-    if (onBuilding(gameState.potionShop)) {
-      lines.push('Apothecary — grab a free potion');
     }
     return lines.join('\n');
   }
@@ -547,9 +491,6 @@
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
       addExamineBlock('Stairs', 'Descend to the next floor — you fully heal and gain a level.');
-    }
-    if (onBuilding(gameState.potionShop)) {
-      addExamineBlock('Apothecary', 'Grab a free potion into your satchel.');
     }
   }
 
@@ -723,6 +664,8 @@
     const enabled = tutorialsEnabled();
     optionsStatus.textContent = `Tutorial tips are currently ${enabled ? 'ON' : 'OFF'}.`;
     optionsToggle.textContent = enabled ? 'Disable tutorials' : 'Enable tutorials';
+    // The character sheet only exists mid-run.
+    if (optionsCharacterButton) optionsCharacterButton.style.display = gameState ? '' : 'none';
   }
 
   function openOptions() {
@@ -740,6 +683,82 @@
     screen = screenBeforeModal;
   }
 
+  /* ---------------------------- character sheet -------------------------- */
+
+  // Build one titled block (heading + list of rows) for the character sheet.
+  function characterBlock(heading, rows) {
+    const block = document.createElement('div');
+    block.className = 'examine-block';
+    const h = document.createElement('div');
+    h.className = 'examine-h';
+    h.textContent = heading;
+    block.append(h);
+    rows.forEach((row) => {
+      const line = document.createElement('div');
+      line.className = 'examine-line';
+      if (typeof row === 'string') {
+        line.textContent = row;
+      } else {
+        if (row.color) line.style.color = row.color;
+        line.textContent = row.text;
+      }
+      block.append(line);
+    });
+    return block;
+  }
+
+  function renderCharacter() {
+    const p = gameState.player;
+    const cls = CLASSES[p.className];
+    characterSub.textContent = cls
+      ? `${cls.name} — Level ${p.level || 1}`
+      : `Level ${p.level || 1}`;
+    characterBody.innerHTML = '';
+
+    characterBody.append(characterBlock('Stats', [
+      `HP ${p.hp}/${p.maxHp}`,
+      `Sight ${p.vision}`,
+      `Move ${p.moveRange}`,
+      `Potion slots ${p.maxConsumables}`,
+    ]));
+
+    const cards = p.cards || [];
+    characterBody.append(characterBlock(`Cards (${cards.length})`, cards.length
+      ? cards.map((c) => {
+          const cat = c.category || 'melee';
+          const ready = c.remaining > 0 ? `cooldown ${c.remaining}` : 'ready';
+          return { text: `${getPieceLabel(c.kind)}  ${c.kind} — ${cat} (${ready})`, color: CATEGORY_COLOR[cat] };
+        })
+      : ['No cards.']));
+
+    const taken = p.takenPerks || [];
+    characterBody.append(characterBlock(`Perks (${taken.length})`, taken.length && cls
+      ? taken.map((id) => {
+          const perk = cls.perks.find((k) => k.id === id) || { name: id, desc: '' };
+          return perk.desc ? `${perk.name} — ${perk.desc}` : perk.name;
+        })
+      : ['No perks taken yet.']));
+
+    const held = (p.consumables || []).filter(Boolean);
+    characterBody.append(characterBlock(`Potions (${held.length}/${p.maxConsumables})`, held.length
+      ? held.map((k) => potionLabel(k))
+      : ['Satchel empty.']));
+  }
+
+  function openCharacter() {
+    if (!gameState) return;
+    optionsScreen.classList.add('hidden');
+    screen = 'character';
+    renderCharacter();
+    characterScreen.classList.remove('hidden');
+  }
+
+  function closeCharacter() {
+    characterScreen.classList.add('hidden');
+    screen = 'options';
+    optionsScreen.classList.remove('hidden');
+  }
+
   /* --------------------------- screen handling --------------------------- */
 
   function hideOverlays() {
@@ -748,10 +767,9 @@
     gameoverScreen.classList.add('hidden');
     victoryScreen.classList.add('hidden');
     altarScreen.classList.add('hidden');
-    potionShopScreen.classList.add('hidden');
-    weaponshopScreen.classList.add('hidden');
     tutorialScreen.classList.add('hidden');
     optionsScreen.classList.add('hidden');
+    characterScreen.classList.add('hidden');
   }
 
   function showTitle() {
@@ -1049,50 +1067,6 @@
     scanVisibleTips(gameState);
   }
 
-  /* ---------------------------- apothecary ------------------------------ */
-
-  function renderPotionShop() {
-    const p = gameState.player;
-    if (potionShopGold) potionShopGold.textContent = `Satchel ${p.consumables.length}/${p.maxConsumables}`;
-    potionShopMessage.textContent = gameState.shopMessage || 'Take a free potion (used later from your satchel).';
-    potionShopList.innerHTML = '';
-    const offers = (gameState.potionShop && gameState.potionShop.offers) || [];
-    offers.forEach((offer, index) => {
-      const def = CONSUMABLES[offer.key];
-      if (!def) return;
-      const row = document.createElement('li');
-      row.className = 'shop-item';
-      const info = document.createElement('div');
-      info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name" style="color:${def.color}">${def.glyph} ${def.name}</span><span class="shop-desc">${def.desc}</span>`;
-      const buy = document.createElement('button');
-      buy.type = 'button';
-      buy.textContent = offer.sold ? 'Taken' : 'Take';
-      buy.disabled = offer.sold || p.consumables.length >= p.maxConsumables;
-      buy.addEventListener('click', () => {
-        applyState(buyConsumable(gameState, index), true);
-        renderPotionShop();
-      });
-      row.append(info, buy);
-      potionShopList.append(row);
-    });
-  }
-
-  function openPotionShop() {
-    screen = 'potionshop';
-    gameState.shopMessage = '';
-    renderPotionShop();
-    potionShopScreen.classList.remove('hidden');
-    queueTip('potionShop');
-  }
-
-  function closePotionShop() {
-    screen = 'playing';
-    potionShopScreen.classList.add('hidden');
-    saveGame(gameState);
-  }
-
-
   /* ------------------------------ turn flow ------------------------------ */
 
   function processPlayerResult(nextState) {
@@ -1169,12 +1143,9 @@
       return;
     }
 
-    // Turn complete: maybe reinforce, persist, then open the apothecary if stepped on.
+    // Turn complete: maybe reinforce, then persist.
     applyState(maybeSpawnEnemy(gameState), true);
-    const potionShopPending = gameState.pendingPotionShop;
-    gameState.pendingPotionShop = false;
     saveGame(gameState);
-    if (potionShopPending) openPotionShop();
   }
 
   function handleStep(dx, dy) {
@@ -1191,21 +1162,6 @@
     const rect = canvas.getBoundingClientRect();
     const scale = canvas.width / rect.width;
     const { x: tileX, y: tileY } = Renderer.screenToTile((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
-
-    // Aiming a blink scroll: a click on a lit tile blinks there; else cancels.
-    if (blinkTargeting !== null) {
-      if (!isIdle()) {
-        return;
-      }
-      const target = blinkTiles.find((t) => t.x === tileX && t.y === tileY);
-      if (target) {
-        confirmBlink(tileX, tileY);
-      } else {
-        cancelBlinkTargeting();
-        examineTile(tileX, tileY);
-      }
-      return;
-    }
 
     // Aiming a card: a click on a highlighted tile plays it; anything else cancels.
     if (cardTargeting !== null) {
@@ -1268,27 +1224,16 @@
     }
 
     Renderer.update(delta);
-    // While aiming a card or a blink, show its reachable tiles instead of moves.
+    // While aiming a card, show its reachable tiles instead of moves.
     const aiming = cardTargeting !== null;
-    const blinking = blinkTargeting !== null;
-    const targets = aiming ? cardTargets : blinking ? blinkTiles : null;
-    Renderer.draw(gameState, isIdle() && !aiming && !blinking, targets, aiming ? cardCursor : null);
+    const targets = aiming ? cardTargets : null;
+    Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null);
     requestAnimationFrame(step);
   }
 
   /* ------------------------------- wiring -------------------------------- */
 
   document.addEventListener('keydown', (event) => {
-    // While aiming a blink scroll (click-targeted): Escape cancels; swallow the rest.
-    if (blinkTargeting !== null) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        cancelBlinkTargeting();
-        gameState.message = 'Blink cancelled.';
-        updateHud();
-      }
-      return;
-    }
 
     // While aiming a card: movement keys steer the cursor, Enter/Space confirm,
     // Escape cancels.
@@ -1424,11 +1369,12 @@
   victoryAgainButton.addEventListener('click', openClassSelect);
   victoryTitleButton.addEventListener('click', showTitle);
   if (altarCloseButton) altarCloseButton.addEventListener('click', closeLevelUp);
-  potionShopCloseButton.addEventListener('click', closePotionShop);
   tutorialOkButton.addEventListener('click', dismissTip);
   tutorialDisableButton.addEventListener('click', disableTipsFromModal);
   optionsButton.addEventListener('click', openOptions);
   optionsCloseButton.addEventListener('click', closeOptions);
+  if (optionsCharacterButton) optionsCharacterButton.addEventListener('click', openCharacter);
+  if (characterCloseButton) characterCloseButton.addEventListener('click', closeCharacter);
   optionsToggle.addEventListener('click', () => {
     if (tutorialsEnabled()) {
       setTutorialsEnabled(false);

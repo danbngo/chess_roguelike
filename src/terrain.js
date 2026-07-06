@@ -21,13 +21,12 @@ function blocksSight(type) {
   return type === 'wall';
 }
 
-// Whether a mover may enter/stop on a tile. Walls stop everything. Flyers cross
-// anything but walls. Lava is passable only to enemies (opts.lavaOk); water is
-// passable to all (but slow — see slideStops).
+// Whether a mover may enter/stop on a tile. Walls stop everything. Lava is
+// passable only to enemies (opts.lavaOk); water is passable to all (but slow —
+// see slideStops).
 function standableFor(type, opts) {
   if (type === 'wall') return false;
   const o = opts || {};
-  if (o.flying) return true;
   if (type === 'lava') return Boolean(o.lavaOk);
   return true; // water & normal are walkable
 }
@@ -45,8 +44,6 @@ function isStandable(type) {
 // Symmetric line of sight: clear unless a wall lies strictly between the two
 // points (endpoints themselves are not opaque to the look).
 function hasLineOfSight(state, x0, y0, x1, y1) {
-  // A Ranger's Eagle Eye lets the king see through anything but stone walls.
-  const xray = Boolean(state.player && state.player.xraySight);
   const dx = Math.abs(x1 - x0);
   const dy = Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
@@ -67,9 +64,8 @@ function hasLineOfSight(state, x0, y0, x1, y1) {
     if (x === x1 && y === y1) {
       break;
     }
-    const blocked = xray ? terrainAt(state, x, y) === 'wall' : (blocksSight(terrainAt(state, x, y)) || (state.fogClouds && state.fogClouds[`${x},${y}`]));
-    if (blocked) {
-      return false; // walls (and, without Eagle Eye, brush/trees/fog clouds) block the look
+    if (blocksSight(terrainAt(state, x, y))) {
+      return false; // walls block the look
     }
   }
   return true;
@@ -100,13 +96,13 @@ function computeVisibleTiles(state) {
   return set;
 }
 
-// Walk a ray, returning every tile the mover may legally stop on. Ice forces a
-// slide (you can't stop on it); mud caps at two crossed tiles; walls and water
-// are solid. `unitAt(x,y)` returns a blocking unit (or null); `isTarget(x,y)`
-// reports whether a unit there may be captured (and thus stopped on).
+// Walk a ray, returning every tile the mover may legally stop on. Water is slow
+// (at most one crossed per move); walls stop the ray. `unitAt(x,y)` returns a
+// blocking unit (or null); `isTarget(x,y)` reports whether a unit there may be
+// captured (and thus stopped on).
 function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
   const o = opts || {};
-  const immune = Boolean(o.terrainImmune) || Boolean(o.flying); // ignore slow-terrain effects
+  const immune = Boolean(o.terrainImmune); // ignore slow-terrain effects
   const stops = [];
   let x = sx;
   let y = sy;

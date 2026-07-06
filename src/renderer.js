@@ -33,11 +33,11 @@ const Renderer = (function () {
   // Ever-increasing time accumulator, used for ambient animation (powerup glow).
   let clock = 0;
 
-  // In-flight ranged projectiles (turret / mage / boss bolts), each easing from a
-  // source tile to a target tile over its lifetime.
+  // In-flight ranged projectiles (turret / boss bolts), each easing from a source
+  // tile to a target tile over its lifetime.
   let projectiles = [];
   const PROJECTILE_TIME = 0.16;
-  const PROJECTILE_COLOR = { turret: '#e0894b', mage: '#c084fc', skirmisher: '#f59e0b', boss: '#ffe9a8' };
+  const PROJECTILE_COLOR = { turret: '#e0894b', boss: '#ffe9a8' };
 
   // Camera: a movable, zoomable window onto the board. `baseTile` is the on-screen
   // size of a tile at zoom 1 — set so the default view shows half the board (i.e.
@@ -223,9 +223,8 @@ const Renderer = (function () {
     const radius = tileSize * (role === 'boss' ? 0.46 : 0.4);
 
     ctx.save();
-    // Spent (recharging) casters are faded; an invisible king is ghostly.
+    // Spent (recharging) casters are faded.
     if (o.inactive) ctx.globalAlpha = 0.4;
-    if (o.invisible) ctx.globalAlpha = 0.35;
 
     // Token body / outline, tinted by special role / class / allegiance.
     let fill = isPlayer ? '#f7e7b8' : '#111118';
@@ -342,25 +341,6 @@ const Renderer = (function () {
   }
 
   // Draw drifting fog clouds (from a Fog Scroll) over their tiles.
-  function drawFogClouds(state) {
-    if (!state.fogClouds) return;
-    for (const key in state.fogClouds) {
-      const [x, y] = key.split(',').map(Number);
-      const px = x * tileSize;
-      const py = y * tileSize;
-      ctx.save();
-      ctx.fillStyle = 'rgba(203, 213, 225, 0.7)';
-      for (let i = 0; i < 3; i += 1) {
-        const rx = tileHash(x * 3 + i, y + 9);
-        const ry = tileHash(x + 9, y * 3 + i);
-        ctx.beginPath();
-        ctx.arc(px + tileSize * (0.25 + rx * 0.5), py + tileSize * (0.25 + ry * 0.5), tileSize * 0.34, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-  }
-
   // Draw the in-flight ranged bolts (world space).
   function drawProjectiles() {
     for (const p of projectiles) {
@@ -457,92 +437,6 @@ const Renderer = (function () {
     }
     ctx.restore();
   }
-
-  // The weapon shop: a stall with two crossed swords.
-  function drawWeaponShop(tileX, tileY, faded) {
-    const px = tileX * tileSize;
-    const py = tileY * tileSize;
-    const cx = px + tileSize / 2;
-    const cy = py + tileSize / 2;
-    ctx.save();
-    ctx.globalAlpha = faded ? 0.45 : 1;
-    ctx.fillStyle = '#7c2d12';
-    ctx.fillRect(px + tileSize * 0.12, py + tileSize * 0.12, tileSize * 0.76, tileSize * 0.76);
-    // Awning stripe.
-    ctx.fillStyle = '#b45309';
-    ctx.fillRect(px + tileSize * 0.12, py + tileSize * 0.12, tileSize * 0.76, tileSize * 0.18);
-    // Two crossed sword blades.
-    ctx.translate(cx, cy + tileSize * 0.08);
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth = Math.max(2, tileSize * 0.06);
-    ctx.lineCap = 'round';
-    for (const dir of [-1, 1]) {
-      ctx.beginPath();
-      ctx.moveTo(dir * tileSize * 0.22, tileSize * 0.18);
-      ctx.lineTo(-dir * tileSize * 0.22, -tileSize * 0.22);
-      ctx.stroke();
-    }
-    // Hilts.
-    ctx.strokeStyle = '#facc15';
-    ctx.lineWidth = Math.max(2, tileSize * 0.05);
-    for (const dir of [-1, 1]) {
-      ctx.beginPath();
-      ctx.moveTo(dir * tileSize * 0.14, tileSize * 0.1);
-      ctx.lineTo(dir * tileSize * 0.26, tileSize * 0.22);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  // The class altar: a pale stone plinth with a violet flame. Dimmed once spent.
-  function drawClassAltar(tileX, tileY, faded, used) {
-    const px = tileX * tileSize;
-    const py = tileY * tileSize;
-    ctx.save();
-    ctx.globalAlpha = used ? 0.35 : faded ? 0.45 : 1;
-    ctx.fillStyle = used ? '#6b7280' : '#cbd5e1';
-    ctx.fillRect(px + tileSize * 0.28, py + tileSize * 0.46, tileSize * 0.44, tileSize * 0.36);
-    ctx.fillStyle = used ? '#9ca3af' : '#e2e8f0';
-    ctx.fillRect(px + tileSize * 0.22, py + tileSize * 0.4, tileSize * 0.56, tileSize * 0.12);
-    if (!used) {
-      const cx = px + tileSize / 2;
-      const fy = py + tileSize * 0.36;
-      ctx.beginPath();
-      ctx.moveTo(cx, fy - tileSize * 0.22);
-      ctx.quadraticCurveTo(cx + tileSize * 0.14, fy - tileSize * 0.02, cx, fy);
-      ctx.quadraticCurveTo(cx - tileSize * 0.14, fy - tileSize * 0.02, cx, fy - tileSize * 0.22);
-      ctx.fillStyle = '#a855f7';
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  // The apothecary: a bubbling flask on a little stand.
-  function drawPotionShop(tileX, tileY, faded) {
-    const px = tileX * tileSize;
-    const py = tileY * tileSize;
-    const cx = px + tileSize / 2;
-    ctx.save();
-    ctx.globalAlpha = faded ? 0.45 : 1;
-    // Flask body.
-    ctx.fillStyle = '#22c55e';
-    ctx.beginPath();
-    ctx.arc(cx, py + tileSize * 0.6, tileSize * 0.2, 0, Math.PI * 2);
-    ctx.fill();
-    // Neck.
-    ctx.fillStyle = '#86efac';
-    ctx.fillRect(cx - tileSize * 0.06, py + tileSize * 0.28, tileSize * 0.12, tileSize * 0.2);
-    // Cork.
-    ctx.fillStyle = '#b45309';
-    ctx.fillRect(cx - tileSize * 0.07, py + tileSize * 0.24, tileSize * 0.14, tileSize * 0.06);
-    // A rising bubble.
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.beginPath();
-    ctx.arc(cx + tileSize * 0.05, py + tileSize * 0.55, tileSize * 0.03, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
 
   // Draw a pickup. `animated` items (in current view) pulse and glow; remembered
   // ones (out of view) are static and dimmed.
@@ -660,22 +554,12 @@ const Renderer = (function () {
   // green / red / orange move-and-threat tints overlay legibly on every tile.
   function terrainColor(type, isDark) {
     switch (type) {
-      case 'ice':
-        return isDark ? '#c2cccc' : '#e0e7e3'; // pale frost
       case 'lava':
         return isDark ? '#7a1f10' : '#a6321a'; // molten rock
-      case 'fire':
-        return isDark ? '#8a2b0e' : '#c2410c'; // burning ground
       case 'water':
         return isDark ? '#1e4d6b' : '#2f6f97'; // deep water
-      case 'mud':
-        return isDark ? '#5a4a30' : '#6e5a3c'; // murky brown
       case 'wall':
         return isDark ? '#5a4f45' : '#6b5e52'; // warm brown stone
-      case 'brush':
-        return isDark ? '#2f5233' : '#3b6b40'; // dense green thicket
-      case 'trees':
-        return isDark ? '#24402a' : '#2e5335'; // deep woods
       default:
         return isDark ? '#6b4a2b' : '#e9cfa0'; // cream/brown ground
     }
@@ -705,45 +589,6 @@ const Renderer = (function () {
         }
         break;
       }
-      case 'brush': {
-        // Little tufts of foliage.
-        ctx.strokeStyle = 'rgba(20, 60, 25, 0.6)';
-        ctx.lineWidth = 1.5;
-        for (let i = 0; i < 5; i += 1) {
-          const bx = px + tileSize * (0.15 + tileHash(x * 5 + i, y) * 0.7);
-          const by = py + tileSize * (0.55 + tileHash(x, y * 5 + i) * 0.3);
-          ctx.beginPath();
-          ctx.moveTo(bx, by);
-          ctx.lineTo(bx, by - tileSize * 0.28);
-          ctx.stroke();
-        }
-        break;
-      }
-      case 'trees': {
-        // A rounded canopy over a short trunk.
-        ctx.fillStyle = 'rgba(30, 70, 40, 0.85)';
-        ctx.beginPath();
-        ctx.arc(px + tileSize * 0.5, py + tileSize * 0.42, tileSize * 0.28, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(60, 42, 22, 0.9)';
-        ctx.fillRect(px + tileSize * 0.45, py + tileSize * 0.6, tileSize * 0.1, tileSize * 0.22);
-        break;
-      }
-      case 'fire': {
-        // Licking tongues of flame.
-        const flames = ['rgba(255,196,60,0.9)', 'rgba(255,120,30,0.85)'];
-        for (let i = 0; i < 3; i += 1) {
-          const fx = px + tileSize * (0.22 + tileHash(x * 7 + i, y) * 0.56);
-          const fyBase = py + tileSize * 0.82;
-          ctx.fillStyle = flames[i % flames.length];
-          ctx.beginPath();
-          ctx.moveTo(fx - tileSize * 0.08, fyBase);
-          ctx.quadraticCurveTo(fx, fyBase - tileSize * (0.35 + tileHash(x, y * 7 + i) * 0.2), fx + tileSize * 0.08, fyBase);
-          ctx.closePath();
-          ctx.fill();
-        }
-        break;
-      }
       case 'water': {
         // Gentle ripples catching the light.
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
@@ -755,29 +600,6 @@ const Renderer = (function () {
           ctx.quadraticCurveTo(px + tileSize * 0.5, wy + tileSize * 0.08, px + tileSize * 0.85, wy);
           ctx.stroke();
         }
-        break;
-      }
-      case 'mud': {
-        // Murky bubbles.
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
-        for (let i = 0; i < 4; i += 1) {
-          const rx = tileHash(x * 6 + i, y + 2);
-          const ry = tileHash(x + 2, y * 6 + i);
-          ctx.beginPath();
-          ctx.arc(px + tileSize * (0.2 + rx * 0.6), py + tileSize * (0.2 + ry * 0.6), tileSize * (0.05 + 0.05 * rx), 0, Math.PI * 2);
-          ctx.fill();
-        }
-        break;
-      }
-      case 'ice': {
-        // A pale crack catching the light.
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(px + tileSize * 0.18, py + tileSize * 0.72);
-        ctx.lineTo(px + tileSize * 0.5, py + tileSize * 0.3);
-        ctx.lineTo(px + tileSize * 0.72, py + tileSize * 0.56);
-        ctx.stroke();
         break;
       }
       case 'wall': {
@@ -864,7 +686,6 @@ const Renderer = (function () {
       fill(f.x, f.y);
     };
     feature(state.exit, '#38bdf8'); // stair down — cyan
-    feature(state.potionShop, '#2dd4bf'); // apothecary — teal
 
     // Blips: the king (green) and any foes currently in sight (red).
     const blip = (x, y, color, r) => {
@@ -999,30 +820,11 @@ const Renderer = (function () {
       }
     }
 
-    // Exit, equipment shop and weapon shop: shown when in sight, or faded once
-    // discovered.
+    // The stair down: shown when in sight, or faded once discovered.
     if (state.exit) {
       const seen = lit(state.exit.x, state.exit.y);
       if (seen || state.exit.discovered) {
         drawExit(state.exit.x, state.exit.y, !seen, state.exit.locked);
-      }
-    }
-    if (state.altar) {
-      const seen = lit(state.altar.x, state.altar.y);
-      if (seen || state.altar.discovered) {
-        drawClassAltar(state.altar.x, state.altar.y, !seen, state.altar.used);
-      }
-    }
-    if (state.weaponShop) {
-      const seen = lit(state.weaponShop.x, state.weaponShop.y);
-      if (seen || state.weaponShop.discovered) {
-        drawWeaponShop(state.weaponShop.x, state.weaponShop.y, !seen);
-      }
-    }
-    if (state.potionShop) {
-      const seen = lit(state.potionShop.x, state.potionShop.y);
-      if (seen || state.potionShop.discovered) {
-        drawPotionShop(state.potionShop.x, state.potionShop.y, !seen);
       }
     }
 
@@ -1085,24 +887,15 @@ const Renderer = (function () {
       }
     }
 
-    // The king's summoned allies (friendly pieces), drawn only where visible.
-    for (const ally of state.allies || []) {
-      if (lit(ally.x, ally.y)) {
-        drawPiece(ally.x, ally.y, ally.kind, false, { ally: true });
-      }
-    }
-
-    const invisible = Boolean(state.player.statuses && state.player.statuses.invisible > 0);
     const classColor =
       typeof highestClass === 'function' && typeof CLASSES !== 'undefined'
         ? (CLASSES[highestClass(state.player)] || {}).color
         : null;
-    drawPiece(playerRender.x, playerRender.y, 'king', true, { invisible, classColor });
+    drawPiece(playerRender.x, playerRender.y, 'king', true, { classColor });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);
     }
 
-    drawFogClouds(state);
     drawProjectiles();
 
     ctx.restore();

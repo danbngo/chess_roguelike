@@ -107,7 +107,6 @@ function damageBoss(state, boss, amount) {
   }
   state.enemies = state.enemies.filter((e) => e.id !== boss.id);
   addSpatter(state, boss.x, boss.y);
-  if (state.player && state.player.statuses) state.player.statuses.invisible = 0;
   state.player.killedEnemy = true;
   defeatBoss(state, boss.x, boss.y);
   return 'slain';
@@ -134,7 +133,6 @@ function checkDeath(state) {
     p.hp = 1;
     p.x = PLAYER_START.x;
     p.y = PLAYER_START.y;
-    if (p.statuses) p.statuses.invisible = 0;
     state.message = 'Undying — you rise again at your start!';
     state.lastAction = 'enemy';
     updateDiscovery(state);
@@ -169,25 +167,12 @@ function randomConsumable() {
 // Drink a potion: an immediate boon.
 function applyConsumable(state, potion) {
   const p = state.player;
-  if (!p.statuses) p.statuses = {};
   if (potion === 'health') {
     p.hp = p.maxHp;
     state.message = 'A Potion of Healing restores you to full health.';
   } else if (potion === 'mana') {
     for (const card of p.cards || []) card.remaining = 0;
     state.message = 'A Potion of Mending recharges every card.';
-  }
-}
-
-// Age the king's timed statuses by one turn, dropping any that have run out.
-function tickStatuses(player) {
-  if (!player.statuses) {
-    player.statuses = {};
-    return;
-  }
-  for (const key of Object.keys(player.statuses)) {
-    player.statuses[key] -= 1;
-    if (player.statuses[key] <= 0) delete player.statuses[key];
   }
 }
 
@@ -206,7 +191,7 @@ function pickSome(items, count) {
 // Perk grant flags that are simply switched on.
 const PERK_FLAGS = [
   'reflect', 'firstHitEachTurn', 'freeKillMove', 'extraLife', 'stealth', 'terrainImmune',
-  'revealFloor', 'xraySight', 'freePotion', 'spellHaste', 'freeSpell', 'spellSurprise',
+  'revealFloor', 'freePotion', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
 ];
 
@@ -240,18 +225,15 @@ function createPlayer(classKey) {
     y: PLAYER_START.y,
     hp: STARTING_HP,
     maxHp: STARTING_HP,
-    exp: 0,
     level: 1,
     className: CLASSES[classKey] ? classKey : 'warrior',
     moveRange: 1,
     vision: STARTING_VISION,
-    regen: STARTING_REGEN,
     cardReach: 0,
     cards: [],
     maxConsumables: STARTING_CONSUMABLE_SLOTS,
     consumables: [],
     takenPerks: [], // perk ids taken (unique ones can't be offered again)
-    statuses: {},
     warded: false,
     firstHitUsedThisTurn: false,
     // Per-floor flags reset on descent:
@@ -370,17 +352,13 @@ function generateFloor(floor, carryPlayer, score) {
     enemies: [],
     items: [],
     spatters: [],
-    fogClouds: {},
-    allies: [],
     exit: null,
-    potionShop: null,
     floor,
     turn: 0,
     score: score || 0,
     enemyTurn: false,
     gameOver: false,
     won: false,
-    pendingPotionShop: false,
     pendingLevelUp: false,
     levelPerks: null,
     message: 'A new floor. Seek the exit.',
@@ -478,15 +456,8 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  // An apothecary where the king grabs a free potion (space permitting).
-  if (Math.random() < 0.5) {
-    const offers = pickSome(POTION_KINDS, CONSUMABLE_SHOP_CHOICES).map((key) => ({ key, sold: false }));
-    const shopTile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
-    if (shopTile) state.potionShop = { x: shopTile.x, y: shopTile.y, discovered: false, offers };
-  }
-
   // Potions dropped on the ground (grabbed by stepping on them; trampled by foes).
-  const potionCount = 1 + randomInt(3);
+  const potionCount = 2 + randomInt(3);
   for (let i = 0; i < potionCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 3);
     if (tile) state.items.push({ kind: 'consumable', potion: randomConsumable(), x: tile.x, y: tile.y });
@@ -508,9 +479,7 @@ function generateFloor(floor, carryPlayer, score) {
     for (let ry = 0; ry < WORLD_SIZE; ry += 1) {
       for (let rx = 0; rx < WORLD_SIZE; rx += 1) state.explored[`${rx},${ry}`] = true;
     }
-    for (const f of [state.exit, state.potionShop]) {
-      if (f) f.discovered = true;
-    }
+    if (state.exit) state.exit.discovered = true;
   }
 
   updateDiscovery(state);
@@ -526,7 +495,6 @@ function createInitialState(classKey) {
 function nextFloor(state) {
   const healed = { ...state.player, hp: state.player.maxHp };
   healed.cards = (healed.cards || []).map((c) => ({ ...c, remaining: 0 }));
-  healed.exp = (healed.exp || 0) + 1;
   healed.level = (healed.level || 1) + 1;
   healed.extraLifeUsed = false;
   const next = generateFloor(state.floor + 1, healed, state.score);
@@ -546,15 +514,9 @@ function decaySpatters(spatters) {
   if (!Array.isArray(spatters)) return [];
   return spatters.map((s) => ({ ...s, life: s.life - 1 })).filter((s) => s.life > 0);
 }
-function decayFog(state) {
-  if (!state.fogClouds) return;
-  for (const key of Object.keys(state.fogClouds)) {
-    if (Math.random() < FOG_DISSIPATE) delete state.fogClouds[key];
-  }
-}
 
-// One turn's upkeep: age counters, recharge cards, fade blood, lapse wards, tick
-// statuses, drift fog.
+// One turn's upkeep: age counters, recharge cards, fade blood, lapse wards, and
+// crush any potions trodden underfoot.
 function passTurn(state) {
   const p = state.player;
   state.turn += 1;
@@ -570,8 +532,6 @@ function passTurn(state) {
   p.warded = false;
   p.firstHitUsedThisTurn = false;
   p.attacked = false;
-  tickStatuses(p);
-  decayFog(state);
   trampleItems(state);
 }
 
@@ -591,12 +551,11 @@ function revealSeen(state) {
   for (const key of computeVisibleTiles(state)) state.explored[key] = true;
 }
 
-// Reveal newly-seen ground, and remember the exit / apothecary once explored.
+// Reveal newly-seen ground, and remember the exit once explored.
 function updateDiscovery(state) {
   revealSeen(state);
   rememberItems(state);
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) state.exit.discovered = true;
-  if (state.potionShop && state.explored[`${state.potionShop.x},${state.potionShop.y}`]) state.potionShop.discovered = true;
 }
 
 /* ----------------------------- player movement ---------------------------- */
@@ -618,17 +577,12 @@ function getPlayerMoves(state) {
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     for (const stop of slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy, opts)) add(stop);
   }
-  if (p.canJump) {
-    for (const target of jumpTargets(state, p.x, p.y, enemyAt, isEnemy)) add(target);
-  }
   return moves;
 }
 
 // Resolve the king arriving on (x, y): attack a boss in place, destroy a summoning
-// circle / capture a foe, grab an item, take the stair, open the apothecary.
+// circle / capture a foe, grab an item, and take the stair.
 function applyArrival(next, x, y) {
-  const fromX = next.player.x;
-  const fromY = next.player.y;
   const pl = next.player;
 
   // A boss is ATTACKED IN PLACE (it has HP): the king only steps onto its tile if
@@ -641,7 +595,6 @@ function applyArrival(next, x, y) {
       pl.x = x;
       pl.y = y;
       pl.killedEnemy = true;
-      if (pl.statuses) pl.statuses.invisible = 0;
     }
     if (result === 'slain' && pl.freeKillMove) {
       next.enemyTurn = false;
@@ -652,13 +605,6 @@ function applyArrival(next, x, y) {
     }
     updateDiscovery(next);
     return next;
-  }
-
-  const ally = (next.allies || []).find((a) => a.x === x && a.y === y);
-  if (ally) {
-    ally.x = fromX;
-    ally.y = fromY;
-    ally.skipTurn = true;
   }
 
   next.player.x = x;
@@ -696,14 +642,9 @@ function applyArrival(next, x, y) {
     return next;
   }
 
-  if (next.potionShop && next.potionShop.x === x && next.potionShop.y === y) {
-    next.pendingPotionShop = true;
-    next.message = 'An apothecary! It opens once the enemies have moved.';
-  }
-
   // Statues wake the moment the king steps beside them.
   for (const e of next.enemies) {
-    if (e.statue && !next.player.stealthStructures && chebyshev(e.x, e.y, x, y) <= 1) {
+    if (e.statue && chebyshev(e.x, e.y, x, y) <= 1) {
       e.statue = false;
       e.awake = false;
       e.surprised = false;
@@ -733,7 +674,6 @@ function resolveKill(state, enemy) {
   const p = state.player;
   p.killedEnemy = true;
   addSpatter(state, enemy.x, enemy.y);
-  if (p.statuses) p.statuses.invisible = 0;
   return true;
 }
 
@@ -777,7 +717,6 @@ function canStandEmpty(state, x, y) {
   if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) return false;
   if (!standableFor(terrainAt(state, x, y), {})) return false;
   if (state.enemies.some((e) => e.x === x && e.y === y)) return false;
-  if ((state.allies || []).some((a) => a.x === x && a.y === y)) return false;
   return true;
 }
 
@@ -918,9 +857,9 @@ function movePlayer(state, dx, dy) {
 
 // An unaware enemy shuffles one tile at random, never into the king's sight (so it
 // only ever pokes into view because the KING moved, and is reliably surprised).
-function wanderEnemy(state, enemy, invisible) {
+function wanderEnemy(state, enemy) {
   const unitAt = (x, y) => {
-    if (!invisible && x === state.player.x && y === state.player.y) return 'player';
+    if (x === state.player.x && y === state.player.y) return 'player';
     return state.enemies.find((other) => other.id !== enemy.id && other.x === x && other.y === y) || null;
   };
   const never = () => false;
@@ -931,11 +870,10 @@ function wanderEnemy(state, enemy, invisible) {
     const stops = slideStops(state, enemy.x, enemy.y, dx, dy, 1, unitAt, never, opts);
     if (!stops.length) continue;
     const dest = stops[stops.length - 1];
-    if (invisible || !unitInSight(state, dest.x, dest.y)) candidates.push(dest);
+    if (!unitInSight(state, dest.x, dest.y)) candidates.push(dest);
   }
   if (!candidates.length) return null;
   const pick = candidates[randomInt(candidates.length)];
-  if (invisible && pick.x === state.player.x && pick.y === state.player.y) return 'bump';
   enemy.x = pick.x;
   enemy.y = pick.y;
   return null;
@@ -943,9 +881,9 @@ function wanderEnemy(state, enemy, invisible) {
 
 // The tiles this enemy could move to like its piece, WITHOUT capturing — for
 // pursuing the king's last-seen tile.
-function movesTowardTile(state, enemy, invisible) {
+function movesTowardTile(state, enemy) {
   const unitAt = (x, y) => {
-    if (!invisible && x === state.player.x && y === state.player.y) return 'player';
+    if (x === state.player.x && y === state.player.y) return 'player';
     return state.enemies.find((o) => o.id !== enemy.id && o.x === x && o.y === y) || null;
   };
   const never = () => false;
@@ -954,10 +892,9 @@ function movesTowardTile(state, enemy, invisible) {
   return generateMoves(enemy.kind, state, enemy.x, enemy.y, unitAt, never, opts);
 }
 
-// An out-of-sight enemy hunts toward the king's last-seen tile. Returns 'bump' if,
-// while blind (king invisible), it would step onto him; true if it pursued; false
-// if it gave up (then it wanders).
-function pursueLastSeen(state, enemy, invisible) {
+// An out-of-sight enemy hunts toward the king's last-seen tile. Returns true if it
+// pursued; false if it gave up (then it wanders).
+function pursueLastSeen(state, enemy) {
   const target = enemy.lastSeen;
   if (!target) return false;
   const forget = () => {
@@ -971,7 +908,7 @@ function pursueLastSeen(state, enemy, invisible) {
   const curD = distanceSq(enemy.x, enemy.y, target.x, target.y);
   let best = null;
   let bestD = Infinity;
-  for (const m of movesTowardTile(state, enemy, invisible)) {
+  for (const m of movesTowardTile(state, enemy)) {
     const d = distanceSq(m.x, m.y, target.x, target.y);
     if (d < bestD) {
       bestD = d;
@@ -982,31 +919,11 @@ function pursueLastSeen(state, enemy, invisible) {
     forget();
     return false;
   }
-  if (invisible && best.x === state.player.x && best.y === state.player.y) return 'bump';
   enemy.x = best.x;
   enemy.y = best.y;
   enemy.lastSeenTtl -= 1;
   if ((enemy.x === target.x && enemy.y === target.y) || enemy.lastSeenTtl <= 0) forget();
   return true;
-}
-
-function resolveBump(state, enemy) {
-  const mit = rollMitigation(state.player);
-  if (!mit) {
-    state.player.hp -= 1;
-    state.player.wasHit = true;
-    addSpatter(state, state.player.x, state.player.y);
-  }
-  if (state.player.statuses) state.player.statuses.invisible = 0;
-  state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
-  if (mit) {
-    state.message = `A ${enemy.kind} blunders into the unseen king, who shrugs it off!`;
-    state.lastAction = 'enemy';
-  } else {
-    state.message = `A ${enemy.kind} stumbles into the king, revealing him!`;
-    state.lastAction = 'hit';
-    checkDeath(state);
-  }
 }
 
 // A stationary object (turret / summoning circle) never wanders.
@@ -1020,7 +937,6 @@ function beginEnemyPhase(state) {
   const next = structuredClone(state);
   let moverIds = [];
   const p = next.player;
-  const invisible = Boolean(p.statuses && p.statuses.invisible > 0);
   const stealthed = Boolean(p.stealth) && !p.attacked;
   recordSeenEnemies(next);
 
@@ -1028,34 +944,24 @@ function beginEnemyPhase(state) {
     const wasSurprised = enemy.surprised;
     enemy.frustrated = false;
     if (enemy.statue) continue;
-    if (invisible) {
-      enemy.awake = false;
-      enemy.surprised = false;
-      if (!isStationary(enemy)) {
-        let outcome = false;
-        if (enemy.lastSeen && enemy.lastSeenTtl > 0) outcome = pursueLastSeen(next, enemy, true);
-        if (outcome === false) outcome = wanderEnemy(next, enemy, true);
-        if (outcome === 'bump') {
-          resolveBump(next, enemy);
-          if (next.gameOver) break;
-        }
-      }
-      continue;
-    }
     const hiddenFromThis = stealthed && !enemy.awake && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
     if (hiddenFromThis || !unitInSight(next, enemy.x, enemy.y)) {
       enemy.awake = false;
       enemy.surprised = false;
       if (!isStationary(enemy)) {
-        if (!(enemy.lastSeen && enemy.lastSeenTtl > 0 && pursueLastSeen(next, enemy, false))) {
+        if (!(enemy.lastSeen && enemy.lastSeenTtl > 0 && pursueLastSeen(next, enemy))) {
           wanderEnemy(next, enemy);
         }
       }
       continue;
     }
+    // An enemy is only startled if it had truly lost track of the king. If it
+    // still holds a live memory of him (it was pursuing his last-seen tile), it
+    // re-engages at once rather than gasping in surprise all over again.
+    const remembered = Boolean(enemy.lastSeen) && enemy.lastSeenTtl > 0;
     enemy.lastSeen = { x: p.x, y: p.y };
     enemy.lastSeenTtl = PURSUIT_TTL;
-    if (!enemy.awake && !wasSurprised) {
+    if (!enemy.awake && !wasSurprised && !remembered) {
       enemy.awake = true;
       enemy.surprised = true;
     } else {
@@ -1089,11 +995,6 @@ function tryReflect(state, attacker) {
 
 // A turret's turn: it holds ground and fires along its piece pattern.
 function fireTurret(state, turret) {
-  if (state.player.stealthStructures) {
-    state.message = `A ${turret.kind} turret sits dormant.`;
-    state.lastAction = 'enemy';
-    return state;
-  }
   const hitsKing = getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
   if (!hitsKing) {
     state.message = `A ${turret.kind} turret takes aim.`;
@@ -1196,7 +1097,7 @@ function knockbackKing(state, enemy) {
   if (pdx === 0 && pdy === 0) pdx = 1;
   const bx = king.x + pdx;
   const by = king.y + pdy;
-  const occupied = (x, y) => state.enemies.some((e) => e.id !== enemy.id && e.x === x && e.y === y) || (state.allies || []).some((a) => a.x === x && a.y === y);
+  const occupied = (x, y) => state.enemies.some((e) => e.id !== enemy.id && e.x === x && e.y === y);
   const canPush = bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE && standableFor(terrainAt(state, bx, by), {}) && !occupied(bx, by);
   const mit = rollMitigation(king);
   if (!mit) {
@@ -1326,24 +1227,7 @@ function maybeSpawnEnemy(state) {
   return next;
 }
 
-/* --------------------------------- shops ---------------------------------- */
-
-// Grab a potion free from the apothecary (satchel space permitting).
-function buyConsumable(state, offerIndex) {
-  const next = structuredClone(state);
-  const p = next.player;
-  const offer = next.potionShop && next.potionShop.offers && next.potionShop.offers[offerIndex];
-  if (!offer || offer.sold || !CONSUMABLES[offer.key]) return next;
-  if (!Array.isArray(p.consumables)) p.consumables = [];
-  if (p.consumables.length >= p.maxConsumables) {
-    next.shopMessage = 'Your satchel is full.';
-    return next;
-  }
-  p.consumables.push(offer.key);
-  offer.sold = true;
-  next.shopMessage = `Took a ${CONSUMABLES[offer.key].name}.`;
-  return next;
-}
+/* ------------------------------- consumables ------------------------------ */
 
 // Drink a held potion (by satchel index): a turn passes so enemies then move.
 function consumeItem(state, index) {

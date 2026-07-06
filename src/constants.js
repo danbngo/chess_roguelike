@@ -5,20 +5,17 @@ const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so cente
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
 const PLAYER_START = { x: 8, y: 8 };
 const STARTING_HP = 5;
-const STARTING_REGEN = 1; // (Descending fully heals; kept for legacy saves.)
 const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread.
 const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
-const FOG_DISSIPATE = 0.33; // Per-turn chance each fog cloud clears.
 const PURSUIT_TTL = 6; // Turns an enemy hunts toward the king's last-seen tile before losing the trail.
 const MAX_ENEMIES = 40; // Hard safety cap so over-time spawning can't run away.
 
 // Consumables: just two potions now, held in the satchel and used on demand. They
-// are found on the floor (dropped on the ground) and grabbed free at an apothecary.
+// are found on the floor (dropped on the ground) and grabbed by stepping on them.
 const CONSUMABLES = {
   health: { name: 'Potion of Healing', desc: 'Restores all HP.', glyph: '♥', color: '#f472b6' },
   mana: { name: 'Potion of Mending', desc: 'Recharges every card.', glyph: '✦', color: '#60a5fa' },
 };
-const CONSUMABLE_SHOP_CHOICES = 2; // Potions offered at an apothecary.
 const STARTING_CONSUMABLE_SLOTS = 3; // How many potions the king can carry.
 const POTION_KINDS = ['health', 'mana'];
 
@@ -44,7 +41,7 @@ const ENEMY_UNLOCKS = [
 // The eight authored floors. Each: a themed name, a terrain `recipe` (blob/segment
 // seed counts for the ONLY three terrain types — wall, water, lava), and a UNIQUE
 // boss (a high-mobility piece with HP, guarded by an authored backup cohort). The
-// exit + boss chamber sit at a fixed anchor; wanderers and the apothecary scatter.
+// exit + boss chamber sit at a fixed anchor; wanderers and potions scatter.
 const LEVELS = [
   { name: 'The Battlefield', recipe: { wall: 3 }, boss: { name: 'the Warlord', kind: 'knight', hp: 3 } },
   { name: 'The Old Forest', recipe: { wall: 2, water: 2 }, boss: { name: 'the Centaur', kind: 'bishop', hp: 4 } },
@@ -161,7 +158,7 @@ const CLASSES = {
       { id: 'r_rapid', name: 'Quick Draw', desc: 'A ranged-card kill lets you fire again at once (once)', grants: { rangedRapid: true } },
       { id: 'r_path', name: 'Pathfinder', desc: 'Immune to slow terrain (water)', grants: { terrainImmune: true } },
       { id: 'r_stealth', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
-      { id: 'r_eagle', name: 'Eagle Eye', desc: 'Fresh floors reveal fully; you see and shoot through anything but walls', grants: { revealFloor: true, xraySight: true } },
+      { id: 'r_eagle', name: 'Eagle Eye', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
       { id: 'r_bow', name: 'Shortbow', desc: 'Gain a ranged bishop card', grants: { gainCard: { kind: 'bishop', category: 'ranged' } } },
       { id: 'r_longbow', name: 'Longbow', desc: 'Gain a ranged rook card', grants: { gainCard: { kind: 'rook', category: 'ranged' } } },
     ],

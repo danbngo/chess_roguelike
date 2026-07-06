@@ -17,8 +17,7 @@
               <div id="floor-name" class="floor-name"></div>
               <div id="turn">Turn 0</div>
               <div id="health">HP 3/3</div>
-              <div id="gold">Level 1</div>
-              <div id="reward" class="reward-line"></div>
+              <div id="level">Level 1</div>
               <div id="status" class="status-line"></div>
             </div>
             <button id="options" type="button" class="pane-button">Options</button>
@@ -75,7 +74,7 @@
           <div id="class-screen" class="overlay hidden">
             <div class="overlay-card shop-card">
               <h2 class="overlay-title">Choose your calling</h2>
-              <p class="overlay-sub">Hover a calling for its full kit and perks. Earn 1 exp per floor to buy more at altars.</p>
+              <p class="overlay-sub">Hover a calling for its full kit and perks. Each descent, pick one of three boons for your class.</p>
               <ul id="class-list" class="shop-list"></ul>
               <div class="overlay-buttons">
                 <button id="class-back" type="button">Back</button>
@@ -91,30 +90,6 @@
               <p id="altar-message" class="shop-message"></p>
               <div class="overlay-buttons">
                 <button id="altar-close" type="button">Skip</button>
-              </div>
-            </div>
-          </div>
-
-          <div id="potionshop-screen" class="overlay hidden">
-            <div class="overlay-card shop-card">
-              <h2 class="overlay-title">Apothecary</h2>
-              <p id="potionshop-gold" class="overlay-sub">Gold 0</p>
-              <ul id="potionshop-list" class="shop-list"></ul>
-              <p id="potionshop-message" class="shop-message"></p>
-              <div class="overlay-buttons">
-                <button id="potionshop-close" type="button">Leave Shop</button>
-              </div>
-            </div>
-          </div>
-
-          <div id="weaponshop-screen" class="overlay hidden">
-            <div class="overlay-card shop-card">
-              <h2 class="overlay-title">Weapon Shop</h2>
-              <p id="weaponshop-gold" class="overlay-sub">Gold 0</p>
-              <ul id="weaponshop-list" class="shop-list"></ul>
-              <p id="weaponshop-message" class="shop-message"></p>
-              <div class="overlay-buttons">
-                <button id="weaponshop-close" type="button">Leave Shop</button>
               </div>
             </div>
           </div>
@@ -135,6 +110,9 @@
               <h2 class="overlay-title">Options</h2>
               <p id="options-tutorial-status" class="overlay-sub"></p>
               <div class="overlay-buttons">
+                <button id="options-character" type="button">Character</button>
+              </div>
+              <div class="overlay-buttons">
                 <button id="options-toggle-tutorial" type="button"></button>
               </div>
               <div class="overlay-buttons">
@@ -142,6 +120,17 @@
               </div>
               <div class="overlay-buttons">
                 <button id="options-close" type="button">Close</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="character-screen" class="overlay hidden">
+            <div class="overlay-card shop-card">
+              <h2 id="character-title" class="overlay-title">Character</h2>
+              <p id="character-sub" class="overlay-sub"></p>
+              <div id="character-body" class="character-body"></div>
+              <div class="overlay-buttons">
+                <button id="character-close" type="button">Back</button>
               </div>
             </div>
           </div>

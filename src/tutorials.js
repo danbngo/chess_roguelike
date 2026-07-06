@@ -94,14 +94,6 @@ const TUTORIALS = {
       'Each descent you pick one of three boons drawn from your class: a stat bump, ' +
       'a new card, or a rule-changing power. Build toward the run you want.',
   },
-  potionShop: {
-    title: 'The apothecary',
-    text:
-      'Grab a potion here for free (satchel space permitting), to drink later from ' +
-      'your bar. Potions also lie on the ground — but a foe standing on one in your ' +
-      'sight tramples it away.',
-  },
-
   // Terrain tips fire the first time each type comes into view.
   'terrain-wall': {
     title: 'Walls',

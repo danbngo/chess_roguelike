@@ -146,6 +146,13 @@ button:disabled {
   width: 90%;
 }
 
+.character-body {
+  text-align: left;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 0.4rem 0 0.2rem;
+}
+
 .shop-list {
   list-style: none;
   margin: 0.4rem 0;

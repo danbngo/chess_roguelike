@@ -105,13 +105,11 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
 }
 
 // Every tile this enemy piece could legally move onto next turn. Targets the king.
-// Enemies may walk over lava (demonic); a flyer crosses any non-wall terrain.
+// Enemies may walk over lava.
 function getPieceMoves(piece, state) {
   const unitAt = enemyUnitAt(state, piece);
   const isKing = (x, y) => x === state.player.x && y === state.player.y;
-  // Demons (all enemies from the demon realm, floor 5+) stride through lava & fire.
-  const demon = (state.floor || 1) >= DEMON_FLOOR;
-  const opts = { lavaOk: true, fireOk: demon, flying: Boolean(piece.flying) };
+  const opts = { lavaOk: true };
   return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isKing, opts);
 }
 

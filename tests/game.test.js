@@ -12,11 +12,11 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, consumeItem, buyConsumable, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, consumeItem, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
-  getPlayerMoves, movePlayerTo, beginEnemyPhase, moveEnemy, useCard, buyConsumable,
+  getPlayerMoves, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
   getVisibleBounds, capturableAt, createBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt,
 } = api;
 
@@ -238,14 +238,4 @@ test('an out-of-sight enemy pursues the king’s last-seen tile', () => {
   st.terrain = { '10,8': 'wall' };
   const after = beginEnemyPhase(st).state.enemies[0];
   assert.ok(chebyshev(after.x, after.y, 8, 8) < chebyshev(11, 8, 8, 8), 'it advanced toward the memory');
-});
-
-test('the apothecary hands out potions for free (satchel permitting)', () => {
-  const s = createInitialState('warrior');
-  s.player.consumables = [];
-  s.player.maxConsumables = 3;
-  s.potionShop = { x: 1, y: 1, offers: [{ key: 'health', sold: false }] };
-  const n = buyConsumable(s, 0);
-  assert.equal(n.player.consumables.length, 1);
-  assert.equal(n.potionShop.offers[0].sold, true);
 });
