@@ -113,10 +113,10 @@
     const cls = CLASSES[highestClass(p)];
     floorLabel.textContent = `Floor ${gameState.floor}${cls ? ' · ' + cls.name : ''}`;
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
-    turnLabel.textContent = `Turn ${gameState.turn} · ${p.exp || 0} exp`;
+    turnLabel.textContent = `Turn ${gameState.turn}`;
     healthLabel.textContent = `HP ${p.hp}/${p.maxHp}`;
-    goldLabel.textContent = `Gold ${p.gold}`;
-    if (rewardLabel) rewardLabel.textContent = `Boss bounty ${floorGoldReward(gameState)}`;
+    if (goldLabel) goldLabel.textContent = `Level ${p.level || 1}`;
+    if (rewardLabel) rewardLabel.textContent = '';
     logMessage(gameState.message);
 
     // Dread rises as the king lingers and as his health falls.
@@ -191,27 +191,10 @@
     if (!gameState) {
       return;
     }
-    const { cards, caps } = gameState.player;
-    const capCounts = caps || { melee: 0, ranged: 0, spell: 0 };
-
-    // Owned cards first, in inventory order (their 1-based index is the hotkey).
-    cards.forEach((card, i) => {
+    // Owned cards, in inventory order (their 1-based index is the hotkey).
+    gameState.player.cards.forEach((card, i) => {
       cardBar.append(makeCardSlot(card, i));
     });
-    // Then an empty placeholder per unused category capacity.
-    for (const cat of ['melee', 'ranged', 'spell']) {
-      const owned = cards.filter((c) => (c.category || 'melee') === cat).length;
-      for (let k = owned; k < (capCounts[cat] || 0); k += 1) {
-        const slot = document.createElement('button');
-        slot.type = 'button';
-        slot.className = 'card-slot empty';
-        slot.textContent = cat[0].toUpperCase();
-        slot.title = `Empty ${cat} slot`;
-        slot.style.borderColor = CATEGORY_COLOR[cat];
-        slot.disabled = true;
-        cardBar.append(slot);
-      }
-    }
   }
 
   function makeCardSlot(card, i) {
@@ -221,9 +204,7 @@
     slot.className = 'card-slot';
     slot.style.borderColor = CATEGORY_COLOR[cat] || '#888';
     slot.textContent = getPieceLabel(card.kind);
-    const traits = card.traits || [];
-    const traitText = traits.length ? ` · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : '';
-    slot.title = `[${i + 1}] ${cat} ${card.kind} (rating ${card.rating || 1})${traitText}`;
+    slot.title = `[${i + 1}] ${cat} ${card.kind}`;
     const onCooldown = card.remaining > 0;
     if (cardTargeting === i) {
       slot.classList.add('targeting');
@@ -232,19 +213,13 @@
     } else {
       slot.classList.add('ready');
     }
-    // A tiny hotkey number in one corner, and the rating in another.
+    // A tiny hotkey number in the corner.
     const key = document.createElement('span');
     key.className = 'card-trait';
     key.style.left = '2px';
     key.style.right = 'auto';
     key.textContent = String(i + 1);
     slot.append(key);
-    if ((card.rating || 1) > 1) {
-      const rate = document.createElement('span');
-      rate.className = 'card-trait';
-      rate.textContent = `${card.rating}★`;
-      slot.append(rate);
-    }
     if (onCooldown) {
       const badge = document.createElement('span');
       badge.className = 'card-cooldown';
@@ -289,12 +264,6 @@
   function useConsumableAt(index) {
     if (!isIdle()) return;
     cancelCardTargeting();
-    // Blink and digging scrolls need a target tile — enter aiming mode instead.
-    const key = gameState.player.consumables[index];
-    if (key === 'blink' || key === 'digging') {
-      startScrollTargeting(index, key);
-      return;
-    }
     const result = consumeItem(gameState, index);
     if (result.lastAction === 'blocked') {
       applyState(result, false);
@@ -376,15 +345,12 @@
     updateHud();
   }
 
-  // Show the card being aimed (category, movement, rating, traits) in the pane.
+  // Show the card being aimed (category, movement) in the pane.
   function showCardInfo(card) {
     examineEl.innerHTML = '';
     const cat = card.category || 'melee';
     const verb = cat === 'melee' ? 'Strikes by moving onto the foe.' : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.' : 'A bolt that pierces everything on its path; you hold your tile.';
-    addExamineBlock(`${card.kind} — ${cat} · rating ${card.rating || 1}`, [PIECE_INFO[card.kind] || '', verb, `Cooldown ${card.cooldown} turns`]);
-    for (const t of card.traits || []) {
-      addExamineBlock(`Trait — ${TRAIT_INFO[t].name}`, TRAIT_INFO[t].desc);
-    }
+    addExamineBlock(`${card.kind} — ${cat}`, [PIECE_INFO[card.kind] || '', verb, `Cooldown ${card.cooldown} turns`]);
   }
 
   function distToKing(tile) {
@@ -406,13 +372,8 @@
   const TERRAIN_NAMES = {
     normal: 'Open ground',
     wall: 'Wall — blocks sight & movement',
-    lava: 'Lava — you cannot cross it (demons can); clear to see through',
-    fire: 'Fire — burns non-demons caught in it; dies down after 2 turns',
+    lava: 'Lava — you cannot cross it (enemies can); clear to see through',
     water: 'Water — slow (cross one per move); no cards while wading',
-    mud: 'Mud — slow (cross one per move); no cards while slogging',
-    ice: 'Ice — slippery, you slide across',
-    brush: 'Brush — blocks sight; trampled when stepped on',
-    trees: 'Trees — block sight, but you can move through',
   };
 
   // Build a human description of a tile (or null if there is nothing to say).
@@ -438,43 +399,26 @@
           tag = ' (statue — wakes if you step beside it)';
         } else if (enemy.turret) {
           tag = ' (turret — fixed, fires its pattern)';
+        } else if (enemy.summonCircle) {
+          tag = ' (summoning circle — spawns foes; step on it to destroy)';
         } else if (enemy.boss) {
           tag = ` (boss — HP ${enemy.hp}/${enemy.maxHp})`;
-        } else if (enemy.mage) {
-          tag = ' (mage — piercing bolt on odd turns)';
-        } else if (enemy.skirmisher) {
-          tag = ' (skirmisher — strikes and darts away)';
-        } else if (enemy.brokenShield) {
-          tag = ' (shield broken — re-arms out of sight)';
-        } else if (enemy.armored) {
-          tag = ' (armored — a hit shatters its shield; it survives the first blow)';
-        } else if (enemy.flying) {
-          tag = ' (flying — crosses any terrain but walls)';
-        } else if (enemy.summoner) {
-          tag = ' (summoner — conjures minions)';
         } else {
           tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
-        const label = (typeof enemyDisplayName === 'function' && enemyDisplayName(enemy)) || enemy.kind;
-        lines.push(`Enemy: ${label}${tag}`);
+        lines.push(`Enemy: ${enemy.kind}${tag}`);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
-      if (item) {
-        lines.push(item.kind === 'consumable' ? potionLabel(item.potion) : `Gold — ${item.amount}`);
+      if (item && item.kind === 'consumable') {
+        lines.push(potionLabel(item.potion));
       }
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
       lines.push('Stairs down to the next floor');
     }
-    if (onBuilding(gameState.altar)) {
-      lines.push(gameState.altar.used ? 'Class altar — spent' : 'Class altar — spend exp on a perk');
-    }
-    if (onBuilding(gameState.weaponShop)) {
-      lines.push(`${SHOP_VARIANT_NAMES[gameState.weaponShop.variant] || 'Weapon shop'} — buy ${gameState.weaponShop.category || 'melee'} cards`);
-    }
     if (onBuilding(gameState.potionShop)) {
-      lines.push('Apothecary — buy potions');
+      lines.push('Apothecary — grab a free potion');
     }
     return lines.join('\n');
   }
@@ -516,30 +460,12 @@
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
   };
 
-  // One-line descriptions of each special enemy role (for the examine pane).
+  // One-line descriptions of each enemy role (for the examine pane).
   const ROLE_INFO = {
     statue: 'Statue — inert until you step beside it, then it wakes.',
     turret: 'Turret — fixed; fires its piece pattern, cannot be destroyed.',
-    boss: 'Boss — a guardian with a HP bar and a signature ability.',
-    mage: 'Mage — fires a piercing bolt down its line (odd turns), slaying all in the way.',
-    skirmisher: 'Skirmisher — strikes from a clear line (odd turns), then retreats.',
-    armored: 'Armored — survives the first hit (its shield shatters); it re-arms out of sight.',
-    flying: 'Flying — moves over any terrain except walls.',
-    summoner: 'Summoner — conjures minions (odd turns); never attacks directly.',
-  };
-
-  // Boss ability descriptions, keyed by the boss `special` id.
-  const BOSS_ABILITY_INFO = {
-    armorAura: 'Armor Aura — adjacent minions gain armor; it summons reinforcements.',
-    doubleAct: 'Relentless — acts twice each turn, loosing shots from its line.',
-    frostwake: 'Frostwake — freezes the ground it moves across.',
-    siege: 'Siege — smashes through walls and never loses your trail.',
-    aquatic: 'Aquatic — crosses any terrain but walls/lava; mends every other turn.',
-    undying: 'Undying — rises again when slain (you keep its gold from the first death).',
-    gore: 'Gore — every blow knocks you back for triple damage.',
-    petrify: 'Petrify — turns every other unit to stone and sears you while visible.',
-    bonehide: 'Bonehide — immune to ranged blows; strike it up close.',
-    inferno: 'Inferno — wreathes itself in fire each turn (searing you if adjacent); hurls searing bolts at range.',
+    circle: 'Summoning circle — conjures foes while it sees you; step on it to destroy it.',
+    boss: 'Boss — a high-mobility guardian with a HP bar.',
   };
 
   // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
@@ -589,69 +515,41 @@
 
     if (gameState.player.x === tx && gameState.player.y === ty) {
       const p = gameState.player;
-      const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Gold ${p.gold} · ${p.exp || 0} exp`];
-      const caps = p.caps || { melee: 0, ranged: 0, spell: 0 };
-      const usedByCat = (cat) => (p.cards || []).filter((c) => (c.category || 'melee') === cat).length;
-      stats.push(`Cards — melee ${usedByCat('melee')}/${caps.melee} · ranged ${usedByCat('ranged')}/${caps.ranged} · spell ${usedByCat('spell')}/${caps.spell}`);
+      const byCat = (cat) => (p.cards || []).filter((c) => (c.category || 'melee') === cat).length;
+      const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Level ${p.level || 1}`];
+      stats.push(`Cards — melee ${byCat('melee')} · ranged ${byCat('ranged')} · spell ${byCat('spell')}`);
       stats.push(`Potion slots ${p.maxConsumables}`);
-      addExamineBlock('Your King', stats);
-
-      // Classes the king has invested in, with their level and perks.
-      const classes = Object.keys(p.classLevels || {}).filter((k) => p.classLevels[k] > 0);
-      if (classes.length) {
-        const lines = classes.map((k) => `${CLASSES[k].name} Lv ${p.classLevels[k]}`);
-        addExamineBlock('Classes', lines);
+      const cls = CLASSES[p.className];
+      addExamineBlock(cls ? `${cls.name} King` : 'Your King', stats);
+      if ((p.takenPerks || []).length && cls) {
+        addExamineBlock('Perks', p.takenPerks.map((id) => (cls.perks.find((k) => k.id === id) || { name: id }).name));
       }
     }
 
     if (visible) {
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
-        const state = enemy.surprised
+        const st = enemy.surprised
           ? 'Surprised — frozen this turn'
           : enemy.frustrated
             ? 'Frustrated — no legal move'
             : enemy.awake
               ? 'Hostile — hunting the king'
               : 'Unaware — wandering';
-        const buyable = isCardKind(enemy.kind) ? 'Can be bought as a card.' : null;
-        const bossLine = enemy.boss && enemy.special ? BOSS_ABILITY_INFO[enemy.special] : null;
-        const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp} · form ${(enemy.phase || 0) + 1}/${(enemy.phases || [0]).length}` : null;
-        const display = typeof enemyDisplayName === 'function' ? enemyDisplayName(enemy) : null;
-        const title = enemy.boss
-          ? `Boss — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}`
-          : display
-            ? `${display} — ${enemy.kind}`
-            : `Enemy — ${enemy.kind}`;
-        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, bossLine, hpLine, state, buyable]);
+        const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp}` : null;
+        const title = enemy.boss ? `Boss — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
+        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, hpLine, st]);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
-      if (item) {
-        addExamineBlock('Item', item.kind === 'consumable' ? potionLabel(item.potion) : `Gold — worth ${item.amount}.`);
-      }
+      if (item && item.kind === 'consumable') addExamineBlock('Item', potionLabel(item.potion));
     }
 
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      addExamineBlock(
-        'Stairs',
-        gameState.exit.locked
-          ? 'Barred by the floor’s guardian — defeat the boss to unbar it.'
-          : 'Descend to the next floor (the king mends a little).',
-      );
-    }
-    if (onBuilding(gameState.altar)) {
-      addExamineBlock(
-        'Class Altar',
-        gameState.altar.used ? 'Spent — dormant.' : 'Spend exp to learn a class perk (1 exp per floor descended).',
-      );
-    }
-    if (onBuilding(gameState.weaponShop)) {
-      const v = gameState.weaponShop.variant;
-      addExamineBlock(SHOP_VARIANT_NAMES[v] || 'Weapon Shop', `Buy ${gameState.weaponShop.category || 'melee'} cards drawn from foes you have seen.`);
+      addExamineBlock('Stairs', 'Descend to the next floor — you fully heal and gain a level.');
     }
     if (onBuilding(gameState.potionShop)) {
-      addExamineBlock('Apothecary', 'Buy potions into your satchel, to drink later (costs a turn).');
+      addExamineBlock('Apothecary', 'Grab a free potion into your satchel.');
     }
   }
 
@@ -793,26 +691,14 @@
     if (visible.some((enemy) => enemy.turret)) {
       queueTip('turret');
     }
+    if (visible.some((enemy) => enemy.summonCircle)) {
+      queueTip('circle');
+    }
     if (visible.some((enemy) => enemy.boss)) {
       queueTip('boss');
     }
-    if (visible.some((enemy) => enemy.mage)) {
-      queueTip('mage');
-    }
-    if (visible.some((enemy) => enemy.skirmisher)) {
-      queueTip('skirmisher');
-    }
-    if (visible.some((enemy) => enemy.armored || enemy.brokenShield)) {
-      queueTip('armored');
-    }
-    if (visible.some((enemy) => enemy.flying)) {
-      queueTip('flying');
-    }
     if (visible.some((enemy) => isJumperKind(enemy.kind) && enemy.awake)) {
       queueTip('jumper');
-    }
-    if (visible.some((enemy) => enemy.summoner)) {
-      queueTip('summoner');
     }
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
@@ -902,26 +788,14 @@
     hideOverlays();
   }
 
-  // The class's starting kit, as a one-line bullet.
-  function classStartLine(cls) {
-    if (cls.weapon) {
-      const w = cls.weapon;
-      const traits = w.traits && w.traits.length ? ` (${w.traits.map((t) => TRAIT_INFO[t].name).join(', ')})` : '';
-      return `Starts with a ${w.category || 'melee'} ${w.kind} card, rating ${w.rating || 1}${traits}`;
-    }
-    if (cls.startKit === 'potions') return 'Starts with a satchel of random potions';
-    return 'Starts with a satchel of random scrolls';
-  }
-
-  // The full hover detail for a class: heading, blurb, card caps, then a bullet per
-  // starting kit and per perk (L1-L3).
+  // The full hover detail for a class: heading, blurb, starting card, then the perk
+  // pool the level-up screen draws from.
   function classDetailText(key) {
     const cls = CLASSES[key];
-    const caps = cls.caps || { melee: 0, ranged: 0, spell: 0 };
     const lines = [cls.name, cls.blurb, ''];
-    lines.push(`Card slots — melee ${caps.melee} · ranged ${caps.ranged} · spell ${caps.spell}`);
-    lines.push(`• ${classStartLine(cls)}`);
-    cls.perks.forEach((perk, i) => lines.push(`• L${i + 1} ${perk.name} — ${perk.desc}`));
+    lines.push(`• Starts with a ${cls.start.category} ${cls.start.kind} card`);
+    lines.push(`• Every descent, pick one of three ${cls.name} boons:`);
+    cls.perks.forEach((perk) => lines.push(`   – ${perk.name}: ${perk.desc}`));
     return lines.join('\n');
   }
 
@@ -970,7 +844,7 @@
   }
 
   function newGame(classKey) {
-    startGame(createInitialState(classKey || 'valkyrie'));
+    startGame(createInitialState(classKey || 'warrior'));
     saveGame(gameState);
     queueTip('welcome');
     scanVisibleTips(gameState);
@@ -993,7 +867,11 @@
     animTimer = 0;
     pendingAction = null;
     saveGame(gameState);
-    scanVisibleTips(gameState);
+    if (gameState.pendingLevelUp) {
+      openLevelUp(); // choose a boon before playing the new floor
+    } else {
+      scanVisibleTips(gameState);
+    }
   }
 
   // Compose the end-of-run summary (score + earned conducts) into the given node.
@@ -1130,60 +1008,53 @@
     goNextFloor();
   }
 
-  /* ----------------------------- class altar ---------------------------- */
+  /* ------------------------------ level up ------------------------------- */
 
-  function renderAltar() {
-    altarMessage.textContent = gameState.altarMessage || '';
+  // After each descent, choose one of three class boons (reusing the altar overlay).
+  function renderLevelUp() {
+    if (altarMessage) altarMessage.textContent = `Level ${gameState.player.level} — choose a boon.`;
     altarList.innerHTML = '';
-    const offers = (gameState.altar && gameState.altar.offers) || [];
-    const levels = gameState.player.classLevels || {};
-    for (const classKey of offers) {
-      const cls = CLASSES[classKey];
-      if (!cls) continue;
-      const level = levels[classKey] || 0;
-      const perk = cls.perks[level];
-      if (!perk) continue;
-
+    const perks = gameState.levelPerks || rollLevelPerks(gameState.player, 3);
+    for (const perk of perks) {
       const row = document.createElement('li');
       row.className = 'shop-item';
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML =
-        `<span class="shop-name">${cls.name} <small>Lv ${level + 1}/${cls.perks.length}</small></span>` +
-        `<span class="shop-desc">${perk.name} — ${perk.desc}</span>`;
+      info.innerHTML = `<span class="shop-name">${perk.name}</span><span class="shop-desc">${perk.desc}</span>`;
       const take = document.createElement('button');
       take.type = 'button';
       take.textContent = 'Take';
       take.addEventListener('click', () => {
-        applyState(useClassAltar(gameState, classKey), true);
+        applyState(learnPerk(gameState, perk.id), false);
         Renderer.effect('powerup');
-        closeAltar(); // one perk per altar, then it's spent
+        closeLevelUp();
       });
       row.append(info, take);
       altarList.append(row);
     }
   }
 
-  function openAltar() {
-    screen = 'altar';
-    gameState.altarMessage = '';
-    renderAltar();
+  function openLevelUp() {
+    screen = 'levelup';
+    renderLevelUp();
     altarScreen.classList.remove('hidden');
-    queueTip('classAltar');
+    queueTip('levelup');
   }
 
-  function closeAltar() {
+  function closeLevelUp() {
     screen = 'playing';
     altarScreen.classList.add('hidden');
+    setExamineEmpty('Click a tile to inspect it.');
     saveGame(gameState);
+    scanVisibleTips(gameState);
   }
 
   /* ---------------------------- apothecary ------------------------------ */
 
   function renderPotionShop() {
     const p = gameState.player;
-    potionShopGold.textContent = `Gold ${p.gold} · Satchel ${p.consumables.length}/${p.maxConsumables}`;
-    potionShopMessage.textContent = gameState.shopMessage || 'Potions are used later from your satchel.';
+    if (potionShopGold) potionShopGold.textContent = `Satchel ${p.consumables.length}/${p.maxConsumables}`;
+    potionShopMessage.textContent = gameState.shopMessage || 'Take a free potion (used later from your satchel).';
     potionShopList.innerHTML = '';
     const offers = (gameState.potionShop && gameState.potionShop.offers) || [];
     offers.forEach((offer, index) => {
@@ -1196,8 +1067,8 @@
       info.innerHTML = `<span class="shop-name" style="color:${def.color}">${def.glyph} ${def.name}</span><span class="shop-desc">${def.desc}</span>`;
       const buy = document.createElement('button');
       buy.type = 'button';
-      buy.textContent = `${def.cost}g`;
-      buy.disabled = p.gold < def.cost || p.consumables.length >= p.maxConsumables;
+      buy.textContent = offer.sold ? 'Taken' : 'Take';
+      buy.disabled = offer.sold || p.consumables.length >= p.maxConsumables;
       buy.addEventListener('click', () => {
         applyState(buyConsumable(gameState, index), true);
         renderPotionShop();
@@ -1221,135 +1092,6 @@
     saveGame(gameState);
   }
 
-
-  /* ----------------------------- weapon shop ----------------------------- */
-
-  // A "knight · Cleave, Leech" style label for a card / offer.
-  function cardName(c) {
-    const traits = c.traits || [];
-    const list = traits.length ? ` · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : '';
-    const cat = c.category || 'melee';
-    const star = (c.rating || 1) > 1 ? ` ${c.rating}★` : '';
-    return `${getPieceLabel(c.kind)} ${cat} ${c.kind}${star}${list}`;
-  }
-
-  function cardDesc(c) {
-    const cat = c.category || 'melee';
-    const parts = [`reach ${cardReach(c.kind, c.rating || 1)}`, `cooldown ${cardCooldown(c.kind, cat)}`];
-    for (const t of c.traits || []) parts.push(TRAIT_INFO[t].desc);
-    return parts.join(' · ');
-  }
-
-  function renderWeaponShop() {
-    const shop = gameState.weaponShop || {};
-    const variantName = SHOP_VARIANT_NAMES[shop.variant] || 'Weapon Shop';
-    const category = shop.category || 'melee';
-    weaponshopGold.textContent = `Gold ${gameState.player.gold}`;
-    weaponshopMessage.textContent = gameState.shopMessage || `${variantName} — ${category} cards.`;
-    weaponshopList.innerHTML = '';
-
-    const p = gameState.player;
-    const offers = (gameState.weaponShop && gameState.weaponShop.offers) || [];
-    if (!offers.length) {
-      const empty = document.createElement('li');
-      empty.className = 'shop-item';
-      empty.textContent = 'No wares yet — face more foes to learn their forms.';
-      weaponshopList.append(empty);
-      return;
-    }
-
-    offers.forEach((offer, index) => {
-      const cost = cardCost(offer.kind, (offer.traits || []).length, offer.rating || 1);
-      const cat = offer.category || 'melee';
-      const catFull = cardCountByCategory(p, cat) >= cardCapFor(p, cat);
-      const noRoom = cardCapFor(p, cat) <= 0;
-
-      const row = document.createElement('li');
-      row.className = 'shop-item';
-
-      const info = document.createElement('div');
-      info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${cardName(offer)}</span><span class="shop-desc">${cardDesc(offer)}</span>`;
-
-      const buy = document.createElement('button');
-      buy.type = 'button';
-      if (offer.sold) {
-        buy.textContent = 'Sold';
-        buy.disabled = true;
-      } else if (noRoom) {
-        buy.textContent = 'N/A';
-        buy.disabled = true;
-        buy.title = `Your class can't wield ${cat} cards.`;
-      } else {
-        buy.textContent = `${cost}g`;
-        buy.disabled = p.gold < cost;
-        buy.addEventListener('click', () => {
-          if (catFull) {
-            promptReplaceCard(index);
-          } else {
-            applyState(buyCard(gameState, index), true);
-            renderWeaponShop();
-          }
-        });
-      }
-
-      row.append(info, buy);
-      weaponshopList.append(row);
-    });
-  }
-
-  // With slots full, ask which card to replace (a row of swap buttons), then buy.
-  function promptReplaceCard(offerIndex) {
-    const p = gameState.player;
-    const offer = gameState.weaponShop.offers[offerIndex];
-    const cat = offer.category || 'melee';
-    if (p.gold < cardCost(offer.kind, (offer.traits || []).length, offer.rating || 1)) {
-      gameState.shopMessage = 'Not enough gold.';
-      renderWeaponShop();
-      return;
-    }
-    weaponshopMessage.textContent = `Replace which ${cat} card with the ${offer.kind}?`;
-    weaponshopList.innerHTML = '';
-    p.cards.forEach((card, index) => {
-      if ((card.category || 'melee') !== cat) return; // only same-category swaps keep caps valid
-      const row = document.createElement('li');
-      row.className = 'shop-item';
-      const info = document.createElement('div');
-      info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${cardName(card)}</span><span class="shop-desc">${cardDesc(card)}</span>`;
-      const swap = document.createElement('button');
-      swap.type = 'button';
-      swap.textContent = 'Replace';
-      swap.addEventListener('click', () => {
-        applyState(buyCard(gameState, offerIndex, index), true);
-        renderWeaponShop();
-      });
-      row.append(info, swap);
-      weaponshopList.append(row);
-    });
-    const cancel = document.createElement('li');
-    cancel.className = 'shop-item';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', renderWeaponShop);
-    cancel.append(cancelBtn);
-    weaponshopList.append(cancel);
-  }
-
-  function openWeaponShop() {
-    screen = 'weaponshop';
-    gameState.shopMessage = '';
-    renderWeaponShop();
-    weaponshopScreen.classList.remove('hidden');
-    queueTip('weaponShop');
-  }
-
-  function closeWeaponShop() {
-    screen = 'playing';
-    weaponshopScreen.classList.add('hidden');
-    saveGame(gameState);
-  }
 
   /* ------------------------------ turn flow ------------------------------ */
 
@@ -1427,22 +1169,12 @@
       return;
     }
 
-    // Turn complete: maybe reinforce, persist, then open a building if stepped on.
+    // Turn complete: maybe reinforce, persist, then open the apothecary if stepped on.
     applyState(maybeSpawnEnemy(gameState), true);
-    const altarPending = gameState.pendingAltar;
-    const weaponShopPending = gameState.pendingWeaponShop;
     const potionShopPending = gameState.pendingPotionShop;
-    gameState.pendingAltar = false;
-    gameState.pendingWeaponShop = false;
     gameState.pendingPotionShop = false;
     saveGame(gameState);
-    if (altarPending) {
-      openAltar();
-    } else if (weaponShopPending) {
-      openWeaponShop();
-    } else if (potionShopPending) {
-      openPotionShop();
-    }
+    if (potionShopPending) openPotionShop();
   }
 
   function handleStep(dx, dy) {
@@ -1691,9 +1423,8 @@
   victoryContinueButton.addEventListener('click', continueAfterVictory);
   victoryAgainButton.addEventListener('click', openClassSelect);
   victoryTitleButton.addEventListener('click', showTitle);
-  altarCloseButton.addEventListener('click', closeAltar);
+  if (altarCloseButton) altarCloseButton.addEventListener('click', closeLevelUp);
   potionShopCloseButton.addEventListener('click', closePotionShop);
-  weaponshopCloseButton.addEventListener('click', closeWeaponShop);
   tutorialOkButton.addEventListener('click', dismissTip);
   tutorialDisableButton.addEventListener('click', disableTipsFromModal);
   optionsButton.addEventListener('click', openOptions);

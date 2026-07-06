@@ -138,33 +138,24 @@ function cardSlideDirs(kind) {
 
 // The enemy tiles a weapon card may strike from the king's square. Behaviour turns
 // on the card's category:
-//   melee  - the king would physically move onto the target, so it respects real
-//            movement (terrain, slow ground). Reach = rating (steppers) or 3/4/5.
+//   melee  - the king physically moves onto the target (real movement rules).
 //   ranged - a projectile: rays fly over terrain, stopped only by walls, and are
-//            BLOCKED by the first unit in the way (unless Overhead pierces).
+//            BLOCKED by the first unit in the way.
 //   spell  - a bolt that pierces EVERY unit on its path (ignores obstructions).
-// Leaps ignore whatever they jump over. Targets must be in sight (a Ranger's Eagle
-// Eye lets sight — and thus shots — pass through any terrain but walls).
+// Leaps ignore whatever they jump over. Steppers/knights reach 1, sliders reach 3
+// (+ a Farsight perk). Targets must be in sight (a Ranger's Eagle Eye lets sight —
+// and thus shots — pass through any terrain but walls).
 function getCardMoves(state, card) {
   const p = state.player;
   const kind = card.kind;
   const category = card.category || 'melee';
-  const rating = card.rating || 1;
-  const traits = card.traits || [];
-  const reach = cardReach(kind, rating);
-  const hops = kind === 'knight' ? rating : 1; // compounds do a single knight leap
+  const reach = cardReach(kind, p.cardReach || 0);
   const dirs = cardSlideDirs(kind);
   const hasLeap = isJumperKind(kind);
-  const blast = traits.includes('blast');
-  const pierce = category === 'spell' || (category === 'ranged' && traits.includes('overhead'));
+  const pierce = category === 'spell';
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
   const inBounds = (x, y) => x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE;
-  const targetable = (x, y) => {
-    const e = enemyAt(x, y);
-    if (!e) return false;
-    if (blast && (e.statue || e.turret)) return true; // a Blast spell shatters structures
-    return isCapturable(state, e);
-  };
+  const targetable = (x, y) => isCapturable(state, enemyAt(x, y));
   const results = [];
   const add = (x, y, viaJump) => {
     if (inLineOfSight(state, x, y)) results.push({ x, y, capture: true, viaJump: Boolean(viaJump) });
@@ -172,7 +163,7 @@ function getCardMoves(state, card) {
 
   if (category === 'melee') {
     // The king walks/leaps onto the target — real movement rules apply.
-    const opts = { ignoreIce: true, terrainImmune: Boolean(p.terrainImmune) };
+    const opts = { terrainImmune: Boolean(p.terrainImmune) };
     for (const [dx, dy] of dirs) {
       for (const stop of slideStops(state, p.x, p.y, dx, dy, reach, enemyAt, targetable, opts)) {
         if (stop.capture) add(stop.x, stop.y);
@@ -180,19 +171,12 @@ function getCardMoves(state, card) {
     }
     if (hasLeap) {
       for (const [dx, dy] of KNIGHT_STEPS) {
-        let x = p.x;
-        let y = p.y;
-        for (let h = 0; h < hops; h += 1) {
-          x += dx;
-          y += dy;
-          if (!inBounds(x, y)) break;
-          const t = terrainAt(state, x, y);
-          if (t === 'wall' || (t === 'lava' && !p.terrainImmune)) break; // can't land there
-          if (enemyAt(x, y)) {
-            if (targetable(x, y)) add(x, y, true);
-            break; // a unit halts the ride
-          }
-        }
+        const x = p.x + dx;
+        const y = p.y + dy;
+        if (!inBounds(x, y)) continue;
+        const t = terrainAt(state, x, y);
+        if (t === 'wall' || t === 'lava') continue; // can't land there
+        if (enemyAt(x, y) && targetable(x, y)) add(x, y, true);
       }
     }
   } else {
@@ -212,17 +196,10 @@ function getCardMoves(state, card) {
     }
     if (hasLeap) {
       for (const [dx, dy] of KNIGHT_STEPS) {
-        let x = p.x;
-        let y = p.y;
-        for (let h = 0; h < hops; h += 1) {
-          x += dx;
-          y += dy;
-          if (!inBounds(x, y) || terrainAt(state, x, y) === 'wall') break;
-          if (enemyAt(x, y)) {
-            if (targetable(x, y)) add(x, y, true);
-            if (!pierce) break;
-          }
-        }
+        const x = p.x + dx;
+        const y = p.y + dy;
+        if (!inBounds(x, y) || terrainAt(state, x, y) === 'wall') continue;
+        if (enemyAt(x, y) && targetable(x, y)) add(x, y, true);
       }
     }
   }
@@ -262,15 +239,8 @@ function adjacentThreats(piece, state, dirs) {
 // attacks the diagonals, the berolina attacks the orthogonals. Everything else
 // threatens exactly where it can move.
 function getPieceThreats(piece, state) {
-  if (piece.statue) {
-    return []; // an inert statue threatens nothing until it wakes
-  }
-  if (piece.summoner) {
-    return []; // summoners never strike the king directly
-  }
-  if (piece.mage) {
-    // A mage only threatens when charged, and its bolt pierces (mage tiles).
-    return piece.charged ? magePierceTiles(state, piece) : [];
+  if (piece.statue || piece.summonCircle) {
+    return []; // inert stone / a circle never strikes the king directly
   }
   if (piece.kind === 'pawn') {
     return adjacentThreats(piece, state, DIAG);

@@ -1,50 +1,40 @@
 // Terrain types and the rules that depend on them: symmetric line of sight and
-// the slide / jump movement primitives shared by the player and the enemies.
+// the slide / jump movement primitives shared by the player and the enemies. Only
+// three terrain types exist:
 //
 //   normal - open ground.
-//   wall   - solid; nothing may stand on it, it blocks line of sight, and it
-//            cannot be leapt over.
-//   lava   - impassable (nothing may stand on it), but it does NOT block sight;
-//            leapers can still jump clean over it. (Demon realm only, floor 5+.)
-//   mud    - slow: at most ONE mud/water tile may be crossed in a move, and no
-//            weapon card may be used while standing on it.
-//   water  - now passable but slow, exactly like mud (so the king can never be
-//            walled off the exit by a lake); also blocks card use while on it.
-//   ice    - you cannot stop on it; you slide to the far end (or until you bump
-//            a unit / hit a wall). Jumps and weapon shots ignore ice.
-//   brush  - blocks line of sight and blocks sliding through, but is trampled back
-//            to open ground the moment a unit steps onto it (in the king's sight).
-//   fire   - a temporary hazard (from a Fiery spell or the Balrog): burns down to
-//            normal after a couple of turns, and scorches any non-demon that is
-//            caught in it. Non-demons won't step into it, but can be knocked in.
+//   wall   - solid; blocks movement AND line of sight, and cannot be leapt over.
+//   water  - passable but SLOW: at most one water tile may be crossed per move,
+//            and no weapon card may be used while wading in it (so a lake can
+//            never wall the king off the exit). Doesn't block sight; leapt over.
+//   lava   - the king cannot cross it, but ENEMIES can (it doesn't stop them);
+//            leapers jump clean over it and it doesn't block sight.
 //
-// Sight is hidden by walls, brush, drifting fog clouds, and the fog of war (a
-// Ranger's Eagle Eye lets sight pass through anything but walls).
+// Sight is hidden only by walls (and drifting fog clouds / the fog of war). A
+// Ranger's Eagle Eye lets sight pass through anything but walls.
 
 function terrainAt(state, x, y) {
   return (state.terrain && state.terrain[`${x},${y}`]) || 'normal';
 }
 
 function blocksSight(type) {
-  return type === 'wall' || type === 'brush' || type === 'trees';
+  return type === 'wall';
 }
 
-// Whether a mover may enter/stop on a tile, given its options (flying / lavaOk).
-// Walls stop everything. Flyers cross anything but walls. Lava is passable only to
-// flyers and lava-walkers (demonic enemies); water only to flyers. Brush/trees/
-// ice/mud/normal are walkable.
+// Whether a mover may enter/stop on a tile. Walls stop everything. Flyers cross
+// anything but walls. Lava is passable only to enemies (opts.lavaOk); water is
+// passable to all (but slow — see slideStops).
 function standableFor(type, opts) {
   if (type === 'wall') return false;
   const o = opts || {};
   if (o.flying) return true;
   if (type === 'lava') return Boolean(o.lavaOk);
-  if (type === 'fire') return Boolean(o.fireOk); // only demons stride into flame (others are knocked in)
-  return true; // water is now passable (but slow — see slideStops)
+  return true; // water & normal are walkable
 }
 
-// Slow terrain the king can only cross one tile of per move (and can't cast from).
+// Slow terrain the king only crosses one tile of per move (and can't cast from).
 function isSlowTerrain(type) {
-  return type === 'mud' || type === 'water';
+  return type === 'water';
 }
 
 // Context-free standability (used for placement): a plain walker.
@@ -116,68 +106,34 @@ function computeVisibleTiles(state) {
 // reports whether a unit there may be captured (and thus stopped on).
 function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
   const o = opts || {};
-  const immune = Boolean(o.terrainImmune) || Boolean(o.flying); // ignore ice/mud/brush effects
-  const iceSlides = !immune && !o.ignoreIce; // weapon shots (ignoreIce) don't slide
+  const immune = Boolean(o.terrainImmune) || Boolean(o.flying); // ignore slow-terrain effects
   const stops = [];
   let x = sx;
   let y = sy;
   let groundUsed = 0;
-  let mudUsed = 0;
-  let onIce = false;
+  let slowUsed = 0;
 
   while (true) {
     const nx = x + dx;
     const ny = y + dy;
-    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) {
-      if (onIce) stops.push({ x, y, capture: false });
-      break;
-    }
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) break;
     const terrain = terrainAt(state, nx, ny);
-    if (!standableFor(terrain, o)) {
-      // Solid for this mover (walls always; water/lava unless it flies / walks lava).
-      if (onIce) stops.push({ x, y, capture: false });
-      break;
-    }
+    if (!standableFor(terrain, o)) break; // wall always; water/lava unless it flies / walks lava
     if (unitAt(nx, ny)) {
-      if (isTarget(nx, ny)) {
-        // Capturing the target costs a ground step (unless an ice slide carries
-        // the mover in for free). Without the range to spend it, the target is
-        // simply out of reach this move — a 1-range king can't pounce two tiles.
-        const captureCost = onIce ? 0 : 1;
-        if (captureCost === 0 || groundUsed < maxGround) {
-          stops.push({ x: nx, y: ny, capture: true });
-        } else if (onIce) {
-          stops.push({ x, y, capture: false });
-        }
-      } else if (onIce) {
-        stops.push({ x, y, capture: false });
+      // Capturing the target costs a ground step; without the range to spend it,
+      // the target is out of reach this move (a 1-range king can't pounce two).
+      if (isTarget(nx, ny) && groundUsed < maxGround) {
+        stops.push({ x: nx, y: ny, capture: true });
       }
       break;
     }
-    if (isSlowTerrain(terrain) && !immune && mudUsed >= 1) {
-      if (onIce) stops.push({ x, y, capture: false });
-      break; // may cross at most ONE mud/water tile per move
-    }
-    const cost = onIce ? 0 : 1;
-    if (cost === 1 && groundUsed >= maxGround) {
-      break; // Out of range on solid ground.
-    }
-    groundUsed += cost;
-    if (isSlowTerrain(terrain) && !immune) {
-      mudUsed += 1;
-    }
-    const wasOnIce = onIce;
+    if (isSlowTerrain(terrain) && !immune && slowUsed >= 1) break; // at most one water tile per move
+    if (groundUsed >= maxGround) break; // out of range
+    groundUsed += 1;
+    if (isSlowTerrain(terrain) && !immune) slowUsed += 1;
     x = nx;
     y = ny;
-    if (terrain === 'ice' && iceSlides) {
-      onIce = true; // Keep sliding; ice is never a resting tile.
-    } else {
-      stops.push({ x, y, capture: false });
-      onIce = false;
-      if (wasOnIce || (terrain === 'brush' && !immune)) {
-        break; // stopped at the edge of ice, or trampled into blocking brush
-      }
-    }
+    stops.push({ x, y, capture: false });
   }
   return stops;
 }

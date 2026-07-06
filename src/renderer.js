@@ -250,27 +250,18 @@ const Renderer = (function () {
       fill = '#1a0f1f'; // deep royal
       stroke = '#e0b341'; // gold
       glyph = '#ffe9a8';
-    } else if (role === 'armored') {
-      fill = '#1f2937'; // iron
-      stroke = '#9aa6b2';
-    } else if (role === 'skirmisher') {
-      stroke = '#f59e0b'; // amber — quick and slippery
-    } else if (role === 'summoner') {
-      fill = '#241733'; // arcane violet
+    } else if (role === 'circle') {
+      fill = '#241733'; // arcane violet — a summoning circle
       stroke = '#a855f7';
       glyph = '#e9d5ff';
-    } else if (role === 'summoned') {
-      stroke = '#9ca3af';
-      glyph = '#cbd5e1';
     }
 
-    // Boss aura: a soft outer ring, cyan while shielded (invulnerable), gold once
-    // its guards have fallen and it can be struck.
+    // Boss aura: a soft gold outer ring.
     if (role === 'boss') {
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, radius + tileSize * 0.12, 0, Math.PI * 2);
-      ctx.strokeStyle = o.shielded ? 'rgba(56, 189, 248, 0.85)' : 'rgba(224, 179, 65, 0.85)';
+      ctx.strokeStyle = 'rgba(224, 179, 65, 0.85)';
       ctx.lineWidth = 3;
       ctx.stroke();
       ctx.restore();
@@ -297,11 +288,7 @@ const Renderer = (function () {
     statue: '#94a3b8', // stone
     turret: '#e0894b', // rust
     boss: '#e0b341', // gold
-    skirmisher: '#f59e0b', // amber
-    armored: '#9aa6b2', // steel
-    summoner: '#a855f7', // violet
-    mage: '#c084fc', // arcane
-    flying: '#7dd3fc', // sky
+    circle: '#a855f7', // arcane violet
   };
   function drawRoleHat(tileX, tileY, role) {
     const color = ROLE_HAT[role];
@@ -877,8 +864,6 @@ const Renderer = (function () {
       fill(f.x, f.y);
     };
     feature(state.exit, '#38bdf8'); // stair down — cyan
-    feature(state.altar, '#c084fc'); // class altar — violet
-    feature(state.weaponShop, '#f59e0b'); // weapon shop — amber
     feature(state.potionShop, '#2dd4bf'); // apothecary — teal
 
     // Blips: the king (green) and any foes currently in sight (red).
@@ -1082,9 +1067,9 @@ const Renderer = (function () {
     const ordered = [...visibleEnemies.filter((enemy) => !isMoving(enemy)), ...visibleEnemies.filter(isMoving)];
     for (const enemy of ordered) {
       const role = enemy.role || 'normal';
-      // Mages/summoners that are spent (recharging) can't act next turn — drawn
-      // faded so the player can read who is dangerous this turn.
-      const inactive = (role === 'mage' || role === 'summoner') && !enemy.charged;
+      // A summoning circle that is spent (recharging) can't conjure next turn —
+      // drawn faded so the player can read who is dangerous this turn.
+      const inactive = role === 'circle' && !enemy.charged;
       drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, inactive });
       if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
@@ -1093,8 +1078,8 @@ const Renderer = (function () {
       if (enemy.boss && enemy.maxHp) {
         drawBossHpBar(enemy.x, enemy.y, enemy.hp, enemy.maxHp);
       }
-      // Main-AI-state icon (statues stay dormant, so show no state for them).
-      if (role !== 'statue' && role !== 'turret') {
+      // Main-AI-state icon (statues / turrets / circles stay put, so show none).
+      if (role !== 'statue' && role !== 'turret' && role !== 'circle') {
         const mainState = enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : null;
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }
