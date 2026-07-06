@@ -75,7 +75,7 @@
           <div id="class-screen" class="overlay hidden">
             <div class="overlay-card shop-card">
               <h2 class="overlay-title">Choose your calling</h2>
-              <p class="overlay-sub">Each class starts with a weapon and a level-1 perk. Earn 1 exp per floor to buy more at altars.</p>
+              <p class="overlay-sub">Hover a calling for its full kit and perks. Earn 1 exp per floor to buy more at altars.</p>
               <ul id="class-list" class="shop-list"></ul>
               <div class="overlay-buttons">
                 <button id="class-back" type="button">Back</button>
@@ -157,6 +157,7 @@
       </section>
     </main>
     <div id="tile-popover" class="tile-popover hidden"></div>
+    <canvas id="minimap" width="240" height="240"></canvas>
     <!-- Plain classic scripts, loaded in dependency order, so the game runs
          straight off the filesystem (no server / ES modules required). -->
     <script src="src/constants.js"></script>

@@ -127,18 +127,20 @@ const TUTORIALS = {
       'anything in the way — keep a unit between you and it, or close the gap.',
   },
   armored: {
-    title: 'Armored foes',
+    title: 'Armored foes (Guards)',
     text:
-      'An armored piece (steel cap) shrugs off your first blow — the hit only ' +
-      'shatters its armor, and the recoil hurls you back to where you entered the ' +
-      'floor. It then fights on as an ordinary piece.',
+      'A Guard (armored pawn or Blackguard berolina, steel cap) shrugs off your ' +
+      'first blow — the hit only shatters its shield, and since it lives you stop ' +
+      'one tile short of it (a leap onto it knocks it aside instead). Beware: if it ' +
+      'slips out of your sight it re-forges its shield and must be broken again.',
   },
-  mounted: {
-    title: 'Mounted foes',
+  jumper: {
+    title: 'Leapers strike by charging',
     text:
-      'A mounted piece (bronze cap) charges you down — it barrels INTO your tile ' +
-      'and tramples you back a square. If the space behind you is blocked, it ' +
-      'strikes as an ordinary piece instead. Leapers are never mounted.',
+      'A leaper (knight and the compound pieces) attacks by leaping ONTO your tile, ' +
+      'knocking you back a square so it lands where you stood — usually shoving you ' +
+      'diagonally, in the direction it jumped. If the space behind you is blocked, ' +
+      'the blow still lands but you keep your footing.',
   },
   flying: {
     title: 'Flying foes',
@@ -150,16 +152,18 @@ const TUTORIALS = {
   summoner: {
     title: 'Summoners',
     text:
-      'A summoner (violet cap) conjures fresh minions beside it on odd turns and ' +
-      'never strikes you itself. Its summoned pieces wink out once no summoner is ' +
-      'in sight — so cut down the summoner and its brood goes with it.',
+      'A summoner (violet cap — a Summoner bishop or Archsummoner archbishop) ' +
+      'conjures fresh minions beside it on odd turns and never strikes you itself. ' +
+      'Its conjured pieces are only held together by the hunt: the moment one drifts ' +
+      'out of your sight (or loses your trail) it is dispelled.',
   },
   boss: {
     title: 'The floor guardian',
     text:
-      'A crowned boss guards the way down. It is invulnerable while any of its ' +
-      'guards still stand in your sight (a blue ring). Clear the guards, and the ' +
-      'ring turns gold — then strike it down to open the descent.',
+      'A crowned boss guards the way down — a unique foe with a HP bar and a ' +
+      'signature power. Each blow chips its bar; when it empties the boss sheds ' +
+      'into its next form (bar refilled) and fights on, until its final form falls. ' +
+      'You may also just slip past it down the stair.',
   },
   danger: {
     title: 'The longer you linger...',
@@ -180,7 +184,9 @@ const TUTORIALS = {
   'terrain-water': {
     title: 'Water',
     text:
-      'Deep water is impassable — you cannot wade in. It does not block your ' +
+      'Water is passable but SLOW — like mud, you cross at most one tile of it per ' +
+      'move, and you cannot ready a weapon card while wading through it (so a lake ' +
+      'can never wall you off from the stairs). It does not block your ' +
       'sight, though; leapers jump clean over it and flyers soar across.',
   },
   'terrain-lava': {
@@ -189,6 +195,14 @@ const TUTORIALS = {
       'Molten rock scars the demon depths. You cannot cross it — but demonic ' +
       'foes wade through unharmed, and flyers pass over it. Keep it between you ' +
       'and them where you can.',
+  },
+  'terrain-fire': {
+    title: 'Fire',
+    text:
+      'Fire springs up from a Fiery spell or the Balrog and burns down to bare ' +
+      'ground after a couple of turns. It sears any non-demon caught in it for 1 ' +
+      'damage — you won’t step into it willingly, but a shove can hurl you in. ' +
+      'Demons (and every foe of the demon realm) stride through it unharmed.',
   },
   'terrain-trees': {
     title: 'Trees',
@@ -200,8 +214,8 @@ const TUTORIALS = {
   'terrain-mud': {
     title: 'Mud',
     text:
-      'You may slog across at most two mud tiles in a single move. A leap clears ' +
-      'mud entirely.',
+      'You may slog across at most one mud tile in a single move, and you can’t ' +
+      'ready a weapon card while stuck in it. A leap clears mud entirely.',
   },
   'terrain-ice': {
     title: 'Ice',

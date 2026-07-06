@@ -6,13 +6,20 @@
 //            cannot be leapt over.
 //   lava   - impassable (nothing may stand on it), but it does NOT block sight;
 //            leapers can still jump clean over it. (Demon realm only, floor 5+.)
-//   mud    - at most ONE mud tile may be crossed in a move, unless jumping/shooting.
+//   mud    - slow: at most ONE mud/water tile may be crossed in a move, and no
+//            weapon card may be used while standing on it.
+//   water  - now passable but slow, exactly like mud (so the king can never be
+//            walled off the exit by a lake); also blocks card use while on it.
 //   ice    - you cannot stop on it; you slide to the far end (or until you bump
 //            a unit / hit a wall). Jumps and weapon shots ignore ice.
 //   brush  - blocks line of sight and blocks sliding through, but is trampled back
 //            to open ground the moment a unit steps onto it (in the king's sight).
+//   fire   - a temporary hazard (from a Fiery spell or the Balrog): burns down to
+//            normal after a couple of turns, and scorches any non-demon that is
+//            caught in it. Non-demons won't step into it, but can be knocked in.
 //
-// Sight is hidden by walls, brush, drifting fog clouds, and the fog of war.
+// Sight is hidden by walls, brush, drifting fog clouds, and the fog of war (a
+// Ranger's Eagle Eye lets sight pass through anything but walls).
 
 function terrainAt(state, x, y) {
   return (state.terrain && state.terrain[`${x},${y}`]) || 'normal';
@@ -31,8 +38,13 @@ function standableFor(type, opts) {
   const o = opts || {};
   if (o.flying) return true;
   if (type === 'lava') return Boolean(o.lavaOk);
-  if (type === 'water') return false;
-  return true;
+  if (type === 'fire') return Boolean(o.fireOk); // only demons stride into flame (others are knocked in)
+  return true; // water is now passable (but slow — see slideStops)
+}
+
+// Slow terrain the king can only cross one tile of per move (and can't cast from).
+function isSlowTerrain(type) {
+  return type === 'mud' || type === 'water';
 }
 
 // Context-free standability (used for placement): a plain walker.
@@ -43,6 +55,8 @@ function isStandable(type) {
 // Symmetric line of sight: clear unless a wall lies strictly between the two
 // points (endpoints themselves are not opaque to the look).
 function hasLineOfSight(state, x0, y0, x1, y1) {
+  // A Ranger's Eagle Eye lets the king see through anything but stone walls.
+  const xray = Boolean(state.player && state.player.xraySight);
   const dx = Math.abs(x1 - x0);
   const dy = Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
@@ -63,8 +77,9 @@ function hasLineOfSight(state, x0, y0, x1, y1) {
     if (x === x1 && y === y1) {
       break;
     }
-    if (blocksSight(terrainAt(state, x, y)) || (state.fogClouds && state.fogClouds[`${x},${y}`])) {
-      return false; // walls and drifting fog clouds both block the look
+    const blocked = xray ? terrainAt(state, x, y) === 'wall' : (blocksSight(terrainAt(state, x, y)) || (state.fogClouds && state.fogClouds[`${x},${y}`]));
+    if (blocked) {
+      return false; // walls (and, without Eagle Eye, brush/trees/fog clouds) block the look
     }
   }
   return true;
@@ -139,16 +154,16 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
       }
       break;
     }
-    if (terrain === 'mud' && !immune && mudUsed >= 1) {
+    if (isSlowTerrain(terrain) && !immune && mudUsed >= 1) {
       if (onIce) stops.push({ x, y, capture: false });
-      break; // may cross at most ONE mud tile per move
+      break; // may cross at most ONE mud/water tile per move
     }
     const cost = onIce ? 0 : 1;
     if (cost === 1 && groundUsed >= maxGround) {
       break; // Out of range on solid ground.
     }
     groundUsed += cost;
-    if (terrain === 'mud' && !immune) {
+    if (isSlowTerrain(terrain) && !immune) {
       mudUsed += 1;
     }
     const wasOnIce = onIce;

@@ -183,52 +183,77 @@
 
   // Draw the card bar: one slot per `maxCards`, owned cards first. A ready card is
   // clickable to start aiming; one mid-cooldown shows its countdown.
+  // Colors per weapon category (border tint on the card slot).
+  const CATEGORY_COLOR = { melee: '#dc2626', ranged: '#65a30d', spell: '#a855f7' };
+
   function renderCards() {
     cardBar.innerHTML = '';
     if (!gameState) {
       return;
     }
-    const { cards, maxCards } = gameState.player;
-    for (let i = 0; i < maxCards; i += 1) {
-      const card = cards[i];
-      const slot = document.createElement('button');
-      slot.type = 'button';
-      slot.className = 'card-slot';
-      if (!card) {
-        slot.classList.add('empty');
-        slot.textContent = 'empty';
+    const { cards, caps } = gameState.player;
+    const capCounts = caps || { melee: 0, ranged: 0, spell: 0 };
+
+    // Owned cards first, in inventory order (their 1-based index is the hotkey).
+    cards.forEach((card, i) => {
+      cardBar.append(makeCardSlot(card, i));
+    });
+    // Then an empty placeholder per unused category capacity.
+    for (const cat of ['melee', 'ranged', 'spell']) {
+      const owned = cards.filter((c) => (c.category || 'melee') === cat).length;
+      for (let k = owned; k < (capCounts[cat] || 0); k += 1) {
+        const slot = document.createElement('button');
+        slot.type = 'button';
+        slot.className = 'card-slot empty';
+        slot.textContent = cat[0].toUpperCase();
+        slot.title = `Empty ${cat} slot`;
+        slot.style.borderColor = CATEGORY_COLOR[cat];
         slot.disabled = true;
         cardBar.append(slot);
-        continue;
       }
-      slot.textContent = getPieceLabel(card.kind);
-      const traits = card.traits || [];
-      slot.title = traits.length ? `${card.kind} card · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : `${card.kind} card`;
-      const onCooldown = card.remaining > 0;
-      if (cardTargeting === i) {
-        slot.classList.add('targeting');
-      } else if (onCooldown) {
-        slot.classList.add('cooldown');
-      } else {
-        slot.classList.add('ready');
-      }
-      if (traits.length) {
-        // A small corner pip marks a card that carries weapon traits.
-        const pip = document.createElement('span');
-        pip.className = 'card-trait';
-        pip.textContent = traits.length > 1 ? String(traits.length) : TRAIT_INFO[traits[0]].name[0];
-        slot.append(pip);
-      }
-      if (onCooldown) {
-        const badge = document.createElement('span');
-        badge.className = 'card-cooldown';
-        badge.textContent = String(card.remaining);
-        slot.append(badge);
-      }
-      slot.disabled = onCooldown && cardTargeting !== i;
-      slot.addEventListener('click', () => toggleCardTargeting(i));
-      cardBar.append(slot);
     }
+  }
+
+  function makeCardSlot(card, i) {
+    const cat = card.category || 'melee';
+    const slot = document.createElement('button');
+    slot.type = 'button';
+    slot.className = 'card-slot';
+    slot.style.borderColor = CATEGORY_COLOR[cat] || '#888';
+    slot.textContent = getPieceLabel(card.kind);
+    const traits = card.traits || [];
+    const traitText = traits.length ? ` · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : '';
+    slot.title = `[${i + 1}] ${cat} ${card.kind} (rating ${card.rating || 1})${traitText}`;
+    const onCooldown = card.remaining > 0;
+    if (cardTargeting === i) {
+      slot.classList.add('targeting');
+    } else if (onCooldown) {
+      slot.classList.add('cooldown');
+    } else {
+      slot.classList.add('ready');
+    }
+    // A tiny hotkey number in one corner, and the rating in another.
+    const key = document.createElement('span');
+    key.className = 'card-trait';
+    key.style.left = '2px';
+    key.style.right = 'auto';
+    key.textContent = String(i + 1);
+    slot.append(key);
+    if ((card.rating || 1) > 1) {
+      const rate = document.createElement('span');
+      rate.className = 'card-trait';
+      rate.textContent = `${card.rating}★`;
+      slot.append(rate);
+    }
+    if (onCooldown) {
+      const badge = document.createElement('span');
+      badge.className = 'card-cooldown';
+      badge.textContent = String(card.remaining);
+      slot.append(badge);
+    }
+    slot.disabled = onCooldown && cardTargeting !== i;
+    slot.addEventListener('click', () => toggleCardTargeting(i));
+    return slot;
   }
 
   // The held-potion bar: click a potion to drink it (costs a turn, unless the
@@ -334,9 +359,9 @@
       return;
     }
     cardTargeting = index;
-    cardTargets = getCardMoves(gameState, card.kind);
+    cardTargets = getCardMoves(gameState, card);
     if (!cardTargets.length) {
-      gameState.message = 'That card has nowhere to go from here.';
+      gameState.message = 'That card has no target in reach.';
       cancelCardTargeting();
       updateHud();
       return;
@@ -346,15 +371,17 @@
       .slice()
       .sort((a, b) => distToKing(a) - distToKing(b))[0];
     cardCursor = { x: cardCursor.x, y: cardCursor.y };
-    gameState.message = `Aiming the ${card.kind} card — click a tile or use the numpad, then Enter (Esc to cancel).`;
+    gameState.message = `Aiming the ${card.category || 'melee'} ${card.kind} — click a target or steer with the numpad, then Enter (Esc to cancel).`;
     showCardInfo(card);
     updateHud();
   }
 
-  // Show the card being aimed (movement + any trait) in the right-hand pane.
+  // Show the card being aimed (category, movement, rating, traits) in the pane.
   function showCardInfo(card) {
     examineEl.innerHTML = '';
-    addExamineBlock(`${card.kind} weapon`, [PIECE_INFO[card.kind] || '', 'Strikes an enemy only.', `Cooldown ${card.cooldown} turns`]);
+    const cat = card.category || 'melee';
+    const verb = cat === 'melee' ? 'Strikes by moving onto the foe.' : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.' : 'A bolt that pierces everything on its path; you hold your tile.';
+    addExamineBlock(`${card.kind} — ${cat} · rating ${card.rating || 1}`, [PIECE_INFO[card.kind] || '', verb, `Cooldown ${card.cooldown} turns`]);
     for (const t of card.traits || []) {
       addExamineBlock(`Trait — ${TRAIT_INFO[t].name}`, TRAIT_INFO[t].desc);
     }
@@ -380,8 +407,9 @@
     normal: 'Open ground',
     wall: 'Wall — blocks sight & movement',
     lava: 'Lava — you cannot cross it (demons can); clear to see through',
-    water: 'Water — impassable, but clear to see through',
-    mud: 'Mud — cross at most one per move',
+    fire: 'Fire — burns non-demons caught in it; dies down after 2 turns',
+    water: 'Water — slow (cross one per move); no cards while wading',
+    mud: 'Mud — slow (cross one per move); no cards while slogging',
     ice: 'Ice — slippery, you slide across',
     brush: 'Brush — blocks sight; trampled when stepped on',
     trees: 'Trees — block sight, but you can move through',
@@ -410,28 +438,25 @@
           tag = ' (statue — wakes if you step beside it)';
         } else if (enemy.turret) {
           tag = ' (turret — fixed, fires its pattern)';
-        } else if (enemy.boss && bossShielded(gameState)) {
-          tag = ' (boss — invulnerable while guards remain)';
         } else if (enemy.boss) {
-          tag = ' (boss — vulnerable!)';
+          tag = ` (boss — HP ${enemy.hp}/${enemy.maxHp})`;
         } else if (enemy.mage) {
           tag = ' (mage — piercing bolt on odd turns)';
         } else if (enemy.skirmisher) {
           tag = ' (skirmisher — strikes and darts away)';
+        } else if (enemy.brokenShield) {
+          tag = ' (shield broken — re-arms out of sight)';
         } else if (enemy.armored) {
-          tag = ' (armored — one hit shatters its armor & flings you back)';
-        } else if (enemy.mounted) {
-          tag = ' (mounted — charges & tramples you back)';
+          tag = ' (armored — a hit shatters its shield; it survives the first blow)';
         } else if (enemy.flying) {
           tag = ' (flying — crosses any terrain but walls)';
         } else if (enemy.summoner) {
           tag = ' (summoner — conjures minions)';
-        } else if (enemy.summoned) {
-          tag = ' (summoned — fades without a summoner near)';
         } else {
           tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
-        lines.push(`Enemy: ${enemy.kind}${tag}`);
+        const label = (typeof enemyDisplayName === 'function' && enemyDisplayName(enemy)) || enemy.kind;
+        lines.push(`Enemy: ${label}${tag}`);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
       if (item) {
@@ -446,7 +471,7 @@
       lines.push(gameState.altar.used ? 'Class altar — spent' : 'Class altar — spend exp on a perk');
     }
     if (onBuilding(gameState.weaponShop)) {
-      lines.push('Weapon shop — buy cards');
+      lines.push(`${SHOP_VARIANT_NAMES[gameState.weaponShop.variant] || 'Weapon shop'} — buy ${gameState.weaponShop.category || 'melee'} cards`);
     }
     if (onBuilding(gameState.potionShop)) {
       lines.push('Apothecary — buy potions');
@@ -473,6 +498,7 @@
 
   function hideTilePopover() {
     tilePopover.classList.add('hidden');
+    tilePopover.classList.remove('wide'); // reset the class-details widening
   }
 
   /* ------------------------------ examine pane --------------------------- */
@@ -494,28 +520,26 @@
   const ROLE_INFO = {
     statue: 'Statue — inert until you step beside it, then it wakes.',
     turret: 'Turret — fixed; fires its piece pattern, cannot be destroyed.',
-    boss: 'Boss — invulnerable while its guards remain in sight.',
+    boss: 'Boss — a guardian with a HP bar and a signature ability.',
     mage: 'Mage — fires a piercing bolt down its line (odd turns), slaying all in the way.',
     skirmisher: 'Skirmisher — strikes from a clear line (odd turns), then retreats.',
-    armored: 'Armored — first hit shatters its armor and flings you back.',
-    mounted: 'Mounted — charges into you and shoves you back a tile.',
+    armored: 'Armored — survives the first hit (its shield shatters); it re-arms out of sight.',
     flying: 'Flying — moves over any terrain except walls.',
     summoner: 'Summoner — conjures minions (odd turns); never attacks directly.',
-    summoned: 'Summoned — vanishes when no summoner is in sight.',
   };
 
-  // Boss ability descriptions, keyed by ability id.
+  // Boss ability descriptions, keyed by the boss `special` id.
   const BOSS_ABILITY_INFO = {
-    rally: 'Rally — calls up an armored soldier when first roused.',
-    trueshot: 'Trueshot — looses arrows straight through wood and units.',
-    frostwake: 'Frostwake — a charger that freezes the ground in its wake.',
+    armorAura: 'Armor Aura — adjacent minions gain armor; it summons reinforcements.',
+    doubleAct: 'Relentless — acts twice each turn, loosing shots from its line.',
+    frostwake: 'Frostwake — freezes the ground it moves across.',
     siege: 'Siege — smashes through walls and never loses your trail.',
-    aquatic: 'Aquatic — glides over water; only a ranged blow can fell it.',
-    necromancy: 'Necromancy — raises horrors while you keep your distance; reforms when struck.',
-    gore: 'Gore — a mounted terror that tramples for heavy damage.',
-    gaze: 'Gaze — sears you whenever it sees you; pierces down its line.',
-    bonehide: 'Bonehide — impervious to ranged blows; strike it adjacent.',
-    inferno: 'Inferno — burns you while adjacent; spits demons when you flee.',
+    aquatic: 'Aquatic — crosses any terrain but walls/lava; mends every other turn.',
+    undying: 'Undying — rises again when slain (you keep its gold from the first death).',
+    gore: 'Gore — every blow knocks you back for triple damage.',
+    petrify: 'Petrify — turns every other unit to stone and sears you while visible.',
+    bonehide: 'Bonehide — immune to ranged blows; strike it up close.',
+    inferno: 'Inferno — wreathes itself in fire each turn (searing you if adjacent); hurls searing bolts at range.',
   };
 
   // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
@@ -566,7 +590,10 @@
     if (gameState.player.x === tx && gameState.player.y === ty) {
       const p = gameState.player;
       const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Gold ${p.gold} · ${p.exp || 0} exp`];
-      stats.push(`Weapon slots ${p.maxCards} · Potion slots ${p.maxConsumables}`);
+      const caps = p.caps || { melee: 0, ranged: 0, spell: 0 };
+      const usedByCat = (cat) => (p.cards || []).filter((c) => (c.category || 'melee') === cat).length;
+      stats.push(`Cards — melee ${usedByCat('melee')}/${caps.melee} · ranged ${usedByCat('ranged')}/${caps.ranged} · spell ${usedByCat('spell')}/${caps.spell}`);
+      stats.push(`Potion slots ${p.maxConsumables}`);
       addExamineBlock('Your King', stats);
 
       // Classes the king has invested in, with their level and perks.
@@ -589,8 +616,14 @@
               : 'Unaware — wandering';
         const buyable = isCardKind(enemy.kind) ? 'Can be bought as a card.' : null;
         const bossLine = enemy.boss && enemy.special ? BOSS_ABILITY_INFO[enemy.special] : null;
-        const title = enemy.boss && enemy.bossName ? `Boss — ${enemy.bossName.replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
-        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, bossLine, state, buyable]);
+        const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp} · form ${(enemy.phase || 0) + 1}/${(enemy.phases || [0]).length}` : null;
+        const display = typeof enemyDisplayName === 'function' ? enemyDisplayName(enemy) : null;
+        const title = enemy.boss
+          ? `Boss — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}`
+          : display
+            ? `${display} — ${enemy.kind}`
+            : `Enemy — ${enemy.kind}`;
+        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, bossLine, hpLine, state, buyable]);
       }
       const item = gameState.items.find((i) => i.x === tx && i.y === ty);
       if (item) {
@@ -614,7 +647,8 @@
       );
     }
     if (onBuilding(gameState.weaponShop)) {
-      addExamineBlock('Weapon Shop', 'Buy movement cards drawn from foes you have seen.');
+      const v = gameState.weaponShop.variant;
+      addExamineBlock(SHOP_VARIANT_NAMES[v] || 'Weapon Shop', `Buy ${gameState.weaponShop.category || 'melee'} cards drawn from foes you have seen.`);
     }
     if (onBuilding(gameState.potionShop)) {
       addExamineBlock('Apothecary', 'Buy potions into your satchel, to drink later (costs a turn).');
@@ -768,14 +802,14 @@
     if (visible.some((enemy) => enemy.skirmisher)) {
       queueTip('skirmisher');
     }
-    if (visible.some((enemy) => enemy.armored)) {
+    if (visible.some((enemy) => enemy.armored || enemy.brokenShield)) {
       queueTip('armored');
-    }
-    if (visible.some((enemy) => enemy.mounted)) {
-      queueTip('mounted');
     }
     if (visible.some((enemy) => enemy.flying)) {
       queueTip('flying');
+    }
+    if (visible.some((enemy) => isJumperKind(enemy.kind) && enemy.awake)) {
+      queueTip('jumper');
     }
     if (visible.some((enemy) => enemy.summoner)) {
       queueTip('summoner');
@@ -868,7 +902,44 @@
     hideOverlays();
   }
 
-  // Open the class-select screen (the "New Game" entry point).
+  // The class's starting kit, as a one-line bullet.
+  function classStartLine(cls) {
+    if (cls.weapon) {
+      const w = cls.weapon;
+      const traits = w.traits && w.traits.length ? ` (${w.traits.map((t) => TRAIT_INFO[t].name).join(', ')})` : '';
+      return `Starts with a ${w.category || 'melee'} ${w.kind} card, rating ${w.rating || 1}${traits}`;
+    }
+    if (cls.startKit === 'potions') return 'Starts with a satchel of random potions';
+    return 'Starts with a satchel of random scrolls';
+  }
+
+  // The full hover detail for a class: heading, blurb, card caps, then a bullet per
+  // starting kit and per perk (L1-L3).
+  function classDetailText(key) {
+    const cls = CLASSES[key];
+    const caps = cls.caps || { melee: 0, ranged: 0, spell: 0 };
+    const lines = [cls.name, cls.blurb, ''];
+    lines.push(`Card slots — melee ${caps.melee} · ranged ${caps.ranged} · spell ${caps.spell}`);
+    lines.push(`• ${classStartLine(cls)}`);
+    cls.perks.forEach((perk, i) => lines.push(`• L${i + 1} ${perk.name} — ${perk.desc}`));
+    return lines.join('\n');
+  }
+
+  function showClassPopover(key, event) {
+    tilePopover.textContent = classDetailText(key);
+    tilePopover.classList.add('wide');
+    tilePopover.style.left = `${event.clientX + 16}px`;
+    tilePopover.style.top = `${event.clientY + 16}px`;
+    tilePopover.classList.remove('hidden');
+  }
+
+  function hideClassPopover() {
+    tilePopover.classList.remove('wide');
+    hideTilePopover();
+  }
+
+  // Open the class-select screen (the "New Game" entry point). Each row shows a
+  // brief description; hovering reveals full details (kit + each perk).
   function openClassSelect() {
     screen = 'class';
     hideOverlays();
@@ -876,18 +947,23 @@
     classList.innerHTML = '';
     for (const key of Object.keys(CLASSES)) {
       const cls = CLASSES[key];
-      const weapon = cls.weapon ? `${cls.weapon.kind}${cls.weapon.traits.length ? ' (' + cls.weapon.traits.join(', ') + ')' : ''}` : 'random potions';
       const row = document.createElement('li');
-      row.className = 'shop-item';
+      row.className = 'shop-item class-item';
       const info = document.createElement('div');
       info.className = 'shop-info';
       info.innerHTML =
         `<span class="shop-name" style="color:${cls.color}">${cls.name}</span>` +
-        `<span class="shop-desc">${cls.blurb} · starts: ${weapon}; L1 ${cls.perks[0].name} — ${cls.perks[0].desc}</span>`;
+        `<span class="shop-desc">${cls.blurb}</span>`;
       const pick = document.createElement('button');
       pick.type = 'button';
       pick.textContent = 'Choose';
-      pick.addEventListener('click', () => newGame(key));
+      pick.addEventListener('click', () => {
+        hideClassPopover();
+        newGame(key);
+      });
+      row.addEventListener('mouseenter', (e) => showClassPopover(key, e));
+      row.addEventListener('mousemove', (e) => showClassPopover(key, e));
+      row.addEventListener('mouseleave', hideClassPopover);
       row.append(info, pick);
       classList.append(row);
     }
@@ -1149,20 +1225,27 @@
   /* ----------------------------- weapon shop ----------------------------- */
 
   // A "knight · Cleave, Leech" style label for a card / offer.
-  function cardName(kind, traits) {
-    const list = traits && traits.length ? ` · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : '';
-    return `${getPieceLabel(kind)} ${kind}${list}`;
+  function cardName(c) {
+    const traits = c.traits || [];
+    const list = traits.length ? ` · ${traits.map((t) => TRAIT_INFO[t].name).join(', ')}` : '';
+    const cat = c.category || 'melee';
+    const star = (c.rating || 1) > 1 ? ` ${c.rating}★` : '';
+    return `${getPieceLabel(c.kind)} ${cat} ${c.kind}${star}${list}`;
   }
 
-  function cardDesc(kind, traits) {
-    const parts = [`cooldown ${cardCooldown(kind)}`];
-    for (const t of traits || []) parts.push(TRAIT_INFO[t].desc);
+  function cardDesc(c) {
+    const cat = c.category || 'melee';
+    const parts = [`reach ${cardReach(c.kind, c.rating || 1)}`, `cooldown ${cardCooldown(c.kind, cat)}`];
+    for (const t of c.traits || []) parts.push(TRAIT_INFO[t].desc);
     return parts.join(' · ');
   }
 
   function renderWeaponShop() {
+    const shop = gameState.weaponShop || {};
+    const variantName = SHOP_VARIANT_NAMES[shop.variant] || 'Weapon Shop';
+    const category = shop.category || 'melee';
     weaponshopGold.textContent = `Gold ${gameState.player.gold}`;
-    weaponshopMessage.textContent = gameState.shopMessage || '';
+    weaponshopMessage.textContent = gameState.shopMessage || `${variantName} — ${category} cards.`;
     weaponshopList.innerHTML = '';
 
     const p = gameState.player;
@@ -1176,26 +1259,32 @@
     }
 
     offers.forEach((offer, index) => {
-      const cost = cardCost(offer.kind, (offer.traits || []).length);
-      const slotsFull = p.cards.length >= p.maxCards;
+      const cost = cardCost(offer.kind, (offer.traits || []).length, offer.rating || 1);
+      const cat = offer.category || 'melee';
+      const catFull = cardCountByCategory(p, cat) >= cardCapFor(p, cat);
+      const noRoom = cardCapFor(p, cat) <= 0;
 
       const row = document.createElement('li');
       row.className = 'shop-item';
 
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${cardName(offer.kind, offer.traits)}</span><span class="shop-desc">${cardDesc(offer.kind, offer.traits)}</span>`;
+      info.innerHTML = `<span class="shop-name">${cardName(offer)}</span><span class="shop-desc">${cardDesc(offer)}</span>`;
 
       const buy = document.createElement('button');
       buy.type = 'button';
       if (offer.sold) {
         buy.textContent = 'Sold';
         buy.disabled = true;
+      } else if (noRoom) {
+        buy.textContent = 'N/A';
+        buy.disabled = true;
+        buy.title = `Your class can't wield ${cat} cards.`;
       } else {
         buy.textContent = `${cost}g`;
         buy.disabled = p.gold < cost;
         buy.addEventListener('click', () => {
-          if (slotsFull) {
+          if (catFull) {
             promptReplaceCard(index);
           } else {
             applyState(buyCard(gameState, index), true);
@@ -1213,19 +1302,21 @@
   function promptReplaceCard(offerIndex) {
     const p = gameState.player;
     const offer = gameState.weaponShop.offers[offerIndex];
-    if (p.gold < cardCost(offer.kind, (offer.traits || []).length)) {
+    const cat = offer.category || 'melee';
+    if (p.gold < cardCost(offer.kind, (offer.traits || []).length, offer.rating || 1)) {
       gameState.shopMessage = 'Not enough gold.';
       renderWeaponShop();
       return;
     }
-    weaponshopMessage.textContent = `Replace which card with the ${offer.kind}?`;
+    weaponshopMessage.textContent = `Replace which ${cat} card with the ${offer.kind}?`;
     weaponshopList.innerHTML = '';
     p.cards.forEach((card, index) => {
+      if ((card.category || 'melee') !== cat) return; // only same-category swaps keep caps valid
       const row = document.createElement('li');
       row.className = 'shop-item';
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${cardName(card.kind, card.traits)}</span><span class="shop-desc">${cardDesc(card.kind, card.traits)}</span>`;
+      info.innerHTML = `<span class="shop-name">${cardName(card)}</span><span class="shop-desc">${cardDesc(card)}</span>`;
       const swap = document.createElement('button');
       swap.type = 'button';
       swap.textContent = 'Replace';
@@ -1488,6 +1579,14 @@
         moveCardCursor(aim[0], aim[1]);
         return;
       }
+    }
+
+    // Top-row number keys (Digit1-9, never the numpad) select/aim a weapon card.
+    const cardKey = /^Digit([1-9])$/.exec(event.code);
+    if (cardKey) {
+      event.preventDefault();
+      toggleCardTargeting(Number(cardKey[1]) - 1);
+      return;
     }
 
     const move = resolveMove(event);

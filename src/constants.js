@@ -1,7 +1,7 @@
 // Shared configuration. Loaded first; every other script reads from these.
 
 const WORLD_SIZE = 20; // The full board is WORLD_SIZE x WORLD_SIZE tiles.
-const STARTING_VISION = 5; // The king starts seeing a 5x5 window (odd, so centered).
+const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so centered).
 const VISION_STEP = 2; // Each Keen Eyes upgrade widens the window by 2 (5 -> 7 -> 9...).
 const PLAYER_START = { x: 8, y: 8 };
 const STARTING_HP = 3;
@@ -12,6 +12,7 @@ const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
 const BARKSKIN_TURNS = 3; // Turns the Barkskin potion keeps the king invincible.
 const INVIS_TURNS = 5; // Turns the Invisibility potion hides the king.
 const FOG_DISSIPATE = 0.33; // Per-turn chance each fog cloud clears.
+const PURSUIT_TTL = 6; // Turns an enemy hunts toward the king's last-seen tile before losing the trail.
 
 // Consumables are bought at the apothecary and used from the satchel. `blink` and
 // `digging` need a target tile (handled by the UI); the rest apply at once.
@@ -86,7 +87,7 @@ function floorName(floor) {
 // and cohort are authored (not random), while wanderers/shops/altars still scatter.
 //   phases  - the sequence of piece-kinds the boss becomes as it is struck down
 //             (a two/three-headed guardian: the fight ends only on the last).
-//   traits  - role flags stamped on every phase (armored / mounted / mage /
+//   traits  - role flags stamped on every phase (armored / summoner / mage /
 //             skirmisher / flying).
 //   special - the boss's signature behaviour (see bossSpecialTurn / boss death).
 //   damage  - HP a successful boss hit costs (default 1).
@@ -95,64 +96,97 @@ const LEVELS = [
   {
     theme: 'battlefield', name: 'The Battlefield',
     recipe: { wall: 3, brush: 2 }, feature: 'redoubt',
-    boss: { name: 'the Warlord', phases: ['king', 'king'], traits: [], special: 'rally', damage: 1 },
+    weights: { kinds: { pawn: 3, knight: 1 }, role: 0.6 },
+    boss: { name: 'the Weaponmaster', phases: ['king', 'king'], traits: ['summoner'], special: 'armorAura', damage: 1, hp: 3 },
     cohort: ['pawn', 'pawn', 'knight', 'knight'],
   },
   {
     theme: 'forest', name: 'The Old Forest',
     recipe: { trees: 5, brush: 3, water: 1 }, feature: 'grove',
-    boss: { name: 'the Centaur', phases: ['knight', 'king'], traits: ['skirmisher'], special: 'trueshot', damage: 1 },
+    weights: { kinds: { knight: 3, pawn: 1, bishop: 1 }, role: 0.6 },
+    boss: { name: 'the Centaur', phases: ['knight', 'king'], traits: ['skirmisher'], special: 'doubleAct', damage: 1, hp: 3 },
     cohort: ['pawn', 'knight', 'bishop', 'pawn'],
   },
   {
     theme: 'tundra', name: 'The Frozen Tundra',
-    recipe: { ice: 5, water: 2, wall: 1 }, feature: 'floes',
-    boss: { name: 'the Yeti', phases: ['bishop', 'king'], traits: ['mounted'], special: 'frostwake', damage: 1 },
+    recipe: { ice: 5, water: 2, mud: 2, trees: 2 }, feature: 'floes',
+    weights: { kinds: { bishop: 2, knight: 2, pawn: 1 }, role: 0.4 },
+    boss: { name: 'the Yeti', phases: ['bishop', 'king'], traits: [], special: 'frostwake', damage: 1, hp: 3 },
     cohort: ['pawn', 'bishop', 'knight', 'bishop'],
   },
   {
     theme: 'ruins', name: 'The Sunken Ruins',
-    recipe: { wall: 6, brush: 2, water: 2 }, feature: 'rooms',
-    boss: { name: 'the Iron Giant', phases: ['rook', 'king'], traits: ['armored'], special: 'siege', damage: 1 },
+    recipe: { wall: 7, mud: 3 }, feature: 'rooms',
+    weights: { kinds: { rook: 2, pawn: 2, knight: 1 }, role: 0.5 },
+    boss: { name: 'the Stone Golem', phases: ['rook', 'king'], traits: ['armored'], special: 'siege', damage: 1, hp: 3 },
     cohort: ['rook', 'knight', 'pawn', 'bishop'],
   },
   {
     theme: 'lake', name: 'The Drowned Lake',
-    recipe: { water: 8, brush: 2 }, feature: 'island',
-    boss: { name: 'the Hydra', phases: ['queen', 'king'], traits: ['flying'], special: 'aquatic', damage: 1, respawnMelee: true },
-    cohort: ['bishop', 'rook', 'knight', 'bishop'],
+    recipe: { water: 8, brush: 2, mud: 2, trees: 2 }, feature: 'island',
+    weights: { kinds: { amazon: 1, berolina: 2, archbishop: 1, chancellor: 1 }, role: 0.4 },
+    boss: { name: 'the Hydra', phases: ['queen', 'king'], traits: [], special: 'aquatic', damage: 1, hp: 3 },
+    cohort: ['berolina', 'archbishop', 'chancellor', 'berolina'],
   },
   {
     theme: 'crypt', name: 'The Whispering Crypt',
-    recipe: { wall: 6, brush: 2 }, feature: 'sanctum',
-    boss: { name: 'the Lich', phases: ['king', 'king', 'king'], traits: [], special: 'necromancy', damage: 1, respawnDeath: true },
+    recipe: { wall: 7, brush: 1 }, feature: 'sanctum', statues: 6,
+    weights: { kinds: { archbishop: 3, berolina: 2, chancellor: 1 }, role: 0.6 },
+    boss: { name: 'the Lich', phases: ['king', 'king', 'king'], traits: ['summoner'], special: 'undying', damage: 1, hp: 2, respawnDeath: true },
     cohort: ['berolina', 'berolina', 'archbishop', 'berolina'],
   },
   {
     theme: 'maze', name: 'The Hedge Maze',
-    recipe: { trees: 8, brush: 4 }, feature: 'maze',
-    boss: { name: 'the Minotaur', phases: ['knight', 'king', 'king'], traits: ['mounted'], special: 'gore', damage: 3 },
+    recipe: { brush: 6, trees: 5, lava: 2 }, feature: 'maze',
+    weights: { kinds: { chancellor: 1, berolina: 2, archbishop: 1 }, role: 0.4 },
+    boss: { name: 'the Minotaur', phases: ['knight', 'king', 'king'], traits: [], special: 'gore', damage: 3, hp: 2 },
     cohort: ['berolina', 'archbishop', 'berolina', 'archbishop'],
   },
   {
     theme: 'demon-forest', name: 'The Demon Wood',
-    recipe: { trees: 6, lava: 3, brush: 3 }, feature: 'grove',
-    boss: { name: 'the Medusa', phases: ['bishop', 'king', 'king'], traits: ['mage'], special: 'gaze', damage: 1 },
+    recipe: { trees: 6, brush: 4, lava: 2 }, feature: 'grove',
+    weights: { kinds: { chancellor: 2, archbishop: 2, berolina: 1 }, role: 0.5 },
+    boss: { name: 'the Medusa', phases: ['bishop', 'king', 'king'], traits: [], special: 'petrify', damage: 1, hp: 2 },
     cohort: ['archbishop', 'chancellor', 'berolina', 'archbishop'],
   },
   {
     theme: 'lava', name: 'The Lake of Fire',
     recipe: { lava: 8, wall: 2 }, feature: 'island',
-    boss: { name: 'the Bone Dragon', phases: ['rook', 'king', 'king'], traits: [], special: 'bonehide', damage: 1, meleeOnly: true },
+    weights: { kinds: { amazon: 2, chancellor: 1, archbishop: 1 }, role: 0.5 },
+    boss: { name: 'the Bone Dragon', phases: ['rook', 'king', 'king'], traits: ['flying'], special: 'bonehide', damage: 1, hp: 2, meleeOnly: true },
     cohort: ['chancellor', 'archbishop', 'chancellor', 'berolina'],
   },
   {
     theme: 'castle', name: 'The Demon Castle',
     recipe: { wall: 8, lava: 3 }, feature: 'throne',
-    boss: { name: 'the Balrog', phases: ['queen', 'king', 'king'], traits: [], special: 'inferno', damage: 1 },
+    weights: { kinds: { amazon: 2, chancellor: 2, archbishop: 1 }, role: 0.5 },
+    boss: { name: 'the Balrog', phases: ['queen', 'king', 'king'], traits: ['mage'], special: 'inferno', damage: 1, hp: 2 },
     cohort: ['amazon', 'chancellor', 'archbishop', 'chancellor'],
   },
 ];
+
+// Roles are no longer rolled for every kind: each role is restricted to a few
+// piece kinds, and a kind carries a flavourful NAME when it bears its role (purely
+// cosmetic, shown only in the UI panel). A kind maps to at most ONE role.
+const ROLE_UNITS = {
+  armored: ['pawn', 'berolina'],
+  skirmisher: ['knight'],
+  summoner: ['bishop', 'archbishop'],
+  mage: ['rook', 'chancellor'],
+  flying: ['queen', 'amazon'],
+};
+const ROLE_NAMES = {
+  armored: { pawn: 'Guard', berolina: 'Blackguard' },
+  skirmisher: { knight: 'Horse Archer' },
+  summoner: { bishop: 'Summoner', archbishop: 'Archsummoner' },
+  mage: { rook: 'Wizard', chancellor: 'Archwizard' },
+  flying: { queen: 'Banshee', amazon: 'Vampiress' },
+};
+// The single role a kind is eligible for (or undefined).
+const ROLE_FOR_KIND = {};
+for (const r of Object.keys(ROLE_UNITS)) {
+  for (const k of ROLE_UNITS[r]) ROLE_FOR_KIND[k] = r;
+}
 
 // The authored level for a floor (cycling every FINAL_FLOOR for New Game +).
 function levelForFloor(floor) {
@@ -206,12 +240,16 @@ const SHOP_CHOICES = 3; // Cards a weapon shop offers.
 // class's three perks cost 1, 2, then 3 exp. He earns 1 exp per floor descended,
 // and may spread exp across classes. His king token is tinted by his top class.
 const CLASS_ALTAR_CHOICES = 3;
+// Each class carries its own per-CATEGORY card caps (melee / ranged / spell) in
+// `caps` — replacing a single shared weapon-slot count — plus a starting weapon
+// with a category and rating.
 const CLASSES = {
   valkyrie: {
     name: 'Valkyrie',
     blurb: 'A shieldmaiden who turns aside blade, bolt, and spell.',
     color: '#e0b341',
-    weapon: { kind: 'king', traits: ['parry'] },
+    weapon: { kind: 'king', category: 'melee', rating: 1, traits: ['parry'] },
+    caps: { melee: 2, ranged: 1, spell: 1 },
     perks: [
       { id: 'val1', name: 'Aegis', desc: '+3 max HP', grants: { maxHp: 3 } },
       { id: 'val2', name: 'Ward', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
@@ -222,10 +260,11 @@ const CLASSES = {
     name: 'Barbarian',
     blurb: 'A whirlwind of blades that never stops swinging.',
     color: '#dc2626',
-    weapon: { kind: 'king', traits: ['cleave'] },
+    weapon: { kind: 'king', category: 'melee', rating: 1, traits: ['cleave'] },
+    caps: { melee: 2, ranged: 1, spell: 0 },
     perks: [
-      { id: 'bar1', name: 'Arsenal', desc: '+1 weapon slot', grants: { maxCards: 1 } },
-      { id: 'bar2', name: 'Frenzy', desc: 'Each kill shaves 1 turn off a random weapon cooldown', grants: { frenzy: true } },
+      { id: 'bar1', name: 'Arsenal', desc: '+1 melee card slot', grants: { maxMelee: 1 } },
+      { id: 'bar2', name: 'Frenzy', desc: 'Each kill shaves 1 turn off a random weapon-card cooldown', grants: { frenzy: true } },
       { id: 'bar3', name: 'Bloodrush', desc: 'A normal move that kills does not cost a turn', grants: { freeKillMove: true } },
     ],
   },
@@ -233,18 +272,20 @@ const CLASSES = {
     name: 'Ranger',
     blurb: 'A hunter at home in every wild, whose shot fells anything.',
     color: '#65a30d',
-    weapon: { kind: 'knight', traits: ['shoot'] },
+    weapon: { kind: 'knight', category: 'ranged', rating: 1, traits: [] },
+    caps: { melee: 1, ranged: 3, spell: 1 },
     perks: [
       { id: 'ran1', name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
       { id: 'ran2', name: 'Pathfinder', desc: 'Immune to terrain effects (except lava & walls)', grants: { terrainImmune: true } },
-      { id: 'ran3', name: 'Deadshot', desc: 'Kill any unit in one hit, ignoring its defenses (even bosses)', grants: { ignoreDefenses: true } },
+      { id: 'ran3', name: 'Eagle Eye', desc: 'Fresh floors reveal fully; you see and shoot through any terrain but walls', grants: { revealFloor: true, xraySight: true } },
     ],
   },
   ninja: {
     name: 'Ninja',
     blurb: 'A shadow that slips past sentries unseen.',
     color: '#4b5563',
-    weapon: { kind: 'king', traits: ['quick'] },
+    weapon: { kind: 'king', category: 'melee', rating: 1, traits: ['quick'] },
+    caps: { melee: 2, ranged: 2, spell: 1 },
     perks: [
       { id: 'nin1', name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
       { id: 'nin2', name: 'Shadow', desc: 'Statues and turrets ignore you', grants: { stealthStructures: true } },
@@ -253,21 +294,22 @@ const CLASSES = {
   },
   sorcerer: {
     name: 'Sorcerer',
-    blurb: 'A caster who opens with a satchel of scrolls.',
+    blurb: 'A caster who opens with a spell and bends the battlefield.',
     color: '#a855f7',
-    weapon: null, // starts with random scrolls instead of a weapon
-    startKit: 'scrolls',
+    weapon: { kind: 'knight', category: 'spell', rating: 1, traits: [] },
+    caps: { melee: 0, ranged: 1, spell: 3 },
     perks: [
-      { id: 'sor1', name: 'Overload', desc: 'A weapon kill surprises adjacent enemies', grants: { weaponKillSurprise: true } },
-      { id: 'sor2', name: 'Piercing', desc: 'Weapons can target through units', grants: { pierceTargeting: true } },
-      { id: 'sor3', name: 'Ruin', desc: 'Weapons also slay enemies en route to the target', grants: { pierceDamage: true } },
+      { id: 'sor1', name: 'Attunement', desc: 'Spell cards recharge twice as fast when no enemy is in sight', grants: { spellHaste: true } },
+      { id: 'sor2', name: 'Free Casting', desc: 'Spell cards cost no turn to cast', grants: { freeSpell: true } },
+      { id: 'sor3', name: 'Cataclysm', desc: 'Every visible enemy is caught by surprise when you cast a spell', grants: { spellSurprise: true } },
     ],
   },
   necromancer: {
     name: 'Necromancer',
     blurb: 'A death-speaker who bends the slain to his will.',
     color: '#0ea5e9',
-    weapon: { kind: 'king', traits: ['leech'] },
+    weapon: { kind: 'king', category: 'melee', rating: 1, traits: ['leech'] },
+    caps: { melee: 1, ranged: 1, spell: 2 },
     perks: [
       { id: 'nec1', name: 'Familiar', desc: 'A demon familiar (berolina ally) that respawns each descent', grants: { familiar: true } },
       { id: 'nec2', name: 'Reanimate', desc: `A slain foe rises as your ally (up to ${MAX_ALLIES})`, grants: { reanimate: true } },
@@ -280,6 +322,7 @@ const CLASSES = {
     color: '#10b981',
     weapon: null, // starts with random potions instead of a weapon
     startKit: 'potions',
+    caps: { melee: 1, ranged: 1, spell: 1 },
     perks: [
       { id: 'alc1', name: 'Satchel', desc: '+2 consumable slots', grants: { maxConsumables: 2 } },
       { id: 'alc2', name: 'Quick Draw', desc: 'Consumables cost no turn to use', grants: { freePotion: true } },
@@ -289,11 +332,18 @@ const CLASSES = {
 };
 const CLASS_PERK_COST = [1, 2, 3]; // exp cost of the 1st / 2nd / 3rd perk in a ladder
 
-// A weapon card lets the king attack once by moving like the given unit ONTO an
-// enemy (cards can only be used to strike, never to reposition). Its gold cost is
-// the piece's chess value, raised for each weapon trait it bears. Cards share a
-// fixed cooldown; the king card recharges a touch faster.
+// A weapon card lets the king attack once by moving/striking like the given unit.
+// Cards come in three CATEGORIES, sold at three shops:
+//   melee  (blacksmith) - the king moves ONTO the target (as before).
+//   ranged (fletcher)   - the king holds his tile; the shot respects obstructions
+//                         (blocked by units in the way) — except leaps.
+//   spell  (library)    - the king holds his tile; the bolt pierces EVERYTHING on
+//                         the path (ignores obstructions) and costs 2x cooldown.
+// King and pawn cards can only ever be melee. Each card also has a RATING 1-3 that
+// raises its reach and price.
 const CARD_POINTS = {
+  pawn: 1,
+  king: 2,
   knight: 3,
   bishop: 3,
   rook: 5,
@@ -301,36 +351,86 @@ const CARD_POINTS = {
   chancellor: 8,
   queen: 9,
   amazon: 12, // never sold (no amazon enemies to learn from); kept for the final boss
-  king: 2,
 };
-const CARD_COOLDOWN = 3; // Fixed recharge for most cards.
+const CARD_COOLDOWN = 3; // Fixed recharge for most cards (spells double it).
+const CARD_CATEGORIES = ['melee', 'ranged', 'spell'];
+const MELEE_ONLY_KINDS = ['king', 'pawn']; // may never be ranged/spell cards
+const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach = rating (auto-pathed); sliders reach 2+rating
 
 function isCardKind(kind) {
   return Object.prototype.hasOwnProperty.call(CARD_POINTS, kind);
 }
-
-function cardCooldown(kind) {
-  if (kind === 'king') return 2;
-  return CARD_COOLDOWN;
+function kindAllowsCategory(kind, category) {
+  return category === 'melee' || !MELEE_ONLY_KINDS.includes(kind);
+}
+// The card kinds a shop of a given category may stock (from kinds the king has seen).
+function categoryKinds(category) {
+  return Object.keys(CARD_POINTS).filter((k) => kindAllowsCategory(k, category));
 }
 
-// Cost rises with the number of traits (each trait adds the base value again).
-function cardCost(kind, traitCount) {
-  return CARD_POINTS[kind] * (1 + (traitCount || 0));
+// How far a card reaches, by rating: steppers/knights auto-path up to `rating`
+// tiles/leaps; sliders reach 2/3/4 at rating 1/2/3 (so a rating-3 slider outranges
+// the base 7x7 sight and truly matters).
+function cardReach(kind, rating) {
+  return STEPPER_KINDS.includes(kind) ? rating : 1 + rating;
 }
 
-// Weapon traits, each triggering when the card scores a kill (except Quick, which
-// acts on use). A card can carry several traits, but extra traits are increasingly
-// rare (see rollCardTraits).
+// Spell cards recharge twice as slowly; the king card is a touch faster.
+function cardCooldown(kind, category) {
+  const base = kind === 'king' ? 2 : CARD_COOLDOWN;
+  return category === 'spell' ? base * 2 : base;
+}
+
+// Cost scales with the piece value, the rating, and the number of traits.
+function cardCost(kind, traitCount, rating) {
+  return CARD_POINTS[kind] * (rating || 1) * (1 + (traitCount || 0));
+}
+
+// Weapon traits, split by category (a card may only bear traits of its own kind).
+//   melee  : parry, cleave, leech, quick
+//   ranged : rapid, overhead (never on knight cards), shrapnel, recoil
+//   spell  : dazzle, blast, zoom  (+ the deferred weather traits)
 const TRAIT_INFO = {
-  parry: { name: 'Parry', desc: 'Take no damage on the enemy turn after a kill with this card.' },
-  cleave: { name: 'Cleave', desc: 'On a kill, also slay up to 1 adjacent enemy.' },
-  shoot: { name: 'Shoot', desc: 'On a kill, snap back to your starting tile.' },
-  quick: { name: 'Quick', desc: 'Using this card costs no turn.' },
-  leech: { name: 'Leech', desc: 'Gain 1 HP when this card kills an enemy.' },
+  parry: { name: 'Parry', desc: 'Take no damage on the enemy turn after you strike with this card.', category: 'melee' },
+  cleave: { name: 'Cleave', desc: 'On a kill, also slay up to 1 adjacent enemy.', category: 'melee' },
+  leech: { name: 'Leech', desc: 'Gain 1 HP when this card kills an enemy.', category: 'melee' },
+  quick: { name: 'Quick', desc: 'Using this card costs no turn.', category: 'melee' },
+  rapid: { name: 'Rapid', desc: 'On a kill, immediately fire again once, no turn passing.', category: 'ranged' },
+  overhead: { name: 'Overhead', desc: 'Your shot ignores obstructions (not on knight cards).', category: 'ranged' },
+  shrapnel: { name: 'Shrapnel', desc: 'On a hit, each enemy beside the target has a 1/3 chance to be struck.', category: 'ranged' },
+  recoil: { name: 'Recoil', desc: 'Knocks you back one tile, opposite the shot, after firing.', category: 'ranged' },
+  dazzle: { name: 'Dazzle', desc: 'Enemies beside those slain by this spell are caught by surprise.', category: 'spell' },
+  blast: { name: 'Blast', desc: 'This spell can target and destroy statues and turrets.', category: 'spell' },
+  zoom: { name: 'Zoom', desc: 'After casting, move onto the targeted tile if it is empty and passable.', category: 'spell' },
+  // Weather traits reshape the terrain the bolt passes over (mutually exclusive).
+  icy: { name: 'Icy', desc: 'Freezes every tile on the path to ice (fire/lava melt to normal + fog).', category: 'spell' },
+  rainy: { name: 'Rainy', desc: 'Douses the path: fire→normal, normal→mud, mud→water.', category: 'spell' },
+  fiery: { name: 'Fiery', desc: 'Scorches the path: ice→water, water→mud, mud→normal, brush/tree/normal→fire.', category: 'spell' },
+  windy: { name: 'Windy', desc: 'Clears the path: fire, fog, trees, and brush blow away to normal.', category: 'spell' },
 };
+const WEATHER_TRAITS = ['icy', 'rainy', 'fiery', 'windy']; // at most one per card
+const CATEGORY_TRAITS = {
+  melee: ['parry', 'cleave', 'leech', 'quick'],
+  ranged: ['rapid', 'overhead', 'shrapnel', 'recoil'],
+  spell: ['dazzle', 'blast', 'zoom', 'icy', 'rainy', 'fiery', 'windy'],
+};
+// The traits a given kind+category card may roll (knight ranged can't take Overhead).
+function traitsForCard(kind, category) {
+  let pool = CATEGORY_TRAITS[category] || [];
+  if (category === 'ranged' && kind === 'knight') pool = pool.filter((t) => t !== 'overhead');
+  return pool;
+}
+function isWeatherTrait(trait) {
+  return WEATHER_TRAITS.includes(trait);
+}
+
+const FIRE_LIFE = 2; // turns a patch of fire burns before it dies down to normal ground
 const CARD_TRAITS = Object.keys(TRAIT_INFO);
 const MAX_TRAIT_CHANCE = 0.5; // Highest chance (reached on the final floor) a card bears a first trait.
+
+// The three weapon-shop variants and which card category each sells.
+const SHOP_VARIANTS = { blacksmith: 'melee', fletcher: 'ranged', library: 'spell' };
+const SHOP_VARIANT_NAMES = { blacksmith: 'Blacksmith', fletcher: 'Fletcher', library: 'Arcane Library' };
 
 // Movement direction tables, reused by the piece-move generators.
 const ORTHO = [

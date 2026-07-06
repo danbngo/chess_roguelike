@@ -216,6 +216,36 @@ button:disabled {
   display: none;
 }
 
+/* Wider variant for the class-details tooltip (a heading + bullet list). */
+.tile-popover.wide {
+  max-width: 340px;
+}
+
+/* The class rows show only a brief blurb; hovering reveals full details. */
+.class-item {
+  cursor: help;
+}
+
+/* Whole-level minimap, pinned to the viewport's bottom-right corner. */
+#minimap {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 55;
+  width: min(220px, 24vmin);
+  height: min(220px, 24vmin);
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(2, 6, 23, 0.9);
+  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.5);
+  pointer-events: none;
+  display: none;
+}
+
+body.in-game #minimap {
+  display: block;
+}
+
 /* The three-pane game layout: left controls | board | examine pane. */
 .game-layout {
   display: flex;

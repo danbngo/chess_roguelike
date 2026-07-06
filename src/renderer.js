@@ -5,6 +5,8 @@ const Renderer = (function () {
   let ctx = null;
   let canvas = null;
   let tileSize = 0;
+  let miniCanvas = null; // the dedicated bottom-right minimap canvas (screen-fixed)
+  let miniCtx = null;
 
   let playerRender = { x: 0, y: 0, targetX: 0, targetY: 0 };
   let enemyRenders = [];
@@ -55,6 +57,8 @@ const Renderer = (function () {
   function init(canvasEl) {
     canvas = canvasEl;
     ctx = canvasEl.getContext('2d');
+    miniCanvas = typeof document !== 'undefined' ? document.getElementById('minimap') : null;
+    miniCtx = miniCanvas ? miniCanvas.getContext('2d') : null;
     // Two tiles' worth bigger than the old full-board fit: the default view spans
     // half the world (WORLD_SIZE / 2 tiles across the canvas).
     baseTile = canvasEl.width / (WORLD_SIZE / 2);
@@ -178,6 +182,9 @@ const Renderer = (function () {
       render.awake = Boolean(enemy.awake);
       render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
+      render.boss = Boolean(enemy.boss);
+      render.hp = enemy.hp;
+      render.maxHp = enemy.maxHp;
       next.push(render);
     }
     enemyRenders = next;
@@ -293,10 +300,8 @@ const Renderer = (function () {
     skirmisher: '#f59e0b', // amber
     armored: '#9aa6b2', // steel
     summoner: '#a855f7', // violet
-    summoned: '#6b7280', // gray
     mage: '#c084fc', // arcane
     flying: '#7dd3fc', // sky
-    mounted: '#b45309', // saddle brown
   };
   function drawRoleHat(tileX, tileY, role) {
     const color = ROLE_HAT[role];
@@ -317,6 +322,23 @@ const Renderer = (function () {
     ctx.strokeStyle = 'rgba(0,0,0,0.5)';
     ctx.lineWidth = 1;
     ctx.stroke();
+    ctx.restore();
+  }
+
+  // A boss's HP bar, hovering just below its token.
+  function drawBossHpBar(tileX, tileY, hp, maxHp) {
+    const frac = Math.max(0, Math.min(1, hp / maxHp));
+    const w = tileSize * 0.72;
+    const h = tileSize * 0.09;
+    const x = tileX * tileSize + (tileSize - w) / 2;
+    const y = tileY * tileSize + tileSize * 0.86;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+    ctx.fillStyle = '#3a0d0d';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = frac > 0.5 ? '#e0b341' : frac > 0.25 ? '#e07a2b' : '#dc2626';
+    ctx.fillRect(x, y, w * frac, h);
     ctx.restore();
   }
 
@@ -368,11 +390,13 @@ const Renderer = (function () {
     }
   }
 
-  // A small glyph above a piece's head (surprise "!", frustration "✖", etc.).
+  // A small state glyph (surprise "!", frustration "✖", etc.) in the piece's
+  // TOP-RIGHT corner — clear of the top-centre role hat, so a unit's state never
+  // hides its role.
   function drawStatusMark(tileX, tileY, glyph, color) {
-    const cx = tileX * tileSize + tileSize / 2;
-    const cy = tileY * tileSize + tileSize * 0.12;
-    ctx.font = `bold ${tileSize * 0.55}px sans-serif`;
+    const cx = tileX * tileSize + tileSize * 0.8;
+    const cy = tileY * tileSize + tileSize * 0.2;
+    ctx.font = `bold ${tileSize * 0.44}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 4;
@@ -653,6 +677,8 @@ const Renderer = (function () {
         return isDark ? '#c2cccc' : '#e0e7e3'; // pale frost
       case 'lava':
         return isDark ? '#7a1f10' : '#a6321a'; // molten rock
+      case 'fire':
+        return isDark ? '#8a2b0e' : '#c2410c'; // burning ground
       case 'water':
         return isDark ? '#1e4d6b' : '#2f6f97'; // deep water
       case 'mud':
@@ -714,6 +740,21 @@ const Renderer = (function () {
         ctx.fill();
         ctx.fillStyle = 'rgba(60, 42, 22, 0.9)';
         ctx.fillRect(px + tileSize * 0.45, py + tileSize * 0.6, tileSize * 0.1, tileSize * 0.22);
+        break;
+      }
+      case 'fire': {
+        // Licking tongues of flame.
+        const flames = ['rgba(255,196,60,0.9)', 'rgba(255,120,30,0.85)'];
+        for (let i = 0; i < 3; i += 1) {
+          const fx = px + tileSize * (0.22 + tileHash(x * 7 + i, y) * 0.56);
+          const fyBase = py + tileSize * 0.82;
+          ctx.fillStyle = flames[i % flames.length];
+          ctx.beginPath();
+          ctx.moveTo(fx - tileSize * 0.08, fyBase);
+          ctx.quadraticCurveTo(fx, fyBase - tileSize * (0.35 + tileHash(x, y * 7 + i) * 0.2), fx + tileSize * 0.08, fyBase);
+          ctx.closePath();
+          ctx.fill();
+        }
         break;
       }
       case 'water': {
@@ -790,6 +831,74 @@ const Renderer = (function () {
   function drawEmpty() {
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // A whole-level minimap drawn onto its own screen-fixed canvas (bottom-right of
+  // the viewport). Shows explored terrain (dim when only remembered, bright while
+  // in sight — so fog of war reads clearly), discovered features, and green/red
+  // blips for the king and any foes currently in view.
+  function drawMinimap(state) {
+    if (!miniCtx || !miniCanvas) return;
+    const W = miniCanvas.width;
+    const H = miniCanvas.height;
+    miniCtx.clearRect(0, 0, W, H);
+    if (!state || !state.player) return;
+
+    const world = state.worldSize || WORLD_SIZE;
+    const cell = Math.min(W, H) / world; // the whole level fits, square
+    const ox = (W - cell * world) / 2; // center the map if the canvas isn't square
+    const oy = (H - cell * world) / 2;
+
+    // Backing (also the colour of unexplored/void tiles).
+    miniCtx.fillStyle = 'rgba(2, 6, 23, 0.92)';
+    miniCtx.fillRect(0, 0, W, H);
+
+    const explored = state.explored || {};
+    const visible = computeVisibleTiles(state);
+    const fill = (x, y) => miniCtx.fillRect(ox + x * cell, oy + y * cell, cell + 0.6, cell + 0.6);
+
+    // Terrain: remembered tiles dim, in-sight tiles bright; unexplored stays void.
+    for (let y = 0; y < world; y += 1) {
+      for (let x = 0; x < world; x += 1) {
+        const key = `${x},${y}`;
+        if (!explored[key]) continue; // fog of war — never seen
+        const seen = visible.has(key);
+        miniCtx.globalAlpha = seen ? 1 : 0.5;
+        miniCtx.fillStyle = terrainColor(terrainAt(state, x, y), !seen);
+        fill(x, y);
+      }
+    }
+    miniCtx.globalAlpha = 1;
+
+    // Interesting features (once discovered), as distinct coloured cells.
+    const feature = (f, color) => {
+      if (!f || !f.discovered) return;
+      miniCtx.fillStyle = color;
+      fill(f.x, f.y);
+    };
+    feature(state.exit, '#38bdf8'); // stair down — cyan
+    feature(state.altar, '#c084fc'); // class altar — violet
+    feature(state.weaponShop, '#f59e0b'); // weapon shop — amber
+    feature(state.potionShop, '#2dd4bf'); // apothecary — teal
+
+    // Blips: the king (green) and any foes currently in sight (red).
+    const blip = (x, y, color, r) => {
+      miniCtx.fillStyle = color;
+      miniCtx.beginPath();
+      miniCtx.arc(ox + (x + 0.5) * cell, oy + (y + 0.5) * cell, r, 0, Math.PI * 2);
+      miniCtx.fill();
+    };
+    const r = Math.max(1.4, cell * 0.42);
+    for (const e of state.enemies || []) {
+      if (visible.has(`${e.x},${e.y}`)) blip(e.x, e.y, '#ef4444', r);
+    }
+    blip(state.player.x, state.player.y, '#22c55e', r + 0.7);
+
+    // A faint frame marking the slice of the level currently on screen.
+    const b = getVisibleBounds(state);
+    miniCtx.strokeStyle = 'rgba(226, 232, 240, 0.55)';
+    miniCtx.lineWidth = 1;
+    miniCtx.strokeRect(ox + b.x * cell, oy + b.y * cell, b.width * cell, b.height * cell);
   }
 
   function draw(state, showMoves, cardTargets, cardCursor) {
@@ -971,15 +1080,18 @@ const Renderer = (function () {
     const visibleEnemies = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY));
     const isMoving = (enemy) => Math.abs(enemy.x - enemy.targetX) + Math.abs(enemy.y - enemy.targetY) > 0.05;
     const ordered = [...visibleEnemies.filter((enemy) => !isMoving(enemy)), ...visibleEnemies.filter(isMoving)];
-    const bossWarded = typeof bossShielded === 'function' ? bossShielded(state) : false;
     for (const enemy of ordered) {
       const role = enemy.role || 'normal';
       // Mages/summoners that are spent (recharging) can't act next turn — drawn
       // faded so the player can read who is dangerous this turn.
       const inactive = (role === 'mage' || role === 'summoner') && !enemy.charged;
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, shielded: role === 'boss' && bossWarded, inactive });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, inactive });
       if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
+      }
+      // A boss wears a HP bar so the multi-hit fight has a readable state.
+      if (enemy.boss && enemy.maxHp) {
+        drawBossHpBar(enemy.x, enemy.y, enemy.hp, enemy.maxHp);
       }
       // Main-AI-state icon (statues stay dormant, so show no state for them).
       if (role !== 'statue' && role !== 'turret') {
@@ -1015,6 +1127,8 @@ const Renderer = (function () {
       ctx.fillStyle = `rgba(${flashColor}, ${flashPeak * flash})`;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
+
+    drawMinimap(state); // whole-level overview, bottom-right (over the hit flash)
   }
 
   return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, panBy, panByPixels, zoomBy, screenToTile };
