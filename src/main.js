@@ -8,7 +8,6 @@
   const turnLabel = document.getElementById('turn');
   const healthLabel = document.getElementById('health');
   const levelLabel = document.getElementById('level');
-  const consumableBar = document.getElementById('consumable-bar');
   const logEl = document.getElementById('log');
   const examineEl = document.getElementById('examine');
   const restartButton = document.getElementById('restart');
@@ -34,6 +33,7 @@
   const optionsScreen = document.getElementById('options-screen');
   const optionsStatus = document.getElementById('options-tutorial-status');
   const optionsToggle = document.getElementById('options-toggle-tutorial');
+  const optionsSoundToggle = document.getElementById('options-toggle-sound');
   const optionsCharacterButton = document.getElementById('options-character');
 
   const characterScreen = document.getElementById('character-screen');
@@ -110,7 +110,6 @@
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
     healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
     renderCards();
-    renderConsumables();
   }
 
   /* -------------------------------- log --------------------------------- */
@@ -196,51 +195,6 @@
     return slot;
   }
 
-  // The held-potion bar: click a potion to drink it (costs a turn, unless the
-  // Alchemist's Quick Draw makes it free).
-  function renderConsumables() {
-    if (!consumableBar) return;
-    consumableBar.innerHTML = '';
-    if (!gameState) return;
-    const { consumables, maxConsumables } = gameState.player;
-    for (let i = 0; i < maxConsumables; i += 1) {
-      const key = consumables[i];
-      const slot = document.createElement('button');
-      slot.type = 'button';
-      slot.className = 'card-slot consumable-slot';
-      if (!key) {
-        slot.classList.add('empty');
-        slot.textContent = '·';
-        slot.disabled = true;
-        consumableBar.append(slot);
-        continue;
-      }
-      const info = CONSUMABLES[key];
-      slot.textContent = info.glyph;
-      slot.style.color = info.color;
-      slot.title = `${info.name} — ${info.desc} (click to drink)`;
-      slot.classList.add('ready');
-      slot.disabled = !isIdle();
-      slot.addEventListener('click', () => useConsumableAt(i));
-      consumableBar.append(slot);
-    }
-  }
-
-  function useConsumableAt(index) {
-    if (!isIdle()) return;
-    cancelCardTargeting();
-    const result = consumeItem(gameState, index);
-    if (result.lastAction === 'blocked') {
-      applyState(result, false);
-      return;
-    }
-    Renderer.effect('heal');
-    if (result.lastAction === 'consume-free') {
-      applyState(result, true); // Quick Draw: no enemy phase
-      return;
-    }
-    processPlayerResult(result); // costs a turn — enemies then move
-  }
 
   // Start (or cancel) aiming a card. While aiming, its reachable tiles glow.
   function toggleCardTargeting(index) {
@@ -394,7 +348,7 @@
   // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
   function potionLabel(potion) {
     const info = CONSUMABLES[potion];
-    return info ? `${info.name} — ${info.desc}` : 'A mysterious potion.';
+    return info ? `${info.name} — ${info.desc} (step on to quaff when it helps)` : 'A mysterious potion.';
   }
 
   function setExamineEmpty(text) {
@@ -440,7 +394,6 @@
       const p = gameState.player;
       const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Level ${p.level || 1}`];
       stats.push(`Cards — ${(p.cards || []).length} ${classCategory(p.className)}`);
-      stats.push(`Potion slots ${p.maxConsumables}`);
       const cls = CLASSES[p.className];
       addExamineBlock(cls ? `${cls.name} King` : 'Your King', stats);
       if ((p.takenPerks || []).length && cls) {
@@ -471,6 +424,12 @@
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
       addExamineBlock('Stairs', 'Descend to the next floor — you fully heal and gain a level.');
+    }
+
+    const scar = (gameState.scars || []).find((s) => s.x === tx && s.y === ty);
+    if (scar && (gameState.explored || {})[`${tx},${ty}`]) {
+      if (scar.kind === 'circle') addExamineBlock('Ruined circle', 'A shattered summoning circle — it conjures no more.');
+      else addExamineBlock('Sprung trap', 'A trap that already fired when it came into view.');
     }
   }
 
@@ -527,6 +486,7 @@
       return;
     }
     cancelCardTargeting();
+    GameAudio.play('cast');
     processPlayerResult(useCard(gameState, index, target.x, target.y));
   }
 
@@ -644,6 +604,7 @@
     const enabled = tutorialsEnabled();
     optionsStatus.textContent = `Tutorial tips are currently ${enabled ? 'ON' : 'OFF'}.`;
     optionsToggle.textContent = enabled ? 'Disable tutorials' : 'Enable tutorials';
+    if (optionsSoundToggle) optionsSoundToggle.textContent = GameAudio.isEnabled() ? 'Sound: On' : 'Sound: Off';
     // The character sheet only exists mid-run.
     if (optionsCharacterButton) optionsCharacterButton.style.display = gameState ? '' : 'none';
   }
@@ -699,7 +660,6 @@
       `HP ${p.hp}/${p.maxHp}`,
       `Sight ${p.vision}`,
       `Move ${p.moveRange}`,
-      `Potion slots ${p.maxConsumables}`,
     ]));
 
     const cards = p.cards || [];
@@ -718,11 +678,6 @@
           return perk.desc ? `${perk.name} — ${perk.desc}` : perk.name;
         })
       : ['No perks taken yet.']));
-
-    const held = (p.consumables || []).filter(Boolean);
-    characterBody.append(characterBlock(`Potions (${held.length}/${p.maxConsumables})`, held.length
-      ? held.map((k) => potionLabel(k))
-      : ['Satchel empty.']));
   }
 
   function openCharacter() {
@@ -1025,6 +980,7 @@
       take.addEventListener('click', () => {
         applyState(learnPerk(gameState, perk.id), false);
         Renderer.effect('powerup');
+        GameAudio.play('buy');
         closeLevelUp();
       });
       row.append(info, take);
@@ -1055,17 +1011,35 @@
       return;
     }
 
+    const prevEnemies = gameState ? gameState.enemies.length : 0;
+    const prevScars = gameState ? (gameState.scars || []).length : 0;
+
     applyState(nextState, true);
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
 
+    const felled = prevEnemies - nextState.enemies.length; // captures this action
+    const struck = nextState.lastAction === 'combat' || nextState.lastAction === 'move-free';
+    // A trap fired this move if a fresh 'trap' scar appeared.
+    const trapSprung = (nextState.scars || []).length > prevScars
+      && (nextState.scars || []).slice(prevScars).some((s) => s.kind === 'trap');
+
     // Feedback flashes for what just happened.
-    if (nextState.lastAction === 'combat' || nextState.lastAction === 'move-free') {
+    if (struck) {
       Renderer.effect('kill');
+    }
+    if (nextState.drankPotion) {
+      Renderer.effect('heal');
+      GameAudio.play('quaff');
+    }
+    if (trapSprung) {
+      Renderer.effect('trap'); // amber jolt — foes just erupted beside you
+      queueTip('trap');
     }
 
     if (nextState.won) {
       // Let the victory flash play for a beat before the overlay drops.
       Renderer.effect('victory');
+      GameAudio.play('win');
       pendingAction = 'victory';
       animTimer = PLAYER_MOVE_TIME * 3;
       return;
@@ -1075,13 +1049,17 @@
       return;
     }
     if (nextState.lastAction === 'exit') {
+      GameAudio.play('descend');
       queueTip('exit');
       pendingAction = 'floor';
       animTimer = PLAYER_MOVE_TIME;
       return;
     }
-    // Quick weapons / Bloodrush kills / free potions cost no turn — no enemy phase.
-    if (nextState.enemyTurn === false || nextState.lastAction === 'card-free' || nextState.lastAction === 'move-free' || nextState.lastAction === 'consume-free') {
+    // A strike either felled a piece (kill) or merely chipped it (attack).
+    if (felled > 0) GameAudio.play('kill');
+    else if (struck) GameAudio.play('attack');
+    // Quick weapons / Bloodrush kills cost no turn — no enemy phase.
+    if (nextState.enemyTurn === false || nextState.lastAction === 'card-free' || nextState.lastAction === 'move-free') {
       return;
     }
 
@@ -1107,6 +1085,7 @@
       }
       if (gameState.player.hp < hpBefore) {
         Renderer.effect(gameState.gameOver ? 'death' : 'hit');
+        GameAudio.play(gameState.gameOver ? 'death' : 'hit');
         flashHealth();
         if (!gameState.gameOver) {
           queueTip('hp');
@@ -1114,6 +1093,7 @@
       } else if (gameState.player.deflected) {
         // A blow landed but was warded/parried away — flash a blue block.
         Renderer.effect('deflect');
+        GameAudio.play('deflect');
       }
       if (gameState.gameOver) {
         enemyQueue = [];
@@ -1155,6 +1135,7 @@
       const index = cardTargeting;
       cancelCardTargeting();
       if (target) {
+        GameAudio.play('cast');
         processPlayerResult(useCard(gameState, index, tileX, tileY));
       } else {
         examineTile(tileX, tileY);
@@ -1204,6 +1185,12 @@
     // Continuous edge-of-screen panning while playing.
     if (screen === 'playing' && (edgePan.x || edgePan.y)) {
       Renderer.panBy(edgePan.x * EDGE_PAN_SPEED * delta, edgePan.y * EDGE_PAN_SPEED * delta);
+    }
+
+    // At max danger the turn counter pulses amber<->red (a louder alarm than the
+    // steady red of merely-high danger) — matched by the doubled spawn rate.
+    if (gameState && screen === 'playing' && gameState.turn >= MAX_TURNS_SCARY) {
+      turnLabel.style.color = Math.floor(timestamp / 350) % 2 ? '#fde047' : '#ef4444';
     }
 
     Renderer.update(delta);
@@ -1367,6 +1354,12 @@
     }
     refreshOptions();
   });
+  if (optionsSoundToggle) {
+    optionsSoundToggle.addEventListener('click', () => {
+      GameAudio.toggle();
+      refreshOptions();
+    });
+  }
   restartButton.addEventListener('click', () => {
     newGame(); // lives in the options menu now; starts a fresh run
   });

@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, consumeItem, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -33,8 +33,8 @@ function makeEnemy(extra) {
 
 test('createInitialState starts the king at the center and spawns enemies', () => {
   const state = createInitialState('warrior');
-  assert.equal(state.player.x, 8);
-  assert.equal(state.player.y, 8);
+  assert.equal(state.player.x, 14);
+  assert.equal(state.player.y, 14);
   assert.ok(state.enemies.length >= 3);
 });
 
@@ -54,13 +54,13 @@ test('visible bounds are a centered 7x7 window', () => {
   const bounds = getVisibleBounds(createInitialState('warrior'));
   assert.equal(bounds.width, 7);
   assert.equal(bounds.height, 7);
-  assert.equal(bounds.x, 5);
-  assert.equal(bounds.y, 5);
+  assert.equal(bounds.x, 11);
+  assert.equal(bounds.y, 11);
 });
 
 test('a fresh floor reveals fog around the king but not the far corners', () => {
   const state = createInitialState('warrior');
-  assert.ok(state.explored['8,8']);
+  assert.ok(state.explored['14,14']);
   assert.ok(!state.explored['0,0']);
 });
 
@@ -113,17 +113,47 @@ test('a summoning circle conjures a foe when it sees you, and dies when stepped 
   assert.ok(!destroyed.enemies.some((e) => e.summonCircle), 'stepping on it destroys it');
 });
 
-test('a ground potion is picked up on arrival', () => {
+test('a ground potion is quaffed on arrival when useful, else left on the ground', () => {
+  const base = () => {
+    const s = createInitialState('warrior');
+    s.terrain = {};
+    s.enemies = [];
+    s.player.x = 8;
+    s.player.y = 8;
+    s.items = [{ kind: 'consumable', potion: 'health', x: 9, y: 8 }];
+    return s;
+  };
+  // Hurt: stepping onto the health potion drinks it and clears the tile.
+  const hurt = base();
+  hurt.player.hp = 1;
+  const drank = movePlayerTo(hurt, 9, 8);
+  assert.equal(drank.player.hp, drank.player.maxHp);
+  assert.equal(drank.items.length, 0);
+  assert.equal(drank.drankPotion, true);
+
+  // Full HP: the potion is wasted on nothing, so it's LEFT for later.
+  const full = base();
+  full.player.hp = full.player.maxHp;
+  const skipped = movePlayerTo(full, 9, 8);
+  assert.equal(skipped.items.length, 1);
+  assert.equal(skipped.drankPotion, false);
+});
+
+test('a seen potion is remembered after it slips into the fog of war', () => {
   const s = createInitialState('warrior');
   s.terrain = {};
   s.enemies = [];
+  s.itemMemory = {};
   s.player.x = 8;
   s.player.y = 8;
-  s.player.consumables = [];
-  s.items = [{ kind: 'consumable', potion: 'health', x: 9, y: 8 }];
-  const n = movePlayerTo(s, 9, 8);
-  assert.equal(n.player.consumables.length, 1);
-  assert.equal(n.items.length, 0);
+  // Mana potion; the king's cards are all charged, so it is left on the ground.
+  s.items = [{ kind: 'consumable', potion: 'mana', x: 11, y: 8 }];
+  let n = movePlayerTo(s, 8, 9); // in sight (chebyshev 3): remembered
+  assert.ok(n.itemMemory['11,8'], 'the potion the king saw is remembered');
+  n = movePlayerTo(n, 7, 9); // chebyshev 4 from the potion: beyond the 3-tile sight radius
+  assert.ok(chebyshev(7, 9, 11, 8) > 3, 'the potion is now outside the sight window');
+  assert.ok(n.itemMemory['11,8'], 'and it stays remembered through the fog');
+  assert.equal(n.items.length, 1, 'the potion still lies on the ground');
 });
 
 test('the king cannot cross lava, but enemies can', () => {
@@ -155,6 +185,7 @@ test('water is passable but slow', () => {
 test('a melee card moves the king onto the target; a spell card pierces cover', () => {
   const melee = createInitialState('warrior');
   melee.terrain = {};
+  melee.traps = [];
   melee.player.x = 8;
   melee.player.y = 8;
   melee.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true })];
@@ -164,6 +195,7 @@ test('a melee card moves the king onto the target; a spell card pierces cover', 
 
   const spell = createInitialState('sorcerer');
   spell.terrain = {};
+  spell.traps = [];
   spell.player.x = 8;
   spell.player.y = 8;
   spell.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true }), makeEnemy({ kind: 'pawn', x: 11, y: 8, awake: true })];

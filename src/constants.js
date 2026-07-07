@@ -1,22 +1,24 @@
 // Shared configuration. Loaded first; every other script reads from these.
 
-const WORLD_SIZE = 20; // The full board is WORLD_SIZE x WORLD_SIZE tiles.
+const WORLD_SIZE = 28; // The full board is WORLD_SIZE x WORLD_SIZE tiles (walled border).
 const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so centered).
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
-const PLAYER_START = { x: 8, y: 8 };
+const PLAYER_START = { x: 14, y: 14 };
 const STARTING_HP = 5;
 const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread.
 const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
 const PURSUIT_TTL = 6; // Turns an enemy hunts toward the king's last-seen tile before losing the trail.
-const MAX_ENEMIES = 40; // Hard safety cap so over-time spawning can't run away.
+const MAX_ENEMIES = 70; // Hard safety cap so over-time spawning can't run away.
+const TRAP_SPAWN_COUNT = 3; // Foes conjured when a trap enters the king's sight.
 
 // Consumables: just two potions now, held in the satchel and used on demand. They
-// are found on the floor (dropped on the ground) and grabbed by stepping on them.
+// found on the floor (dropped on the ground) and quaffed the instant the king steps
+// onto one — but ONLY if it would help right now; otherwise it's left where it lies
+// (and remembered through the fog) for when it's needed.
 const CONSUMABLES = {
   health: { name: 'Potion of Healing', desc: 'Restores all HP.', glyph: '♥', color: '#f472b6' },
   mana: { name: 'Potion of Mending', desc: 'Recharges every card.', glyph: '✦', color: '#60a5fa' },
 };
-const STARTING_CONSUMABLE_SLOTS = 3; // How many potions the king can carry.
 const POTION_KINDS = ['health', 'mana'];
 
 // --- Floors -----------------------------------------------------------------
@@ -67,14 +69,14 @@ function floorName(floor) {
 // Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of
 // the king's central start and spread around the board's edges.
 const CHAMBER_ANCHORS = [
-  { x: 16, y: 16 },
-  { x: 3, y: 3 },
-  { x: 16, y: 3 },
-  { x: 3, y: 16 },
-  { x: 16, y: 10 },
-  { x: 3, y: 10 },
-  { x: 10, y: 16 },
-  { x: 10, y: 3 },
+  { x: 22, y: 22 },
+  { x: 5, y: 5 },
+  { x: 22, y: 5 },
+  { x: 5, y: 22 },
+  { x: 22, y: 14 },
+  { x: 5, y: 14 },
+  { x: 14, y: 22 },
+  { x: 14, y: 5 },
 ];
 function chamberAnchorForFloor(floor) {
   return CHAMBER_ANCHORS[((floor - 1) % FINAL_FLOOR + FINAL_FLOOR) % FINAL_FLOOR];

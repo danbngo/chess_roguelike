@@ -188,6 +188,14 @@ function applyConsumable(state, potion) {
   }
 }
 
+// Would quaffing this potion do anything right now? (Full HP wastes a Healing;
+// all cards ready wastes a Mending.) If not, the king leaves it on the ground.
+function consumableIsUseful(player, potion) {
+  if (potion === 'health') return player.hp < player.maxHp;
+  if (potion === 'mana') return (player.cards || []).some((c) => c.remaining > 0);
+  return true;
+}
+
 // Return up to `count` distinct random members of `items` (a shuffled sample).
 function pickSome(items, count) {
   const pool = items.slice();
@@ -203,7 +211,7 @@ function pickSome(items, count) {
 // Perk grant flags that are simply switched on.
 const PERK_FLAGS = [
   'reflect', 'firstHitEachTurn', 'freeKillMove', 'extraLife', 'stealth', 'terrainImmune',
-  'revealFloor', 'freePotion', 'spellHaste', 'freeSpell', 'spellSurprise',
+  'revealFloor', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
 ];
 
@@ -223,7 +231,6 @@ function applyPerk(player, grants) {
   if (grants.vision) player.vision += grants.vision;
   if (grants.moveRange) player.moveRange += grants.moveRange;
   if (grants.cardReach) player.cardReach = (player.cardReach || 0) + grants.cardReach;
-  if (grants.maxConsumables) player.maxConsumables += grants.maxConsumables;
   if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className)));
   for (const flag of PERK_FLAGS) {
     if (grants[flag]) player[flag] = true;
@@ -244,8 +251,6 @@ function createPlayer(classKey) {
     vision: STARTING_VISION,
     cardReach: 0,
     cards: [],
-    maxConsumables: STARTING_CONSUMABLE_SLOTS,
-    consumables: [],
     takenPerks: [], // perk ids taken (unique ones can't be offered again)
     warded: false,
     firstHitUsedThisTurn: false,
@@ -310,16 +315,73 @@ function findFreeTile(occupied, predicate, attempts) {
   return null;
 }
 
-// Scatter the floor's terrain (walls / water / lava per the level recipe), keeping
-// the tiles around the king's start clear.
+// Tiles the KING can walk between (8-directional flood over floor/water — walls and
+// lava block him). Used to guarantee the exit is reachable.
+function playerReachable(state, sx, sy) {
+  const seen = new Set();
+  const walkable = (x, y) => x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE
+    && standableFor(terrainAt(state, x, y), { lavaOk: false });
+  if (!walkable(sx, sy)) return seen;
+  const stack = [[sx, sy]];
+  seen.add(`${sx},${sy}`);
+  while (stack.length) {
+    const [x, y] = stack.pop();
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const key = `${nx},${ny}`;
+      if (seen.has(key) || !walkable(nx, ny)) continue;
+      seen.add(key);
+      stack.push([nx, ny]);
+    }
+  }
+  return seen;
+}
+
+// Clear a walkable L-shaped corridor between two points (turning walls/lava to floor).
+function carveCorridor(state, x0, y0, x1, y1) {
+  let x = x0;
+  let y = y0;
+  const open = (cx, cy) => {
+    if (cx <= 0 || cx >= WORLD_SIZE - 1 || cy <= 0 || cy >= WORLD_SIZE - 1) return;
+    const t = terrainAt(state, cx, cy);
+    if (t === 'wall' || t === 'lava') delete state.terrain[`${cx},${cy}`];
+  };
+  while (x !== x1) { open(x, y); x += Math.sign(x1 - x); }
+  while (y !== y1) { open(x, y); y += Math.sign(y1 - y); }
+  open(x, y);
+}
+
+// Would this enemy, as its piece, have at least one legal move from where it stands?
+function enemyHasMove(state, enemy) {
+  return getPieceMoves(enemy, state).length > 0;
+}
+
+// Build the floor's terrain: a solid wall border enclosing everything, then rooms,
+// hallways and water/lava per the level recipe. The tiles around the king's start
+// stay clear.
 function generateTerrain(floor, player) {
   const terrain = {};
   const nearStart = (x, y) => chebyshev(x, y, player.x, player.y) <= 2;
+  // Interior placement only (never the border, never on the king's doorstep).
   const put = (x, y, type) => {
     if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) return;
     if (nearStart(x, y)) return;
     terrain[`${x},${y}`] = type;
   };
+  const clear = (x, y) => {
+    if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) return;
+    delete terrain[`${x},${y}`];
+  };
+
+  // 1) A wall wraps the whole map so the king is always enclosed.
+  for (let i = 0; i < WORLD_SIZE; i += 1) {
+    terrain[`${i},0`] = 'wall';
+    terrain[`${i},${WORLD_SIZE - 1}`] = 'wall';
+    terrain[`0,${i}`] = 'wall';
+    terrain[`${WORLD_SIZE - 1},${i}`] = 'wall';
+  }
+
   const blob = (type, patches, spread) => {
     for (let i = 0; i < patches; i += 1) {
       const cx = randomInt(WORLD_SIZE);
@@ -328,10 +390,11 @@ function generateTerrain(floor, player) {
       for (let j = 0; j < cells; j += 1) put(cx + randomInt(3) - 1, cy + randomInt(3) - 1, type);
     }
   };
+  // Straight wall runs — the bones of hallways.
   const wallLine = (segments, length) => {
     for (let i = 0; i < segments; i += 1) {
-      let x = randomInt(WORLD_SIZE);
-      let y = randomInt(WORLD_SIZE);
+      let x = 1 + randomInt(WORLD_SIZE - 2);
+      let y = 1 + randomInt(WORLD_SIZE - 2);
       const horizontal = Math.random() < 0.5;
       for (let j = 0; j < length; j += 1) {
         put(x, y, 'wall');
@@ -340,14 +403,34 @@ function generateTerrain(floor, player) {
       }
     }
   };
+  // Rectangular rooms — a wall outline with one or two doorway gaps.
+  const rooms = (count) => {
+    for (let i = 0; i < count; i += 1) {
+      const w = 4 + randomInt(5);
+      const h = 4 + randomInt(5);
+      const rx = 2 + randomInt(Math.max(1, WORLD_SIZE - w - 3));
+      const ry = 2 + randomInt(Math.max(1, WORLD_SIZE - h - 3));
+      const edge = [];
+      for (let x = rx; x < rx + w; x += 1) { put(x, ry, 'wall'); put(x, ry + h - 1, 'wall'); edge.push([x, ry], [x, ry + h - 1]); }
+      for (let y = ry; y < ry + h; y += 1) { put(rx, y, 'wall'); put(rx + w - 1, y, 'wall'); edge.push([rx, y], [rx + w - 1, y]); }
+      const doors = 1 + randomInt(2);
+      for (let d = 0; d < doors && edge.length; d += 1) {
+        const [dx, dy] = edge[randomInt(edge.length)];
+        clear(dx, dy);
+        clear(dx, dy); // widen the gap a touch by clearing a neighbour too
+      }
+    }
+  };
+
   const level = levelForFloor(floor);
   const recipe = (level && level.recipe) || {};
   const cycle = Math.floor((floor - 1) / FINAL_FLOOR);
-  const scale = 1 + cycle * 0.5;
+  const scale = (1 + cycle * 0.5) * (WORLD_SIZE / 20); // more seeds for the bigger board
   const seeds = (type) => Math.round((recipe[type] || 0) * scale);
   if (seeds('water')) blob('water', 2 * seeds('water'), 5);
   if (seeds('lava')) blob('lava', 2 * seeds('lava'), 5);
-  if (seeds('wall')) wallLine(2 * seeds('wall'), 3);
+  if (seeds('wall')) wallLine(3 * seeds('wall'), 5);
+  rooms(3 + randomInt(3));
   return terrain;
 }
 
@@ -365,6 +448,8 @@ function generateFloor(floor, carryPlayer, score) {
     enemies: [],
     items: [],
     spatters: [],
+    traps: [], // hidden until they enter sight, then they conjure foes and stay sprung
+    scars: [], // permanent marks (sprung traps / shattered summoning circles)
     exit: null,
     floor,
     turn: 0,
@@ -389,24 +474,35 @@ function generateFloor(floor, carryPlayer, score) {
     if (tile) occupied.add(tile.key);
     return tile;
   }
-  function addEnemy(type, x, y, surprised) {
+  // Spawn a MOBILE enemy that is guaranteed to have a legal move: if the chosen kind
+  // is walled in, fall back to a king (moves one step any way); if even that is
+  // trapped, don't spawn it at all — never leave a piece frozen in place.
+  function addMobileEnemy(type, x, y, surprised) {
     const enemy = createEnemy(type, x, y);
     enemy.surprised = Boolean(surprised);
     state.enemies.push(enemy);
+    if (!enemyHasMove(state, enemy)) {
+      enemy.kind = 'king';
+      if (!enemyHasMove(state, enemy)) {
+        state.enemies.pop();
+        return null;
+      }
+    }
+    return enemy;
   }
 
-  // Wandering off-screen enemies, growing with depth (capped).
-  const offscreenCount = Math.min(5 + floor * 3, MAX_ENEMIES);
+  // Wandering off-screen enemies, growing with depth — roughly double the old count.
+  const offscreenCount = Math.min(10 + floor * 6, MAX_ENEMIES);
   for (let i = 0; i < offscreenCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (!tile) break;
-    addEnemy(randomEnemyKind(floor), tile.x, tile.y, false);
+    addMobileEnemy(randomEnemyKind(floor), tile.x, tile.y, false);
   }
 
   // Floor 1 introduces the game with one visible, surprised foe.
   if (floor === 1) {
     const tile = place((x, y) => standable(x, y) && seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
-    if (tile) addEnemy(randomEnemyKind(floor), tile.x, tile.y, true);
+    if (tile) addMobileEnemy(randomEnemyKind(floor), tile.x, tile.y, true);
   }
 
   // The exit + boss chamber sit at the floor's fixed anchor, ringed by a wall (or a
@@ -438,17 +534,30 @@ function generateFloor(floor, carryPlayer, score) {
   delete state.terrain[`${doorX},${doorY}`];
 
   // The boss stands ON the stair, guarding the way down until roused.
-  state.enemies.push(createBoss(floor, ax, ay));
-
-  const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 5 && chebyshev(x, y, player.x, player.y) >= 3;
-  // Sleeping backup pieces near the boss.
-  for (let i = 0; i < 3 + Math.floor(floor / 2); i += 1) {
-    const spot = place(nearChamber);
-    if (spot) state.enemies.push(createEnemy(randomEnemyKind(floor), spot.x, spot.y));
+  const boss = createBoss(floor, ax, ay);
+  state.enemies.push(boss);
+  // A pure jumper (e.g. a knight) only ever lands on the chebyshev-2 ring, so a solid
+  // wall ring would pen it in forever. If the boss can't move once roused, flood the
+  // ring to water so any piece can wade out.
+  if (!enemyHasMove(state, boss)) {
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dy = -2; dy <= 2; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== 2) continue;
+        const key = `${ax + dx},${ay + dy}`;
+        if (state.terrain[key] === 'wall') state.terrain[key] = 'water';
+      }
+    }
   }
-  // Turrets guarding the chamber (from floor 3).
+
+  const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 6 && chebyshev(x, y, player.x, player.y) >= 3;
+  // Sleeping backup pieces near the boss (roughly doubled).
+  for (let i = 0; i < 6 + floor; i += 1) {
+    const spot = place(nearChamber);
+    if (spot) addMobileEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
+  }
+  // Turrets guarding the chamber (from floor 3, roughly doubled).
   if (floor >= 3) {
-    for (let i = 0; i < 1 + Math.floor(floor / 3); i += 1) {
+    for (let i = 0; i < 2 + Math.floor(floor / 2); i += 1) {
       const spot = place(nearChamber);
       if (spot) {
         const t = createEnemy(randomEnemyKind(floor), spot.x, spot.y);
@@ -457,10 +566,10 @@ function generateFloor(floor, carryPlayer, score) {
       }
     }
   }
-  // A summoning circle or two (from floor 2). Its shown piece type is the ONLY
-  // kind it conjures.
+  // Summoning circles (from floor 2, roughly doubled). The shown piece type is the
+  // ONLY kind each one conjures.
   if (floor >= 2) {
-    for (let i = 0; i < 1 + Math.floor(floor / 4); i += 1) {
+    for (let i = 0; i < 2 + Math.floor(floor / 2); i += 1) {
       const spot = place(nearChamber);
       if (spot) {
         const c = createEnemy(randomEnemyKind(floor), spot.x, spot.y);
@@ -471,14 +580,14 @@ function generateFloor(floor, carryPlayer, score) {
   }
 
   // Potions dropped on the ground (grabbed by stepping on them; trampled by foes).
-  const potionCount = 2 + randomInt(3);
+  const potionCount = 3 + randomInt(3);
   for (let i = 0; i < potionCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 3);
     if (tile) state.items.push({ kind: 'consumable', potion: randomConsumable(), x: tile.x, y: tile.y });
   }
 
-  // Loose statues scattered out of sight (the Crypt has extra).
-  const statueCount = (level && level.statues ? level.statues : 0) + (floor >= 2 ? 1 + randomInt(2) : 0);
+  // Loose statues scattered out of sight (the Crypt has extra, all roughly doubled).
+  const statueCount = 2 * (level && level.statues ? level.statues : 0) + (floor >= 2 ? 2 + randomInt(3) : 0);
   for (let i = 0; i < statueCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 3);
     if (tile) {
@@ -487,6 +596,33 @@ function generateFloor(floor, carryPlayer, score) {
       state.enemies.push(s);
     }
   }
+
+  // Hidden traps: unseen until they enter the king's sight, then they conjure a burst
+  // of one floor-appropriate piece type beside him. Each holds its own spawn kind.
+  const trapCount = 2 + floor;
+  for (let i = 0; i < trapCount; i += 1) {
+    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
+    if (tile) state.traps.push({ x: tile.x, y: tile.y, kind: randomEnemyKind(floor), sprung: false });
+  }
+
+  // Guarantee the king can actually reach the stair: if walls/lava seal it off, carve
+  // a corridor from his start to the chamber doorway.
+  const reachable = playerReachable(state, player.x, player.y);
+  if (!reachable.has(`${doorX},${doorY}`)) {
+    carveCorridor(state, player.x, player.y, doorX, doorY);
+  }
+
+  // Final guard: the chamber ring and corridor-carving happen after the wanderers are
+  // scattered, so one may have been sealed in by terrain. Any mobile piece with no
+  // move even in isolation is king-swapped, or dropped if it's truly walled solid —
+  // never leave a frozen piece on the board.
+  state.enemies = state.enemies.filter((e) => {
+    if (e.boss || e.statue || e.turret || e.summonCircle) return true;
+    const solo = { ...state, enemies: [e] };
+    if (getPieceMoves(e, solo).length > 0) return true;
+    e.kind = 'king';
+    return getPieceMoves(e, solo).length > 0;
+  });
 
   // Ranger Eagle Eye: the whole floor is mapped from the outset.
   if (player.revealFloor) {
@@ -565,10 +701,57 @@ function revealSeen(state) {
   for (const key of computeVisibleTiles(state)) state.explored[key] = true;
 }
 
-// Reveal newly-seen ground, and remember the exit once explored.
+// Conjure up to `count` fresh foes of `kind` on free tiles spiralling out from
+// `origin`. They wake at once so they immediately menace the king.
+function spawnBurst(state, origin, kind, count) {
+  let made = 0;
+  for (let r = 1; r <= 4 && made < count; r += 1) {
+    const ring = [];
+    for (let dx = -r; dx <= r; dx += 1) {
+      for (let dy = -r; dy <= r; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) === r) ring.push([origin.x + dx, origin.y + dy]);
+      }
+    }
+    for (let i = ring.length - 1; i > 0; i -= 1) {
+      const j = randomInt(i + 1);
+      [ring[i], ring[j]] = [ring[j], ring[i]];
+    }
+    for (const [x, y] of ring) {
+      if (made >= count) break;
+      if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+      if (!isStandable(terrainAt(state, x, y))) continue;
+      if (x === state.player.x && y === state.player.y) continue;
+      if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
+      const foe = createEnemy(kind, x, y);
+      foe.awake = true;
+      state.enemies.push(foe);
+      made += 1;
+    }
+  }
+  return made;
+}
+
+// A trap fires the instant it enters the king's sight (never on step — that would be
+// too easy to skirt): it conjures a burst of its piece type beside him, then stays
+// permanently sprung (a scar the renderer keeps showing).
+function springTraps(state) {
+  if (!Array.isArray(state.traps) || !state.traps.length) return;
+  const visible = computeVisibleTiles(state);
+  for (const trap of state.traps) {
+    if (trap.sprung || !visible.has(`${trap.x},${trap.y}`)) continue;
+    trap.sprung = true;
+    spawnBurst(state, state.player, trap.kind, TRAP_SPAWN_COUNT);
+    if (!Array.isArray(state.scars)) state.scars = [];
+    state.scars.push({ x: trap.x, y: trap.y, kind: 'trap' });
+    state.message = `A trap springs — ${trap.kind}s burst from the ground!`;
+  }
+}
+
+// Reveal newly-seen ground, spring any traps now in view, and remember the exit.
 function updateDiscovery(state) {
   revealSeen(state);
   rememberItems(state);
+  springTraps(state);
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) state.exit.discovered = true;
 }
 
@@ -642,17 +825,15 @@ function applyArrival(next, x, y) {
     next.lastAction = 'combat';
   }
 
-  // Grab a potion lying on the tile (if there's satchel space).
+  // A potion on this tile is quaffed on the spot — but only if it would help right
+  // now. If not, the king steps over it and leaves it for later (it stays on the
+  // ground, and is remembered through the fog).
+  next.drankPotion = false;
   const item = next.items.find((i) => i.x === x && i.y === y);
-  if (item) {
-    if (!Array.isArray(pl.consumables)) pl.consumables = [];
-    if (pl.consumables.length < pl.maxConsumables) {
-      pl.consumables.push(item.potion);
-      next.items = next.items.filter((i) => i !== item);
-      next.message = `You pick up a ${CONSUMABLES[item.potion].name}.`;
-    } else {
-      next.message = 'Your satchel is full — no room for that potion.';
-    }
+  if (item && consumableIsUseful(pl, item.potion)) {
+    applyConsumable(next, item.potion);
+    next.items = next.items.filter((i) => i !== item);
+    next.drankPotion = true;
   }
 
   if (tryDescend(next)) return next;
@@ -689,6 +870,11 @@ function resolveKill(state, enemy) {
   const p = state.player;
   p.killedEnemy = true;
   addSpatter(state, enemy.x, enemy.y);
+  // A shattered summoning circle leaves a permanent scar so its ruin stays visible.
+  if (enemy.summonCircle) {
+    if (!Array.isArray(state.scars)) state.scars = [];
+    state.scars.push({ x: enemy.x, y: enemy.y, kind: 'circle' });
+  }
   return true;
 }
 
@@ -1258,45 +1444,21 @@ function moveEnemy(state, enemyId) {
 function maybeSpawnEnemy(state) {
   const next = structuredClone(state);
   next.turnsSinceSpawn += 1;
+  const maxed = next.turn >= MAX_TURNS_SCARY; // lingered to the danger ceiling
   const ramp = Math.min(1, next.turn / MAX_TURNS_SCARY);
   const interval = Math.max(1, Math.round((next.spawnInterval - (next.spawnInterval - 2) * ramp) / 2));
-  const cap = Math.min(MAX_ENEMIES, 8 + next.floor * 3);
+  const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5);
   if (next.turnsSinceSpawn < interval || next.enemies.length >= cap) return next;
   next.turnsSinceSpawn = 0;
-  const occupied = new Set([`${next.player.x},${next.player.y}`]);
-  for (const enemy of next.enemies) occupied.add(`${enemy.x},${enemy.y}`);
-  for (const item of next.items) occupied.add(`${item.x},${item.y}`);
-  const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y));
-  if (tile) next.enemies.push(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y));
-  return next;
-}
-
-/* ------------------------------- consumables ------------------------------ */
-
-// Drink a held potion (by satchel index): a turn passes so enemies then move.
-function consumeItem(state, index) {
-  const next = structuredClone(state);
-  const p = next.player;
-  if (!Array.isArray(p.consumables) || index < 0 || index >= p.consumables.length) {
-    next.message = 'No such potion.';
-    next.lastAction = 'blocked';
-    return next;
+  const bursts = maxed ? 2 : 1; // at max danger the spawns come twice as fast
+  for (let b = 0; b < bursts; b += 1) {
+    if (next.enemies.length >= cap) break;
+    const occupied = new Set([`${next.player.x},${next.player.y}`]);
+    for (const enemy of next.enemies) occupied.add(`${enemy.x},${enemy.y}`);
+    for (const item of next.items) occupied.add(`${item.x},${item.y}`);
+    const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y));
+    if (tile) next.enemies.push(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y));
   }
-  const potion = p.consumables[index];
-  if (p.freePotion) {
-    applyConsumable(next, potion);
-    p.consumables.splice(index, 1);
-    next.enemyTurn = false;
-    next.lastAction = 'consume-free';
-    updateDiscovery(next);
-    return next;
-  }
-  passTurn(next);
-  next.enemyTurn = true;
-  applyConsumable(next, potion);
-  p.consumables.splice(index, 1);
-  next.lastAction = 'consume';
-  updateDiscovery(next);
   return next;
 }
 

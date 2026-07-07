@@ -26,8 +26,9 @@ const TUTORIALS = {
   hp: {
     title: 'Taking damage',
     text:
-      'That strike cost you 1 HP. Lose every point and the run ends. Drink a Potion ' +
-      'of Healing to recover, and you fully heal each time you descend.',
+      'That strike cost you 1 HP. Lose every point and the run ends. Step onto a ' +
+      'Potion of Healing to quaff it on the spot, and you fully heal each time you ' +
+      'descend.',
   },
   knight: {
     title: 'Knights leap',
@@ -80,7 +81,16 @@ const TUTORIALS = {
     title: 'The longer you linger...',
     text:
       'Danger climbs the more turns you spend on a floor — enemies spawn faster and ' +
-      'faster (watch the Turn counter redden). Don’t dawdle: find the stairs.',
+      'faster (watch the Turn counter redden). When it flashes amber-and-red you have ' +
+      'lingered to the limit and foes now pour in twice as fast. Don’t dawdle: find ' +
+      'the stairs.',
+  },
+  trap: {
+    title: 'Sprung a trap!',
+    text:
+      'Traps lie hidden until they enter your sight — then they burst, conjuring a ' +
+      'pack of foes right beside you (you can’t defuse them by stepping around). A ' +
+      'sprung trap stays marked with a scorched cross so you know it is spent.',
   },
   exit: {
     title: 'Descending',

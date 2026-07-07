@@ -26,7 +26,8 @@ const Renderer = (function () {
     deflect: { color: '125, 211, 252', peak: 0.4, shake: SHAKE_DURATION * 0.4 }, // sky blue — blocked
     death: { color: '153, 27, 27', peak: 0.85, shake: SHAKE_DURATION * 1.8 }, // deep crimson
     kill: { color: '248, 250, 252', peak: 0.18, shake: SHAKE_DURATION * 0.45 }, // pale impact
-    heal: { color: '34, 197, 94', peak: 0.4, shake: 0 }, // green
+    heal: { color: '74, 222, 128', peak: 0.6, shake: SHAKE_DURATION * 0.3 }, // bright green — a quaff
+    trap: { color: '217, 119, 6', peak: 0.55, shake: SHAKE_DURATION }, // amber — a trap erupts
     powerup: { color: '168, 85, 247', peak: 0.45, shake: 0 }, // violet (level-up)
     victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
   };
@@ -473,6 +474,35 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // A permanent scar left on the ground: a shattered summoning circle, or a sprung
+  // trap. Drawn dim when only remembered, brighter while in sight.
+  function drawScar(scar, faded) {
+    const cx = scar.x * tileSize + tileSize / 2;
+    const cy = scar.y * tileSize + tileSize / 2;
+    const r = tileSize * 0.34;
+    ctx.save();
+    ctx.globalAlpha = faded ? 0.4 : 0.8;
+    ctx.lineWidth = Math.max(1.5, tileSize * 0.05);
+    if (scar.kind === 'circle') {
+      // A broken violet ring — the ruin of a summoning circle.
+      ctx.strokeStyle = '#7c5cbf';
+      for (let i = 0; i < 4; i += 1) {
+        const a0 = (i / 4) * Math.PI * 2 + 0.25;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, a0, a0 + Math.PI * 0.35);
+        ctx.stroke();
+      }
+    } else {
+      // A sprung trap — jagged X of scorched marks.
+      ctx.strokeStyle = '#d97706';
+      ctx.beginPath();
+      ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
+      ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // A small marker on each tile the king can move to this turn.
   function drawMoveHint(tileX, tileY, viaJump, capture) {
     const cx = tileX * tileSize + tileSize / 2;
@@ -633,6 +663,21 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // Mark a tile with an OPAQUE box outline hugging its inner edge, in a solid colour,
+  // instead of a translucent wash — so the marker reads the same over any terrain and
+  // leaves the tile itself fully visible. `strength` (>= 1) thickens the border where
+  // more enemies converge.
+  function tileOutline(px, py, color, strength) {
+    ctx.save();
+    ctx.globalAlpha = 1; // fully opaque — never tinted by the background tile
+    ctx.strokeStyle = color;
+    const lw = Math.min(tileSize * 0.16, Math.max(1.5, tileSize * 0.06) * (1 + 0.3 * ((strength || 1) - 1)));
+    ctx.lineWidth = lw;
+    const inset = lw / 2 + 0.5; // sit just inside the tile so the whole edge shows
+    ctx.strokeRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
+    ctx.restore();
+  }
+
   // A flat dark canvas to sit behind the title screen before play begins.
   function drawEmpty() {
     ctx.fillStyle = '#020617';
@@ -683,6 +728,12 @@ const Renderer = (function () {
       fill(f.x, f.y);
     };
     feature(state.exit, '#38bdf8'); // stair down — cyan
+    // Permanent scars on explored ground: shattered circles (violet) / sprung traps (amber).
+    for (const scar of state.scars || []) {
+      if (!(state.explored || {})[`${scar.x},${scar.y}`]) continue;
+      miniCtx.fillStyle = scar.kind === 'circle' ? '#7c5cbf' : '#d97706';
+      fill(scar.x, scar.y);
+    }
 
     // Blips: the king (green) and any foes currently in sight (red).
     const blip = (x, y, color, r) => {
@@ -781,22 +832,18 @@ const Renderer = (function () {
         const threatCount = inView ? threatened.get(`${x},${y}`) || 0 : 0;
         const canMove = reachable.has(`${x},${y}`);
         const isKingTile = x === state.player.x && y === state.player.y;
+        // Markers are drawn as an opaque box outline (not a translucent wash) so the
+        // tile stays fully visible and the colour never blends with the ground.
         if ((canMove || isKingTile) && threatCount > 0) {
-          // Dangerous: the king could stand here and an enemy covers it too (his
-          // OWN tile counts — being captured in place is a real threat). Red,
-          // deepening where more enemies converge.
-          const alpha = Math.min(0.62, 0.32 + 0.12 * threatCount);
-          ctx.fillStyle = `rgba(220, 38, 38, ${alpha})`;
-          ctx.fillRect(px, py, tileSize, tileSize);
+          // RED — you get hit if you move onto (or stand on) this tile; the king's
+          // OWN square counts. Thicker where more enemies converge.
+          tileOutline(px, py, '#ef4444', threatCount);
         } else if (canMove) {
-          // Safe king move — light green.
-          ctx.fillStyle = 'rgba(74, 222, 128, 0.35)';
-          ctx.fillRect(px, py, tileSize, tileSize);
+          // GREEN — a safe tile the king can move to.
+          tileOutline(px, py, '#22c55e', 1);
         } else if (threatCount > 0) {
-          // Enemies cover this square but the king can't reach it — orange.
-          const alpha = Math.min(0.6, 0.3 + 0.12 * threatCount);
-          ctx.fillStyle = `rgba(249, 115, 22, ${alpha})`;
-          ctx.fillRect(px, py, tileSize, tileSize);
+          // ORANGE — enemies cover this square but the king can't reach it.
+          tileOutline(px, py, '#f97316', threatCount);
         }
 
         if (!inView) {
@@ -825,6 +872,12 @@ const Renderer = (function () {
       if (seen || state.exit.discovered) {
         drawExit(state.exit.x, state.exit.y, !seen, state.exit.locked);
       }
+    }
+
+    // Permanent scars (shattered circles, sprung traps): shown forever once their
+    // tile has been explored.
+    for (const scar of state.scars || []) {
+      if (isExplored(scar.x, scar.y)) drawScar(scar, !lit(scar.x, scar.y));
     }
 
     // Live items in current view: drawn from reality, animated.

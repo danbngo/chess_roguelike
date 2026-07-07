@@ -361,14 +361,6 @@ body.in-game canvas {
   margin-top: -0.1rem;
 }
 
-.consumable-bar .card-slot.consumable-slot {
-  border-color: rgba(34, 197, 94, 0.5);
-}
-
-.consumable-bar .card-slot.consumable-slot.ready {
-  box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
-}
-
 .pane-button {
   align-self: flex-start;
 }
