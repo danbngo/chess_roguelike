@@ -1,25 +1,14 @@
 // Shared configuration. Loaded first; every other script reads from these.
 
-const WORLD_SIZE = 28; // The full board is WORLD_SIZE x WORLD_SIZE tiles (walled border).
+const WORLD_SIZE = 20; // The full board is WORLD_SIZE x WORLD_SIZE tiles (walled border).
 const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so centered).
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
-const PLAYER_START = { x: 14, y: 14 };
-const STARTING_HP = 5;
-const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread.
+const PLAYER_START = { x: 10, y: 10 };
+const STARTING_HP = 5; // Default; each class overrides it (see CLASSES[].hp).
+const MAX_TURNS_SCARY = 50; // Lingering this many turns on a floor maxes spawn rate / dread.
 const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
 const PURSUIT_TTL = 6; // Turns an enemy hunts toward the king's last-seen tile before losing the trail.
-const MAX_ENEMIES = 70; // Hard safety cap so over-time spawning can't run away.
-const TRAP_SPAWN_COUNT = 3; // Foes conjured when a trap enters the king's sight.
-
-// Consumables: just two potions now, held in the satchel and used on demand. They
-// found on the floor (dropped on the ground) and quaffed the instant the king steps
-// onto one — but ONLY if it would help right now; otherwise it's left where it lies
-// (and remembered through the fog) for when it's needed.
-const CONSUMABLES = {
-  health: { name: 'Potion of Healing', desc: 'Restores all HP.', glyph: '♥', color: '#f472b6' },
-  mana: { name: 'Potion of Mending', desc: 'Recharges every card.', glyph: '✦', color: '#60a5fa' },
-};
-const POTION_KINDS = ['health', 'mana'];
+const MAX_ENEMIES = 45; // Hard safety cap so over-time spawning can't run away.
 
 // --- Floors -----------------------------------------------------------------
 
@@ -49,7 +38,7 @@ const LEVELS = [
   { name: 'The Old Forest', recipe: { wall: 2, water: 2 }, boss: { name: 'the Centaur', kind: 'bishop', hp: 4 } },
   { name: 'The Sunken Ruins', recipe: { wall: 6 }, boss: { name: 'the Stone Golem', kind: 'rook', hp: 4 } },
   { name: 'The Drowned Lake', recipe: { water: 8 }, boss: { name: 'the Leviathan', kind: 'queen', hp: 5 } },
-  { name: 'The Whispering Crypt', recipe: { wall: 7 }, statues: 6, boss: { name: 'the Lich', kind: 'archbishop', hp: 5 } },
+  { name: 'The Whispering Crypt', recipe: { wall: 7 }, boss: { name: 'the Lich', kind: 'archbishop', hp: 5 } },
   { name: 'The Hedge Maze', recipe: { wall: 8 }, boss: { name: 'the Minotaur', kind: 'chancellor', hp: 6 } },
   { name: 'The Lake of Fire', recipe: { lava: 8, wall: 2 }, boss: { name: 'the Bone Dragon', kind: 'amazon', hp: 6 } },
   { name: 'The Demon Castle', recipe: { wall: 6, lava: 3 }, boss: { name: 'the Balrog', kind: 'amazon', hp: 8 } },
@@ -69,14 +58,14 @@ function floorName(floor) {
 // Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of
 // the king's central start and spread around the board's edges.
 const CHAMBER_ANCHORS = [
-  { x: 22, y: 22 },
-  { x: 5, y: 5 },
-  { x: 22, y: 5 },
-  { x: 5, y: 22 },
-  { x: 22, y: 14 },
-  { x: 5, y: 14 },
-  { x: 14, y: 22 },
-  { x: 14, y: 5 },
+  { x: 16, y: 16 },
+  { x: 3, y: 3 },
+  { x: 16, y: 3 },
+  { x: 3, y: 16 },
+  { x: 16, y: 10 },
+  { x: 3, y: 10 },
+  { x: 10, y: 16 },
+  { x: 10, y: 3 },
 ];
 function chamberAnchorForFloor(floor) {
   return CHAMBER_ANCHORS[((floor - 1) % FINAL_FLOOR + FINAL_FLOOR) % FINAL_FLOOR];
@@ -124,29 +113,39 @@ function cardCooldown(kind, category) {
 
 // --- Classes & level-up perks -----------------------------------------------
 
-// Three classes, one per card category. Each starts with a single card and, on
-// every descent, chooses ONE of three offered perks from its pool. Perks are
-// roughly equal in value: simple stat bumps (repeatable), extra cards, and
-// rule-changing boons. `repeatable` perks can be offered/taken more than once.
+// Three classes, one per card category, with distinct starting HP (the melee
+// Warrior is sturdiest, the fragile Sorcerer least). Each starts with a single card
+// and, on every descent, chooses ONE of TWO offered perks. Perks form TIERED CHAINS:
+// a perk with `requires` only appears once its prerequisite is taken, so the strong
+// capstones are always gated behind cheaper stat bumps (tier 1 -> 2 -> 3).
 const CLASSES = {
   warrior: {
     name: 'Warrior',
-    blurb: 'A frontline fighter who wades in and trades blows.',
+    blurb: 'A sturdy frontline fighter who lunges in and trades blows.',
     color: '#dc2626',
     category: 'melee', // every Warrior card strikes by moving onto the target
-    start: 'king',
+    // A knight LEAP: bound in an L onto a foe (or, now, onto empty ground) — a jumping
+    // gap-closer that clears walls and pieces between. Not a piece his perks grant
+    // (those give bishop & rook), so no overlap.
+    start: 'knight',
+    hp: 7,
     perks: [
-      { id: 'w_hp', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 }, repeatable: true },
-      { id: 'w_reach', name: 'Long Arms', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 'w_fleet', name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
-      { id: 'w_bulwark', name: 'Bulwark', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
-      { id: 'w_reflect', name: 'Reflection', desc: 'Reflect missiles and spells back at the attacker', grants: { reflect: true } },
-      { id: 'w_cleave', name: 'Cleave', desc: 'A melee-card kill also slays one adjacent enemy', grants: { meleeCleave: true } },
-      { id: 'w_leech', name: 'Vampiric Edge', desc: 'A melee-card kill heals 1 HP', grants: { meleeLeech: true } },
-      { id: 'w_rush', name: 'Bloodrush', desc: 'A normal move that kills costs no turn', grants: { freeKillMove: true } },
-      { id: 'w_undying', name: 'Undying', desc: 'Revive once per floor at your start', grants: { extraLife: true } },
-      { id: 'w_knight', name: 'Cavalier', desc: 'Gain a knight card', grants: { gainCard: 'knight' } },
-      { id: 'w_rook', name: 'Warhammer', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
+      // Vigor chain
+      { id: 'w_hp1', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
+      { id: 'w_hp2', tier: 2, requires: 'w_hp1', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 } },
+      { id: 'w_bulwark', tier: 3, requires: 'w_hp2', name: 'Bulwark', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
+      // Onslaught chain
+      { id: 'w_reach', tier: 1, name: 'Long Arms', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 'w_cleave', tier: 2, requires: 'w_reach', name: 'Cleave', desc: 'A melee-card kill also slays one adjacent enemy', grants: { meleeCleave: true } },
+      { id: 'w_leech', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', desc: 'A melee-card kill heals 1 HP', grants: { meleeLeech: true } },
+      // Fury chain
+      { id: 'w_fleet', tier: 1, name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
+      { id: 'w_rush', tier: 2, requires: 'w_fleet', name: 'Bloodrush', desc: 'A normal move that kills costs no turn', grants: { freeKillMove: true } },
+      { id: 'w_reflect', tier: 3, requires: 'w_rush', name: 'Reflection', desc: 'Reflect missiles and spells back at the attacker', grants: { reflect: true } },
+      // Warband chain
+      { id: 'w_bishop', tier: 1, name: 'Crusader', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
+      { id: 'w_rook', tier: 2, requires: 'w_bishop', name: 'Warhammer', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
+      { id: 'w_undying', tier: 3, requires: 'w_rook', name: 'Undying', desc: 'Revive once per floor at your start', grants: { extraLife: true } },
     ],
   },
   ranger: {
@@ -155,40 +154,54 @@ const CLASSES = {
     color: '#65a30d',
     category: 'ranged', // every Ranger card fires from afar (blocked by cover)
     start: 'knight',
+    hp: 5,
     perks: [
-      { id: 'r_hp', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 }, repeatable: true },
-      { id: 'r_eyes', name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 }, repeatable: true },
-      { id: 'r_reach', name: 'Farsight', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 'r_fleet', name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
-      { id: 'r_rapid', name: 'Quick Draw', desc: 'A ranged-card kill lets you fire again at once (once)', grants: { rangedRapid: true } },
-      { id: 'r_path', name: 'Pathfinder', desc: 'Immune to slow terrain (water)', grants: { terrainImmune: true } },
-      { id: 'r_stealth', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
-      { id: 'r_eagle', name: 'Eagle Eye', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
-      { id: 'r_bow', name: 'Shortbow', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
-      { id: 'r_longbow', name: 'Longbow', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
+      // Vigor chain
+      { id: 'r_hp1', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
+      { id: 'r_hp2', tier: 2, requires: 'r_hp1', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 } },
+      { id: 'r_bulwark', tier: 3, requires: 'r_hp2', name: 'Bulwark', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
+      // Marksman chain
+      { id: 'r_reach', tier: 1, name: 'Farsight', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 'r_rapid', tier: 2, requires: 'r_reach', name: 'Quick Draw', desc: 'A ranged-card kill lets you fire again at once (once)', grants: { rangedRapid: true } },
+      { id: 'r_eagle', tier: 3, requires: 'r_rapid', name: 'Eagle Eye', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
+      // Scouting chain
+      { id: 'r_eyes1', tier: 1, name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
+      { id: 'r_eyes2', tier: 2, requires: 'r_eyes1', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
+      { id: 'r_stealth', tier: 3, requires: 'r_eyes2', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
+      // Ranging chain
+      { id: 'r_bow', tier: 1, name: 'Shortbow', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
+      { id: 'r_longbow', tier: 2, requires: 'r_bow', name: 'Longbow', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
+      { id: 'r_fleet', tier: 3, requires: 'r_longbow', name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
     ],
   },
   sorcerer: {
     name: 'Sorcerer',
-    blurb: 'A caster whose bolts pierce straight through the ranks.',
+    blurb: 'A fragile caster whose bolts pierce straight through the ranks.',
     color: '#a855f7',
     category: 'spell', // every Sorcerer card is a bolt that pierces the whole path
     start: 'rook',
+    hp: 4,
     perks: [
-      { id: 's_hp', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 }, repeatable: true },
-      { id: 's_eyes', name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 }, repeatable: true },
-      { id: 's_reach', name: 'Farsight', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 's_haste', name: 'Attunement', desc: 'Spell cards recharge twice as fast with no enemy in sight', grants: { spellHaste: true } },
-      { id: 's_free', name: 'Free Casting', desc: 'Spell cards cost no turn to cast', grants: { freeSpell: true } },
-      { id: 's_dazzle', name: 'Dazzle', desc: 'Enemies beside those a spell slays are caught by surprise', grants: { spellDazzle: true } },
-      { id: 's_cata', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
-      { id: 's_reflect', name: 'Reflection', desc: 'Reflect missiles and spells back at the attacker', grants: { reflect: true } },
-      { id: 's_wand', name: 'Wand', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
-      { id: 's_staff', name: 'Archstaff', desc: 'Gain a queen card', grants: { gainCard: 'queen' } },
+      // Vigor chain
+      { id: 's_hp1', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
+      { id: 's_hp2', tier: 2, requires: 's_hp1', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 } },
+      { id: 's_reflect', tier: 3, requires: 's_hp2', name: 'Reflection', desc: 'Reflect missiles and spells back at the attacker', grants: { reflect: true } },
+      // Arcana chain
+      { id: 's_reach', tier: 1, name: 'Farsight', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 's_haste', tier: 2, requires: 's_reach', name: 'Attunement', desc: 'Spell cards recharge twice as fast with no enemy in sight', grants: { spellHaste: true } },
+      { id: 's_free', tier: 3, requires: 's_haste', name: 'Free Casting', desc: 'Spell cards cost no turn to cast', grants: { freeSpell: true } },
+      // Mysticism chain
+      { id: 's_eyes', tier: 1, name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
+      { id: 's_dazzle', tier: 2, requires: 's_eyes', name: 'Dazzle', desc: 'Enemies beside those a spell slays are caught by surprise', grants: { spellDazzle: true } },
+      { id: 's_cata', tier: 3, requires: 's_dazzle', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
+      // Evocation chain
+      { id: 's_wand', tier: 1, name: 'Wand', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
+      { id: 's_staff', tier: 2, requires: 's_wand', name: 'Archstaff', desc: 'Gain a queen card', grants: { gainCard: 'queen' } },
+      { id: 's_amp', tier: 3, requires: 's_staff', name: 'Amplify', desc: '+1 card reach', grants: { cardReach: 1 } },
     ],
   },
 };
-const LEVEL_PERK_CHOICES = 3; // perks offered per descent
+const LEVEL_PERK_CHOICES = 2; // perks offered per descent
 
 // Movement direction tables, reused by the piece-move generators.
 const ORTHO = [

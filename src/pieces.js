@@ -155,16 +155,17 @@ function getCardMoves(state, card) {
   const inBounds = (x, y) => x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE;
   const targetable = (x, y) => isCapturable(state, enemyAt(x, y));
   const results = [];
-  const add = (x, y, viaJump) => {
-    if (inLineOfSight(state, x, y)) results.push({ x, y, capture: true, viaJump: Boolean(viaJump) });
+  const add = (x, y, viaJump, capture) => {
+    if (inLineOfSight(state, x, y)) results.push({ x, y, capture: Boolean(capture), viaJump: Boolean(viaJump) });
   };
 
   if (category === 'melee') {
-    // The king walks/leaps onto the target — real movement rules apply.
+    // The king walks/leaps onto a foe (a capture) OR onto empty ground within reach
+    // (a plain repositioning move) — real movement rules apply either way.
     const opts = { terrainImmune: Boolean(p.terrainImmune) };
     for (const [dx, dy] of dirs) {
       for (const stop of slideStops(state, p.x, p.y, dx, dy, reach, enemyAt, targetable, opts)) {
-        if (stop.capture) add(stop.x, stop.y);
+        add(stop.x, stop.y, false, stop.capture);
       }
     }
     if (hasLeap) {
@@ -174,11 +175,16 @@ function getCardMoves(state, card) {
         if (!inBounds(x, y)) continue;
         const t = terrainAt(state, x, y);
         if (t === 'wall' || t === 'lava') continue; // can't land there
-        if (enemyAt(x, y) && targetable(x, y)) add(x, y, true);
+        if (enemyAt(x, y)) {
+          if (targetable(x, y)) add(x, y, true, true);
+        } else {
+          add(x, y, true, false); // leap to empty ground
+        }
       }
     }
   } else {
-    // ranged / spell: projectile rays over terrain, stopped only by walls.
+    // ranged / spell: projectile rays over terrain, stopped only by walls. Only foes
+    // are valid targets (these cards never move the king).
     for (const [dx, dy] of dirs) {
       let x = p.x;
       let y = p.y;
@@ -187,7 +193,7 @@ function getCardMoves(state, card) {
         y += dy;
         if (!inBounds(x, y) || terrainAt(state, x, y) === 'wall') break;
         if (enemyAt(x, y)) {
-          if (targetable(x, y)) add(x, y);
+          if (targetable(x, y)) add(x, y, false, true);
           if (!pierce) break; // a solid unit blocks a non-piercing shot
         }
       }
@@ -197,7 +203,7 @@ function getCardMoves(state, card) {
         const x = p.x + dx;
         const y = p.y + dy;
         if (!inBounds(x, y) || terrainAt(state, x, y) === 'wall') continue;
-        if (enemyAt(x, y) && targetable(x, y)) add(x, y, true);
+        if (enemyAt(x, y) && targetable(x, y)) add(x, y, true, true);
       }
     }
   }
@@ -212,8 +218,11 @@ function getCardMoves(state, card) {
 }
 
 // The squares immediately adjacent (in the given directions) a piece threatens —
-// used for pawn-likes, whose capture squares differ from their move squares.
-function adjacentThreats(piece, state, dirs) {
+// used for pawn-likes, whose capture squares differ from their move squares. With
+// `includeOccupied` (the danger overlay), an ally-occupied square STILL counts as
+// threatened — because if the king captures that ally and stands there, this piece
+// can capture him next turn.
+function adjacentThreats(piece, state, dirs, includeOccupied) {
   const threats = [];
   for (const [dx, dy] of dirs) {
     const x = piece.x + dx;
@@ -224,7 +233,7 @@ function adjacentThreats(piece, state, dirs) {
     if (!isStandable(terrainAt(state, x, y))) {
       continue;
     }
-    if (state.enemies.some((other) => other.id !== piece.id && other.x === x && other.y === y)) {
+    if (!includeOccupied && state.enemies.some((other) => other.id !== piece.id && other.x === x && other.y === y)) {
       continue;
     }
     threats.push({ x, y });
@@ -235,18 +244,29 @@ function adjacentThreats(piece, state, dirs) {
 // Tiles where this piece could capture the king — the squares dangerous to stand
 // on (the red threat tint). Pawn-likes capture differently than they move: a pawn
 // attacks the diagonals, the berolina attacks the orthogonals. Everything else
-// threatens exactly where it can move.
-function getPieceThreats(piece, state) {
-  if (piece.statue || piece.summonCircle) {
-    return []; // inert stone / a circle never strikes the king directly
+// threatens exactly where it can move. With `includeOccupied` (the danger overlay),
+// an ally-occupied square still counts as threatened — because the king may CAPTURE
+// that ally and stand there, exposing himself to this piece next turn.
+function getPieceThreats(piece, state, includeOccupied) {
+  if (piece.summonCircle) {
+    return []; // a summoning circle never strikes the king directly
   }
   if (piece.kind === 'pawn') {
-    return adjacentThreats(piece, state, DIAG);
+    return adjacentThreats(piece, state, DIAG, includeOccupied);
   }
   if (piece.kind === 'berolina') {
-    return adjacentThreats(piece, state, ORTHO);
+    return adjacentThreats(piece, state, ORTHO, includeOccupied);
   }
-  return getPieceMoves(piece, state);
+  if (!includeOccupied) {
+    return getPieceMoves(piece, state);
+  }
+  // Treat every occupied square (the king OR any other enemy) as a capture target,
+  // so sliders/steppers threaten the tiles their allies sit on too.
+  const unitAt = enemyUnitAt(state, piece);
+  const isTarget = (x, y) =>
+    (x === state.player.x && y === state.player.y) ||
+    state.enemies.some((o) => o.id !== piece.id && o.x === x && o.y === y);
+  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, { lavaOk: true });
 }
 
 // Standard pieces use solid chess glyphs; the fairy / endgame pieces use a single

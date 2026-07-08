@@ -28,7 +28,9 @@ function getVisibleEnemies(state) {
 function getThreatenedTiles(state) {
   const counts = new Map();
   for (const enemy of getVisibleEnemies(state)) {
-    for (const tile of getPieceThreats(enemy, state)) {
+    // includeOccupied: a tile an enemy sits on is still dangerous, because the king
+    // can capture that enemy and end his move there — where other foes can hit him.
+    for (const tile of getPieceThreats(enemy, state, true)) {
       const key = `${tile.x},${tile.y}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }

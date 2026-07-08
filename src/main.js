@@ -217,12 +217,19 @@
       updateHud();
       return;
     }
-    // Start the keyboard cursor on the reachable tile nearest the king.
-    cardCursor = cardTargets
-      .slice()
-      .sort((a, b) => distToKing(a) - distToKing(b))[0];
-    cardCursor = { x: cardCursor.x, y: cardCursor.y };
-    gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — click a target or steer with the numpad, then Enter (Esc to cancel).`;
+    // Order targets clockwise around the king (ties by nearness) so movement keys
+    // cycle through them in a predictable ring.
+    const kx = gameState.player.x;
+    const ky = gameState.player.y;
+    cardTargets.sort((a, b) => {
+      const angA = Math.atan2(a.y - ky, a.x - kx);
+      const angB = Math.atan2(b.y - ky, b.x - kx);
+      return angA !== angB ? angA - angB : distToKing(a) - distToKing(b);
+    });
+    // Start the cursor on the reachable tile nearest the king.
+    const nearest = cardTargets.slice().sort((a, b) => distToKing(a) - distToKing(b))[0];
+    cardCursor = { x: nearest.x, y: nearest.y };
+    gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — cycle targets with the numpad/WSAD, then Enter/Space (or press ${index + 1} again) to fire; Esc to cancel.`;
     showCardInfo(card);
     updateHud();
   }
@@ -275,9 +282,7 @@
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
         let tag;
-        if (enemy.statue) {
-          tag = ' (statue — wakes if you step beside it)';
-        } else if (enemy.turret) {
+        if (enemy.turret) {
           tag = ' (turret — fixed, fires its pattern)';
         } else if (enemy.summonCircle) {
           tag = ' (summoning circle — spawns foes; step on it to destroy)';
@@ -287,10 +292,6 @@
           tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
         lines.push(`Enemy: ${enemy.kind}${tag}`);
-      }
-      const item = gameState.items.find((i) => i.x === tx && i.y === ty);
-      if (item && item.kind === 'consumable') {
-        lines.push(potionLabel(item.potion));
       }
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
@@ -339,17 +340,10 @@
 
   // One-line descriptions of each enemy role (for the examine pane).
   const ROLE_INFO = {
-    statue: 'Statue — inert until you step beside it, then it wakes.',
     turret: 'Turret — fixed; fires its piece pattern, cannot be destroyed.',
     circle: 'Summoning circle — conjures foes while it sees you; step on it to destroy it.',
     boss: 'Boss — a high-mobility guardian with a HP bar.',
   };
-
-  // A short "Name — effect" label for a consumable, from the shared CONSUMABLES data.
-  function potionLabel(potion) {
-    const info = CONSUMABLES[potion];
-    return info ? `${info.name} — ${info.desc} (step on to quaff when it helps)` : 'A mysterious potion.';
-  }
 
   function setExamineEmpty(text) {
     examineEl.innerHTML = '';
@@ -417,8 +411,6 @@
         const title = enemy.boss ? `Boss — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
         addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, hpLine, st]);
       }
-      const item = gameState.items.find((i) => i.x === tx && i.y === ty);
-      if (item && item.kind === 'consumable') addExamineBlock('Item', potionLabel(item.potion));
     }
 
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
@@ -428,52 +420,21 @@
 
     const scar = (gameState.scars || []).find((s) => s.x === tx && s.y === ty);
     if (scar && (gameState.explored || {})[`${tx},${ty}`]) {
-      if (scar.kind === 'circle') addExamineBlock('Ruined circle', 'A shattered summoning circle — it conjures no more.');
-      else addExamineBlock('Sprung trap', 'A trap that already fired when it came into view.');
+      addExamineBlock('Ruined circle', 'A shattered summoning circle — it conjures no more.');
     }
   }
 
-  // Move the targeting cursor to the nearest valid target in the given direction.
-  function moveCardCursor(dx, dy) {
-    if (cardTargeting === null || !cardCursor) {
+  // Step the targeting cursor to the next (+1) or previous (-1) valid target, wrapping
+  // around the ring. A movement key that heads right/down cycles forward; left/up back.
+  function cycleCardCursor(step) {
+    if (cardTargeting === null || !cardTargets.length) {
       return;
     }
-    let best = null;
-    let bestScore = Infinity;
-    for (const t of cardTargets) {
-      const ox = t.x - cardCursor.x;
-      const oy = t.y - cardCursor.y;
-      if (ox === 0 && oy === 0) continue;
-      // Must head in the pressed direction on each constrained axis.
-      if (dx !== 0 && Math.sign(ox) !== dx) continue;
-      if (dy !== 0 && Math.sign(oy) !== dy) continue;
-      if (dx === 0 && ox !== 0) continue; // pure vertical: stay in column-ish
-      if (dy === 0 && oy !== 0) continue; // pure horizontal: stay in row-ish
-      const score = ox * ox + oy * oy;
-      if (score < bestScore) {
-        bestScore = score;
-        best = t;
-      }
-    }
-    // If nothing lined up exactly, fall back to the closest target in that half-plane.
-    if (!best) {
-      for (const t of cardTargets) {
-        const ox = t.x - cardCursor.x;
-        const oy = t.y - cardCursor.y;
-        if (ox === 0 && oy === 0) continue;
-        if (dx !== 0 && Math.sign(ox) !== dx) continue;
-        if (dy !== 0 && Math.sign(oy) !== dy) continue;
-        const score = ox * ox + oy * oy;
-        if (score < bestScore) {
-          bestScore = score;
-          best = t;
-        }
-      }
-    }
-    if (best) {
-      cardCursor = { x: best.x, y: best.y };
-      Renderer.centerOn(cardCursor.x, cardCursor.y); // keep the cursor in view
-    }
+    let idx = cardCursor ? cardTargets.findIndex((t) => t.x === cardCursor.x && t.y === cardCursor.y) : -1;
+    idx = idx < 0 ? 0 : (idx + step + cardTargets.length) % cardTargets.length;
+    const t = cardTargets[idx];
+    cardCursor = { x: t.x, y: t.y };
+    Renderer.centerOn(cardCursor.x, cardCursor.y); // keep the cursor in view
   }
 
   function confirmCardCursor() {
@@ -565,9 +526,6 @@
     }
     if (visible.some((enemy) => enemy.kind === 'king')) {
       queueTip('enemyKing');
-    }
-    if (visible.some((enemy) => enemy.statue)) {
-      queueTip('statue');
     }
     if (visible.some((enemy) => enemy.turret)) {
       queueTip('turret');
@@ -747,7 +705,7 @@
     const cls = CLASSES[key];
     const lines = [cls.name, cls.blurb, ''];
     lines.push(`• All cards are ${cls.category}; starts with a ${cls.start} card`);
-    lines.push(`• Every descent, pick one of three ${cls.name} boons:`);
+    lines.push(`• Every descent, pick one of two ${cls.name} boons (tiered chains):`);
     cls.perks.forEach((perk) => lines.push(`   – ${perk.name}: ${perk.desc}`));
     return lines.join('\n');
   }
@@ -815,16 +773,27 @@
   }
 
   function goNextFloor() {
+    // The boon was already earned by slaying the boss; descending just builds the
+    // next floor (no level-up screen here).
     applyState(nextFloor(gameState), false);
     enemyQueue = [];
     animTimer = 0;
     pendingAction = null;
     saveGame(gameState);
-    if (gameState.pendingLevelUp) {
-      openLevelUp(); // choose a boon before playing the new floor
-    } else {
-      scanVisibleTips(gameState);
+    scanVisibleTips(gameState);
+  }
+
+  // Slaying a boss queues the level-up mid-floor; open the screen once the turn has
+  // fully resolved (the king then chooses a boon and walks to the now-open stair).
+  function maybeOpenLevelUp() {
+    if (gameState && screen === 'playing' && gameState.pendingLevelUp && (gameState.levelPerks || []).length) {
+      openLevelUp();
+      return true;
     }
+    if (gameState && gameState.pendingLevelUp && !(gameState.levelPerks || []).length) {
+      gameState.pendingLevelUp = false; // nothing left to offer (deep NG+)
+    }
+    return false;
   }
 
   // Compose the end-of-run summary (score + earned conducts) into the given node.
@@ -963,7 +932,7 @@
 
   /* ------------------------------ level up ------------------------------- */
 
-  // After each descent, choose one of three class boons (reusing the altar overlay).
+  // After each descent, choose one of two class boons (reusing the altar overlay).
   function renderLevelUp() {
     if (altarMessage) altarMessage.textContent = `Level ${gameState.player.level} — choose a boon.`;
     altarList.innerHTML = '';
@@ -996,6 +965,12 @@
   }
 
   function closeLevelUp() {
+    // Clear the pending boon (taking a perk already did; skipping must too) so it
+    // does not re-open every turn.
+    if (gameState) {
+      gameState.pendingLevelUp = false;
+      gameState.levelPerks = null;
+    }
     screen = 'playing';
     altarScreen.classList.add('hidden');
     setExamineEmpty('Click a tile to inspect it.');
@@ -1012,28 +987,16 @@
     }
 
     const prevEnemies = gameState ? gameState.enemies.length : 0;
-    const prevScars = gameState ? (gameState.scars || []).length : 0;
 
     applyState(nextState, true);
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
 
     const felled = prevEnemies - nextState.enemies.length; // captures this action
     const struck = nextState.lastAction === 'combat' || nextState.lastAction === 'move-free';
-    // A trap fired this move if a fresh 'trap' scar appeared.
-    const trapSprung = (nextState.scars || []).length > prevScars
-      && (nextState.scars || []).slice(prevScars).some((s) => s.kind === 'trap');
 
     // Feedback flashes for what just happened.
     if (struck) {
       Renderer.effect('kill');
-    }
-    if (nextState.drankPotion) {
-      Renderer.effect('heal');
-      GameAudio.play('quaff');
-    }
-    if (trapSprung) {
-      Renderer.effect('trap'); // amber jolt — foes just erupted beside you
-      queueTip('trap');
     }
 
     if (nextState.won) {
@@ -1060,6 +1023,7 @@
     else if (struck) GameAudio.play('attack');
     // Quick weapons / Bloodrush kills cost no turn — no enemy phase.
     if (nextState.enemyTurn === false || nextState.lastAction === 'card-free' || nextState.lastAction === 'move-free') {
+      maybeOpenLevelUp(); // a free-action boss kill still earns its boon
       return;
     }
 
@@ -1109,6 +1073,7 @@
     // Turn complete: maybe reinforce, then persist.
     applyState(maybeSpawnEnemy(gameState), true);
     saveGame(gameState);
+    maybeOpenLevelUp(); // if this turn slew the boss, offer the boon now
   }
 
   function handleStep(dx, dy) {
@@ -1205,8 +1170,9 @@
 
   document.addEventListener('keydown', (event) => {
 
-    // While aiming a card: movement keys steer the cursor, Enter/Space confirm,
-    // Escape cancels.
+    // While aiming a card: movement keys CYCLE through valid targets; Enter/Space —
+    // or pressing the same card's hotkey again — confirms; another card's hotkey
+    // switches to it; Escape cancels.
     if (cardTargeting !== null) {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -1220,10 +1186,20 @@
         confirmCardCursor();
         return;
       }
+      const aimingCardKey = /^Digit([1-9])$/.exec(event.code);
+      if (aimingCardKey) {
+        event.preventDefault();
+        const idx = Number(aimingCardKey[1]) - 1;
+        if (idx === cardTargeting) confirmCardCursor(); // same hotkey again = fire
+        else toggleCardTargeting(idx); // a different card's hotkey re-aims that one
+        return;
+      }
       const aim = resolveMove(event);
       if (aim) {
         event.preventDefault();
-        moveCardCursor(aim[0], aim[1]);
+        // Right/down cycles forward through the target ring; left/up cycles back.
+        const forward = aim[0] !== 0 ? aim[0] > 0 : aim[1] > 0;
+        cycleCardCursor(forward ? 1 : -1);
         return;
       }
     }

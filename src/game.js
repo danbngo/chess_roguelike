@@ -14,9 +14,8 @@ function createEnemy(type, x, y) {
     awake: false,
     surprised: false,
     frustrated: false,
-    // Object roles (at most one): inert statue, fixed turret, boss, or a
-    // destroyable summoning circle. Ordinary enemies carry none.
-    statue: false,
+    // Object roles (at most one): fixed turret, boss, or a destroyable summoning
+    // circle. Ordinary enemies carry none.
     turret: false,
     boss: false,
     summonCircle: false, // stationary spawner; destroyed by stepping on it
@@ -30,7 +29,6 @@ function createEnemy(type, x, y) {
 // The single role a piece carries (or 'normal'), for display / icons.
 function enemyRole(enemy) {
   if (enemy.boss) return 'boss';
-  if (enemy.statue) return 'statue';
   if (enemy.turret) return 'turret';
   if (enemy.summonCircle) return 'circle';
   return 'normal';
@@ -41,12 +39,12 @@ function isJumperKind(kind) {
   return JUMPER_KINDS.includes(kind);
 }
 
-// Whether an enemy may be captured/destroyed by the king right now. Statues and
-// turrets are untouchable; a summoning circle is destroyed by stepping on it; a
-// boss is targetable but soaks HP (handled specially). Ordinary pieces die in one.
+// Whether an enemy may be captured/destroyed by the king right now. Turrets are
+// untouchable; a summoning circle is destroyed by stepping on it; a boss is
+// targetable but soaks HP (handled specially). Ordinary pieces die in one.
 function isCapturable(state, enemy) {
   if (!enemy) return false;
-  if (enemy.statue || enemy.turret) return false;
+  if (enemy.turret) return false;
   return true;
 }
 function capturableAt(state, x, y) {
@@ -57,7 +55,7 @@ function capturableAt(state, x, y) {
 // Quick Draw, Dazzle, Bloodrush). Only real enemy pieces count — NOT summoning
 // circles or other structures (and never a mere non-lethal hit, handled by callers).
 function isKillablePiece(enemy) {
-  return Boolean(enemy) && !enemy.statue && !enemy.turret && !enemy.summonCircle;
+  return Boolean(enemy) && !enemy.turret && !enemy.summonCircle;
 }
 
 // Has the floor's boss been defeated? True when no boss piece remains.
@@ -120,14 +118,20 @@ function damageBoss(state, boss, amount) {
   return 'slain';
 }
 
-// Resolve the floor's boss being slain: the final floor wins the run.
+// Resolve the floor's boss being slain: the final floor wins the run; any other
+// floor earns the level-up boon RIGHT HERE (the king does not descend yet — the
+// stair the boss guarded is now clear, and he must still walk onto it).
 function defeatBoss(state, x, y) {
   if (isFinalBossFloor(state.floor)) {
     state.won = true;
     state.message = 'The final guardian falls — the realm is free!';
-  } else {
-    state.message = 'The guardian falls — the way down is clear!';
+    return;
   }
+  const p = state.player;
+  p.level = (p.level || 1) + 1;
+  state.pendingLevelUp = true;
+  state.levelPerks = rollLevelPerks(p, LEVEL_PERK_CHOICES);
+  state.message = `The guardian falls! You reach level ${p.level} — choose a boon, then take the stair.`;
 }
 
 /* ------------------------------- the king --------------------------------- */
@@ -170,32 +174,6 @@ function mitigationMessage(mit, kind) {
   return `The king shrugs off a ${kind}!`;
 }
 
-/* ------------------------------ consumables ------------------------------- */
-
-function randomConsumable() {
-  return POTION_KINDS[randomInt(POTION_KINDS.length)];
-}
-
-// Drink a potion: an immediate boon.
-function applyConsumable(state, potion) {
-  const p = state.player;
-  if (potion === 'health') {
-    p.hp = p.maxHp;
-    state.message = 'A Potion of Healing restores you to full health.';
-  } else if (potion === 'mana') {
-    for (const card of p.cards || []) card.remaining = 0;
-    state.message = 'A Potion of Mending recharges every card.';
-  }
-}
-
-// Would quaffing this potion do anything right now? (Full HP wastes a Healing;
-// all cards ready wastes a Mending.) If not, the king leaves it on the ground.
-function consumableIsUseful(player, potion) {
-  if (potion === 'health') return player.hp < player.maxHp;
-  if (potion === 'mana') return (player.cards || []).some((c) => c.remaining > 0);
-  return true;
-}
-
 // Return up to `count` distinct random members of `items` (a shuffled sample).
 function pickSome(items, count) {
   const pool = items.slice();
@@ -210,7 +188,7 @@ function pickSome(items, count) {
 
 // Perk grant flags that are simply switched on.
 const PERK_FLAGS = [
-  'reflect', 'firstHitEachTurn', 'freeKillMove', 'extraLife', 'stealth', 'terrainImmune',
+  'reflect', 'firstHitEachTurn', 'freeKillMove', 'extraLife', 'stealth',
   'revealFloor', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
 ];
@@ -240,11 +218,12 @@ function applyPerk(player, grants) {
 // Build a fresh king of the chosen class: base stats + its starting card.
 function createPlayer(classKey) {
   const cls = CLASSES[classKey] || CLASSES.warrior;
+  const startHp = cls.hp || STARTING_HP; // Warrior is sturdier, Sorcerer frailer
   const player = {
     x: PLAYER_START.x,
     y: PLAYER_START.y,
-    hp: STARTING_HP,
-    maxHp: STARTING_HP,
+    hp: startHp,
+    maxHp: startHp,
     level: 1,
     className: CLASSES[classKey] ? classKey : 'warrior',
     moveRange: 1,
@@ -267,13 +246,21 @@ function createPlayer(classKey) {
   return player;
 }
 
-// The three perks offered on a descent: from the king's class pool, excluding
-// unique perks already taken (repeatable perks may recur). Falls back to whatever
-// remains so a choice is always available.
+// Is a perk offerable right now? Not already taken, and its prerequisite (if any)
+// has been taken — so tier-2/3 chain perks only surface once their tier below is in.
+function perkAvailable(player, perk) {
+  const taken = player.takenPerks || [];
+  if (taken.includes(perk.id)) return false;
+  if (perk.requires && !taken.includes(perk.requires)) return false;
+  return true;
+}
+
+// The perks offered on a descent (up to `count`): the currently-unlocked, untaken
+// tiers of the king's class chains. May return fewer than `count` late in a run.
 function rollLevelPerks(player, count) {
   const cls = CLASSES[player.className] || CLASSES.warrior;
-  const eligible = cls.perks.filter((perk) => perk.repeatable || !player.takenPerks.includes(perk.id));
-  return pickSome(eligible.length ? eligible : cls.perks, count || LEVEL_PERK_CHOICES);
+  const eligible = cls.perks.filter((perk) => perkAvailable(player, perk));
+  return pickSome(eligible, count || LEVEL_PERK_CHOICES);
 }
 
 // Learn a level-up perk (by id) from the king's class pool.
@@ -282,7 +269,7 @@ function learnPerk(state, perkId) {
   const p = next.player;
   const cls = CLASSES[p.className] || CLASSES.warrior;
   const perk = cls.perks.find((k) => k.id === perkId);
-  if (!perk || (!perk.repeatable && p.takenPerks.includes(perkId))) {
+  if (!perk || !perkAvailable(p, perk)) {
     next.pendingLevelUp = false;
     return next;
   }
@@ -338,23 +325,104 @@ function playerReachable(state, sx, sy) {
   return seen;
 }
 
-// Clear a walkable L-shaped corridor between two points (turning walls/lava to floor).
-function carveCorridor(state, x0, y0, x1, y1) {
+// Clear a walkable L-shaped corridor between two points. Turns walls (and, unless
+// `wallsOnly`, lava) to floor.
+function carveCorridor(state, x0, y0, x1, y1, wallsOnly) {
   let x = x0;
   let y = y0;
   const open = (cx, cy) => {
     if (cx <= 0 || cx >= WORLD_SIZE - 1 || cy <= 0 || cy >= WORLD_SIZE - 1) return;
     const t = terrainAt(state, cx, cy);
-    if (t === 'wall' || t === 'lava') delete state.terrain[`${cx},${cy}`];
+    if (t === 'wall' || (!wallsOnly && t === 'lava')) delete state.terrain[`${cx},${cy}`];
   };
   while (x !== x1) { open(x, y); x += Math.sign(x1 - x); }
   while (y !== y1) { open(x, y); y += Math.sign(y1 - y); }
   open(x, y);
 }
 
+// Clear the minimum-wall path from (sx,sy) to (tx,ty), routing AROUND lava (a 0-1 BFS:
+// stepping on floor/water is free, breaking a wall costs 1, lava is impassable). Turns
+// only the walls on that path to floor. Returns false if the target is unreachable even
+// through walls (i.e. genuinely lava-isolated) — such a pocket is left alone.
+function carveWallPathTo(state, sx, sy, tx, ty) {
+  const key = (x, y) => `${x},${y}`;
+  const passable = (x, y) => x > 0 && x < WORLD_SIZE - 1 && y > 0 && y < WORLD_SIZE - 1 && terrainAt(state, x, y) !== 'lava';
+  const cost = new Map([[key(sx, sy), 0]]);
+  const prev = new Map();
+  const deque = [[sx, sy]];
+  while (deque.length) {
+    const [x, y] = deque.shift();
+    if (x === tx && y === ty) break;
+    const base = cost.get(key(x, y));
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!passable(nx, ny)) continue;
+      const nc = base + (terrainAt(state, nx, ny) === 'wall' ? 1 : 0);
+      if (!cost.has(key(nx, ny)) || nc < cost.get(key(nx, ny))) {
+        cost.set(key(nx, ny), nc);
+        prev.set(key(nx, ny), key(x, y));
+        if (nc === base) deque.unshift([nx, ny]);
+        else deque.push([nx, ny]);
+      }
+    }
+  }
+  if (!cost.has(key(tx, ty))) return false; // lava-isolated — leave it be
+  let cur = key(tx, ty);
+  while (cur) {
+    if (terrainAt(state, ...cur.split(',').map(Number)) === 'wall') delete state.terrain[cur];
+    cur = prev.get(cur);
+  }
+  return true;
+}
+
+// No walkable region may be fully WALLED off from the king. Flood from his start; for
+// each pocket he can't reach, carve the min-wall path to it (routing around lava, so
+// genuinely lava-isolated islands are left as intended).
+function connectWalledPockets(state, sx, sy) {
+  const tried = new Set();
+  for (let guard = 0; guard < 60; guard += 1) {
+    const reach = playerReachable(state, sx, sy);
+    let pocket = null;
+    for (let y = 1; y < WORLD_SIZE - 1 && !pocket; y += 1) {
+      for (let x = 1; x < WORLD_SIZE - 1; x += 1) {
+        const key = `${x},${y}`;
+        if (reach.has(key) || tried.has(key)) continue;
+        if (standableFor(terrainAt(state, x, y), { lavaOk: false })) pocket = { x, y };
+      }
+    }
+    if (!pocket) break;
+    for (const k of playerReachable(state, pocket.x, pocket.y)) tried.add(k); // whole pocket, once
+    carveWallPathTo(state, sx, sy, pocket.x, pocket.y);
+  }
+}
+
 // Would this enemy, as its piece, have at least one legal move from where it stands?
 function enemyHasMove(state, enemy) {
   return getPieceMoves(enemy, state).length > 0;
+}
+
+// How many tiles a turret of `kind` planted at (x,y) would cover, judged by TERRAIN
+// alone (transient units don't count — they move/die). Avoids boxing a turret in where
+// walls leave it firing at almost nothing.
+function turretCoverage(state, kind, x, y) {
+  const probe = { kind, x, y, id: '__probe' };
+  return getPieceThreats(probe, { ...state, enemies: [probe] }).length;
+}
+
+// Could a summoning circle of `kind` at (x,y) conjure a minion onto an adjacent tile
+// from which that minion could move (terrain-wise)? (Don't place circles that would
+// only ever spawn stuck pieces.)
+function circleCanSpawnMobile(state, kind, x, y) {
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
+    if (!isStandable(terrainAt(state, nx, ny))) continue;
+    const probe = { kind, x: nx, y: ny, id: '__probe' };
+    if (getPieceMoves(probe, { ...state, enemies: [probe] }).length > 0) return true;
+  }
+  return false;
 }
 
 // Build the floor's terrain: a solid wall border enclosing everything, then rooms,
@@ -444,12 +512,9 @@ function generateFloor(floor, carryPlayer, score) {
     player,
     terrain: generateTerrain(floor, player),
     explored: {},
-    itemMemory: {},
     enemies: [],
-    items: [],
     spatters: [],
-    traps: [], // hidden until they enter sight, then they conjure foes and stay sprung
-    scars: [], // permanent marks (sprung traps / shattered summoning circles)
+    scars: [], // permanent marks (shattered summoning circles)
     exit: null,
     floor,
     turn: 0,
@@ -491,8 +556,11 @@ function generateFloor(floor, carryPlayer, score) {
     return enemy;
   }
 
-  // Wandering off-screen enemies, growing with depth — roughly double the old count.
-  const offscreenCount = Math.min(10 + floor * 6, MAX_ENEMIES);
+  // Every initial cohort is scaled to 0.75x for a gentler starting population.
+  const initCount = (n) => Math.round(n * 0.75);
+
+  // Wandering off-screen enemies, growing with depth.
+  const offscreenCount = Math.min(initCount(8 + floor * 4), MAX_ENEMIES);
   for (let i = 0; i < offscreenCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
     if (!tile) break;
@@ -507,8 +575,7 @@ function generateFloor(floor, carryPlayer, score) {
 
   // The exit + boss chamber sit at the floor's fixed anchor, ringed by a wall (or a
   // lava/water moat on watery/fiery floors) with a doorway facing the king. The
-  // boss and a backup cohort (turrets / statues / summoning circles / sleeping
-  // pieces) guard it.
+  // boss and a backup cohort (turrets / summoning circles / sleeping pieces) guard it.
   const level = levelForFloor(floor);
   const anchor = chamberAnchorForFloor(floor);
   const ax = Math.max(2, Math.min(WORLD_SIZE - 3, anchor.x));
@@ -550,74 +617,53 @@ function generateFloor(floor, carryPlayer, score) {
   }
 
   const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 6 && chebyshev(x, y, player.x, player.y) >= 3;
-  // Sleeping backup pieces near the boss (roughly doubled).
-  for (let i = 0; i < 6 + floor; i += 1) {
+  // The chamber leans on STATIONARY hazards near the stair, with only a thin screen of
+  // mobile guards. Sleeping backup pieces (few).
+  for (let i = 0; i < initCount(2 + Math.floor(floor / 2)); i += 1) {
     const spot = place(nearChamber);
     if (spot) addMobileEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
   }
-  // Turrets guarding the chamber (from floor 3, roughly doubled).
+  // Turrets guarding the chamber (from floor 3) — placed ONLY where they cover real
+  // ground (never boxed into hitting no/few tiles).
   if (floor >= 3) {
-    for (let i = 0; i < 2 + Math.floor(floor / 2); i += 1) {
-      const spot = place(nearChamber);
+    for (let i = 0; i < initCount(3 + Math.floor(floor / 2)); i += 1) {
+      const kind = randomEnemyKind(floor);
+      const spot = place((x, y) => nearChamber(x, y) && turretCoverage(state, kind, x, y) >= 4);
       if (spot) {
-        const t = createEnemy(randomEnemyKind(floor), spot.x, spot.y);
+        const t = createEnemy(kind, spot.x, spot.y);
         t.turret = true;
         state.enemies.push(t);
       }
     }
   }
-  // Summoning circles (from floor 2, roughly doubled). The shown piece type is the
-  // ONLY kind each one conjures.
+  // Summoning circles (from floor 2) — placed ONLY where the piece they conjure has
+  // room to move. The shown piece type is the ONLY kind each conjures.
   if (floor >= 2) {
-    for (let i = 0; i < 2 + Math.floor(floor / 2); i += 1) {
-      const spot = place(nearChamber);
+    for (let i = 0; i < initCount(3 + Math.floor(floor / 2)); i += 1) {
+      const kind = randomEnemyKind(floor);
+      const spot = place((x, y) => nearChamber(x, y) && circleCanSpawnMobile(state, kind, x, y));
       if (spot) {
-        const c = createEnemy(randomEnemyKind(floor), spot.x, spot.y);
+        const c = createEnemy(kind, spot.x, spot.y);
         c.summonCircle = true;
         state.enemies.push(c);
       }
     }
   }
 
-  // Potions dropped on the ground (grabbed by stepping on them; trampled by foes).
-  const potionCount = 3 + randomInt(3);
-  for (let i = 0; i < potionCount; i += 1) {
-    const tile = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 3);
-    if (tile) state.items.push({ kind: 'consumable', potion: randomConsumable(), x: tile.x, y: tile.y });
-  }
-
-  // Loose statues scattered out of sight (the Crypt has extra, all roughly doubled).
-  const statueCount = 2 * (level && level.statues ? level.statues : 0) + (floor >= 2 ? 2 + randomInt(3) : 0);
-  for (let i = 0; i < statueCount; i += 1) {
-    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 3);
-    if (tile) {
-      const s = createEnemy(randomEnemyKind(floor), tile.x, tile.y);
-      s.statue = true;
-      state.enemies.push(s);
-    }
-  }
-
-  // Hidden traps: unseen until they enter the king's sight, then they conjure a burst
-  // of one floor-appropriate piece type beside him. Each holds its own spawn kind.
-  const trapCount = 2 + floor;
-  for (let i = 0; i < trapCount; i += 1) {
-    const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 4);
-    if (tile) state.traps.push({ x: tile.x, y: tile.y, kind: randomEnemyKind(floor), sprung: false });
-  }
-
-  // Guarantee the king can actually reach the stair: if walls/lava seal it off, carve
-  // a corridor from his start to the chamber doorway.
+  // Guarantee the king can reach the stair: if walls/lava seal the doorway off, carve
+  // to it — then make sure NO walkable pocket anywhere is fully walled off.
   const reachable = playerReachable(state, player.x, player.y);
   if (!reachable.has(`${doorX},${doorY}`)) {
     carveCorridor(state, player.x, player.y, doorX, doorY);
   }
+  connectWalledPockets(state, player.x, player.y);
 
   // Final guard: the chamber ring and corridor-carving happen after the wanderers are
   // scattered, so one may have been sealed in by terrain. Any mobile piece with no
   // move even in isolation is king-swapped, or dropped if it's truly walled solid —
   // never leave a frozen piece on the board.
   state.enemies = state.enemies.filter((e) => {
-    if (e.boss || e.statue || e.turret || e.summonCircle) return true;
+    if (e.boss || e.turret || e.summonCircle) return true;
     const solo = { ...state, enemies: [e] };
     if (getPieceMoves(e, solo).length > 0) return true;
     e.kind = 'king';
@@ -640,17 +686,16 @@ function createInitialState(classKey) {
   return generateFloor(1, createPlayer(classKey || 'warrior'), 0);
 }
 
-// Descending: fully heal, refresh cards, reset per-floor flags, and queue a level-up
-// perk choice. The controller shows the choice, then the next floor is built.
+// Descending the stair: fully heal and refresh cards, then build the next floor. The
+// level-up boon is NOT granted here — it is earned earlier, by slaying the floor's
+// boss (see defeatBoss). Slipping past a boss and descending thus yields nothing.
 function nextFloor(state) {
   const healed = { ...state.player, hp: state.player.maxHp };
   healed.cards = (healed.cards || []).map((c) => ({ ...c, remaining: 0 }));
-  healed.level = (healed.level || 1) + 1;
   healed.extraLifeUsed = false;
   const next = generateFloor(state.floor + 1, healed, state.score);
-  next.pendingLevelUp = true;
-  next.levelPerks = rollLevelPerks(next.player, LEVEL_PERK_CHOICES);
-  next.message = `You reach level ${next.player.level}. Choose a boon.`;
+  next.pendingLevelUp = false;
+  next.message = 'You descend the stair to the next floor.';
   return next;
 }
 
@@ -665,8 +710,7 @@ function decaySpatters(spatters) {
   return spatters.map((s) => ({ ...s, life: s.life - 1 })).filter((s) => s.life > 0);
 }
 
-// One turn's upkeep: age counters, recharge cards, fade blood, lapse wards, and
-// crush any potions trodden underfoot.
+// One turn's upkeep: age counters, recharge cards, fade blood, and lapse wards.
 function passTurn(state) {
   const p = state.player;
   state.turn += 1;
@@ -682,18 +726,6 @@ function passTurn(state) {
   p.warded = false;
   p.firstHitUsedThisTurn = false;
   p.attacked = false;
-  trampleItems(state);
-}
-
-// Record item memory (last-seen pickup at each explored tile) from what's in view.
-function rememberItems(state) {
-  if (!state.itemMemory) state.itemMemory = {};
-  for (const key of computeVisibleTiles(state)) {
-    const [x, y] = key.split(',').map(Number);
-    const item = state.items.find((i) => i.x === x && i.y === y);
-    if (item) state.itemMemory[key] = { kind: item.kind, potion: item.potion };
-    else delete state.itemMemory[key];
-  }
 }
 
 function revealSeen(state) {
@@ -701,57 +733,9 @@ function revealSeen(state) {
   for (const key of computeVisibleTiles(state)) state.explored[key] = true;
 }
 
-// Conjure up to `count` fresh foes of `kind` on free tiles spiralling out from
-// `origin`. They wake at once so they immediately menace the king.
-function spawnBurst(state, origin, kind, count) {
-  let made = 0;
-  for (let r = 1; r <= 4 && made < count; r += 1) {
-    const ring = [];
-    for (let dx = -r; dx <= r; dx += 1) {
-      for (let dy = -r; dy <= r; dy += 1) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) === r) ring.push([origin.x + dx, origin.y + dy]);
-      }
-    }
-    for (let i = ring.length - 1; i > 0; i -= 1) {
-      const j = randomInt(i + 1);
-      [ring[i], ring[j]] = [ring[j], ring[i]];
-    }
-    for (const [x, y] of ring) {
-      if (made >= count) break;
-      if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
-      if (!isStandable(terrainAt(state, x, y))) continue;
-      if (x === state.player.x && y === state.player.y) continue;
-      if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
-      const foe = createEnemy(kind, x, y);
-      foe.awake = true;
-      state.enemies.push(foe);
-      made += 1;
-    }
-  }
-  return made;
-}
-
-// A trap fires the instant it enters the king's sight (never on step — that would be
-// too easy to skirt): it conjures a burst of its piece type beside him, then stays
-// permanently sprung (a scar the renderer keeps showing).
-function springTraps(state) {
-  if (!Array.isArray(state.traps) || !state.traps.length) return;
-  const visible = computeVisibleTiles(state);
-  for (const trap of state.traps) {
-    if (trap.sprung || !visible.has(`${trap.x},${trap.y}`)) continue;
-    trap.sprung = true;
-    spawnBurst(state, state.player, trap.kind, TRAP_SPAWN_COUNT);
-    if (!Array.isArray(state.scars)) state.scars = [];
-    state.scars.push({ x: trap.x, y: trap.y, kind: 'trap' });
-    state.message = `A trap springs — ${trap.kind}s burst from the ground!`;
-  }
-}
-
-// Reveal newly-seen ground, spring any traps now in view, and remember the exit.
+// Reveal newly-seen ground and remember the exit once explored.
 function updateDiscovery(state) {
   revealSeen(state);
-  rememberItems(state);
-  springTraps(state);
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) state.exit.discovered = true;
 }
 
@@ -772,7 +756,11 @@ function getPlayerMoves(state) {
   };
   const opts = { terrainImmune: Boolean(p.terrainImmune) };
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-    for (const stop of slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy, opts)) add(stop);
+    const stops = slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy, opts);
+    // The king must COMMIT to the full slide (his moveRange) — he can only stop short
+    // where he collides (a wall, edge, or a foe he captures). So only the furthest
+    // reachable tile in each direction is a legal destination, never an inner one.
+    if (stops.length) add(stops[stops.length - 1]);
   }
   return moves;
 }
@@ -782,28 +770,22 @@ function getPlayerMoves(state) {
 function applyArrival(next, x, y) {
   const pl = next.player;
 
-  // A boss is ATTACKED IN PLACE (it has HP): the king only steps onto its tile if
-  // the blow fells it.
+  // A boss is ATTACKED IN PLACE (it has HP): the king never steps onto its tile —
+  // even the killing blow leaves him where he stands. The boss (which guards the
+  // stair) is removed and the level-up boon is granted (see defeatBoss); the king
+  // must then walk onto the now-empty stair himself to descend.
   const bossHere = next.enemies.find((e) => e.x === x && e.y === y && e.boss);
   if (bossHere) {
     pl.attacked = true;
     const result = damageBoss(next, bossHere, 1);
-    if (result === 'slain') {
-      pl.x = x;
-      pl.y = y;
-      pl.killedEnemy = true;
-      // The boss guards the stair — felling it puts the king on it: descend at once.
-      if (tryDescend(next)) {
-        updateDiscovery(next);
-        return next;
-      }
-    }
+    if (result === 'slain') pl.killedEnemy = true;
     if (result === 'slain' && pl.freeKillMove) {
       next.enemyTurn = false;
       next.lastAction = 'move-free';
     } else {
       passTurn(next);
       next.enemyTurn = true;
+      next.lastAction = 'combat';
     }
     updateDiscovery(next);
     return next;
@@ -825,29 +807,7 @@ function applyArrival(next, x, y) {
     next.lastAction = 'combat';
   }
 
-  // A potion on this tile is quaffed on the spot — but only if it would help right
-  // now. If not, the king steps over it and leaves it for later (it stays on the
-  // ground, and is remembered through the fog).
-  next.drankPotion = false;
-  const item = next.items.find((i) => i.x === x && i.y === y);
-  if (item && consumableIsUseful(pl, item.potion)) {
-    applyConsumable(next, item.potion);
-    next.items = next.items.filter((i) => i !== item);
-    next.drankPotion = true;
-  }
-
   if (tryDescend(next)) return next;
-
-  // Statues wake the moment the king steps beside them.
-  for (const e of next.enemies) {
-    if (e.statue && chebyshev(e.x, e.y, x, y) <= 1) {
-      e.statue = false;
-      e.awake = false;
-      e.surprised = false;
-      next.awokeStatue = true;
-      next.message = `A ${e.kind} statue cracks to life!`;
-    }
-  }
 
   if (realKill && pl.freeKillMove) {
     next.enemyTurn = false;
@@ -973,12 +933,19 @@ function useCard(state, cardIndex, x, y) {
   if (category === 'melee') {
     let survived = false;
     if (mainTarget && mainTarget.boss) {
+      // The boss is struck IN PLACE — the king never steps onto its stair tile, even
+      // on the kill (so he must still walk onto the stair afterward to descend).
       survived = damageBoss(next, mainTarget, 1) !== 'slain';
-      if (!survived) { p.x = x; p.y = y; }
     } else if (mainTarget) {
       resolveKill(next, mainTarget);
       p.x = x;
       p.y = y;
+    } else {
+      // No foe on the tile: a melee card can also be spent as a repositioning move
+      // onto empty ground within reach.
+      p.x = x;
+      p.y = y;
+      next.message = 'The king repositions.';
     }
     scored = Boolean(mainTarget) && !survived;
     realKill = scored && isKillablePiece(mainTarget); // shattering a circle is not an on-kill
@@ -1003,7 +970,7 @@ function useCard(state, cardIndex, x, y) {
       for (const s of kills) {
         for (const [dx, dy] of [...ORTHO, ...DIAG]) {
           const e = next.enemies.find((en) => en.x === s.x + dx && en.y === s.y + dy);
-          if (e && !e.boss && !e.statue && unitInSight(next, e.x, e.y)) e.awake = false;
+          if (e && !e.boss && unitInSight(next, e.x, e.y)) e.awake = false;
         }
       }
     }
@@ -1011,7 +978,7 @@ function useCard(state, cardIndex, x, y) {
 
   if (category === 'spell' && p.spellSurprise && !next.gameOver && !next.won) {
     for (const e of next.enemies) {
-      if (!e.boss && !e.statue && unitInSight(next, e.x, e.y)) e.awake = false;
+      if (!e.boss && unitInSight(next, e.x, e.y)) e.awake = false;
     }
   }
 
@@ -1057,8 +1024,10 @@ function movePlayerTo(state, x, y) {
 // Keyboard movement: a single ground step in a direction.
 function movePlayer(state, dx, dy) {
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
-  const isEnemy = (x, y) => Boolean(enemyAt(x, y));
-  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, 1, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune) });
+  const isEnemy = (x, y) => capturableAt(state, x, y);
+  // Slide the king's FULL move range (2+ with Fleet), stopping only on collision —
+  // the furthest reachable stop is the destination.
+  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune) });
   if (!stops.length) {
     const next = structuredClone(state);
     next.message = 'The king cannot move that way.';
@@ -1161,7 +1130,6 @@ function beginEnemyPhase(state) {
   for (const enemy of next.enemies) {
     const wasSurprised = enemy.surprised;
     enemy.frustrated = false;
-    if (enemy.statue) continue;
     const hiddenFromThis = stealthed && !enemy.awake && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
     if (hiddenFromThis || !unitInSight(next, enemy.x, enemy.y)) {
       enemy.awake = false;
@@ -1170,6 +1138,15 @@ function beginEnemyPhase(state) {
         if (!(enemy.lastSeen && enemy.lastSeenTtl > 0 && pursueLastSeen(next, enemy))) {
           wanderEnemy(next, enemy);
         }
+      }
+      // Pursuing/wandering can carry an enemy INTO the king's view. It has already
+      // spent its move this turn, but it must NOT be left flagged "unaware" while
+      // sitting on screen — a hunter that steps into sight is plainly hostile. Mark
+      // it aware and refresh its memory so it acts as a mover next turn.
+      if (!hiddenFromThis && unitInSight(next, enemy.x, enemy.y)) {
+        enemy.awake = true;
+        enemy.lastSeen = { x: p.x, y: p.y };
+        enemy.lastSeenTtl = PURSUIT_TTL;
       }
       continue;
     }
@@ -1439,40 +1416,38 @@ function moveEnemy(state, enemyId) {
   return meleeMove(next, enemy);
 }
 
-// Difficulty over time: drop fresh enemies out of sight, faster the longer the king
-// lingers.
+// Difficulty over time: drop fresh enemies just BEYOND the king's sight so they
+// close in on him — the safe bubble shrinks the longer he lingers. Spawns come
+// faster (and, at the danger ceiling, twice as many) the longer he stays.
 function maybeSpawnEnemy(state) {
   const next = structuredClone(state);
   next.turnsSinceSpawn += 1;
   const maxed = next.turn >= MAX_TURNS_SCARY; // lingered to the danger ceiling
   const ramp = Math.min(1, next.turn / MAX_TURNS_SCARY);
-  const interval = Math.max(1, Math.round((next.spawnInterval - (next.spawnInterval - 2) * ramp) / 2));
+  // Turns between spawns (shrinks as dread ramps). Toned down 50% from before — the
+  // interval is the full base (was halved), so foes trickle in half as fast.
+  const interval = Math.max(1, Math.round(next.spawnInterval - (next.spawnInterval - 2) * ramp));
   const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5);
   if (next.turnsSinceSpawn < interval || next.enemies.length >= cap) return next;
   next.turnsSinceSpawn = 0;
   const bursts = maxed ? 2 : 1; // at max danger the spawns come twice as fast
+  const radius = Math.floor((next.player.vision || STARTING_VISION) / 2);
   for (let b = 0; b < bursts; b += 1) {
     if (next.enemies.length >= cap) break;
     const occupied = new Set([`${next.player.x},${next.player.y}`]);
     for (const enemy of next.enemies) occupied.add(`${enemy.x},${enemy.y}`);
-    for (const item of next.items) occupied.add(`${item.x},${item.y}`);
-    const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y));
+    const unseen = (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y);
+    // Prefer the ring just outside the king's sight (encroaching); if that ring is
+    // full/walled off, fall back to anywhere he can't see so a spawn still lands.
+    const dist = (x, y) => chebyshev(x, y, next.player.x, next.player.y);
+    const tile = findFreeTile(occupied, (x, y) => unseen(x, y) && dist(x, y) <= radius + 2)
+      || findFreeTile(occupied, unseen);
     if (tile) next.enemies.push(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y));
   }
   return next;
 }
 
 /* --------------------------------- upkeep --------------------------------- */
-
-// Ground potions in the king's sight are trampled away by any foe standing on them.
-function trampleItems(state) {
-  if (!Array.isArray(state.items) || !state.items.length) return;
-  state.items = state.items.filter((item) => {
-    const foe = state.enemies.some((e) => e.x === item.x && e.y === item.y);
-    if (foe && inLineOfSight(state, item.x, item.y)) return false; // crushed underfoot
-    return true;
-  });
-}
 
 // Record any enemy kinds the king can currently see.
 function recordSeenEnemies(state) {

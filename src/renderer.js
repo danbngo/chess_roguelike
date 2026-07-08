@@ -27,7 +27,6 @@ const Renderer = (function () {
     death: { color: '153, 27, 27', peak: 0.85, shake: SHAKE_DURATION * 1.8 }, // deep crimson
     kill: { color: '248, 250, 252', peak: 0.18, shake: SHAKE_DURATION * 0.45 }, // pale impact
     heal: { color: '74, 222, 128', peak: 0.6, shake: SHAKE_DURATION * 0.3 }, // bright green — a quaff
-    trap: { color: '217, 119, 6', peak: 0.55, shake: SHAKE_DURATION }, // amber — a trap erupts
     powerup: { color: '168, 85, 247', peak: 0.45, shake: 0 }, // violet (level-up)
     victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
   };
@@ -235,11 +234,7 @@ const Renderer = (function () {
     if (isPlayer && o.classColor) {
       stroke = o.classColor; // the king's outline is tinted by his class
     }
-    if (role === 'statue') {
-      fill = '#5b6470'; // dull stone
-      stroke = '#8b95a3';
-      glyph = '#cdd5df';
-    } else if (role === 'turret') {
+    if (role === 'turret') {
       fill = '#2c2f3a'; // dark steel
       stroke = '#e0894b'; // warm danger ring
       glyph = '#f1c9a0';
@@ -282,7 +277,6 @@ const Renderer = (function () {
 
   // At-a-glance ROLE indicator: a colored cap sitting atop the piece token.
   const ROLE_HAT = {
-    statue: '#94a3b8', // stone
     turret: '#e0894b', // rust
     boss: '#e0b341', // gold
     circle: '#a855f7', // arcane violet
@@ -438,44 +432,8 @@ const Renderer = (function () {
 
   // Draw a pickup. `animated` items (in current view) pulse and glow; remembered
   // ones (out of view) are static and dimmed.
-  function drawItem(item, animated) {
-    const cx = item.x * tileSize + tileSize / 2;
-    const cy = item.y * tileSize + tileSize / 2;
-    const pulse = animated ? 0.5 + 0.5 * Math.sin(clock * 4 + (item.x + item.y)) : 0;
-    ctx.save();
-    if (!animated) {
-      ctx.globalAlpha = 0.5;
-    }
-    ctx.shadowBlur = animated ? tileSize * (0.18 + 0.22 * pulse) : 0;
-    if (item.kind === 'consumable') {
-      const info = (typeof CONSUMABLES !== 'undefined' && CONSUMABLES[item.potion]) || { glyph: '!', color: '#f472b6' };
-      ctx.shadowColor = info.color;
-      ctx.fillStyle = info.color;
-      ctx.font = `${tileSize * (0.56 + 0.06 * pulse)}px serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(info.glyph, cx, cy + tileSize * 0.05);
-    } else {
-      ctx.shadowColor = 'rgba(251, 191, 36, 0.95)';
-      ctx.beginPath();
-      ctx.arc(cx, cy, tileSize * (0.24 + 0.03 * pulse), 0, Math.PI * 2);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#b45309';
-      ctx.stroke();
-      ctx.fillStyle = '#7c4a03';
-      ctx.font = `bold ${tileSize * 0.32}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('$', cx, cy);
-    }
-    ctx.restore();
-  }
-
-  // A permanent scar left on the ground: a shattered summoning circle, or a sprung
-  // trap. Drawn dim when only remembered, brighter while in sight.
+  // A permanent scar left on the ground: the ruin of a shattered summoning circle.
+  // Drawn dim when only remembered, brighter while in sight.
   function drawScar(scar, faded) {
     const cx = scar.x * tileSize + tileSize / 2;
     const cy = scar.y * tileSize + tileSize / 2;
@@ -483,21 +441,11 @@ const Renderer = (function () {
     ctx.save();
     ctx.globalAlpha = faded ? 0.4 : 0.8;
     ctx.lineWidth = Math.max(1.5, tileSize * 0.05);
-    if (scar.kind === 'circle') {
-      // A broken violet ring — the ruin of a summoning circle.
-      ctx.strokeStyle = '#7c5cbf';
-      for (let i = 0; i < 4; i += 1) {
-        const a0 = (i / 4) * Math.PI * 2 + 0.25;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, a0, a0 + Math.PI * 0.35);
-        ctx.stroke();
-      }
-    } else {
-      // A sprung trap — jagged X of scorched marks.
-      ctx.strokeStyle = '#d97706';
+    ctx.strokeStyle = '#7c5cbf'; // a broken violet ring
+    for (let i = 0; i < 4; i += 1) {
+      const a0 = (i / 4) * Math.PI * 2 + 0.25;
       ctx.beginPath();
-      ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
-      ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
+      ctx.arc(cx, cy, r, a0, a0 + Math.PI * 0.35);
       ctx.stroke();
     }
     ctx.restore();
@@ -728,10 +676,10 @@ const Renderer = (function () {
       fill(f.x, f.y);
     };
     feature(state.exit, '#38bdf8'); // stair down — cyan
-    // Permanent scars on explored ground: shattered circles (violet) / sprung traps (amber).
+    // Permanent scars on explored ground: shattered summoning circles (violet).
     for (const scar of state.scars || []) {
       if (!(state.explored || {})[`${scar.x},${scar.y}`]) continue;
-      miniCtx.fillStyle = scar.kind === 'circle' ? '#7c5cbf' : '#d97706';
+      miniCtx.fillStyle = '#7c5cbf';
       fill(scar.x, scar.y);
     }
 
@@ -874,26 +822,9 @@ const Renderer = (function () {
       }
     }
 
-    // Permanent scars (shattered circles, sprung traps): shown forever once their
-    // tile has been explored.
+    // Permanent scars (shattered summoning circles): shown forever once explored.
     for (const scar of state.scars || []) {
       if (isExplored(scar.x, scar.y)) drawScar(scar, !lit(scar.x, scar.y));
-    }
-
-    // Live items in current view: drawn from reality, animated.
-    for (const item of state.items) {
-      if (lit(item.x, item.y)) {
-        drawItem(item, true);
-      }
-    }
-    // Remembered items the king saw earlier, on explored ground he can't currently
-    // see: drawn static and dim. They may be stale (trampled while out of view).
-    const memory = state.itemMemory || {};
-    for (const key in memory) {
-      const [mx, my] = key.split(',').map(Number);
-      if (isExplored(mx, my) && !lit(mx, my)) {
-        drawItem({ x: mx, y: my, kind: memory[key].kind, amount: memory[key].amount, potion: memory[key].potion }, false);
-      }
     }
 
     // While aiming a card, show its reachable tiles in violet; otherwise the plain
@@ -932,8 +863,8 @@ const Renderer = (function () {
       if (enemy.boss && enemy.maxHp) {
         drawBossHpBar(enemy.x, enemy.y, enemy.hp, enemy.maxHp);
       }
-      // Main-AI-state icon (statues / turrets / circles stay put, so show none).
-      if (role !== 'statue' && role !== 'turret' && role !== 'circle') {
+      // Main-AI-state icon (turrets / circles stay put, so show none).
+      if (role !== 'turret' && role !== 'circle') {
         const mainState = enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : null;
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }

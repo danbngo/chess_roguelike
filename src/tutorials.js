@@ -26,9 +26,8 @@ const TUTORIALS = {
   hp: {
     title: 'Taking damage',
     text:
-      'That strike cost you 1 HP. Lose every point and the run ends. Step onto a ' +
-      'Potion of Healing to quaff it on the spot, and you fully heal each time you ' +
-      'descend.',
+      'That strike cost you 1 HP. Lose every point and the run ends — there is no ' +
+      'healing on a floor, so avoid blows. You fully heal each time you descend.',
   },
   knight: {
     title: 'Knights leap',
@@ -49,13 +48,6 @@ const TUTORIALS = {
       'An enemy king shuffles one tile at a time toward you and strikes when it can ' +
       'step onto your square. Weak alone, dangerous in a crowd.',
   },
-  statue: {
-    title: 'Statues',
-    text:
-      'A statue stands inert and cannot be captured — until the king steps onto a ' +
-      'neighbouring tile, when it cracks to life and joins the hunt. They often ' +
-      'guard the stair.',
-  },
   turret: {
     title: 'Turrets',
     text:
@@ -74,8 +66,9 @@ const TUTORIALS = {
     title: 'The floor guardian',
     text:
       'A crowned boss sits ON the stair down — a high-mobility piece with a HP bar. ' +
-      'It holds still until you strike it or step adjacent, then hunts. Fell it (each ' +
-      'hit chips the bar) and you descend the moment it drops.',
+      'It holds still until you strike it or step adjacent, then hunts. SLAY it (each ' +
+      'hit chips the bar) to descend AND earn a level-up boon. You can also bait it ' +
+      'off the stair and slip past — but then you descend with NO boon and stay weak.',
   },
   danger: {
     title: 'The longer you linger...',
@@ -85,24 +78,19 @@ const TUTORIALS = {
       'lingered to the limit and foes now pour in twice as fast. Don’t dawdle: find ' +
       'the stairs.',
   },
-  trap: {
-    title: 'Sprung a trap!',
-    text:
-      'Traps lie hidden until they enter your sight — then they burst, conjuring a ' +
-      'pack of foes right beside you (you can’t defuse them by stepping around). A ' +
-      'sprung trap stays marked with a scorched cross so you know it is spent.',
-  },
   exit: {
     title: 'Descending',
     text:
-      'Step onto the stair to descend. You fully heal, your cards recharge, and you ' +
-      'gain a level — choose one of three boons for your class.',
+      'Step onto the stair to descend — you fully heal and your cards recharge. But a ' +
+      'level-up boon comes ONLY from slaying the guardian first; slip past it and you ' +
+      'descend empty-handed.',
   },
   levelup: {
     title: 'Level up',
     text:
-      'Each descent you pick one of three boons drawn from your class: a stat bump, ' +
-      'a new card, or a rule-changing power. Build toward the run you want.',
+      'Slaying a floor guardian earns a boon: pick one of two drawn from your class. ' +
+      'Boons come in tiered chains — take the cheap tier-1 bump and it unlocks the ' +
+      'stronger tier-2, then the tier-3 capstone. Build toward the run you want.',
   },
   // Terrain tips fire the first time each type comes into view.
   'terrain-wall': {
