@@ -10,10 +10,11 @@ live ones (rebalance the numbers/effects next). **Only the Warrior was actually 
 Sorcerer's four even line up with the D&D wizard schools.
 
 Effect keys: `maxHp`, `vision` (+2 = +1 sight radius), `moveRange` (now a forced full
-slide), `cardReach`, `gainCard:<piece>`, and flags: `firstHitEachTurn`, `reflect`,
-`meleeRefund`, `meleeCleave`, `meleeLeech`, `meleePierce`, `leapShock`, `meleeFlourish`,
-`freeKillMove`, `extraLife`, `revealFloor`, `stealth`, `rangedRapid`, `spellHaste`,
-`freeSpell`, `spellDazzle`, `spellSurprise`.
+slide), `cardReach`, `gainCard:<piece>` (+ optional `gainCooldown:<n>` override), and
+flags: `firstHitEachTurn`, `reflect`, `meleeRefund`, `meleeCleave`, `meleeLeech`,
+`meleePierce`, `leapShock`, `meleeFlourish`, `freeKillMove`, `extraLife`, `revealFloor`,
+`terrainImmune`, `seeThroughWalls`, `noChase`, `camouflage`, `recoil`, `stealth`,
+`rangedRapid`, `spellHaste`, `freeSpell`, `spellDazzle`, `spellSurprise`.
 
 ---
 
@@ -59,76 +60,81 @@ grants, and Undying — replaced by the four chains above (survive / butcher / c
 
 ---
 
-## RANGER — the Hunter  (ranged · start: bishop · 5 HP)
+## RANGER — the Hunter  (ranged · start: bishop, cooldown 4 · 5 HP)  ✅ IMPLEMENTED
 _A hunter who fells foes from across the room._
-make sure its starting bishop has 4 cooldown
 
 ### 🌲 Druid — "Weather any storm the wild throws at you."
-The survivalist: hard to hurt, first blow shrugged off.
+The survivalist who masters the terrain, then becomes the beast.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-Water no longer effects your moves or prevents your weapon usage
-Can see and shoot over (with cards) walls
-Beastform - costs 0 turns to activate. turns you into a knight for 3 turns. You can only move by jumping and cannot use weapon cards.
+| 1 | `r_wade` | Amphibious | water no longer slows your moves or blocks your cards | `terrainImmune` |
+| 2 | `r_xray` | Sixth Sense | see and shoot over walls (symmetric — you can also be seen through them) | `seeThroughWalls` |
+| 3 | `r_beast` | Beastform | gain a beastform card: free to cast; for 3 turns move only by knight-leaps and use no weapon cards | `gainCard:beastform` |
 
 ### 🎯 Deadeye — "One shot. Then another, before they blink."
-Extreme range and rapid follow-up shots.
+Reach, sight, and foreknowledge.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 3 | `r_eagle` | Premonition | fresh floors reveal fully the moment you arrive | `revealFloor` |
-| 2 | `r_eyes2` | Hawk Eyes | +1 sight radius | `vision:2` |
 | 1 | `r_reach` | Power Draw | +1 card reach | `cardReach:1` |
+| 2 | `r_eyes2` | Hawk Eyes | +1 sight radius | `vision:2` |
+| 3 | `r_eagle` | Premonition | fresh floors reveal fully the moment you arrive | `revealFloor` |
 
 ### 🌑 Gloom Stalker — "Seen only when it's already too late."
-All-seeing and unseen — the perfect ambusher.
+The ghost: unchased, ignored by structures, unnoticed.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-Enemies no longer chase you if you move out of their sight
-camouflage - turrets and summoning circles dont attack you
-| 3 | `r_stealth` | Silent | unaware foes don't notice you unless adjacent or if you use an attack in front of them | `stealth` |
+| 1 | `r_ghost` | Ghost | foes stop chasing once you leave their sight | `noChase` |
+| 2 | `r_camo` | Camouflage | turrets and summoning circles ignore you | `camouflage` |
+| 3 | `r_stealth` | Silent | unaware foes don't notice you unless adjacent (or you attack) | `stealth` |
 
 ### 🏹 Fletcher — "A bow for every range, and the feet to use them."
-A versatile skirmisher who kites with a full quiver.
+The quartermaster: reload, a bigger bow, and kickback.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-reload - an ability card that skips your turn but recharges all OTHER cooldowns. cooldown: 3.
-| 2 | `r_longbow` | Longbow | gain a rook card with cooldown 5 | `gainCard:rook` |
-Recoil - whenever you use a weapon card, move away from the target. this move CAN hit an enemy.
+| 1 | `r_reload` | Reload | gain a reload card: spend a turn to recharge all your OTHER cards (cooldown 3) | `gainCard:reload` |
+| 2 | `r_longbow` | Longbow | gain a rook card (cooldown 5) | `gainCard:rook`, `gainCooldown:5` |
+| 3 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (and can strike a foe there) | `recoil` |
+
+_Ranger changes: starter knight → bishop (cd 4); DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet). Silent kept its "(or you attack)" wording — the "in front of them" directional nuance is not yet built._
 
 ---
 
-## SORCERER — the Wizard  (spell · start: rook · 4 HP)
+## SORCERER — the Wizard  (spell · start: rook · 3 HP)
 _A fragile caster whose bolts pierce straight through the ranks._
 _(the four chains are the four D&D schools of magic)_
 
-### 🔮 Abjuration — "Ward, and let their spite recoil."
-The protective mage — extra life and a mirror against magic.
+starting rook should have cooldown 5 and hits all tiles en route to the target as well as the target with an animation (if not the case already)
+the wizard's low hp makes up for his great cards
+
+### 🔮 Translocations 
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-Add a castling card here. Lets you hop over an enemy 2 or 3 squares away orthogonally if landing tile is valid/unblocked. This does not consume a turn.
+You can move into wall tiles. While doing so reduces your vision radius to 1.
+Add a castling card here. Lets you swap places with any enemy or turret on screen. Cooldown 5.
 
-### 🔥 mysticism — "Rain bolts, fast, far, and free."
+
+### 🔥 Time Magic
 Raw destructive throughput: reach, haste, and free casts.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 2 | `s_haste` | Attunement | spell cards recharge twice as fast with no enemy in sight | `spellHaste` |
-| 3 | `s_free` | Free Casting | spell cards cost no turn to cast | `freeSpell` |
+| 3 | `s_free` | Free Casting | cards cost no turn to cast | `freeSpell` |
+| 2 | `s_haste` | Attunement | cards recharge twice as fast | `spellHaste` |
+Add a card that gives every enemy on screen the frustrated state for the next 3 turns. Cooldown 9.
 
 
-### 💫 Enchantment — "Their eyes glaze; their guard drops."
+### 💫 Hexes — "Their eyes glaze; their guard drops."
 Crowd control through dazzling, mind-fogging bolts.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_eyes` | Third Eye | +1 sight radius | `vision:2` |
-| 2 | `s_dazzle` | Dazzle | foes beside those a spell slays are caught by surprise | `spellDazzle` |
+
 | 3 | `s_cata` | Cataclysm | every visible foe is surprised when you cast a spell | `spellSurprise` |
 
 ### 🌀 Conjuration — "Summon a bigger weapon."
 Conjure escalating armaments — up to a queen — and reach further.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_wand` | Wand | gain a bishop card | `gainCard:bishop` |
-| 2 | `s_staff` | Archstaff | gain a queen card | `gainCard:queen` |
+| 1 | `s_wand` | Wand | gain a bishop card (cooldown: 3) | `gainCard:bishop` |
+| 2 | `s_staff` | Archstaff | gain a queen card (cooldown: 9) | `gainCard:queen` |
 | 3 | `s_amp` | Amplify | +1 card reach | `cardReach:1` |
 
 _Sorcerer changes: none — chains kept, just themed as the four schools._

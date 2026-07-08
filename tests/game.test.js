@@ -12,12 +12,13 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
   getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
   getVisibleBounds, capturableAt, createBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
+  fireTurret, summonCircleTurn,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -43,7 +44,8 @@ test('category is a class property; each class starts with its one card', () => 
   assert.equal(createPlayer('warrior').cards[0].kind, 'knight'); // a melee leap ("horse")
   assert.equal(createPlayer('warrior').cards[0].category, undefined);
   assert.equal(CLASSES.warrior.category, 'melee');
-  assert.equal(createPlayer('ranger').cards[0].kind, 'knight');
+  assert.equal(createPlayer('ranger').cards[0].kind, 'bishop');
+  assert.equal(createPlayer('ranger').cards[0].cooldown, 4); // his bishop is slower than default
   assert.equal(CLASSES.ranger.category, 'ranged');
   assert.equal(createPlayer('sorcerer').cards[0].kind, 'rook');
   assert.equal(CLASSES.sorcerer.category, 'spell');
@@ -237,6 +239,90 @@ test('Trample: landing a knight leap strikes every adjacent foe', () => {
   const r = useCard(s, idx, 12, 11); // leap onto empty ground
   assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 11 });
   assert.equal(r.enemies.length, 0, 'all foes around the landing tile fall');
+});
+
+// A tiny Ranger fixture: a bare floor, king centered, given perks learned.
+function rangerWith(...perkIds) {
+  let s = createInitialState('ranger');
+  s.terrain = {};
+  s.enemies = [];
+  s.exit = { x: 0, y: 0, discovered: false };
+  s.player.x = 10;
+  s.player.y = 10;
+  for (const id of perkIds) {
+    s.pendingLevelUp = true;
+    s = learnPerk(s, id);
+  }
+  return s;
+}
+
+test('Amphibious lets the Ranger wade freely and cast while in water', () => {
+  const wade = rangerWith('r_wade');
+  wade.player.moveRange = 3;
+  wade.terrain = { '11,10': 'water', '12,10': 'water' };
+  assert.ok(getPlayerMoves(wade).some((m) => m.x === 13 && m.y === 10), 'slides across two water tiles');
+  const cast = rangerWith('r_wade');
+  cast.terrain = { '10,10': 'water' };
+  cast.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12 })];
+  const r = useCard(cast, 0, 12, 12);
+  assert.notEqual(r.lastAction, 'blocked', 'a weapon still fires while wading');
+  assert.equal(r.enemies.length, 0);
+});
+
+test('Sixth Sense sees and shoots over walls (diagonally, as a bishop)', () => {
+  const plain = rangerWith();
+  plain.terrain = { '11,11': 'wall' };
+  plain.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12 })];
+  assert.ok(!getCardMoves(plain, plain.player.cards[0]).some((m) => m.x === 12 && m.y === 12), 'a wall blocks the shot');
+  const xray = rangerWith('r_wade', 'r_xray');
+  xray.terrain = { '11,11': 'wall' };
+  xray.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12 })];
+  assert.ok(getCardMoves(xray, xray.player.cards[0]).some((m) => m.x === 12 && m.y === 12), 'Sixth Sense shoots past it');
+  assert.ok(unitInSight(xray, 12, 12), 'and sees past it');
+});
+
+test('Beastform: a free cast that limits the king to knight-leaps and locks his cards', () => {
+  const s = rangerWith('r_wade', 'r_xray', 'r_beast');
+  const bi = s.player.cards.findIndex((c) => c.kind === 'beastform');
+  const beast = useCard(s, bi, s.player.x, s.player.y);
+  assert.equal(beast.player.beastform, 3);
+  assert.equal(beast.enemyTurn, false, 'casting it costs no turn');
+  const moves = getPlayerMoves(beast);
+  assert.ok(moves.length && moves.every((m) => m.viaJump), 'every move is a leap');
+  assert.equal(useCard(beast, 0, 12, 12).lastAction, 'blocked', 'no weapons in beast form');
+  const after = movePlayerTo(beast, moves[0].x, moves[0].y);
+  assert.equal(after.player.beastform, 2, 'the timer counts down each turn');
+});
+
+test('Reload readies every other card; Longbow grants a slow rook; Recoil kicks back', () => {
+  const s = rangerWith('r_reload', 'r_longbow');
+  const rook = s.player.cards.find((c) => c.kind === 'rook');
+  assert.equal(rook.cooldown, 5, 'Longbow rook has cooldown 5');
+  s.player.cards[0].remaining = 3; // bishop mid-cooldown
+  rook.remaining = 4;
+  const ri = s.player.cards.findIndex((c) => c.kind === 'reload');
+  const reloaded = useCard(s, ri, s.player.x, s.player.y);
+  assert.equal(reloaded.player.cards[0].remaining, 0, 'the bishop is ready again');
+  assert.equal(reloaded.player.cards.find((c) => c.kind === 'rook').remaining, 0, 'the rook is ready again');
+  assert.equal(reloaded.enemyTurn, true, 'reload spends the turn');
+
+  const rec = rangerWith('r_reload', 'r_longbow', 'r_recoil');
+  rec.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12 })];
+  const shot = useCard(rec, 0, 12, 12); // bishop shot down-right; recoil up-left to (9,9)
+  assert.deepEqual({ x: shot.player.x, y: shot.player.y }, { x: 9, y: 9 });
+  assert.equal(shot.enemies.length, 0);
+});
+
+test('Camouflage: turrets hold fire and circles conjure nothing', () => {
+  const s = rangerWith('r_ghost', 'r_camo');
+  const turret = makeEnemy({ kind: 'rook', x: 10, y: 13, turret: true });
+  s.enemies = [turret];
+  const hp0 = s.player.hp;
+  assert.equal(fireTurret(s, turret).player.hp, hp0, 'a turret cannot target the camouflaged king');
+  const s2 = rangerWith('r_ghost', 'r_camo');
+  const circle = makeEnemy({ kind: 'pawn', x: 10, y: 12, summonCircle: true, charged: true });
+  s2.enemies = [circle];
+  assert.equal(summonCircleTurn(s2, circle).enemies.length, 1, 'a circle conjures nothing while camouflaged');
 });
 
 test('a melee enemy cannot move AND strike in the same turn', () => {

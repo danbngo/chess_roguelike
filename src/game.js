@@ -192,12 +192,14 @@ const PERK_FLAGS = [
   'revealFloor', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
   'meleeRefund', 'meleePierce', 'leapShock', 'meleeFlourish',
+  'terrainImmune', 'seeThroughWalls', 'noChase', 'camouflage', 'recoil',
 ];
 
 // Build a card record. The category (from the owning class) sets the cooldown but
 // is NOT stored on the card — it is re-derived from the class wherever needed.
-function makeCard(kind, category) {
-  return { kind, cooldown: cardCooldown(kind, category || 'melee'), remaining: 0 };
+function makeCard(kind, category, cooldownOverride) {
+  const cooldown = cooldownOverride != null ? cooldownOverride : cardCooldown(kind, category || 'melee');
+  return { kind, cooldown, remaining: 0 };
 }
 
 // Apply a perk's grants to a player (stat bumps, a card, or a rule flag).
@@ -210,7 +212,7 @@ function applyPerk(player, grants) {
   if (grants.vision) player.vision += grants.vision;
   if (grants.moveRange) player.moveRange += grants.moveRange;
   if (grants.cardReach) player.cardReach = (player.cardReach || 0) + grants.cardReach;
-  if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className)));
+  if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className), grants.gainCooldown));
   for (const flag of PERK_FLAGS) {
     if (grants[flag]) player[flag] = true;
   }
@@ -230,6 +232,7 @@ function createPlayer(classKey) {
     moveRange: 1,
     vision: STARTING_VISION,
     cardReach: 0,
+    beastform: 0, // turns remaining as a knight (Ranger's Beastform); 0 = normal
     cards: [],
     takenPerks: [], // perk ids taken (unique ones can't be offered again)
     warded: false,
@@ -243,7 +246,7 @@ function createPlayer(classKey) {
     wasHit: false,
   };
   for (const flag of PERK_FLAGS) player[flag] = false;
-  player.cards.push(makeCard(cls.start, cls.category));
+  player.cards.push(makeCard(cls.start, cls.category, cls.startCooldown));
   return player;
 }
 
@@ -730,6 +733,7 @@ function passTurn(state) {
     }
   }
   state.spatters = decaySpatters(state.spatters);
+  if (p.beastform > 0) p.beastform -= 1; // Beast form wears off after its turns elapse
   p.warded = false;
   p.firstHitUsedThisTurn = false;
   p.attacked = false;
@@ -761,6 +765,12 @@ function getPlayerMoves(state) {
     seen.add(key);
     moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture) });
   };
+  if (p.beastform > 0) {
+    // Beast form (Ranger): the king moves ONLY as a knight — L-leaps that clear
+    // anything between. Click/target a tile to leap (straight keyboard steps do nothing).
+    for (const t of jumpTargets(state, p.x, p.y, enemyAt, isEnemy)) add(t);
+    return moves;
+  }
   const opts = { terrainImmune: Boolean(p.terrainImmune) };
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     const stops = slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy, opts);
@@ -951,7 +961,15 @@ function useCard(state, cardIndex, x, y) {
     next.lastAction = 'blocked';
     return next;
   }
-  if (isSlowTerrain(terrainAt(next, p.x, p.y))) {
+  // In beast form the king wields no cards — he only leaps.
+  if (p.beastform > 0) {
+    next.message = 'The beast knows no weapons — leap instead.';
+    next.lastAction = 'blocked';
+    return next;
+  }
+  const isAbilityCard = card.kind === 'beastform' || card.kind === 'reload';
+  // Water forbids readying a WEAPON (Amphibious lifts that); ability cards are exempt.
+  if (isSlowTerrain(terrainAt(next, p.x, p.y)) && !p.terrainImmune && !isAbilityCard) {
     next.message = `You can't ready a weapon while wading through ${terrainAt(next, p.x, p.y)}.`;
     next.lastAction = 'blocked';
     return next;
@@ -960,6 +978,29 @@ function useCard(state, cardIndex, x, y) {
   if (!move) {
     next.message = 'That card cannot reach that tile.';
     next.lastAction = 'blocked';
+    return next;
+  }
+
+  // Beastform: a FREE action (no turn spent) that turns the king into a knight for a
+  // few turns — he moves only by leaping and can play no cards until it wears off.
+  if (card.kind === 'beastform') {
+    p.beastform = BEASTFORM_TURNS;
+    card.remaining = card.cooldown;
+    next.message = 'The Ranger takes beast form — leap, and leap again!';
+    next.enemyTurn = false;
+    next.lastAction = 'card-free';
+    updateDiscovery(next);
+    return next;
+  }
+  // Reload: spend the turn to recharge every OTHER card at once.
+  if (card.kind === 'reload') {
+    for (const c of p.cards) if (c !== card) c.remaining = 0;
+    card.remaining = card.cooldown;
+    next.message = 'You reload — every other card is ready.';
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
     return next;
   }
 
@@ -1046,6 +1087,30 @@ function useCard(state, cardIndex, x, y) {
   if (category === 'spell' && p.spellSurprise && !next.gameOver && !next.won) {
     for (const e of next.enemies) {
       if (!e.boss && unitInSight(next, e.x, e.y)) e.awake = false;
+    }
+  }
+
+  // Recoil (Fletcher): a ranged/spell shot kicks the archer one tile back, away from the
+  // target — landing on (and capturing) a foe there if one blocks the step.
+  if (p.recoil && category !== 'melee' && !next.gameOver && !next.won) {
+    const rdx = Math.sign(p.x - x);
+    const rdy = Math.sign(p.y - y);
+    if (rdx || rdy) {
+      const bx = p.x + rdx;
+      const by = p.y + rdy;
+      if (bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE && standableFor(terrainAt(next, bx, by), {})) {
+        const foe = next.enemies.find((e) => e.x === bx && e.y === by);
+        if (!foe) {
+          p.x = bx;
+          p.y = by;
+        } else if (isCapturable(next, foe)) {
+          if (attackTile(next, bx, by)) {
+            p.x = bx;
+            p.y = by;
+          }
+        }
+        // A wall/lava/edge or an untouchable turret behind him simply halts the recoil.
+      }
     }
   }
 
@@ -1204,9 +1269,10 @@ function beginEnemyPhase(state) {
       enemy.awake = false;
       enemy.surprised = false;
       if (!isStationary(enemy)) {
-        if (!(enemy.lastSeen && enemy.lastSeenTtl > 0 && pursueLastSeen(next, enemy))) {
-          wanderEnemy(next, enemy);
-        }
+        // Ghost (noChase): the king shakes pursuers the instant he breaks sight, so a
+        // foe that has lost him wanders instead of hunting his last-seen tile.
+        const canPursue = !p.noChase && enemy.lastSeen && enemy.lastSeenTtl > 0 && pursueLastSeen(next, enemy);
+        if (!canPursue) wanderEnemy(next, enemy);
       }
       // Pursuing/wandering can carry an enemy INTO the king's view. It has already
       // spent its move this turn, but it must NOT be left flagged "unaware" while
@@ -1259,6 +1325,12 @@ function tryReflect(state, attacker) {
 
 // A turret's turn: it holds ground and fires along its piece pattern.
 function fireTurret(state, turret) {
+  // Camouflage (Gloom Stalker): structures can't find the king to target him.
+  if (state.player.camouflage) {
+    state.message = `A ${turret.kind} turret loses the king from view.`;
+    state.lastAction = 'enemy';
+    return state;
+  }
   const hitsKing = getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
   if (!hitsKing) {
     state.message = `A ${turret.kind} turret takes aim.`;
@@ -1310,6 +1382,13 @@ function summonAdjacent(state, origin, kind) {
 // A summoning circle's turn: while the king can see it, it conjures a minion of its
 // OWN piece type on charged turns (never two running). It never moves or strikes.
 function summonCircleTurn(state, circle) {
+  // Camouflage: a circle that can't sense the king won't conjure against him.
+  if (state.player.camouflage) {
+    circle.charged = true;
+    state.message = 'A summoning circle gropes blindly for the king.';
+    state.lastAction = 'enemy';
+    return state;
+  }
   if (circle.charged && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, circle, circle.kind)) {
     circle.charged = false;
     state.message = 'A summoning circle conjures a minion!';

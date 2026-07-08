@@ -87,8 +87,9 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 // CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
 // classCategory(). There are no traits or ratings; card power comes from perks.
 const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach 1; sliders reach 3
-const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant'];
+const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'beastform', 'reload'];
 const CARD_COOLDOWN = 3;
+const BEASTFORM_TURNS = 3; // how many turns the Ranger's Beastform lasts
 
 function isCardKind(kind) {
   return CARD_KINDS.includes(kind);
@@ -153,25 +154,26 @@ const CLASSES = {
     blurb: 'A hunter who fells foes from across the room.',
     color: '#65a30d',
     category: 'ranged', // every Ranger card fires from afar (blocked by cover)
-    start: 'knight',
+    start: 'bishop',
+    startCooldown: 3, // his starting bishop uses the class-default cooldown
     hp: 5,
     perks: [
-      // Vigor chain
-      { id: 'r_hp1', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
-      { id: 'r_hp2', tier: 2, requires: 'r_hp1', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 } },
-      { id: 'r_bulwark', tier: 3, requires: 'r_hp2', name: 'Bulwark', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
-      // Marksman chain
-      { id: 'r_reach', tier: 1, name: 'Farsight', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 'r_rapid', tier: 2, requires: 'r_reach', name: 'Quick Draw', desc: 'A ranged-card kill lets you fire again at once (once)', grants: { rangedRapid: true } },
-      { id: 'r_eagle', tier: 3, requires: 'r_rapid', name: 'Eagle Eye', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
-      // Scouting chain
-      { id: 'r_eyes1', tier: 1, name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
-      { id: 'r_eyes2', tier: 2, requires: 'r_eyes1', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
-      { id: 'r_stealth', tier: 3, requires: 'r_eyes2', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
-      // Ranging chain
-      { id: 'r_bow', tier: 1, name: 'Shortbow', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
-      { id: 'r_longbow', tier: 2, requires: 'r_bow', name: 'Longbow', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
-      { id: 'r_fleet', tier: 3, requires: 'r_longbow', name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
+      // 🌲 Druid — the survivalist: master the terrain, then become the beast.
+      { id: 'r_wade', tier: 1, name: 'Amphibious', desc: 'Water no longer slows you or blocks your cards', grants: { terrainImmune: true } },
+      { id: 'r_xray', tier: 2, requires: 'r_wade', name: 'Sixth Sense', desc: 'See and shoot over walls', grants: { seeThroughWalls: true } },
+      { id: 'r_beast', tier: 3, requires: 'r_xray', name: 'Beastform', desc: 'Gain a beastform card: cast free to move only by knight-leaps for 3 turns (no weapon cards)', grants: { gainCard: 'beastform' } },
+      // 🎯 Deadeye — reach, sight, and foreknowledge.
+      { id: 'r_reach', tier: 1, name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 'r_eyes2', tier: 2, requires: 'r_reach', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
+      { id: 'r_eagle', tier: 3, requires: 'r_eyes2', name: 'Premonition', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
+      // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
+      { id: 'r_ghost', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
+      { id: 'r_camo', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles ignore you', grants: { camouflage: true } },
+      { id: 'r_stealth', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
+      // 🏹 Fletcher — the quartermaster: reload, a bigger bow, and kickback.
+      { id: 'r_reload', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
+      { id: 'r_longbow', tier: 2, requires: 'r_reload', name: 'Longbow', desc: 'Gain a rook card (cooldown 5)', grants: { gainCard: 'rook', gainCooldown: 5 } },
+      { id: 'r_recoil', tier: 3, requires: 'r_longbow', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (and can strike a foe there)', grants: { recoil: true } },
     ],
   },
   sorcerer: {

@@ -146,7 +146,7 @@
     const cls = CLASSES[highestClass(p)];
     floorLabel.textContent = `Floor ${toRoman(gameState.floor)}${cls ? ' · ' + cls.name : ''}`;
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
-    turnLabel.textContent = `Turn ${gameState.turn}`;
+    turnLabel.textContent = `Turn ${gameState.turn}${p.beastform > 0 ? ` · 🐺 Beast ${p.beastform}` : ''}`;
     renderHearts(p.hp, p.maxHp);
     renderLevelBadges(p.level || 1);
     logMessage(gameState.message);
@@ -282,7 +282,13 @@
   function showCardInfo(card) {
     examineEl.innerHTML = '';
     const cat = classCategory(gameState.player.className);
-    const verb = card.kind === 'enpassant' ? 'Dashes past; strikes the two tiles you flank.' : cat === 'melee' ? 'Strikes by moving onto the foe.' : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.' : 'A bolt that pierces everything on its path; you hold your tile.';
+    const verb =
+      card.kind === 'beastform' ? 'Self-cast: confirm on your own tile. Free action.'
+      : card.kind === 'reload' ? 'Self-cast: confirm on your own tile.'
+      : card.kind === 'enpassant' ? 'Dashes past; strikes the two tiles you flank.'
+      : cat === 'melee' ? 'Strikes by moving onto the foe.'
+      : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
+      : 'A bolt that pierces everything on its path; you hold your tile.';
     addExamineBlock(`${card.kind} — ${cat}`, [PIECE_INFO[card.kind] || '', verb, `Cooldown ${card.cooldown} turns`]);
   }
 
@@ -381,6 +387,8 @@
     amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
     enpassant: 'Dashes 2 tiles orthogonally onto empty ground, striking the two tiles it flanks on the way.',
+    beastform: 'Turns the king into a knight for a few turns: move only by leaping, use no weapons. Free to cast.',
+    reload: 'Spend your turn to recharge every other card at once.',
   };
 
   // One-line descriptions of each enemy role (for the examine pane).

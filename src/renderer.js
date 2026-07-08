@@ -897,7 +897,9 @@ const Renderer = (function () {
       typeof highestClass === 'function' && typeof CLASSES !== 'undefined'
         ? (CLASSES[highestClass(state.player)] || {}).color
         : null;
-    drawPiece(playerRender.x, playerRender.y, 'king', true, { classColor });
+    // In Beast form the king shows as a knight (he moves and fights as one).
+    const playerGlyph = state.player.beastform > 0 ? 'knight' : 'king';
+    drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);
     }

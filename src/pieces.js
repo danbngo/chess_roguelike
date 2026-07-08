@@ -159,6 +159,12 @@ function getCardMoves(state, card) {
     if (inLineOfSight(state, x, y)) results.push({ x, y, capture: Boolean(capture), viaJump: Boolean(viaJump) });
   };
 
+  // Self-cast ability cards (Beastform, Reload) target the king's own tile — there is
+  // no foe to aim at, so selecting his square activates them.
+  if (kind === 'beastform' || kind === 'reload') {
+    return [{ x: p.x, y: p.y, capture: false, viaJump: false, self: true }];
+  }
+
   if (kind === 'enpassant') {
     // The Duellist's signature dash: bolt exactly 2 tiles orthogonally onto empty
     // ground, en-passant-striking the two tiles that FLANK the square dashed over.
@@ -209,13 +215,15 @@ function getCardMoves(state, card) {
   } else {
     // ranged / spell: projectile rays over terrain, stopped only by walls. Only foes
     // are valid targets (these cards never move the king).
+    const shootWalls = Boolean(p.seeThroughWalls); // Sixth Sense: shots fly over walls
     for (const [dx, dy] of dirs) {
       let x = p.x;
       let y = p.y;
       for (let i = 0; i < reach; i += 1) {
         x += dx;
         y += dy;
-        if (!inBounds(x, y) || terrainAt(state, x, y) === 'wall') break;
+        if (!inBounds(x, y)) break;
+        if (terrainAt(state, x, y) === 'wall' && !shootWalls) break;
         if (enemyAt(x, y)) {
           if (targetable(x, y)) add(x, y, false, true);
           if (!pierce) break; // a solid unit blocks a non-piercing shot
@@ -308,6 +316,8 @@ function getPieceLabel(kind) {
     chancellor: 'M', // rook + knight (a.k.a. marshall)
     amazon: 'Z', // queen + knight (the final boss)
     enpassant: '♙', // the Duellist's en-passant dash card
+    beastform: '🐺', // the Ranger's Beastform transformation card
+    reload: '⟳', // the Ranger's Reload card
   };
   return labels[kind] ?? '♟';
 }

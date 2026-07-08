@@ -64,7 +64,8 @@ function hasLineOfSight(state, x0, y0, x1, y1) {
     if (x === x1 && y === y1) {
       break;
     }
-    if (blocksSight(terrainAt(state, x, y))) {
+    // The Ranger's Sixth Sense sees over walls (and, symmetrically, is seen over them).
+    if (blocksSight(terrainAt(state, x, y)) && !(state.player && state.player.seeThroughWalls)) {
       return false; // walls block the look
     }
   }
