@@ -362,11 +362,59 @@ body.in-game canvas {
 }
 
 .pane-button {
+  align-self: center;
+}
+
+/* HP as hearts. */
+.hearts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.05rem;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.hearts .heart {
+  color: #ef4444;
+}
+.hearts .heart.empty {
+  color: #475569;
+}
+
+/* Character level as small star badges. */
+.level-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.08rem;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.level-badges .badge {
+  color: #fbbf24;
+  text-shadow: 0 0 3px rgba(251, 191, 36, 0.5);
+}
+
+/* Collapsible message log (pinned to the bottom of the pane). */
+.log-wrap {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.log-toggle {
   align-self: flex-start;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.15rem 0.1rem;
+  cursor: pointer;
+}
+.log-toggle:hover {
+  color: #e2e8f0;
 }
 
 .log {
-  margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -375,6 +423,9 @@ body.in-game canvas {
   color: #cbd5e1;
   overflow-y: auto;
   max-height: 40vh;
+}
+.log.collapsed {
+  display: none;
 }
 
 .log-line {

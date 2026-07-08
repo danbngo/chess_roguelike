@@ -9,6 +9,7 @@
   const healthLabel = document.getElementById('health');
   const levelLabel = document.getElementById('level');
   const logEl = document.getElementById('log');
+  const logToggle = document.getElementById('log-toggle');
   const examineEl = document.getElementById('examine');
   const restartButton = document.getElementById('restart');
   const optionsButton = document.getElementById('options');
@@ -41,6 +42,11 @@
   const characterBody = document.getElementById('character-body');
   const characterCloseButton = document.getElementById('character-close');
 
+  const confirmScreen = document.getElementById('confirm-screen');
+  const confirmText = document.getElementById('confirm-text');
+  const confirmYesButton = document.getElementById('confirm-yes');
+  const confirmNoButton = document.getElementById('confirm-no');
+
   const classScreen = document.getElementById('class-screen');
   const classList = document.getElementById('class-list');
   const classBackButton = document.getElementById('class-back');
@@ -67,7 +73,7 @@
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
 
-  // screen: 'title' | 'class' | 'playing' | 'levelup' | 'character' | 'gameover' | 'victory' | 'tutorial' | 'options'
+  // screen: 'title' | 'class' | 'playing' | 'levelup' | 'character' | 'confirm' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
   let gameState = null;
 
@@ -88,9 +94,48 @@
   // Modal bookkeeping: which screen to return to when a tip / options closes.
   let pendingTips = [];
   let screenBeforeModal = 'playing';
+  let pendingConfirm = null; // callback to run if the player confirms a yes/no modal
 
   function isIdle() {
     return screen === 'playing' && animTimer <= 0 && enemyQueue.length === 0 && pendingAction === null && !gameState.gameOver;
+  }
+
+  // Whole numbers to Roman numerals (I, II, ... VIII, IX, X, ...) for the floor label.
+  function toRoman(n) {
+    if (!n || n < 1) return '—';
+    const map = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
+    let out = '';
+    let v = Math.floor(n);
+    for (const [val, sym] of map) {
+      while (v >= val) { out += sym; v -= val; }
+    }
+    return out;
+  }
+
+  // HP as a row of filled/empty hearts.
+  function renderHearts(hp, maxHp) {
+    if (!healthLabel) return;
+    healthLabel.innerHTML = '';
+    for (let i = 0; i < maxHp; i += 1) {
+      const h = document.createElement('span');
+      h.className = i < hp ? 'heart' : 'heart empty';
+      h.textContent = i < hp ? '♥' : '♡';
+      healthLabel.append(h);
+    }
+    healthLabel.title = `HP ${hp}/${maxHp}`;
+  }
+
+  // Character level as a row of small star badges.
+  function renderLevelBadges(level) {
+    if (!levelLabel) return;
+    levelLabel.innerHTML = '';
+    for (let i = 0; i < level; i += 1) {
+      const b = document.createElement('span');
+      b.className = 'badge';
+      b.textContent = '★';
+      levelLabel.append(b);
+    }
+    levelLabel.title = `Level ${level}`;
   }
 
   function updateHud() {
@@ -99,16 +144,15 @@
     }
     const p = gameState.player;
     const cls = CLASSES[highestClass(p)];
-    floorLabel.textContent = `Floor ${gameState.floor}${cls ? ' · ' + cls.name : ''}`;
+    floorLabel.textContent = `Floor ${toRoman(gameState.floor)}${cls ? ' · ' + cls.name : ''}`;
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
     turnLabel.textContent = `Turn ${gameState.turn}`;
-    healthLabel.textContent = `HP ${p.hp}/${p.maxHp}`;
-    if (levelLabel) levelLabel.textContent = `Level ${p.level || 1}`;
+    renderHearts(p.hp, p.maxHp);
+    renderLevelBadges(p.level || 1);
     logMessage(gameState.message);
 
-    // Dread rises as the king lingers and as his health falls.
+    // Dread rises as the king lingers.
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
-    healthLabel.style.color = scaryColor(1 - gameState.player.hp / gameState.player.maxHp);
     renderCards();
   }
 
@@ -238,7 +282,7 @@
   function showCardInfo(card) {
     examineEl.innerHTML = '';
     const cat = classCategory(gameState.player.className);
-    const verb = cat === 'melee' ? 'Strikes by moving onto the foe.' : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.' : 'A bolt that pierces everything on its path; you hold your tile.';
+    const verb = card.kind === 'enpassant' ? 'Dashes past; strikes the two tiles you flank.' : cat === 'melee' ? 'Strikes by moving onto the foe.' : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.' : 'A bolt that pierces everything on its path; you hold your tile.';
     addExamineBlock(`${card.kind} — ${cat}`, [PIECE_INFO[card.kind] || '', verb, `Cooldown ${card.cooldown} turns`]);
   }
 
@@ -336,6 +380,7 @@
     chancellor: 'Moves as a rook or a knight.',
     amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
+    enpassant: 'Dashes 2 tiles orthogonally onto empty ground, striking the two tiles it flanks on the way.',
   };
 
   // One-line descriptions of each enemy role (for the examine pane).
@@ -448,7 +493,7 @@
     }
     cancelCardTargeting();
     GameAudio.play('cast');
-    processPlayerResult(useCard(gameState, index, target.x, target.y));
+    commitMove(useCard(gameState, index, target.x, target.y));
   }
 
   // Restart the HP counter's damage animation (re-add the class after a reflow).
@@ -663,6 +708,8 @@
     tutorialScreen.classList.add('hidden');
     optionsScreen.classList.add('hidden');
     characterScreen.classList.add('hidden');
+    if (confirmScreen) confirmScreen.classList.add('hidden');
+    pendingConfirm = null;
   }
 
   function showTitle() {
@@ -980,6 +1027,34 @@
 
   /* ------------------------------ turn flow ------------------------------ */
 
+  // Every player-initiated move/card goes through here. If the resolved move would
+  // DESCEND the stair while the floor's boss is still alive (the king is slipping past
+  // it, forfeiting the boon), confirm first; otherwise apply immediately.
+  function commitMove(result) {
+    if (result.lastAction === 'exit' && !bossDefeated(result)) {
+      openConfirm(
+        'Descend without slaying the guardian? You will earn no boon this floor.',
+        () => processPlayerResult(result),
+      );
+      return;
+    }
+    processPlayerResult(result);
+  }
+
+  function openConfirm(text, onYes) {
+    pendingConfirm = onYes;
+    if (confirmText) confirmText.textContent = text;
+    screenBeforeModal = screen;
+    screen = 'confirm';
+    if (confirmScreen) confirmScreen.classList.remove('hidden');
+  }
+
+  function closeConfirm() {
+    pendingConfirm = null;
+    if (confirmScreen) confirmScreen.classList.add('hidden');
+    screen = 'playing';
+  }
+
   function processPlayerResult(nextState) {
     if (nextState.lastAction === 'blocked') {
       applyState(nextState, false);
@@ -1080,7 +1155,7 @@
     if (!isIdle()) {
       return;
     }
-    processPlayerResult(movePlayer(gameState, dx, dy));
+    commitMove(movePlayer(gameState, dx, dy));
   }
 
   function handleClick(event) {
@@ -1101,7 +1176,7 @@
       cancelCardTargeting();
       if (target) {
         GameAudio.play('cast');
-        processPlayerResult(useCard(gameState, index, tileX, tileY));
+        commitMove(useCard(gameState, index, tileX, tileY));
       } else {
         examineTile(tileX, tileY);
       }
@@ -1112,7 +1187,7 @@
     // the tile in the right-hand pane.
     const canMove = isIdle() && getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
     if (canMove) {
-      processPlayerResult(movePlayerTo(gameState, tileX, tileY));
+      commitMove(movePlayerTo(gameState, tileX, tileY));
     } else {
       examineTile(tileX, tileY);
     }
@@ -1170,6 +1245,20 @@
 
   document.addEventListener('keydown', (event) => {
 
+    // A yes/no confirm modal (e.g. descending past a live boss): Enter = yes, Esc = no.
+    if (screen === 'confirm') {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const act = pendingConfirm;
+        closeConfirm();
+        if (act) act();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeConfirm();
+      }
+      return;
+    }
+
     // While aiming a card: movement keys CYCLE through valid targets; Enter/Space —
     // or pressing the same card's hotkey again — confirms; another card's hotkey
     // switches to it; Escape cancels.
@@ -1200,6 +1289,20 @@
         // Right/down cycles forward through the target ring; left/up cycles back.
         const forward = aim[0] !== 0 ? aim[0] > 0 : aim[1] > 0;
         cycleCardCursor(forward ? 1 : -1);
+        return;
+      }
+    }
+
+    // Not aiming and not in a confirm: Escape toggles the Options menu.
+    if (event.key === 'Escape') {
+      if (screen === 'options') {
+        event.preventDefault();
+        closeOptions();
+        return;
+      }
+      if (screen === 'playing') {
+        event.preventDefault();
+        openOptions();
         return;
       }
     }
@@ -1319,8 +1422,22 @@
   tutorialDisableButton.addEventListener('click', disableTipsFromModal);
   optionsButton.addEventListener('click', openOptions);
   optionsCloseButton.addEventListener('click', closeOptions);
+  if (logToggle) {
+    logToggle.addEventListener('click', () => {
+      const collapsed = logEl.classList.toggle('collapsed');
+      logToggle.setAttribute('aria-expanded', String(!collapsed));
+      logToggle.textContent = collapsed ? '▸ Log' : '▾ Log';
+      if (!collapsed) logEl.scrollTop = logEl.scrollHeight;
+    });
+  }
   if (optionsCharacterButton) optionsCharacterButton.addEventListener('click', openCharacter);
   if (characterCloseButton) characterCloseButton.addEventListener('click', closeCharacter);
+  if (confirmYesButton) confirmYesButton.addEventListener('click', () => {
+    const act = pendingConfirm;
+    closeConfirm();
+    if (act) act();
+  });
+  if (confirmNoButton) confirmNoButton.addEventListener('click', closeConfirm);
   optionsToggle.addEventListener('click', () => {
     if (tutorialsEnabled()) {
       setTutorialsEnabled(false);

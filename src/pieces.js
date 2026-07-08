@@ -159,7 +159,31 @@ function getCardMoves(state, card) {
     if (inLineOfSight(state, x, y)) results.push({ x, y, capture: Boolean(capture), viaJump: Boolean(viaJump) });
   };
 
-  if (category === 'melee') {
+  if (kind === 'enpassant') {
+    // The Duellist's signature dash: bolt exactly 2 tiles orthogonally onto empty
+    // ground, en-passant-striking the two tiles that FLANK the square dashed over.
+    // Walls/lava block both the pass-through and the landing; a foe on the landing
+    // tile blocks the dash (you must land on clear ground).
+    for (const [dx, dy] of ORTHO) {
+      const mx = p.x + dx;
+      const my = p.y + dy; // the tile dashed over
+      const ex = p.x + 2 * dx;
+      const ey = p.y + 2 * dy; // the landing tile
+      if (!inBounds(ex, ey)) continue;
+      const midT = terrainAt(state, mx, my);
+      const destT = terrainAt(state, ex, ey);
+      if (midT === 'wall' || midT === 'lava') continue; // can't dash through
+      if (destT === 'wall' || destT === 'lava') continue; // can't land there
+      if (enemyAt(ex, ey)) continue; // must land on empty ground
+      // The two rear diagonals of the landing tile — the squares that flank the tile
+      // dashed over (down-left and down-right relative to the dash direction).
+      const flanks = [
+        { x: ex - dx + dy, y: ey - dy - dx },
+        { x: ex - dx - dy, y: ey - dy + dx },
+      ];
+      if (inLineOfSight(state, ex, ey)) results.push({ x: ex, y: ey, capture: false, viaJump: true, flanks });
+    }
+  } else if (category === 'melee') {
     // The king walks/leaps onto a foe (a capture) OR onto empty ground within reach
     // (a plain repositioning move) — real movement rules apply either way.
     const opts = { terrainImmune: Boolean(p.terrainImmune) };
@@ -283,6 +307,7 @@ function getPieceLabel(kind) {
     archbishop: 'A', // bishop + knight
     chancellor: 'M', // rook + knight (a.k.a. marshall)
     amazon: 'Z', // queen + knight (the final boss)
+    enpassant: '♙', // the Duellist's en-passant dash card
   };
   return labels[kind] ?? '♟';
 }

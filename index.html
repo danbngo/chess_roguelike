@@ -12,16 +12,19 @@
         <h1>Chess Roguelike</h1>
         <div class="game-layout">
           <aside class="pane left-pane">
+            <button id="options" type="button" class="pane-button">Options</button>
             <div class="info-panel">
-              <div id="floor">Floor 1</div>
+              <div id="floor">Floor I</div>
               <div id="floor-name" class="floor-name"></div>
               <div id="turn">Turn 0</div>
-              <div id="health">HP 3/3</div>
-              <div id="level">Level 1</div>
+              <div id="health" class="hearts" aria-label="Health"></div>
+              <div id="level" class="level-badges" aria-label="Level"></div>
             </div>
-            <button id="options" type="button" class="pane-button">Options</button>
             <div id="card-bar" class="card-bar"></div>
-            <div id="log" class="log"></div>
+            <div class="log-wrap">
+              <button id="log-toggle" type="button" class="log-toggle" aria-expanded="false">▸ Log</button>
+              <div id="log" class="log collapsed"></div>
+            </div>
           </aside>
 
           <div class="stage">
@@ -132,6 +135,17 @@
               <div id="character-body" class="character-body"></div>
               <div class="overlay-buttons">
                 <button id="character-close" type="button">Back</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="confirm-screen" class="overlay hidden">
+            <div class="overlay-card">
+              <h2 id="confirm-title" class="overlay-title">Descend?</h2>
+              <p id="confirm-text" class="overlay-sub"></p>
+              <div class="overlay-buttons">
+                <button id="confirm-yes" type="button">Descend anyway</button>
+                <button id="confirm-no" type="button">Cancel</button>
               </div>
             </div>
           </div>

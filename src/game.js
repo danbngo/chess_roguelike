@@ -191,6 +191,7 @@ const PERK_FLAGS = [
   'reflect', 'firstHitEachTurn', 'freeKillMove', 'extraLife', 'stealth',
   'revealFloor', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
+  'meleeRefund', 'meleePierce', 'leapShock', 'meleeFlourish',
 ];
 
 // Build a card record. The category (from the owning class) sets the cooldown but
@@ -402,6 +403,14 @@ function enemyHasMove(state, enemy) {
   return getPieceMoves(enemy, state).length > 0;
 }
 
+// Could a piece of `kind` at (x,y) move at all, judged by TERRAIN alone (other units
+// ignored — they shift/die)? Used to avoid spawning a piece somewhere it's stuck (e.g.
+// a knight boxed into a corridor whose every L-tile is a wall).
+function kindCanMove(state, kind, x, y) {
+  const probe = { kind, x, y, id: '__probe' };
+  return getPieceMoves(probe, { ...state, enemies: [probe] }).length > 0;
+}
+
 // How many tiles a turret of `kind` planted at (x,y) would cover, judged by TERRAIN
 // alone (transient units don't count — they move/die). Avoids boxing a turret in where
 // walls leave it firing at almost nothing.
@@ -418,9 +427,7 @@ function circleCanSpawnMobile(state, kind, x, y) {
     const nx = x + dx;
     const ny = y + dy;
     if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
-    if (!isStandable(terrainAt(state, nx, ny))) continue;
-    const probe = { kind, x: nx, y: ny, id: '__probe' };
-    if (getPieceMoves(probe, { ...state, enemies: [probe] }).length > 0) return true;
+    if (isStandable(terrainAt(state, nx, ny)) && kindCanMove(state, kind, nx, ny)) return true;
   }
   return false;
 }
@@ -791,6 +798,8 @@ function applyArrival(next, x, y) {
     return next;
   }
 
+  const fromX = pl.x;
+  const fromY = pl.y;
   next.player.x = x;
   next.player.y = y;
   next.enemyTurn = true;
@@ -806,6 +815,10 @@ function applyArrival(next, x, y) {
     next.message = enemy.summonCircle ? 'The king shatters a summoning circle!' : `The king defeats a ${enemy.kind}.`;
     next.lastAction = 'combat';
   }
+
+  // A kill by moving fans out the Warrior's on-kill perks (Cleave/Pierce/Leech/Flourish);
+  // Pierce strikes the foe directly behind the corpse, along the king's line of advance.
+  if (realKill) applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
 
   if (tryDescend(next)) return next;
 
@@ -854,6 +867,35 @@ function cleaveAdjacent(state, x, y) {
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     if (attackTile(state, x + dx, y + dy)) return;
   }
+}
+
+// Flourish (Duellist): after a kill, every foe adjacent to the king is caught off
+// guard — its memory of the king is wiped so it burns its next turn gasping in
+// surprise instead of striking (bosses/structures are unmoved).
+function flourishSurprise(state) {
+  const p = state.player;
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const e = state.enemies.find((en) => en.x === p.x + dx && en.y === p.y + dy);
+    if (e && !e.boss && !e.turret && !e.summonCircle) {
+      e.awake = false;
+      e.surprised = false;
+      e.lastSeen = null;
+      e.lastSeenTtl = 0;
+    }
+  }
+}
+
+// Fan out the Warrior's on-kill perks after he fells a foe by moving or with a melee
+// card. `ox,oy` is the origin the effects radiate from (the king's tile / the slain
+// foe's tile); `dx,dy` is the strike direction (0,0 to skip Pierce). Fires once per
+// action, so a single turn heals/flourishes/cleaves at most once.
+function applyOnKill(state, ox, oy, dx, dy) {
+  const p = state.player;
+  if (state.gameOver || state.won) return;
+  if (p.meleeCleave) cleaveAdjacent(state, ox, oy);
+  if (p.meleePierce && (dx || dy)) attackTile(state, ox + dx, oy + dy);
+  if (p.meleeLeech) p.hp = Math.min(p.maxHp, p.hp + 1);
+  if (p.meleeFlourish) flourishSurprise(state);
 }
 
 // If the king now stands on the stair (and the run isn't already won/over), flag the
@@ -932,14 +974,30 @@ function useCard(state, cardIndex, x, y) {
 
   if (category === 'melee') {
     let survived = false;
-    if (mainTarget && mainTarget.boss) {
+    const isLeap = Boolean(move.viaJump) && isJumperKind(card.kind);
+    if (card.kind === 'enpassant') {
+      // The Duellist dashes 2 tiles onto empty ground, then en-passant-strikes the two
+      // tiles flanking the square dashed over (never the landing tile itself).
+      p.x = x;
+      p.y = y;
+      next.message = 'The king dashes past!';
+      for (const f of move.flanks || []) {
+        const felled = attackTile(next, f.x, f.y);
+        if (felled && isKillablePiece(felled)) realKill = true;
+      }
+      scored = realKill;
+    } else if (mainTarget && mainTarget.boss) {
       // The boss is struck IN PLACE — the king never steps onto its stair tile, even
       // on the kill (so he must still walk onto the stair afterward to descend).
       survived = damageBoss(next, mainTarget, 1) !== 'slain';
+      scored = !survived;
+      realKill = scored;
     } else if (mainTarget) {
       resolveKill(next, mainTarget);
       p.x = x;
       p.y = y;
+      scored = true;
+      realKill = isKillablePiece(mainTarget); // shattering a circle is not an on-kill
     } else {
       // No foe on the tile: a melee card can also be spent as a repositioning move
       // onto empty ground within reach.
@@ -947,11 +1005,20 @@ function useCard(state, cardIndex, x, y) {
       p.y = y;
       next.message = 'The king repositions.';
     }
-    scored = Boolean(mainTarget) && !survived;
-    realKill = scored && isKillablePiece(mainTarget); // shattering a circle is not an on-kill
-    if (!next.gameOver && !next.won) {
-      if (realKill && p.meleeCleave) cleaveAdjacent(next, x, y);
-      if (realKill && p.meleeLeech) p.hp = Math.min(p.maxHp, p.hp + 1);
+    // Trample (leapShock): once the king actually LANDS a knight leap, he strikes every
+    // adjacent foe (skipped when a boss was struck in place and he never moved).
+    if (isLeap && p.leapShock && p.x === x && p.y === y && !next.gameOver && !next.won) {
+      for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+        const felled = attackTile(next, x + dx, y + dy);
+        if (felled && isKillablePiece(felled)) realKill = true;
+      }
+    }
+    // On-kill perks fan out once (Cleave/Pierce/Leech/Flourish). En-passant's flank
+    // strikes carry no single "behind" line, so Pierce is skipped there (dir 0,0).
+    if (realKill && !next.gameOver && !next.won) {
+      const pdx = card.kind === 'enpassant' ? 0 : Math.sign(x - fromX);
+      const pdy = card.kind === 'enpassant' ? 0 : Math.sign(y - fromY);
+      applyOnKill(next, x, y, pdx, pdy);
     }
   } else {
     if (category === 'spell' && !move.viaJump) {
@@ -996,6 +1063,8 @@ function useCard(state, cardIndex, x, y) {
 
   const free = (category === 'spell' && p.freeSpell) || rapidTrigger;
   if (!rapidTrigger) card.remaining = card.cooldown;
+  // Keen Edge (meleeRefund): a card that scored a kill recharges one turn faster.
+  if (category === 'melee' && realKill && p.meleeRefund) card.remaining = Math.max(0, card.remaining - 1);
   if (!scored && !next.message) next.message = 'The card strikes.';
   if (free) {
     next.enemyTurn = false;
@@ -1220,6 +1289,7 @@ function summonAdjacent(state, origin, kind) {
     const j = randomInt(i + 1);
     [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
   }
+  const minionKind = kind || randomEnemyKind(state.floor);
   for (const [dx, dy] of dirs) {
     const x = origin.x + dx;
     const y = origin.y + dy;
@@ -1227,7 +1297,8 @@ function summonAdjacent(state, origin, kind) {
     if (!isStandable(terrainAt(state, x, y))) continue;
     if (x === state.player.x && y === state.player.y) continue;
     if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
-    const minion = createEnemy(kind || randomEnemyKind(state.floor), x, y);
+    if (!kindCanMove(state, minionKind, x, y)) continue; // never conjure a stuck minion
+    const minion = createEnemy(minionKind, x, y);
     minion.summoned = true;
     minion.awake = true;
     state.enemies.push(minion);
@@ -1436,13 +1507,15 @@ function maybeSpawnEnemy(state) {
     if (next.enemies.length >= cap) break;
     const occupied = new Set([`${next.player.x},${next.player.y}`]);
     for (const enemy of next.enemies) occupied.add(`${enemy.x},${enemy.y}`);
-    const unseen = (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y);
-    // Prefer the ring just outside the king's sight (encroaching); if that ring is
-    // full/walled off, fall back to anywhere he can't see so a spawn still lands.
+    // A spawn tile must be standable, unseen, AND let this kind actually move (never
+    // drop a piece where it's terrain-stuck — e.g. a knight in a corridor).
+    const kind = randomEnemyKind(next.floor);
+    const ok = (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y) && kindCanMove(next, kind, x, y);
+    // Prefer the ring just outside sight (encroaching); else anywhere unseen it can move.
     const dist = (x, y) => chebyshev(x, y, next.player.x, next.player.y);
-    const tile = findFreeTile(occupied, (x, y) => unseen(x, y) && dist(x, y) <= radius + 2)
-      || findFreeTile(occupied, unseen);
-    if (tile) next.enemies.push(createEnemy(randomEnemyKind(next.floor), tile.x, tile.y));
+    const tile = findFreeTile(occupied, (x, y) => ok(x, y) && dist(x, y) <= radius + 2)
+      || findFreeTile(occupied, ok);
+    if (tile) next.enemies.push(createEnemy(kind, tile.x, tile.y));
   }
   return next;
 }

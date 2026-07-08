@@ -487,6 +487,24 @@ const Renderer = (function () {
     ctx.fill();
   }
 
+  // A red strike-mark on a tile an en-passant dash would hit (its flank captures), so
+  // the player can see the hit area before committing the dash.
+  function drawCardFlank(tileX, tileY) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const r = tileSize * 0.24;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r);
+    ctx.lineTo(cx + r, cy + r);
+    ctx.moveTo(cx + r, cy - r);
+    ctx.lineTo(cx - r, cy + r);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // A bright box around the tile the keyboard targeting cursor is on.
   function drawCardCursor(tileX, tileY) {
     const px = tileX * tileSize;
@@ -833,6 +851,11 @@ const Renderer = (function () {
     if (cardTargets) {
       for (const target of cardTargets) {
         drawCardHint(target.x, target.y, target.capture);
+        // En-passant dashes carry the two flank tiles they strike — mark them so the
+        // hit area is obvious before the dash is committed.
+        if (target.flanks) {
+          for (const f of target.flanks) drawCardFlank(f.x, f.y);
+        }
       }
       if (cardCursor) {
         drawCardCursor(cardCursor.x, cardCursor.y);

@@ -182,6 +182,63 @@ test('a melee card can reposition onto empty ground, not just capture', () => {
   assert.deepEqual({ x: n.player.x, y: n.player.y }, { x: 12, y: 11 }, 'the king repositions there');
 });
 
+// A tiny Warrior fixture: a bare floor, king centered, and the given perks learned.
+function warriorWith(...perkIds) {
+  let s = createInitialState('warrior');
+  s.terrain = {};
+  s.enemies = [];
+  s.exit = { x: 0, y: 0, discovered: false };
+  s.player.x = 10;
+  s.player.y = 10;
+  for (const id of perkIds) {
+    s.pendingLevelUp = true;
+    s = learnPerk(s, id);
+  }
+  return s;
+}
+
+test('En Passant dashes 2 tiles and strikes the two tiles it flanks', () => {
+  const s = warriorWith('w_enpassant');
+  const card = s.player.cards.find((c) => c.kind === 'enpassant');
+  const idx = s.player.cards.indexOf(card);
+  const up = getCardMoves(s, card).find((m) => m.x === 10 && m.y === 8);
+  assert.ok(up && up.viaJump, 'a dash 2 tiles up is offered');
+  assert.deepEqual(
+    up.flanks.map((f) => `${f.x},${f.y}`).sort(),
+    ['11,9', '9,9'],
+    'flanks are the two rear diagonals of the landing tile',
+  );
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 9 }), makeEnemy({ kind: 'pawn', x: 11, y: 9 })];
+  const r = useCard(s, idx, 10, 8);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 10, y: 8 }, 'king lands on the dash tile');
+  assert.equal(r.enemies.length, 0, 'both flanked foes are struck');
+});
+
+test('Cleave and Pierce fire on a plain move-kill, not just a card', () => {
+  const cleave = warriorWith('w_edge', 'w_cleave');
+  cleave.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10 }), makeEnemy({ kind: 'pawn', x: 11, y: 11 })];
+  assert.equal(movePlayerTo(cleave, 11, 10).enemies.length, 0, 'the kill cleaves an adjacent foe');
+
+  const pierce = warriorWith('w_fleet', 'w_pierce');
+  pierce.player.moveRange = 1;
+  pierce.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10 }), makeEnemy({ kind: 'pawn', x: 12, y: 10 })];
+  const r = movePlayerTo(pierce, 11, 10);
+  assert.equal(r.enemies.length, 0, 'pierce strikes the foe directly behind the kill');
+});
+
+test('Trample: landing a knight leap strikes every adjacent foe', () => {
+  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 11, y: 11 }),
+    makeEnemy({ kind: 'pawn', x: 13, y: 11 }),
+    makeEnemy({ kind: 'pawn', x: 12, y: 12 }),
+  ];
+  const r = useCard(s, idx, 12, 11); // leap onto empty ground
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 11 });
+  assert.equal(r.enemies.length, 0, 'all foes around the landing tile fall');
+});
+
 test('a melee enemy cannot move AND strike in the same turn', () => {
   const s = createInitialState('warrior');
   s.terrain = {};
@@ -259,16 +316,16 @@ test('taking a tier-1 perk and a card perk both apply', () => {
   let card = createInitialState('warrior');
   const cards0 = card.player.cards.length;
   card.pendingLevelUp = true;
-  card = learnPerk(card, 'w_bishop');
+  card = learnPerk(card, 'w_enpassant');
   assert.equal(card.player.cards.length, cards0 + 1);
-  assert.ok(card.player.cards.some((c) => c.kind === 'bishop'));
+  assert.ok(card.player.cards.some((c) => c.kind === 'enpassant'));
 });
 
 test('perks are tiered: a capstone stays gated until its prerequisites are taken', () => {
   const p = createPlayer('warrior');
   // Fresh: only the four tier-1 chain roots are offerable; the tier-2/3 are gated.
   const rootIds = rollLevelPerks({ ...p, takenPerks: [] }, 99).map((o) => o.id).sort();
-  assert.deepEqual(rootIds, ['w_bishop', 'w_fleet', 'w_hp1', 'w_reach']);
+  assert.deepEqual(rootIds, ['w_edge', 'w_enpassant', 'w_fleet', 'w_hp1']);
   // Taking the tier-1 HP unlocks the tier-2 (but not yet the tier-3 Bulwark).
   const afterHp1 = rollLevelPerks({ ...p, takenPerks: ['w_hp1'] }, 99).map((o) => o.id);
   assert.ok(afterHp1.includes('w_hp2'), 'tier 2 unlocked by tier 1');

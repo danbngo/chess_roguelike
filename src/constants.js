@@ -87,7 +87,7 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 // CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
 // classCategory(). There are no traits or ratings; card power comes from perks.
 const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach 1; sliders reach 3
-const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon'];
+const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant'];
 const CARD_COOLDOWN = 3;
 
 function isCardKind(kind) {
@@ -130,22 +130,22 @@ const CLASSES = {
     start: 'knight',
     hp: 7,
     perks: [
-      // Vigor chain
+      // ⛨ Sentinel — the immovable bastion: pile on HP, then shrug off the first blow.
       { id: 'w_hp1', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
-      { id: 'w_hp2', tier: 2, requires: 'w_hp1', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 } },
-      { id: 'w_bulwark', tier: 3, requires: 'w_hp2', name: 'Bulwark', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
-      // Onslaught chain
-      { id: 'w_reach', tier: 1, name: 'Long Arms', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 'w_cleave', tier: 2, requires: 'w_reach', name: 'Cleave', desc: 'A melee-card kill also slays one adjacent enemy', grants: { meleeCleave: true } },
-      { id: 'w_leech', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', desc: 'A melee-card kill heals 1 HP', grants: { meleeLeech: true } },
-      // Fury chain
+      { id: 'w_hp2', tier: 2, requires: 'w_hp1', name: 'Ironhide', desc: '+2 max HP', grants: { maxHp: 2 } },
+      { id: 'w_bulwark', tier: 3, requires: 'w_hp2', name: 'Parry', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
+      // ⚔ Reaver — the bloodletter: kills fuel more kills.
+      { id: 'w_edge', tier: 1, name: 'Keen Edge', desc: "A card kill cuts that card's cooldown by 1", grants: { meleeRefund: true } },
+      { id: 'w_cleave', tier: 2, requires: 'w_edge', name: 'Cleave', desc: 'When you fell a foe, one adjacent foe dies too', grants: { meleeCleave: true } },
+      { id: 'w_leech', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', desc: 'Any turn you fell a foe, heal 1 HP', grants: { meleeLeech: true } },
+      // 🐎 Cavalier — the charger: kill on the move, trample on landing.
       { id: 'w_fleet', tier: 1, name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
-      { id: 'w_rush', tier: 2, requires: 'w_fleet', name: 'Bloodrush', desc: 'A normal move that kills costs no turn', grants: { freeKillMove: true } },
-      { id: 'w_reflect', tier: 3, requires: 'w_rush', name: 'Reflection', desc: 'Reflect missiles and spells back at the attacker', grants: { reflect: true } },
-      // Warband chain
-      { id: 'w_bishop', tier: 1, name: 'Crusader', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
-      { id: 'w_rook', tier: 2, requires: 'w_bishop', name: 'Warhammer', desc: 'Gain a rook card', grants: { gainCard: 'rook' } },
-      { id: 'w_undying', tier: 3, requires: 'w_rook', name: 'Undying', desc: 'Revive once per floor at your start', grants: { extraLife: true } },
+      { id: 'w_pierce', tier: 2, requires: 'w_fleet', name: 'Pierce', desc: 'A kill by moving also strikes the foe directly behind it', grants: { meleePierce: true } },
+      { id: 'w_trample', tier: 3, requires: 'w_pierce', name: 'Trample', desc: 'Landing a knight leap strikes every adjacent foe', grants: { leapShock: true } },
+      // 🛡 Duellist — the flashy fencer: a signature dash, free-tempo kills, a dazzling flourish.
+      { id: 'w_enpassant', tier: 1, name: 'En Passant', desc: 'Gain an en-passant card: dash 2 tiles, strike the two you flank', grants: { gainCard: 'enpassant' } },
+      { id: 'w_rush', tier: 2, requires: 'w_enpassant', name: 'Charge', desc: 'A move that kills costs no turn', grants: { freeKillMove: true } },
+      { id: 'w_flourish', tier: 3, requires: 'w_rush', name: 'Flourish', desc: 'After a kill, foes beside you are caught off guard', grants: { meleeFlourish: true } },
     ],
   },
   ranger: {
