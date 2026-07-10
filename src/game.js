@@ -63,6 +63,12 @@ function bossDefeated(state) {
   return !state.enemies.some((e) => e.boss);
 }
 
+// The uncollected floor key sits on this tile — enemies and structures may never enter
+// or spawn on it (only the king may walk over it, to collect it).
+function keyTileAt(state, x, y) {
+  return Boolean(state.key) && !state.key.collected && state.key.x === x && state.key.y === y;
+}
+
 // The spawn pool for a floor. Floors 1-4 draw from the standard pieces; from floor
 // 5 the fairy pieces take over.
 function enemyRosterForFloor(floor) {
@@ -193,17 +199,20 @@ const PERK_FLAGS = [
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
   'meleeRefund', 'meleePierce', 'leapShock', 'meleeFlourish',
   'terrainImmune', 'seeThroughWalls', 'noChase', 'camouflage', 'recoil',
+  'blink', 'phase', 'hexDemote', 'sleepAura', 'multiShot',
 ];
 
 // Build a card record. The category (from the owning class) sets the cooldown but
-// is NOT stored on the card — it is re-derived from the class wherever needed.
-function makeCard(kind, category, cooldownOverride) {
+// is NOT stored on the card — it is re-derived from the class wherever needed. `color`
+// is the card's subclass colour for the UI (the class colour for a starter card).
+function makeCard(kind, category, cooldownOverride, color) {
   const cooldown = cooldownOverride != null ? cooldownOverride : cardCooldown(kind, category || 'melee');
-  return { kind, cooldown, remaining: 0 };
+  return { kind, cooldown, remaining: 0, color: color || null };
 }
 
-// Apply a perk's grants to a player (stat bumps, a card, or a rule flag).
-function applyPerk(player, grants) {
+// Apply a perk's grants to a player (stat bumps, a card, or a rule flag). `cardColor`
+// tints any card the perk grants (its subclass colour).
+function applyPerk(player, grants, cardColor) {
   if (!grants) return;
   if (grants.maxHp) {
     player.maxHp += grants.maxHp;
@@ -212,7 +221,7 @@ function applyPerk(player, grants) {
   if (grants.vision) player.vision += grants.vision;
   if (grants.moveRange) player.moveRange += grants.moveRange;
   if (grants.cardReach) player.cardReach = (player.cardReach || 0) + grants.cardReach;
-  if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className), grants.gainCooldown));
+  if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className), grants.gainCooldown, cardColor));
   for (const flag of PERK_FLAGS) {
     if (grants[flag]) player[flag] = true;
   }
@@ -232,7 +241,7 @@ function createPlayer(classKey) {
     moveRange: 1,
     vision: STARTING_VISION,
     cardReach: 0,
-    beastform: 0, // turns remaining as a knight (Ranger's Beastform); 0 = normal
+    promotion: 0, // turns remaining as an amazon (Ranger's Promotion); 0 = normal
     cards: [],
     takenPerks: [], // perk ids taken (unique ones can't be offered again)
     warded: false,
@@ -246,7 +255,7 @@ function createPlayer(classKey) {
     wasHit: false,
   };
   for (const flag of PERK_FLAGS) player[flag] = false;
-  player.cards.push(makeCard(cls.start, cls.category, cls.startCooldown));
+  player.cards.push(makeCard(cls.start, cls.category, cls.startCooldown, cls.color));
   return player;
 }
 
@@ -277,7 +286,7 @@ function learnPerk(state, perkId) {
     next.pendingLevelUp = false;
     return next;
   }
-  applyPerk(p, perk.grants);
+  applyPerk(p, perk.grants, chainColorFor(p.className, perk.chain));
   p.takenPerks.push(perkId);
   next.viewSize = p.vision;
   next.pendingLevelUp = false;
@@ -526,6 +535,7 @@ function generateFloor(floor, carryPlayer, score) {
     spatters: [],
     scars: [], // permanent marks (shattered summoning circles)
     exit: null,
+    key: null, // the floor key; the stair stays locked until it is collected
     floor,
     turn: 0,
     score: score || 0,
@@ -534,7 +544,7 @@ function generateFloor(floor, carryPlayer, score) {
     won: false,
     pendingLevelUp: false,
     levelPerks: null,
-    message: 'A new floor. Seek the exit.',
+    message: 'A new floor. Find the floor key to unlock the stair down.',
     lastAction: 'start',
     spawnInterval: Math.max(3, 9 - floor),
     turnsSinceSpawn: 0,
@@ -626,6 +636,20 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
+  // The floor KEY: the stair is sealed until the king picks it up. It favours a tile
+  // well clear of the stair's overlook (chebyshev >= 6) AND out of the king's landing
+  // sight, so he must explore for it; the constraints relax if no such tile exists.
+  // Reserved in `occupied` so NO piece, turret, or circle ever spawns on it, and placed
+  // before the connectivity carve so its pocket is guaranteed reachable.
+  const keyClear = (x, y) => standable(x, y) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, player.x, player.y) >= 2;
+  const keyFar = (x, y) => keyClear(x, y) && chebyshev(x, y, ax, ay) >= 6;
+  const keyHidden = (x, y) => keyFar(x, y) && !seen(x, y);
+  const keyTile = place(keyHidden) || place(keyFar) || place(keyClear) || place(standable);
+  if (keyTile) {
+    state.key = { x: keyTile.x, y: keyTile.y, collected: false, discovered: false };
+    state.exit.locked = true;
+  }
+
   const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 6 && chebyshev(x, y, player.x, player.y) >= 3;
   // The chamber leans on STATIONARY hazards near the stair, with only a thin screen of
   // mobile guards. Sleeping backup pieces (few).
@@ -686,6 +710,7 @@ function generateFloor(floor, carryPlayer, score) {
       for (let rx = 0; rx < WORLD_SIZE; rx += 1) state.explored[`${rx},${ry}`] = true;
     }
     if (state.exit) state.exit.discovered = true;
+    if (state.key) state.key.discovered = true;
   }
 
   updateDiscovery(state);
@@ -733,7 +758,7 @@ function passTurn(state) {
     }
   }
   state.spatters = decaySpatters(state.spatters);
-  if (p.beastform > 0) p.beastform -= 1; // Beast form wears off after its turns elapse
+  if (p.promotion > 0) p.promotion -= 1; // Promotion (amazon form) wears off after its turns elapse
   p.warded = false;
   p.firstHitUsedThisTurn = false;
   p.attacked = false;
@@ -748,6 +773,8 @@ function revealSeen(state) {
 function updateDiscovery(state) {
   revealSeen(state);
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) state.exit.discovered = true;
+  // Once the king lays eyes on the key it is remembered through the fog (like the stair).
+  if (state.key && state.explored[`${state.key.x},${state.key.y}`]) state.key.discovered = true;
 }
 
 /* ----------------------------- player movement ---------------------------- */
@@ -765,13 +792,14 @@ function getPlayerMoves(state) {
     seen.add(key);
     moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture) });
   };
-  if (p.beastform > 0) {
-    // Beast form (Ranger): the king moves ONLY as a knight — L-leaps that clear
-    // anything between. Click/target a tile to leap (straight keyboard steps do nothing).
-    for (const t of jumpTargets(state, p.x, p.y, enemyAt, isEnemy)) add(t);
+  if (p.promotion > 0) {
+    // Promotion (Ranger): the king moves as an AMAZON — full queen slides PLUS knight
+    // leaps — for a few turns, playing no cards. Click/target any reachable tile.
+    const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase) };
+    for (const t of generateMoves('amazon', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
     return moves;
   }
-  const opts = { terrainImmune: Boolean(p.terrainImmune) };
+  const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase) };
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     const stops = slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy, opts);
     // The king must COMMIT to the full slide (his moveRange) — he can only stop short
@@ -830,6 +858,22 @@ function applyArrival(next, x, y) {
   // Pierce strikes the foe directly behind the corpse, along the king's line of advance.
   if (realKill) applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
 
+  // Hex (Sorcerer): a non-pawn foe left standing one tile ahead of the king's advance is
+  // demoted to a pawn and startled.
+  if (pl.hexDemote && (x - fromX || y - fromY) && !next.gameOver && !next.won) {
+    const hx = x + Math.sign(x - fromX);
+    const hy = y + Math.sign(y - fromY);
+    const foe = next.enemies.find((e) => e.x === hx && e.y === hy);
+    if (foe && !foe.boss && !foe.turret && !foe.summonCircle && foe.kind !== 'pawn') {
+      foe.kind = 'pawn';
+      foe.awake = false;
+      foe.surprised = false;
+      foe.lastSeen = null;
+      foe.lastSeenTtl = 0;
+    }
+  }
+
+  collectKeyIfHere(next);
   if (tryDescend(next)) return next;
 
   if (realKill && pl.freeKillMove) {
@@ -913,8 +957,63 @@ function applyOnKill(state, ox, oy, dx, dy) {
 function tryDescend(next) {
   if (next.won || next.gameOver) return false;
   if (next.exit && next.player.x === next.exit.x && next.player.y === next.exit.y) {
+    if (next.exit.locked) {
+      // The king reached the stair but it is sealed until he holds the floor key.
+      next.message = 'The stair is sealed — find the floor key first.';
+      return false;
+    }
     next.lastAction = 'exit';
     next.message = 'You step onto the stair and descend...';
+    return true;
+  }
+  return false;
+}
+
+// Blink (Sorcerer Translocations): when a foe lands a hit, teleport the king to a random
+// tile in sight that is standable, empty, off the stair, and NOT threatened by any visible
+// enemy. No-op when no such refuge exists. Returns true if he blinked.
+function blinkToSafety(state) {
+  const p = state.player;
+  if (!p.blink || state.gameOver) return false;
+  // Danger must be judged as if the king already stood on the candidate — so a slider's
+  // FULL line counts (his own body must not "block" a threat behind himself). Compute each
+  // visible enemy's reach from a ghost state whose king sits off-board.
+  const ghost = { ...state, player: { ...p, x: -50, y: -50 } };
+  const danger = new Set();
+  for (const e of getVisibleEnemies(state)) {
+    for (const t of getPieceThreats(e, ghost, true)) danger.add(`${t.x},${t.y}`);
+  }
+  const bounds = getVisibleBounds(state);
+  const options = [];
+  for (let yy = bounds.y; yy < bounds.y + bounds.height; yy += 1) {
+    for (let xx = bounds.x; xx < bounds.x + bounds.width; xx += 1) {
+      if (xx === p.x && yy === p.y) continue;
+      if (!inLineOfSight(state, xx, yy)) continue;
+      if (!standableFor(terrainAt(state, xx, yy), {})) continue; // solid ground only
+      if (state.enemies.some((e) => e.x === xx && e.y === yy)) continue;
+      if (state.exit && xx === state.exit.x && yy === state.exit.y) continue;
+      if (danger.has(`${xx},${yy}`)) continue; // must be a SAFE tile
+      options.push({ x: xx, y: yy });
+    }
+  }
+  if (!options.length) return false;
+  const pick = options[randomInt(options.length)];
+  p.x = pick.x;
+  p.y = pick.y;
+  collectKeyIfHere(state);
+  state.message = 'The king blinks out of harm’s way!';
+  return true;
+}
+
+// Collect the floor key when the king stands on it: the stair unlocks for good.
+function collectKeyIfHere(next) {
+  const k = next.key;
+  const p = next.player;
+  if (k && !k.collected && p.x === k.x && p.y === k.y) {
+    k.collected = true;
+    k.discovered = true;
+    if (next.exit) next.exit.locked = false;
+    next.message = 'You seize the floor key — the stair unlocks!';
     return true;
   }
   return false;
@@ -961,13 +1060,13 @@ function useCard(state, cardIndex, x, y) {
     next.lastAction = 'blocked';
     return next;
   }
-  // In beast form the king wields no cards — he only leaps.
-  if (p.beastform > 0) {
-    next.message = 'The beast knows no weapons — leap instead.';
+  // While promoted the king wields no cards — he roams as the amazon.
+  if (p.promotion > 0) {
+    next.message = 'The amazon needs no cards — strike by moving.';
     next.lastAction = 'blocked';
     return next;
   }
-  const isAbilityCard = card.kind === 'beastform' || card.kind === 'reload';
+  const isAbilityCard = card.kind === 'promotion' || card.kind === 'reload' || card.kind === 'swap';
   // Water forbids readying a WEAPON (Amphibious lifts that); ability cards are exempt.
   if (isSlowTerrain(terrainAt(next, p.x, p.y)) && !p.terrainImmune && !isAbilityCard) {
     next.message = `You can't ready a weapon while wading through ${terrainAt(next, p.x, p.y)}.`;
@@ -981,12 +1080,12 @@ function useCard(state, cardIndex, x, y) {
     return next;
   }
 
-  // Beastform: a FREE action (no turn spent) that turns the king into a knight for a
-  // few turns — he moves only by leaping and can play no cards until it wears off.
-  if (card.kind === 'beastform') {
-    p.beastform = BEASTFORM_TURNS;
+  // Promotion: a FREE action (no turn spent) that turns the king into an amazon for a
+  // few turns — he roams as queen + knight and can play no cards until it wears off.
+  if (card.kind === 'promotion') {
+    p.promotion = PROMOTION_TURNS;
     card.remaining = card.cooldown;
-    next.message = 'The Ranger takes beast form — leap, and leap again!';
+    next.message = 'The Ranger is promoted — she storms the board as an amazon!';
     next.enemyTurn = false;
     next.lastAction = 'card-free';
     updateDiscovery(next);
@@ -997,6 +1096,29 @@ function useCard(state, cardIndex, x, y) {
     for (const c of p.cards) if (c !== card) c.remaining = 0;
     card.remaining = card.cooldown;
     next.message = 'You reload — every other card is ready.';
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+  // Displacement: trade tiles with the targeted unit (no damage), then spend the turn.
+  if (card.kind === 'swap') {
+    const unit = next.enemies.find((e) => e.x === x && e.y === y);
+    if (!unit) {
+      next.message = 'Nothing to swap with there.';
+      next.lastAction = 'blocked';
+      return next;
+    }
+    const kx = p.x;
+    const ky = p.y;
+    p.x = x;
+    p.y = y;
+    unit.x = kx;
+    unit.y = ky;
+    card.remaining = card.cooldown;
+    next.message = `The king swaps places with a ${unit.kind}.`;
+    collectKeyIfHere(next);
     passTurn(next);
     next.enemyTurn = true;
     next.lastAction = 'combat';
@@ -1061,6 +1183,32 @@ function useCard(state, cardIndex, x, y) {
       const pdy = card.kind === 'enpassant' ? 0 : Math.sign(y - fromY);
       applyOnKill(next, x, y, pdx, pdy);
     }
+  } else if (category === 'spell' && p.multiShot && !move.viaJump) {
+    // Barrage (Conjuration): fire a piercing bolt down EVERY line the piece commands
+    // (a rook fires its 4 orthogonals, a queen all 8), striking every unit on each.
+    const reach = cardReach(card.kind, p.cardReach || 0);
+    for (const [dx, dy] of cardSlideDirs(card.kind)) {
+      let cx = fromX;
+      let cy = fromY;
+      for (let i = 0; i < reach; i += 1) {
+        cx += dx;
+        cy += dy;
+        if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
+        if (terrainAt(next, cx, cy) === 'wall' && !p.seeThroughWalls) break;
+        const felled = attackTile(next, cx, cy);
+        if (felled && isKillablePiece(felled)) kills.push(felled);
+      }
+    }
+    scored = kills.length > 0;
+    realKill = kills.length > 0;
+    if (!next.gameOver && !next.won && p.spellDazzle) {
+      for (const s of kills) {
+        for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+          const e = next.enemies.find((en) => en.x === s.x + dx && en.y === s.y + dy);
+          if (e && !e.boss && unitInSight(next, e.x, e.y)) e.awake = false;
+        }
+      }
+    }
   } else {
     if (category === 'spell' && !move.viaJump) {
       for (const t of straightPath(fromX, fromY, x, y)) {
@@ -1114,6 +1262,8 @@ function useCard(state, cardIndex, x, y) {
     }
   }
 
+  // A melee reposition / En-Passant dash / Recoil can carry the king onto the key.
+  collectKeyIfHere(next);
   // A melee card that fells the guardian leaves the king on the stair: descend.
   if (tryDescend(next)) {
     updateDiscovery(next);
@@ -1161,7 +1311,7 @@ function movePlayer(state, dx, dy) {
   const isEnemy = (x, y) => capturableAt(state, x, y);
   // Slide the king's FULL move range (2+ with Fleet), stopping only on collision —
   // the furthest reachable stop is the destination.
-  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune) });
+  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune), phaseWalls: Boolean(state.player.phase) });
   if (!stops.length) {
     const next = structuredClone(state);
     next.message = 'The king cannot move that way.';
@@ -1179,6 +1329,7 @@ function movePlayer(state, dx, dy) {
 function wanderEnemy(state, enemy) {
   const unitAt = (x, y) => {
     if (x === state.player.x && y === state.player.y) return 'player';
+    if (keyTileAt(state, x, y)) return 'key'; // enemies never path onto the floor key
     return state.enemies.find((other) => other.id !== enemy.id && other.x === x && other.y === y) || null;
   };
   const never = () => false;
@@ -1203,6 +1354,7 @@ function wanderEnemy(state, enemy) {
 function movesTowardTile(state, enemy) {
   const unitAt = (x, y) => {
     if (x === state.player.x && y === state.player.y) return 'player';
+    if (keyTileAt(state, x, y)) return 'key'; // pursuers never path onto the floor key
     return state.enemies.find((o) => o.id !== enemy.id && o.x === x && o.y === y) || null;
   };
   const never = () => false;
@@ -1261,7 +1413,25 @@ function beginEnemyPhase(state) {
   const stealthed = Boolean(p.stealth) && !p.attacked;
   recordSeenEnemies(next);
 
+  // Slumber (Sorcerer): non-boss, non-structure foes adjacent to the king are lulled to
+  // sleep and skip their turn; any no longer adjacent wake back up.
+  if (p.sleepAura) {
+    for (const enemy of next.enemies) {
+      if (enemy.boss || enemy.turret || enemy.summonCircle) continue;
+      if (chebyshev(enemy.x, enemy.y, p.x, p.y) === 1) {
+        enemy.asleep = true;
+        enemy.awake = false;
+        enemy.surprised = false;
+        enemy.lastSeen = null;
+        enemy.lastSeenTtl = 0;
+      } else if (enemy.asleep) {
+        enemy.asleep = false;
+      }
+    }
+  }
+
   for (const enemy of next.enemies) {
+    if (enemy.asleep) continue; // a slumbering foe holds still
     const wasSurprised = enemy.surprised;
     enemy.frustrated = false;
     const hiddenFromThis = stealthed && !enemy.awake && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
@@ -1351,6 +1521,7 @@ function fireTurret(state, turret) {
   state.message = `A ${turret.kind} turret blasts the king!`;
   state.lastAction = 'hit';
   checkDeath(state);
+  if (!state.gameOver) blinkToSafety(state);
   return state;
 }
 
@@ -1368,6 +1539,7 @@ function summonAdjacent(state, origin, kind) {
     if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
     if (!isStandable(terrainAt(state, x, y))) continue;
     if (x === state.player.x && y === state.player.y) continue;
+    if (keyTileAt(state, x, y)) continue; // never conjure a minion onto the floor key
     if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
     if (!kindCanMove(state, minionKind, x, y)) continue; // never conjure a stuck minion
     const minion = createEnemy(minionKind, x, y);
@@ -1427,6 +1599,7 @@ function bossHit(state, boss, hitMsg) {
     state.message = hitMsg;
     state.lastAction = 'hit';
     checkDeath(state);
+    if (!state.gameOver) blinkToSafety(state);
   } else {
     state.message = `The king withstands ${boss.bossName || `the ${boss.kind} guardian`}!`;
     state.lastAction = 'enemy';
@@ -1466,6 +1639,8 @@ function knockbackKing(state, enemy) {
     state.lastAction = 'hit';
     checkDeath(state);
   }
+  if (!state.gameOver) collectKeyIfHere(state); // shoved onto the key? he grabs it
+  if (!state.gameOver && !mit) blinkToSafety(state); // a struck blink-mage flickers away
   updateDiscovery(state);
   return state;
 }
@@ -1511,6 +1686,7 @@ function strikeKing(state, enemy) {
     state.message = `A ${enemy.kind} strikes the king!`;
     state.lastAction = 'hit';
     checkDeath(state);
+    if (!state.gameOver) blinkToSafety(state);
   } else {
     state.message = mitigationMessage(mit, enemy.kind);
     state.lastAction = 'enemy';
@@ -1589,7 +1765,7 @@ function maybeSpawnEnemy(state) {
     // A spawn tile must be standable, unseen, AND let this kind actually move (never
     // drop a piece where it's terrain-stuck — e.g. a knight in a corridor).
     const kind = randomEnemyKind(next.floor);
-    const ok = (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y) && kindCanMove(next, kind, x, y);
+    const ok = (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y) && !keyTileAt(next, x, y) && kindCanMove(next, kind, x, y);
     // Prefer the ring just outside sight (encroaching); else anywhere unseen it can move.
     const dist = (x, y) => chebyshev(x, y, next.player.x, next.player.y);
     const tile = findFreeTile(occupied, (x, y) => ok(x, y) && dist(x, y) <= radius + 2)

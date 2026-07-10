@@ -18,7 +18,7 @@ flags: `firstHitEachTurn`, `reflect`, `meleeRefund`, `meleeCleave`, `meleeLeech`
 
 ---
 
-## WARRIOR — the Fighter  (melee · start: knight · 7 HP)  ✅ IMPLEMENTED
+## WARRIOR — the Fighter  (melee · start: knight · 5 HP)  ✅ IMPLEMENTED
 _A sturdy frontline fighter who lunges in and trades blows._
 The starting knight card has base cooldown 3 (unchanged; the class default).
 
@@ -51,8 +51,8 @@ A show-off who fights with tempo and a signature dash.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `w_enpassant` | En Passant | gain an en-passant card: dash 2 tiles orthogonally onto empty ground, striking the two tiles you flank (base cooldown 3). The hit area is shown while targeting. | `gainCard:enpassant` |
-| 2 | `w_rush` | Charge | a move that kills costs no turn | `freeKillMove` |
-| 3 | `w_flourish` | Flourish | after a kill, foes beside you are caught off guard (surprised) | `meleeFlourish` |
+| 2 | `w_flourish` | Flourish | after a kill, foes beside you are caught off guard (surprised) | `meleeFlourish` |
+| 3 | `w_rush` | Charge | a move that kills costs no turn | `freeKillMove` |
 
 _Dropped from the old Warrior: Long Arms (+reach), Reflection, the bishop/rook card
 grants, and Undying — replaced by the four chains above (survive / butcher / charge / duel)._
@@ -60,7 +60,7 @@ grants, and Undying — replaced by the four chains above (survive / butcher / c
 
 ---
 
-## RANGER — the Hunter  (ranged · start: bishop, cooldown 4 · 5 HP)  ✅ IMPLEMENTED
+## RANGER — the Hunter  (ranged · start: bishop, cooldown 3 · 4 HP)  ✅ IMPLEMENTED
 _A hunter who fells foes from across the room._
 
 ### 🌲 Druid — "Weather any storm the wild throws at you."
@@ -69,7 +69,7 @@ The survivalist who masters the terrain, then becomes the beast.
 |---|---|---|---|---|
 | 1 | `r_wade` | Amphibious | water no longer slows your moves or blocks your cards | `terrainImmune` |
 | 2 | `r_xray` | Sixth Sense | see and shoot over walls (symmetric — you can also be seen through them) | `seeThroughWalls` |
-| 3 | `r_beast` | Beastform | gain a beastform card: free to cast; for 3 turns move only by knight-leaps and use no weapon cards | `gainCard:beastform` |
+| 3 | `r_promo` | Promotion | gain a promotion card: free to cast; for 3 turns move as an amazon (queen + knight) and use no weapon cards | `gainCard:promotion` |
 
 ### 🎯 Deadeye — "One shot. Then another, before they blink."
 Reach, sight, and foreknowledge.
@@ -95,55 +95,34 @@ The quartermaster: reload, a bigger bow, and kickback.
 | 2 | `r_longbow` | Longbow | gain a rook card (cooldown 5) | `gainCard:rook`, `gainCooldown:5` |
 | 3 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (and can strike a foe there) | `recoil` |
 
-_Ranger changes: starter knight → bishop (cd 4); DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet). Silent kept its "(or you attack)" wording — the "in front of them" directional nuance is not yet built._
+_Ranger changes: starter knight → bishop (cd 3); DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet). Silent kept its "(or you attack)" wording — the "in front of them" directional nuance is not yet built._
 
 ---
 
-## SORCERER — the Wizard  (spell · start: rook · 3 HP)
-_A fragile caster whose bolts pierce straight through the ranks._
-_(the four chains are the four D&D schools of magic)_
+## SORCERER — the Wizard  (spell · start: rook, cooldown 5 · 3 HP)  ✅ 3/4 CHAINS IMPLEMENTED
+_A fragile caster whose bolts pierce straight through the ranks — his mighty cards make up for his low HP._
+The starting rook is slow (cd 5) and pierces every tile en route to (and including) the target.
 
-starting rook should have cooldown 5 and hits all tiles en route to the target as well as the target with an animation (if not the case already)
-the wizard's low hp makes up for his great cards
-
-### 🔮 Translocations 
+### 🔮 Translocations — cyan — the blink-mage: dodge, phase, displace.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-You can move into wall tiles. While doing so reduces your vision radius to 1.
-Add a castling card here. Lets you swap places with any enemy or turret on screen. Cooldown 5.
+| 1 | `s_blink` | Blink | when a foe hits you, blink to a random safe tile in sight (if any) | `blink` |
+| 2 | `s_phase` | Phase | move onto wall tiles; while embedded your sight shrinks to 1 | `phase` |
+| 3 | `s_swap` | Displacement | gain a swap card: trade places with any unit in sight (cooldown 3) | `gainCard:swap`, `gainCooldown:3` |
 
-
-### 🔥 Time Magic
-Raw destructive throughput: reach, haste, and free casts.
+### 💫 Hexes — fuchsia — the curse-weaver: demote, dazzle, lull.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 3 | `s_free` | Free Casting | cards cost no turn to cast | `freeSpell` |
-| 2 | `s_haste` | Attunement | cards recharge twice as fast | `spellHaste` |
-Add a card that gives every enemy on screen the frustrated state for the next 3 turns. Cooldown 9.
+| 1 | `s_hex` | Hex | moving so a non-pawn foe stands one tile ahead demotes it to a pawn and startles it | `hexDemote` |
+| 2 | `s_cata` | Cataclysm | every visible foe is surprised when you cast a spell | `spellSurprise` |
+| 3 | `s_slumber` | Slumber | non-boss foes adjacent to you fall asleep (blue "z" icon) | `sleepAura` |
 
-
-### 💫 Hexes — "Their eyes glaze; their guard drops."
-Crowd control through dazzling, mind-fogging bolts.
+### 🌀 Conjuration — violet — the artillery-mage: reach, a queen, a full barrage.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
+| 1 | `s_amp` | Amplify | +1 card reach | `cardReach:1` |
+| 2 | `s_staff` | Archstaff | gain a queen card (cooldown 9) | `gainCard:queen`, `gainCooldown:9` |
+| 3 | `s_barrage` | Barrage | your spell fires down EVERY line the piece commands (rook 4, queen 8) | `multiShot` |
 
-| 3 | `s_cata` | Cataclysm | every visible foe is surprised when you cast a spell | `spellSurprise` |
-
-### 🌀 Conjuration — "Summon a bigger weapon."
-Conjure escalating armaments — up to a queen — and reach further.
-| tier | id | name | effect | `grant` |
-|---|---|---|---|---|
-| 1 | `s_wand` | Wand | gain a bishop card (cooldown: 3) | `gainCard:bishop` |
-| 2 | `s_staff` | Archstaff | gain a queen card (cooldown: 9) | `gainCard:queen` |
-| 3 | `s_amp` | Amplify | +1 card reach | `cardReach:1` |
-
-_Sorcerer changes: none — chains kept, just themed as the four schools._
-
----
-
-## Ideas to push further (optional, needs new mechanics = code)
-- **Warlord → Champion** capstone: a **queen** melee card (the ultimate weapon) instead of Parry.
-- **Cavalier → Overrun**: moving costs no turn if you didn't attack (a true mobility capstone) — NEW flag.
-- **Gloom Stalker → Assassinate**: first strike from stealth cleaves/×2 — NEW flag.
-- **Enchantment → Dominate**: a slain foe's tile leaves the survivors frozen 2 turns — extend `spellDazzle`.
-- Give each class's survival chain a **distinct** T3 (Warrior=Undying, Ranger=Bulwark, Sorcerer=Spell Mirror) — already done above, so they don't feel like the same "Toughness" pick.
+### 🔥 Necromancy — necro-green — ⏳ DEFERRED (the ally faction — a dedicated build)
+_Familiar (a berolina-pawn ally that follows, auto-attacks, and respawns), convert-on-kill undead, and a General upgrade. Introduces allies as a new faction (their AI, rendering with a heart icon, swap-on-move, "enemies can attack allies"), so it's slated as its own pass._

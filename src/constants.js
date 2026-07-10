@@ -87,9 +87,9 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 // CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
 // classCategory(). There are no traits or ratings; card power comes from perks.
 const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach 1; sliders reach 3
-const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'beastform', 'reload'];
+const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'promotion', 'reload', 'swap'];
 const CARD_COOLDOWN = 3;
-const BEASTFORM_TURNS = 3; // how many turns the Ranger's Beastform lasts
+const PROMOTION_TURNS = 3; // how many turns the Ranger's Promotion (amazon form) lasts
 
 function isCardKind(kind) {
   return CARD_KINDS.includes(kind);
@@ -129,24 +129,26 @@ const CLASSES = {
     // gap-closer that clears walls and pieces between. Not a piece his perks grant
     // (those give bishop & rook), so no overlap.
     start: 'knight',
-    hp: 7,
+    hp: 5,
+    // Each subclass chain has its own colour; the class colour is the starter card's.
+    chains: { Sentinel: '#3b82f6', Reaver: '#b91c1c', Cavalier: '#f59e0b', Duellist: '#ec4899' },
     perks: [
       // ⛨ Sentinel — the immovable bastion: pile on HP, then shrug off the first blow.
-      { id: 'w_hp1', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
-      { id: 'w_hp2', tier: 2, requires: 'w_hp1', name: 'Ironhide', desc: '+2 max HP', grants: { maxHp: 2 } },
-      { id: 'w_bulwark', tier: 3, requires: 'w_hp2', name: 'Parry', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
+      { id: 'w_hp1', chain: 'Sentinel', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
+      { id: 'w_hp2', chain: 'Sentinel', tier: 2, requires: 'w_hp1', name: 'Ironhide', desc: '+2 max HP', grants: { maxHp: 2 } },
+      { id: 'w_bulwark', chain: 'Sentinel', tier: 3, requires: 'w_hp2', name: 'Parry', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
       // ⚔ Reaver — the bloodletter: kills fuel more kills.
-      { id: 'w_edge', tier: 1, name: 'Keen Edge', desc: "A card kill cuts that card's cooldown by 1", grants: { meleeRefund: true } },
-      { id: 'w_cleave', tier: 2, requires: 'w_edge', name: 'Cleave', desc: 'When you fell a foe, one adjacent foe dies too', grants: { meleeCleave: true } },
-      { id: 'w_leech', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', desc: 'Any turn you fell a foe, heal 1 HP', grants: { meleeLeech: true } },
+      { id: 'w_edge', chain: 'Reaver', tier: 1, name: 'Keen Edge', desc: "A card kill cuts that card's cooldown by 1", grants: { meleeRefund: true } },
+      { id: 'w_cleave', chain: 'Reaver', tier: 2, requires: 'w_edge', name: 'Cleave', desc: 'When you fell a foe, one adjacent foe dies too', grants: { meleeCleave: true } },
+      { id: 'w_leech', chain: 'Reaver', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', desc: 'Any turn you fell a foe, heal 1 HP', grants: { meleeLeech: true } },
       // 🐎 Cavalier — the charger: kill on the move, trample on landing.
-      { id: 'w_fleet', tier: 1, name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
-      { id: 'w_pierce', tier: 2, requires: 'w_fleet', name: 'Pierce', desc: 'A kill by moving also strikes the foe directly behind it', grants: { meleePierce: true } },
-      { id: 'w_trample', tier: 3, requires: 'w_pierce', name: 'Trample', desc: 'Landing a knight leap strikes every adjacent foe', grants: { leapShock: true } },
+      { id: 'w_fleet', chain: 'Cavalier', tier: 1, name: 'Fleet', desc: '+1 move range', grants: { moveRange: 1 } },
+      { id: 'w_pierce', chain: 'Cavalier', tier: 2, requires: 'w_fleet', name: 'Pierce', desc: 'A kill by moving also strikes the foe directly behind it', grants: { meleePierce: true } },
+      { id: 'w_trample', chain: 'Cavalier', tier: 3, requires: 'w_pierce', name: 'Trample', desc: 'Landing a knight leap strikes every adjacent foe', grants: { leapShock: true } },
       // 🛡 Duellist — the flashy fencer: a signature dash, free-tempo kills, a dazzling flourish.
-      { id: 'w_enpassant', tier: 1, name: 'En Passant', desc: 'Gain an en-passant card: dash 2 tiles, strike the two you flank', grants: { gainCard: 'enpassant' } },
-      { id: 'w_rush', tier: 2, requires: 'w_enpassant', name: 'Charge', desc: 'A move that kills costs no turn', grants: { freeKillMove: true } },
-      { id: 'w_flourish', tier: 3, requires: 'w_rush', name: 'Flourish', desc: 'After a kill, foes beside you are caught off guard', grants: { meleeFlourish: true } },
+      { id: 'w_enpassant', chain: 'Duellist', tier: 1, name: 'En Passant', desc: 'Gain an en-passant card: dash 2 tiles, strike the two you flank', grants: { gainCard: 'enpassant' } },
+      { id: 'w_flourish', chain: 'Duellist', tier: 2, requires: 'w_enpassant', name: 'Flourish', desc: 'After a kill, foes beside you are caught off guard', grants: { meleeFlourish: true } },
+      { id: 'w_rush', chain: 'Duellist', tier: 3, requires: 'w_flourish', name: 'Charge', desc: 'A move that kills costs no turn', grants: { freeKillMove: true } },
     ],
   },
   ranger: {
@@ -156,24 +158,25 @@ const CLASSES = {
     category: 'ranged', // every Ranger card fires from afar (blocked by cover)
     start: 'bishop',
     startCooldown: 3, // his starting bishop uses the class-default cooldown
-    hp: 5,
+    hp: 4,
+    chains: { Druid: '#16a34a', Deadeye: '#14b8a6', 'Gloom Stalker': '#6366f1', Fletcher: '#a3e635' },
     perks: [
-      // 🌲 Druid — the survivalist: master the terrain, then become the beast.
-      { id: 'r_wade', tier: 1, name: 'Amphibious', desc: 'Water no longer slows you or blocks your cards', grants: { terrainImmune: true } },
-      { id: 'r_xray', tier: 2, requires: 'r_wade', name: 'Sixth Sense', desc: 'See and shoot over walls', grants: { seeThroughWalls: true } },
-      { id: 'r_beast', tier: 3, requires: 'r_xray', name: 'Beastform', desc: 'Gain a beastform card: cast free to move only by knight-leaps for 3 turns (no weapon cards)', grants: { gainCard: 'beastform' } },
+      // 🌲 Druid — the survivalist: master the terrain, then ascend to the amazon.
+      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Amphibious', desc: 'Water no longer slows you or blocks your cards', grants: { terrainImmune: true } },
+      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Sixth Sense', desc: 'See and shoot over walls', grants: { seeThroughWalls: true } },
+      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Promotion', desc: 'Gain a promotion card: cast free to move as an amazon (queen + knight) for 3 turns (no weapon cards)', grants: { gainCard: 'promotion' } },
       // 🎯 Deadeye — reach, sight, and foreknowledge.
-      { id: 'r_reach', tier: 1, name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 'r_eyes2', tier: 2, requires: 'r_reach', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
-      { id: 'r_eagle', tier: 3, requires: 'r_eyes2', name: 'Premonition', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
+      { id: 'r_reach', chain: 'Deadeye', tier: 1, name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 'r_eyes2', chain: 'Deadeye', tier: 2, requires: 'r_reach', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
+      { id: 'r_eagle', chain: 'Deadeye', tier: 3, requires: 'r_eyes2', name: 'Premonition', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
-      { id: 'r_ghost', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
-      { id: 'r_camo', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles ignore you', grants: { camouflage: true } },
-      { id: 'r_stealth', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
+      { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
+      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles ignore you', grants: { camouflage: true } },
+      { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
       // 🏹 Fletcher — the quartermaster: reload, a bigger bow, and kickback.
-      { id: 'r_reload', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
-      { id: 'r_longbow', tier: 2, requires: 'r_reload', name: 'Longbow', desc: 'Gain a rook card (cooldown 5)', grants: { gainCard: 'rook', gainCooldown: 5 } },
-      { id: 'r_recoil', tier: 3, requires: 'r_longbow', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (and can strike a foe there)', grants: { recoil: true } },
+      { id: 'r_reload', chain: 'Fletcher', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
+      { id: 'r_longbow', chain: 'Fletcher', tier: 2, requires: 'r_reload', name: 'Longbow', desc: 'Gain a rook card (cooldown 5)', grants: { gainCard: 'rook', gainCooldown: 5 } },
+      { id: 'r_recoil', chain: 'Fletcher', tier: 3, requires: 'r_longbow', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (and can strike a foe there)', grants: { recoil: true } },
     ],
   },
   sorcerer: {
@@ -182,27 +185,37 @@ const CLASSES = {
     color: '#a855f7',
     category: 'spell', // every Sorcerer card is a bolt that pierces the whole path
     start: 'rook',
-    hp: 4,
+    startCooldown: 5, // his mighty starting rook is slow (it hits the whole line)
+    hp: 3,
+    // Necromancy (a fourth, ally-summoning chain) is colour-reserved but not yet built.
+    chains: { Translocations: '#22d3ee', Necromancy: '#65a30d', Hexes: '#e879f9', Conjuration: '#8b5cf6' },
     perks: [
-      // Vigor chain
-      { id: 's_hp1', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
-      { id: 's_hp2', tier: 2, requires: 's_hp1', name: 'Toughness', desc: '+2 max HP', grants: { maxHp: 2 } },
-      { id: 's_reflect', tier: 3, requires: 's_hp2', name: 'Reflection', desc: 'Reflect missiles and spells back at the attacker', grants: { reflect: true } },
-      // Arcana chain
-      { id: 's_reach', tier: 1, name: 'Farsight', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 's_haste', tier: 2, requires: 's_reach', name: 'Attunement', desc: 'Spell cards recharge twice as fast with no enemy in sight', grants: { spellHaste: true } },
-      { id: 's_free', tier: 3, requires: 's_haste', name: 'Free Casting', desc: 'Spell cards cost no turn to cast', grants: { freeSpell: true } },
-      // Mysticism chain
-      { id: 's_eyes', tier: 1, name: 'Keen Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
-      { id: 's_dazzle', tier: 2, requires: 's_eyes', name: 'Dazzle', desc: 'Enemies beside those a spell slays are caught by surprise', grants: { spellDazzle: true } },
-      { id: 's_cata', tier: 3, requires: 's_dazzle', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
-      // Evocation chain
-      { id: 's_wand', tier: 1, name: 'Wand', desc: 'Gain a bishop card', grants: { gainCard: 'bishop' } },
-      { id: 's_staff', tier: 2, requires: 's_wand', name: 'Archstaff', desc: 'Gain a queen card', grants: { gainCard: 'queen' } },
-      { id: 's_amp', tier: 3, requires: 's_staff', name: 'Amplify', desc: '+1 card reach', grants: { cardReach: 1 } },
+      // 🔮 Translocations — the blink-mage: dodge, phase, and displace.
+      { id: 's_blink', chain: 'Translocations', tier: 1, name: 'Blink', desc: 'When a foe hits you, blink to a random safe tile in sight (if any)', grants: { blink: true } },
+      { id: 's_phase', chain: 'Translocations', tier: 2, requires: 's_blink', name: 'Phase', desc: 'Move onto wall tiles; while embedded in a wall your sight shrinks to 1', grants: { phase: true } },
+      { id: 's_swap', chain: 'Translocations', tier: 3, requires: 's_phase', name: 'Displacement', desc: 'Gain a swap card: trade places with any unit in sight (cooldown 3)', grants: { gainCard: 'swap', gainCooldown: 3 } },
+      // 💫 Hexes — the curse-weaver: demote, dazzle, and lull.
+      { id: 's_hex', chain: 'Hexes', tier: 1, name: 'Hex', desc: 'Moving so a non-pawn foe stands one tile ahead demotes it to a pawn and startles it', grants: { hexDemote: true } },
+      { id: 's_cata', chain: 'Hexes', tier: 2, requires: 's_hex', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
+      { id: 's_slumber', chain: 'Hexes', tier: 3, requires: 's_cata', name: 'Slumber', desc: 'Non-boss foes adjacent to you fall asleep', grants: { sleepAura: true } },
+      // 🌀 Conjuration — the artillery-mage: reach, a queen, then a full barrage.
+      { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Amplify', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Archstaff', desc: 'Gain a queen card (cooldown 9)', grants: { gainCard: 'queen', gainCooldown: 9 } },
+      { id: 's_barrage', chain: 'Conjuration', tier: 3, requires: 's_staff', name: 'Barrage', desc: 'Your spell cards fire along EVERY line the piece could (a rook fires 4, a queen 8)', grants: { multiShot: true } },
     ],
   },
 };
+
+// Flat lookup: subclass chain name -> its colour (chain names are unique across classes).
+const SUBCLASS_COLORS = {};
+for (const cls of Object.values(CLASSES)) {
+  for (const [chainName, color] of Object.entries(cls.chains || {})) SUBCLASS_COLORS[chainName] = color;
+}
+// The colour a granted card should wear: its subclass colour, else the class colour.
+function chainColorFor(className, chainName) {
+  const cls = CLASSES[className];
+  return (cls && cls.chains && cls.chains[chainName]) || (cls && cls.color) || '#888';
+}
 const LEVEL_PERK_CHOICES = 2; // perks offered per descent
 
 // Movement direction tables, reused by the piece-move generators.

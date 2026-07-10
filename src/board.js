@@ -4,7 +4,9 @@
 // (upgradable), clamped to stay inside the world. `viewSize` is a legacy
 // fallback for saves made before vision became a player stat.
 function getVisibleBounds(state) {
-  const size = state.player.vision || state.viewSize;
+  const p = state.player;
+  // Phase (Sorcerer): while embedded in a wall the king can barely see out (3x3 window).
+  const size = (p.phase && terrainAt(state, p.x, p.y) === 'wall') ? 3 : (p.vision || state.viewSize);
   const half = Math.floor(size / 2);
   return {
     x: clamp(state.player.x - half, 0, state.worldSize - size),

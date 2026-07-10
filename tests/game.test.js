@@ -12,13 +12,13 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
   getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
   getVisibleBounds, capturableAt, createBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
-  fireTurret, summonCircleTurn,
+  fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -45,7 +45,7 @@ test('category is a class property; each class starts with its one card', () => 
   assert.equal(createPlayer('warrior').cards[0].category, undefined);
   assert.equal(CLASSES.warrior.category, 'melee');
   assert.equal(createPlayer('ranger').cards[0].kind, 'bishop');
-  assert.equal(createPlayer('ranger').cards[0].cooldown, 4); // his bishop is slower than default
+  assert.equal(createPlayer('ranger').cards[0].cooldown, 3); // the class-default cooldown
   assert.equal(CLASSES.ranger.category, 'ranged');
   assert.equal(createPlayer('sorcerer').cards[0].kind, 'rook');
   assert.equal(CLASSES.sorcerer.category, 'spell');
@@ -116,9 +116,9 @@ test('a summoning circle conjures a foe when it sees you, and dies when stepped 
 });
 
 test('classes start with different HP (Warrior sturdiest, Sorcerer frailest)', () => {
-  assert.equal(createPlayer('warrior').maxHp, 7);
-  assert.equal(createPlayer('ranger').maxHp, 5);
-  assert.equal(createPlayer('sorcerer').maxHp, 4);
+  assert.equal(createPlayer('warrior').maxHp, 5);
+  assert.equal(createPlayer('ranger').maxHp, 4);
+  assert.equal(createPlayer('sorcerer').maxHp, 3);
 });
 
 test('the king cannot cross lava, but enemies can', () => {
@@ -281,17 +281,19 @@ test('Sixth Sense sees and shoots over walls (diagonally, as a bishop)', () => {
   assert.ok(unitInSight(xray, 12, 12), 'and sees past it');
 });
 
-test('Beastform: a free cast that limits the king to knight-leaps and locks his cards', () => {
-  const s = rangerWith('r_wade', 'r_xray', 'r_beast');
-  const bi = s.player.cards.findIndex((c) => c.kind === 'beastform');
-  const beast = useCard(s, bi, s.player.x, s.player.y);
-  assert.equal(beast.player.beastform, 3);
-  assert.equal(beast.enemyTurn, false, 'casting it costs no turn');
-  const moves = getPlayerMoves(beast);
-  assert.ok(moves.length && moves.every((m) => m.viaJump), 'every move is a leap');
-  assert.equal(useCard(beast, 0, 12, 12).lastAction, 'blocked', 'no weapons in beast form');
-  const after = movePlayerTo(beast, moves[0].x, moves[0].y);
-  assert.equal(after.player.beastform, 2, 'the timer counts down each turn');
+test('Promotion: a free cast that turns the king into an amazon and locks his cards', () => {
+  const s = rangerWith('r_wade', 'r_xray', 'r_promo');
+  const bi = s.player.cards.findIndex((c) => c.kind === 'promotion');
+  const amazon = useCard(s, bi, s.player.x, s.player.y);
+  assert.equal(amazon.player.promotion, 3);
+  assert.equal(amazon.enemyTurn, false, 'casting it costs no turn');
+  const moves = getPlayerMoves(amazon);
+  assert.ok(moves.some((m) => m.viaJump), 'amazon form can knight-leap');
+  assert.ok(moves.some((m) => !m.viaJump), 'amazon form can also queen-slide');
+  const leap = moves.find((m) => m.viaJump);
+  assert.equal(useCard(amazon, 0, 12, 12).lastAction, 'blocked', 'no weapons while promoted');
+  const after = movePlayerTo(amazon, leap.x, leap.y);
+  assert.equal(after.player.promotion, 2, 'the timer counts down each turn');
 });
 
 test('Reload readies every other card; Longbow grants a slow rook; Recoil kicks back', () => {
@@ -323,6 +325,142 @@ test('Camouflage: turrets hold fire and circles conjure nothing', () => {
   const circle = makeEnemy({ kind: 'pawn', x: 10, y: 12, summonCircle: true, charged: true });
   s2.enemies = [circle];
   assert.equal(summonCircleTurn(s2, circle).enemies.length, 1, 'a circle conjures nothing while camouflaged');
+});
+
+// A tiny Sorcerer fixture on a bare floor.
+function sorcererWith(...perkIds) {
+  let s = createInitialState('sorcerer');
+  s.terrain = {};
+  s.enemies = [];
+  s.exit = { x: 0, y: 0, discovered: false, locked: false };
+  s.key = null;
+  s.player.x = 10;
+  s.player.y = 10;
+  for (const id of perkIds) {
+    s.pendingLevelUp = true;
+    s = learnPerk(s, id);
+  }
+  return s;
+}
+
+test('Sorcerer cards carry cooldowns and subclass colours', () => {
+  const s = sorcererWith();
+  assert.equal(s.player.cards[0].kind, 'rook');
+  assert.equal(s.player.cards[0].cooldown, 5, 'the mighty starting rook is slow');
+  assert.equal(s.player.cards[0].color, '#a855f7', 'a starter card wears the class colour');
+  const conj = sorcererWith('s_amp', 's_staff');
+  const queen = conj.player.cards.find((c) => c.kind === 'queen');
+  assert.equal(queen.cooldown, 9, 'Archstaff queen has cooldown 9');
+  assert.equal(queen.color, '#8b5cf6', 'a granted card wears its subclass colour');
+});
+
+test('Barrage fires a spell down every line the piece commands', () => {
+  const s = sorcererWith('s_amp', 's_staff', 's_barrage');
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 12, y: 10 }),
+    makeEnemy({ kind: 'pawn', x: 8, y: 10 }),
+    makeEnemy({ kind: 'pawn', x: 10, y: 12 }),
+    makeEnemy({ kind: 'pawn', x: 10, y: 8 }),
+    makeEnemy({ kind: 'pawn', x: 12, y: 12 }), // diagonal — a rook can't reach
+  ];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
+  const r = useCard(s, idx, 12, 10);
+  assert.ok(!r.enemies.some((e) => e.y === 10 || e.x === 10), 'all four orthogonal lines are cleared');
+  assert.ok(r.enemies.some((e) => e.x === 12 && e.y === 12), 'the diagonal foe survives a rook barrage');
+});
+
+test('Phase lets the king enter walls and blinds him while embedded', () => {
+  const s = sorcererWith('s_blink', 's_phase');
+  s.terrain = { '11,10': 'wall' };
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10), 'a wall is a legal move while phasing');
+  const inWall = movePlayerTo(s, 11, 10);
+  const bounds = getVisibleBounds(inWall);
+  assert.equal(bounds.width, 3, 'sight shrinks to a 3x3 window inside a wall');
+});
+
+test('Displacement swaps the king with a targeted unit; Blink flees to safety', () => {
+  const s = sorcererWith('s_blink', 's_phase', 's_swap');
+  s.enemies = [makeEnemy({ kind: 'knight', x: 13, y: 13 })];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'swap');
+  const r = useCard(s, idx, 13, 13);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 13, y: 13 }, 'the king takes the unit’s tile');
+  assert.deepEqual({ x: r.enemies[0].x, y: r.enemies[0].y }, { x: 10, y: 10 }, 'and the unit takes his');
+
+  const bs = sorcererWith('s_blink');
+  bs.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8 })]; // in sight, threatens the king's column
+  assert.ok(getThreatenedTiles(bs).has('10,10'), 'the king starts on a threatened tile');
+  assert.equal(blinkToSafety(bs), true);
+  assert.ok(!getThreatenedTiles(bs).has(`${bs.player.x},${bs.player.y}`), 'blink lands on a safe tile');
+});
+
+test('Hex demotes the foe left one tile ahead; Slumber sleeps adjacent foes', () => {
+  const hex = sorcererWith('s_hex');
+  hex.player.moveRange = 1;
+  hex.enemies = [makeEnemy({ kind: 'knight', x: 12, y: 10, awake: true })];
+  const moved = movePlayerTo(hex, 11, 10); // foe at (12,10) is now one tile ahead
+  assert.equal(moved.enemies[0].kind, 'pawn', 'the foe is demoted to a pawn');
+  assert.equal(moved.enemies[0].awake, false, 'and startled');
+
+  const lull = sorcererWith('s_hex', 's_cata', 's_slumber');
+  const foe = makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true });
+  lull.enemies = [foe];
+  const hp0 = lull.player.hp;
+  const r = beginEnemyPhase(lull);
+  const woke = r.state;
+  assert.equal(woke.enemies[0].asleep, true, 'the adjacent foe is asleep');
+  assert.equal(woke.player.hp, hp0, 'a sleeping foe never strikes');
+});
+
+test('every floor spawns a key and a stair sealed until it is collected', () => {
+  for (let floor = 1; floor <= 5; floor += 1) {
+    const s = generateFloor(floor, createPlayer('warrior'), 0);
+    assert.ok(s.key, `floor ${floor} has a key`);
+    assert.equal(s.exit.locked, true, 'the stair starts locked');
+    assert.ok(!(s.key.x === s.exit.x && s.key.y === s.exit.y), 'the key is not on the stair');
+    assert.ok(!(s.key.x === s.player.x && s.key.y === s.player.y), 'the key is not under the king');
+    assert.ok(!s.enemies.some((e) => e.x === s.key.x && e.y === s.key.y), 'no piece/turret/circle sits on the key');
+  }
+});
+
+test('the stair stays sealed until the key is collected, then opens', () => {
+  const s = generateFloor(3, createPlayer('warrior'), 0);
+  const onStair = structuredClone(s);
+  onStair.player.x = onStair.exit.x;
+  onStair.player.y = onStair.exit.y;
+  assert.equal(tryDescend(onStair), false, 'cannot descend while locked');
+
+  const onKey = structuredClone(s);
+  onKey.player.x = onKey.key.x;
+  onKey.player.y = onKey.key.y;
+  assert.equal(collectKeyIfHere(onKey), true);
+  assert.equal(onKey.key.collected, true);
+  assert.equal(onKey.exit.locked, false, 'collecting the key unlocks the stair');
+  onKey.player.x = onKey.exit.x;
+  onKey.player.y = onKey.exit.y;
+  assert.equal(tryDescend(onKey), true, 'now the king may descend');
+});
+
+test('walking onto the key collects it; enemies never step on it', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {};
+  s.enemies = [];
+  s.key = { x: 12, y: 10, collected: false, discovered: false };
+  s.exit = { x: 3, y: 3, discovered: false, locked: true };
+  s.player.x = 11;
+  s.player.y = 10;
+  s.player.moveRange = 1;
+  const walked = movePlayerTo(s, 12, 10);
+  assert.equal(walked.key.collected, true, 'stepping onto the key collects it');
+  assert.equal(walked.exit.locked, false, 'and unlocks the stair');
+
+  const es = createInitialState('warrior');
+  es.terrain = {};
+  es.key = { x: 10, y: 6, collected: false, discovered: false };
+  const rook = makeEnemy({ kind: 'rook', x: 10, y: 2 });
+  es.enemies = [rook];
+  const moves = getPieceMoves(rook, es);
+  assert.ok(!moves.some((m) => m.x === 10 && m.y === 6), 'the key tile is not a legal enemy move');
+  assert.ok(!moves.some((m) => m.x === 10 && m.y > 6), 'the key blocks a slider from passing through it');
 });
 
 test('a melee enemy cannot move AND strike in the same turn', () => {

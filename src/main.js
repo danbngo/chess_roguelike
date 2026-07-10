@@ -146,7 +146,7 @@
     const cls = CLASSES[highestClass(p)];
     floorLabel.textContent = `Floor ${toRoman(gameState.floor)}${cls ? ' · ' + cls.name : ''}`;
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
-    turnLabel.textContent = `Turn ${gameState.turn}${p.beastform > 0 ? ` · 🐺 Beast ${p.beastform}` : ''}`;
+    turnLabel.textContent = `Turn ${gameState.turn}${p.promotion > 0 ? ` · ♛ Amazon ${p.promotion}` : ''}`;
     renderHearts(p.hp, p.maxHp);
     renderLevelBadges(p.level || 1);
     logMessage(gameState.message);
@@ -210,7 +210,10 @@
     const slot = document.createElement('button');
     slot.type = 'button';
     slot.className = 'card-slot';
-    slot.style.borderColor = CATEGORY_COLOR[cat] || '#888';
+    // Each ability card wears its subclass colour (the class colour for a starter card).
+    const cardColor = card.color || CATEGORY_COLOR[cat] || '#888';
+    slot.style.borderColor = cardColor;
+    slot.style.color = cardColor;
     slot.textContent = getPieceLabel(card.kind);
     slot.title = `[${i + 1}] ${cat} ${card.kind}`;
     const onCooldown = card.remaining > 0;
@@ -283,8 +286,9 @@
     examineEl.innerHTML = '';
     const cat = classCategory(gameState.player.className);
     const verb =
-      card.kind === 'beastform' ? 'Self-cast: confirm on your own tile. Free action.'
+      card.kind === 'promotion' ? 'Self-cast: confirm on your own tile. Free action.'
       : card.kind === 'reload' ? 'Self-cast: confirm on your own tile.'
+      : card.kind === 'swap' ? 'Target any unit in sight to trade places with it.'
       : card.kind === 'enpassant' ? 'Dashes past; strikes the two tiles you flank.'
       : cat === 'melee' ? 'Strikes by moving onto the foe.'
       : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
@@ -339,14 +343,17 @@
         } else if (enemy.boss) {
           tag = ` (boss — HP ${enemy.hp}/${enemy.maxHp})`;
         } else {
-          tag = enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
+          tag = enemy.asleep ? ' (asleep)' : enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
         lines.push(`Enemy: ${enemy.kind}${tag}`);
       }
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      lines.push('Stairs down to the next floor');
+      lines.push(gameState.exit.locked ? 'Stairs down — sealed until you find the key' : 'Stairs down to the next floor');
+    }
+    if (gameState.key && !gameState.key.collected && onBuilding(gameState.key)) {
+      lines.push('Floor key — collect it to unlock the stair');
     }
     return lines.join('\n');
   }
@@ -387,8 +394,9 @@
     amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
     enpassant: 'Dashes 2 tiles orthogonally onto empty ground, striking the two tiles it flanks on the way.',
-    beastform: 'Turns the king into a knight for a few turns: move only by leaping, use no weapons. Free to cast.',
+    promotion: 'Turns the king into an amazon (queen + knight) for a few turns: move freely, use no weapons. Free to cast.',
     reload: 'Spend your turn to recharge every other card at once.',
+    swap: 'Trade places with any unit in sight — enemy or turret. No damage.',
   };
 
   // One-line descriptions of each enemy role (for the examine pane).
@@ -468,7 +476,12 @@
 
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      addExamineBlock('Stairs', 'Descend to the next floor — you fully heal and gain a level.');
+      addExamineBlock('Stairs', gameState.exit.locked
+        ? 'Descend to the next floor — but the stair is sealed until you collect this floor’s key.'
+        : 'Descend to the next floor — you fully heal and gain a level.');
+    }
+    if (gameState.key && !gameState.key.collected && onBuilding(gameState.key)) {
+      addExamineBlock('Floor key', 'Walk onto it to collect it — the stair down then unlocks.');
     }
 
     const scar = (gameState.scars || []).find((s) => s.x === tx && s.y === ty);
@@ -678,15 +691,17 @@
     characterBody.append(characterBlock(`Cards (${cards.length}, ${cat})`, cards.length
       ? cards.map((c) => {
           const ready = c.remaining > 0 ? `cooldown ${c.remaining}` : 'ready';
-          return { text: `${getPieceLabel(c.kind)}  ${c.kind} — ${cat} (${ready})`, color: CATEGORY_COLOR[cat] };
+          return { text: `${getPieceLabel(c.kind)}  ${c.kind} — ${cat} (${ready})`, color: c.color || CATEGORY_COLOR[cat] };
         })
       : ['No cards.']));
 
     const taken = p.takenPerks || [];
+    const chainColors = (cls && cls.chains) || {};
     characterBody.append(characterBlock(`Perks (${taken.length})`, taken.length && cls
       ? taken.map((id) => {
           const perk = cls.perks.find((k) => k.id === id) || { name: id, desc: '' };
-          return perk.desc ? `${perk.name} — ${perk.desc}` : perk.name;
+          const text = perk.desc ? `${perk.name} — ${perk.desc}` : perk.name;
+          return { text, color: chainColors[perk.chain] || null };
         })
       : ['No perks taken yet.']));
   }
@@ -992,12 +1007,17 @@
     if (altarMessage) altarMessage.textContent = `Level ${gameState.player.level} — choose a boon.`;
     altarList.innerHTML = '';
     const perks = gameState.levelPerks || rollLevelPerks(gameState.player, 3);
+    const cls = CLASSES[gameState.player.className];
+    const chainColors = (cls && cls.chains) || {};
     for (const perk of perks) {
       const row = document.createElement('li');
       row.className = 'shop-item';
       const info = document.createElement('div');
       info.className = 'shop-info';
-      info.innerHTML = `<span class="shop-name">${perk.name}</span><span class="shop-desc">${perk.desc}</span>`;
+      const chainColor = chainColors[perk.chain];
+      const nameStyle = chainColor ? ` style="color:${chainColor}"` : '';
+      const chainTag = perk.chain ? `<span class="shop-desc"${nameStyle}>${perk.chain}</span>` : '';
+      info.innerHTML = `<span class="shop-name"${nameStyle}>${perk.name}</span>${chainTag}<span class="shop-desc">${perk.desc}</span>`;
       const take = document.createElement('button');
       take.type = 'button';
       take.textContent = 'Take';

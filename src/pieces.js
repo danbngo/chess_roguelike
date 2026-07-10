@@ -8,6 +8,9 @@ function enemyUnitAt(state, piece) {
     if (x === state.player.x && y === state.player.y) {
       return 'player';
     }
+    if (keyTileAt(state, x, y)) {
+      return 'key'; // the floor key blocks enemies — they can never stop on it
+    }
     return state.enemies.find((other) => other.id !== piece.id && other.x === x && other.y === y) || null;
   };
 }
@@ -159,10 +162,18 @@ function getCardMoves(state, card) {
     if (inLineOfSight(state, x, y)) results.push({ x, y, capture: Boolean(capture), viaJump: Boolean(viaJump) });
   };
 
-  // Self-cast ability cards (Beastform, Reload) target the king's own tile — there is
+  // Self-cast ability cards (Promotion, Reload) target the king's own tile — there is
   // no foe to aim at, so selecting his square activates them.
-  if (kind === 'beastform' || kind === 'reload') {
+  if (kind === 'promotion' || kind === 'reload') {
     return [{ x: p.x, y: p.y, capture: false, viaJump: false, self: true }];
+  }
+  // Displacement (swap) can target ANY unit in sight — enemies and turrets alike.
+  if (kind === 'swap') {
+    const out = [];
+    for (const e of state.enemies) {
+      if (inLineOfSight(state, e.x, e.y)) out.push({ x: e.x, y: e.y, capture: false, viaJump: false, swap: true });
+    }
+    return out;
   }
 
   if (kind === 'enpassant') {
@@ -316,8 +327,9 @@ function getPieceLabel(kind) {
     chancellor: 'M', // rook + knight (a.k.a. marshall)
     amazon: 'Z', // queen + knight (the final boss)
     enpassant: '♙', // the Duellist's en-passant dash card
-    beastform: '🐺', // the Ranger's Beastform transformation card
+    promotion: '♛', // the Ranger's Promotion (amazon form) card
     reload: '⟳', // the Ranger's Reload card
+    swap: '⇄', // the Sorcerer's Displacement (swap) card
   };
   return labels[kind] ?? '♟';
 }

@@ -327,6 +327,8 @@ const Renderer = (function () {
     // surprised / frustrated states show a mark.
     if (mainState === 'surprised') {
       drawStatusMark(tileX, tileY, '!', '#ffd400');
+    } else if (mainState === 'asleep') {
+      drawStatusMark(tileX, tileY, 'z', '#93c5fd'); // a soft-blue "z" for a slumbering foe
     } else if (mainState === 'frustrated') {
       drawStatusMark(tileX, tileY, '✖', '#fca5a5');
     }
@@ -427,6 +429,43 @@ const Renderer = (function () {
         ctx.stroke();
       }
     }
+    ctx.restore();
+  }
+
+  // The floor key: a gold key the king must collect to unlock the stair. Drawn bright
+  // in sight and dim once only remembered (it persists through fog like the stair).
+  function drawKey(tileX, tileY, faded) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const s = tileSize;
+    ctx.save();
+    ctx.globalAlpha = faded ? 0.5 : 1;
+    ctx.fillStyle = '#fbbf24';
+    ctx.strokeStyle = '#b45309';
+    ctx.lineWidth = Math.max(1, s * 0.03);
+    // Bow (the round grip), on the upper-left.
+    const bowR = s * 0.15;
+    const bx = cx - s * 0.12;
+    const by = cy - s * 0.12;
+    ctx.beginPath();
+    ctx.arc(bx, by, bowR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = faded ? '#1e293b' : '#0b1220';
+    ctx.beginPath();
+    ctx.arc(bx, by, bowR * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    // Shaft running down to the lower-right, with two teeth.
+    ctx.fillStyle = '#fbbf24';
+    ctx.strokeStyle = '#b45309';
+    const shaftW = s * 0.07;
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillRect(-shaftW / 2, 0, shaftW, s * 0.42);
+    ctx.fillRect(-shaftW / 2, s * 0.3, shaftW + s * 0.1, shaftW); // tooth 1
+    ctx.fillRect(-shaftW / 2, s * 0.4, shaftW + s * 0.16, shaftW); // tooth 2
+    ctx.restore();
     ctx.restore();
   }
 
@@ -694,6 +733,7 @@ const Renderer = (function () {
       fill(f.x, f.y);
     };
     feature(state.exit, '#38bdf8'); // stair down — cyan
+    if (state.key && !state.key.collected) feature(state.key, '#fbbf24'); // floor key — gold
     // Permanent scars on explored ground: shattered summoning circles (violet).
     for (const scar of state.scars || []) {
       if (!(state.explored || {})[`${scar.x},${scar.y}`]) continue;
@@ -840,6 +880,14 @@ const Renderer = (function () {
       }
     }
 
+    // The floor key: shown when in sight, or faded once discovered (persists in fog).
+    if (state.key && !state.key.collected) {
+      const seen = lit(state.key.x, state.key.y);
+      if (seen || state.key.discovered) {
+        drawKey(state.key.x, state.key.y, !seen);
+      }
+    }
+
     // Permanent scars (shattered summoning circles): shown forever once explored.
     for (const scar of state.scars || []) {
       if (isExplored(scar.x, scar.y)) drawScar(scar, !lit(scar.x, scar.y));
@@ -888,7 +936,7 @@ const Renderer = (function () {
       }
       // Main-AI-state icon (turrets / circles stay put, so show none).
       if (role !== 'turret' && role !== 'circle') {
-        const mainState = enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : null;
+        const mainState = enemy.asleep ? 'asleep' : enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : null;
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }
     }
@@ -897,8 +945,8 @@ const Renderer = (function () {
       typeof highestClass === 'function' && typeof CLASSES !== 'undefined'
         ? (CLASSES[highestClass(state.player)] || {}).color
         : null;
-    // In Beast form the king shows as a knight (he moves and fights as one).
-    const playerGlyph = state.player.beastform > 0 ? 'knight' : 'king';
+    // While Promoted the king shows as an amazon (he moves and fights as one).
+    const playerGlyph = state.player.promotion > 0 ? 'amazon' : 'king';
     drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);

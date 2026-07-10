@@ -25,8 +25,8 @@ function blocksSight(type) {
 // passable only to enemies (opts.lavaOk); water is passable to all (but slow —
 // see slideStops).
 function standableFor(type, opts) {
-  if (type === 'wall') return false;
   const o = opts || {};
+  if (type === 'wall') return Boolean(o.phaseWalls); // only a phasing king may enter walls
   if (type === 'lava') return Boolean(o.lavaOk);
   return true; // water & normal are walkable
 }
