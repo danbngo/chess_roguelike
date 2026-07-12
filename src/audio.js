@@ -136,21 +136,40 @@ const GameAudio = (function () {
   }
 
   // --- Ambient music: a slow arpeggio over a shifting bass, looped forever. ---
+  // When `tense` is set (the king has lingered into the danger zone) the track
+  // switches to a darker, faster tritone-laden progression with a throbbing bass.
+  let tense = false;
   const BEAT = 0.34;
+  const BEAT_TENSE = 0.22; // quicker pulse when danger is high
   const PROG = [
     [220.0, 261.63, 329.63], // Am
     [174.61, 261.63, 349.23], // F
     [196.0, 246.94, 293.66], // G
     [164.81, 207.65, 246.94], // Em
   ];
+  const PROG_TENSE = [
+    [174.61, 246.94, 293.66], // F–B–D (tritone bite)
+    [155.56, 220.0, 277.18], // Eb–A–Db
+    [164.81, 233.08, 311.13], // E–Bb–Eb
+    [146.83, 207.65, 246.94], // D–Ab–B
+  ];
   const ARP = [0, 1, 2, 1, 0, 1, 2, 1];
 
+  function beat() {
+    return tense ? BEAT_TENSE : BEAT;
+  }
+
   function scheduleStep(s, when) {
-    const chord = PROG[Math.floor(s / ARP.length) % PROG.length];
+    const prog = tense ? PROG_TENSE : PROG;
+    const chord = prog[Math.floor(s / ARP.length) % prog.length];
     const inChord = s % ARP.length;
-    tone(chord[ARP[inChord]] * 2, when, BEAT * 0.9, { type: 'triangle', gain: 0.05, bus: musicBus });
+    tone(chord[ARP[inChord]] * 2, when, beat() * 0.9, { type: 'triangle', gain: 0.05, bus: musicBus });
     if (inChord === 0) {
-      tone(chord[0] / 2, when, BEAT * ARP.length, { type: 'sine', gain: 0.07, bus: musicBus, attack: 0.08 });
+      tone(chord[0] / 2, when, beat() * ARP.length, { type: 'sine', gain: 0.07, bus: musicBus, attack: 0.08 });
+    }
+    if (tense) {
+      // An insistent low throb on every beat drives the dread home.
+      tone(chord[0] / 2, when, beat() * 0.5, { type: 'sawtooth', gain: 0.045, bus: musicBus });
     }
   }
 
@@ -158,9 +177,14 @@ const GameAudio = (function () {
     if (!ctx) return;
     while (nextNoteTime < ctx.currentTime + 0.15) {
       scheduleStep(step, nextNoteTime);
-      nextNoteTime += BEAT;
+      nextNoteTime += beat();
       step += 1;
     }
+  }
+
+  // Switch between the calm and tense scores (a no-op if already in that mode).
+  function setTension(on) {
+    tense = Boolean(on);
   }
 
   function startMusic() {
@@ -212,5 +236,5 @@ const GameAudio = (function () {
     return enabled;
   }
 
-  return { play, startMusic, stopMusic, isEnabled, setEnabled, toggle };
+  return { play, startMusic, stopMusic, setTension, isEnabled, setEnabled, toggle };
 })();

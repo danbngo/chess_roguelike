@@ -43,7 +43,7 @@ function isStandable(type) {
 
 // Symmetric line of sight: clear unless a wall lies strictly between the two
 // points (endpoints themselves are not opaque to the look).
-function hasLineOfSight(state, x0, y0, x1, y1) {
+function hasLineOfSight(state, x0, y0, x1, y1, seeWalls) {
   const dx = Math.abs(x1 - x0);
   const dy = Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
@@ -64,32 +64,40 @@ function hasLineOfSight(state, x0, y0, x1, y1) {
     if (x === x1 && y === y1) {
       break;
     }
-    // The Ranger's Sixth Sense sees over walls (and, symmetrically, is seen over them).
-    if (blocksSight(terrainAt(state, x, y)) && !(state.player && state.player.seeThroughWalls)) {
-      return false; // walls block the look
+    if (blocksSight(terrainAt(state, x, y)) && !seeWalls) {
+      return false; // walls block the look (unless the looker sees over them)
     }
   }
   return true;
 }
 
-// A tile is in sight if it is inside the king's window and unobstructed.
+// A tile is in the KING's sight if it is inside his window and unobstructed. The Ranger's
+// Sixth Sense lets his OWN sight pass over walls (one-way — see enemyAwareOfKing).
 function inLineOfSight(state, x, y) {
-  return isWithinBounds(getVisibleBounds(state), x, y) && hasLineOfSight(state, state.player.x, state.player.y, x, y);
+  const seeWalls = Boolean(state.player && state.player.seeThroughWalls);
+  return isWithinBounds(getVisibleBounds(state), x, y) && hasLineOfSight(state, state.player.x, state.player.y, x, y, seeWalls);
 }
 
-// A piece is mutually visible with the king when sight is clear. (Line of sight
-// is symmetric, so this is "it sees you and you see it".)
+// A unit the KING can see (his vision — passes over walls with Sixth Sense).
 function unitInSight(state, x, y) {
   return inLineOfSight(state, x, y);
+}
+
+// Whether the foe at (ex,ey) can see the KING. Walls ALWAYS block here: Sixth Sense is
+// one-way, so a foe on the far side of a wall stays oblivious even while the Ranger sees
+// (and shoots) it through the wall.
+function enemyAwareOfKing(state, ex, ey) {
+  return isWithinBounds(getVisibleBounds(state), ex, ey) && hasLineOfSight(state, state.player.x, state.player.y, ex, ey, false);
 }
 
 // The set of tiles the king can currently see (for rendering brightness).
 function computeVisibleTiles(state) {
   const bounds = getVisibleBounds(state);
+  const seeWalls = Boolean(state.player && state.player.seeThroughWalls);
   const set = new Set();
   for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
     for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
-      if (hasLineOfSight(state, state.player.x, state.player.y, x, y)) {
+      if (hasLineOfSight(state, state.player.x, state.player.y, x, y, seeWalls)) {
         set.add(`${x},${y}`);
       }
     }

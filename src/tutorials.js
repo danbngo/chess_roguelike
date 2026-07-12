@@ -78,6 +78,20 @@ const TUTORIALS = {
       'lingered to the limit and foes now pour in twice as fast. Don’t dawdle: find ' +
       'the stairs.',
   },
+  key: {
+    title: 'The floor key',
+    text:
+      'That glinting key unlocks the stair down. WALK ONTO it to pick it up — until you ' +
+      'do, the stair stays sealed. It is always tucked well away from the stair, so you ' +
+      'will have to explore the floor to reach it.',
+  },
+  stairLocked: {
+    title: 'A sealed stair',
+    text:
+      'The stair down is SEALED until you collect this floor’s key — find the key first, ' +
+      'then step onto the stair. (A guardian also holds the stair; slay it to earn your ' +
+      'level-up boon on the way down.)',
+  },
   exit: {
     title: 'Descending',
     text:
@@ -93,10 +107,6 @@ const TUTORIALS = {
       'stronger tier-2, then the tier-3 capstone. Build toward the run you want.',
   },
   // Terrain tips fire the first time each type comes into view.
-  'terrain-wall': {
-    title: 'Walls',
-    text: 'Stone walls block movement AND line of sight, and cannot be leapt over. Route around them — and beware what they hide.',
-  },
   'terrain-water': {
     title: 'Water',
     text:

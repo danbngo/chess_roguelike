@@ -12,13 +12,14 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
   getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
   getVisibleBounds, capturableAt, createBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
   fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
+  advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -66,17 +67,54 @@ test('a fresh floor reveals fog around the king but not the far corners', () => 
   assert.ok(!state.explored['0,0']);
 });
 
-test('turrets cannot be captured; a summoning circle and a plain piece can', () => {
+test('descending onto a floor leaves no enemy in the king’s line of sight', () => {
+  // Floors 2..8 are reached by descending — the king should arrive to a quiet view so
+  // tutorials stagger one at a time. (Floor 1 is a new game, not a descent, and keeps
+  // its deliberate intro foe; the boss sits far off on the stair, out of sight.)
+  for (let floor = 2; floor <= 8; floor += 1) {
+    const s = generateFloor(floor, createPlayer('warrior'), 0);
+    const visibleFoes = s.enemies.filter((e) => !e.boss && unitInSight(s, e.x, e.y));
+    assert.equal(visibleFoes.length, 0, `floor ${floor} arrives with no foe in view`);
+    assert.ok(!unitInSight(s, s.enemies.find((e) => e.boss).x, s.enemies.find((e) => e.boss).y), `floor ${floor} boss is out of sight`);
+  }
+});
+
+test('the king’s token colour is his class colour, upgraded to a tier-3 subclass capstone', () => {
+  let s = createInitialState('warrior');
+  assert.equal(playerDisplayColor(s.player), CLASSES.warrior.color, 'base is the class colour');
+  // Climb the Sentinel chain to its tier-3 capstone (Parry) — the colour becomes Sentinel's.
+  for (const id of ['w_hp1', 'w_hp2', 'w_bulwark']) {
+    s.pendingLevelUp = true;
+    s = learnPerk(s, id);
+  }
+  assert.equal(playerDisplayColor(s.player), chainColorFor('warrior', 'Sentinel'), 'a tier-3 capstone recolours him');
+  assert.notEqual(chainColorFor('warrior', 'Sentinel'), CLASSES.warrior.color, 'and that colour differs from the base');
+});
+
+test('turrets are destructible (HP, struck in place); circles and plain pieces die in one', () => {
   const s = createInitialState('warrior');
   s.terrain = {};
   s.enemies = [
-    makeEnemy({ kind: 'rook', x: 8, y: 9, turret: true }),
+    makeEnemy({ kind: 'rook', x: 8, y: 9, turret: true, hp: 3, maxHp: 3 }),
     makeEnemy({ kind: 'pawn', x: 7, y: 8, summonCircle: true }),
     makeEnemy({ kind: 'knight', x: 9, y: 8 }),
   ];
-  assert.equal(capturableAt(s, 8, 9), false);
+  assert.equal(capturableAt(s, 8, 9), true, 'a turret is now a valid target');
   assert.equal(capturableAt(s, 7, 8), true);
   assert.equal(capturableAt(s, 9, 8), true);
+
+  // A turret soaks 3 hits, struck in place — the king holds his tile until it falls.
+  let n = createInitialState('warrior');
+  n.terrain = {};
+  n.enemies = [makeEnemy({ kind: 'rook', x: 9, y: 8, turret: true, hp: 3, maxHp: 3 })];
+  n.player.x = 8; n.player.y = 8;
+  for (let i = 0; i < 2; i += 1) {
+    n = movePlayerTo(n, 9, 8);
+    assert.deepEqual({ x: n.player.x, y: n.player.y }, { x: 8, y: 8 }, 'king stays put striking the turret');
+    assert.ok(n.enemies.some((e) => e.turret), 'turret still standing after a hit');
+  }
+  n = movePlayerTo(n, 9, 8); // third hit destroys it
+  assert.ok(!n.enemies.some((e) => e.turret), 'the turret is destroyed on the third hit');
 });
 
 test('a boss has HP: it takes several hits, and the final floor boss wins the run', () => {
@@ -98,6 +136,70 @@ test('a boss has HP: it takes several hits, and the final floor boss wins the ru
     n = movePlayerTo(n, b.x, b.y);
   }
   assert.equal(n.won, true);
+});
+
+test('every boss rolls one of the eight boss perks', () => {
+  const boss = createBoss(4, 9, 8);
+  assert.ok(['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough'].includes(boss.bossPerk));
+  assert.equal(boss.originalKind, boss.kind);
+});
+
+test('a Hardened boss bears three extra wounds', () => {
+  // createBoss is random, so probe many draws and check the Hardened ones only.
+  const base = 5; // the floor-4 (queen) boss's authored HP
+  for (let i = 0; i < 40; i += 1) {
+    const b = createBoss(4, 9, 8);
+    if (b.bossPerk === 'tough') assert.equal(b.maxHp, base + 3);
+    else assert.equal(b.maxHp, base);
+  }
+});
+
+test('a Brutal boss strikes the king for two', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  const boss = createBoss(3, 9, 8); // rook
+  boss.bossPerk = 'brutal';
+  boss.dormant = false;
+  s.enemies = [boss];
+  s.player.x = 8; s.player.y = 8; s.player.hp = 6; s.player.maxHp = 6;
+  s.player.className = 'warrior';
+  const before = s.player.hp;
+  const n = moveEnemy(s, boss.id);
+  assert.ok(before - n.player.hp === 2 || n.player.deflected, 'a landed Brutal blow removes two hearts');
+});
+
+test('a Shifting boss morphs into a no-higher form when wounded', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  const boss = createBoss(3, 9, 8); // rook (rank 3)
+  boss.bossPerk = 'shapeshifter';
+  boss.originalKind = 'rook';
+  boss.kind = 'rook';
+  boss.maxHp = 5; boss.hp = 5;
+  boss.dormant = false;
+  s.enemies = [boss];
+  s.player.x = 8; s.player.y = 8;
+  const n = movePlayerTo(s, 9, 8); // capture-strike the boss (it survives on 5 HP)
+  const b = n.enemies.find((e) => e.boss);
+  assert.ok(b, 'the boss survives the first wound');
+  assert.ok(['pawn', 'knight', 'bishop'].includes(b.kind), `a wounded rook shifts to a lesser form, not ${b.kind}`);
+});
+
+test('a Volley boss shoots down an open line instead of closing', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  const boss = createBoss(3, 12, 8); // rook, four tiles east on the same row
+  boss.bossPerk = 'ranged';
+  boss.dormant = false;
+  s.enemies = [boss];
+  s.player.x = 8; s.player.y = 8; s.player.hp = 5; s.player.maxHp = 5;
+  s.player.className = 'warrior';
+  const bx = boss.x;
+  const n = moveEnemy(s, boss.id);
+  const b = n.enemies.find((e) => e.boss);
+  assert.equal(b.x, bx, 'it holds position and fires rather than advancing');
+  assert.ok(n.lastShot && n.lastShot.toX === 8 && n.lastShot.toY === 8, 'a bolt flies at the king');
+  assert.ok(n.player.hp < 5 || n.player.deflected, 'the bolt wounds the king');
 });
 
 test('a summoning circle conjures a foe when it sees you, and dies when stepped on', () => {
@@ -167,6 +269,25 @@ test('a melee card lunges the king onto the target; a spell card pierces cover',
   const n = useCard(spell, 0, 11, 8);
   assert.deepEqual({ x: n.player.x, y: n.player.y }, { x: 8, y: 8 }, 'the caster holds his tile');
   assert.equal(n.enemies.length, 0, 'the bolt slays both');
+  // The fireball records every tile it scorches (9,8 · 10,8 · the target 11,8) so the
+  // view can bloom an impact on each — not just the final tile.
+  assert.equal(n.lastShot.role, 'fireball');
+  assert.ok(Array.isArray(n.lastShot.tiles), 'a spell carries its AoE tile list');
+  const hit = new Set(n.lastShot.tiles.map((t) => `${t.x},${t.y}`));
+  assert.ok(hit.has('9,8') && hit.has('10,8') && hit.has('11,8'), 'every tile on the path is marked');
+});
+
+test('a sorcerer bolt always travels its FULL range, even at a nearer target', () => {
+  const s = createInitialState('sorcerer'); // starts with a rook spell card (reach 3)
+  s.terrain = {};
+  s.player.x = 8;
+  s.player.y = 8;
+  // One foe right next to the king, one two tiles further along the same line.
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true }), makeEnemy({ kind: 'pawn', x: 11, y: 8, awake: true })];
+  const n = useCard(s, 0, 9, 8); // AIM at the ADJACENT foe...
+  const hit = new Set(n.lastShot.tiles.map((t) => `${t.x},${t.y}`));
+  assert.ok(hit.has('9,8') && hit.has('10,8') && hit.has('11,8'), 'the bolt reaches all 3 tiles, not just the aimed one');
+  assert.equal(n.enemies.length, 0, '...yet both foes on the line fall');
 });
 
 test('a melee card can reposition onto empty ground, not just capture', () => {
@@ -199,21 +320,18 @@ function warriorWith(...perkIds) {
   return s;
 }
 
-test('En Passant dashes 2 tiles and strikes the two tiles it flanks', () => {
+test('En Passant steps one tile (capturing there) and strikes one foe in passing', () => {
   const s = warriorWith('w_enpassant');
   const card = s.player.cards.find((c) => c.kind === 'enpassant');
   const idx = s.player.cards.indexOf(card);
-  const up = getCardMoves(s, card).find((m) => m.x === 10 && m.y === 8);
-  assert.ok(up && up.viaJump, 'a dash 2 tiles up is offered');
-  assert.deepEqual(
-    up.flanks.map((f) => `${f.x},${f.y}`).sort(),
-    ['11,9', '9,9'],
-    'flanks are the two rear diagonals of the landing tile',
-  );
-  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 9 }), makeEnemy({ kind: 'pawn', x: 11, y: 9 })];
-  const r = useCard(s, idx, 10, 8);
-  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 10, y: 8 }, 'king lands on the dash tile');
-  assert.equal(r.enemies.length, 0, 'both flanked foes are struck');
+  // A foe on the destination (north of origin) + a foe beside the origin (west).
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 10, y: 9 }), makeEnemy({ kind: 'pawn', x: 9, y: 10 })];
+  const north = getCardMoves(s, card).find((m) => m.x === 10 && m.y === 9);
+  assert.ok(north && north.capture, 'stepping onto the north foe is a capture');
+  assert.deepEqual(north.flanks, [{ x: 9, y: 10 }], 'the in-passing target is the foe beside the origin');
+  const r = useCard(s, idx, 10, 9); // step north (capture) + strike the west foe in passing
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 10, y: 9 }, 'king steps onto the north tile');
+  assert.equal(r.enemies.length, 0, 'both the stepped-on foe and the in-passing foe fall');
 });
 
 test('Cleave and Pierce fire on a plain move-kill, not just a card', () => {
@@ -279,6 +397,13 @@ test('Sixth Sense sees and shoots over walls (diagonally, as a bishop)', () => {
   xray.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12 })];
   assert.ok(getCardMoves(xray, xray.player.cards[0]).some((m) => m.x === 12 && m.y === 12), 'Sixth Sense shoots past it');
   assert.ok(unitInSight(xray, 12, 12), 'and sees past it');
+  // ...but it is ONE-WAY: the foe behind the wall cannot see the king back.
+  assert.equal(enemyAwareOfKing(xray, 12, 12), false, 'the foe does not see the king through the wall');
+  const woke = beginEnemyPhase(xray).state.enemies[0];
+  assert.ok(woke && woke.awake === false && !woke.surprised, 'so it stays unaware');
+  const clear = structuredClone(xray);
+  clear.terrain = {};
+  assert.equal(enemyAwareOfKing(clear, 12, 12), true, 'with the wall gone it can see (and would wake)');
 });
 
 test('Promotion: a free cast that turns the king into an amazon and locks his cards', () => {
@@ -393,13 +518,19 @@ test('Displacement swaps the king with a targeted unit; Blink flees to safety', 
   assert.ok(!getThreatenedTiles(bs).has(`${bs.player.x},${bs.player.y}`), 'blink lands on a safe tile');
 });
 
-test('Hex demotes the foe left one tile ahead; Slumber sleeps adjacent foes', () => {
+test('Hex converts one adjacent foe per turn (boss/pawn immune); Slumber sleeps adjacent foes', () => {
   const hex = sorcererWith('s_hex');
   hex.player.moveRange = 1;
-  hex.enemies = [makeEnemy({ kind: 'knight', x: 12, y: 10, awake: true })];
-  const moved = movePlayerTo(hex, 11, 10); // foe at (12,10) is now one tile ahead
-  assert.equal(moved.enemies[0].kind, 'pawn', 'the foe is demoted to a pawn');
-  assert.equal(moved.enemies[0].awake, false, 'and startled');
+  // Move UP, away from the foe — it ends adjacent (to the side), never "ahead": still hexed.
+  hex.enemies = [makeEnemy({ kind: 'knight', x: 11, y: 10, awake: true })];
+  const moved = movePlayerTo(hex, 10, 9);
+  assert.equal(moved.enemies[0].kind, 'pawn', 'an adjacent foe is warped into a pawn');
+  assert.equal(moved.enemies[0].awake, false, 'and confused (startled)');
+
+  const bossHex = sorcererWith('s_hex');
+  bossHex.player.moveRange = 1;
+  bossHex.enemies = [makeEnemy({ kind: 'knight', x: 11, y: 10, awake: true, boss: true, hp: 3, maxHp: 3, dormant: false })];
+  assert.equal(movePlayerTo(bossHex, 10, 9).enemies[0].kind, 'knight', 'the boss is immune to Hex');
 
   const lull = sorcererWith('s_hex', 's_cata', 's_slumber');
   const foe = makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true });
@@ -409,6 +540,120 @@ test('Hex demotes the foe left one tile ahead; Slumber sleeps adjacent foes', ()
   const woke = r.state;
   assert.equal(woke.enemies[0].asleep, true, 'the adjacent foe is asleep');
   assert.equal(woke.player.hp, hp0, 'a sleeping foe never strikes');
+});
+
+test('Necromancy: familiar spawns and respawns; foes rise as one undead at a time', () => {
+  const s = sorcererWith('s_familiar');
+  assert.equal(s.allies.length, 1);
+  assert.ok(s.allies[0].familiar && s.allies[0].kind === 'berolina');
+  assert.equal(chebyshev(s.allies[0].x, s.allies[0].y, s.player.x, s.player.y), 1, 'spawns beside the king');
+  assert.ok((nextFloor(s).allies || []).some((a) => a.familiar), 'rejoins on the next floor');
+
+  const necro = sorcererWith('s_familiar', 's_undead');
+  necro.allies = [];
+  necro.enemies = [makeEnemy({ kind: 'knight', x: 13, y: 10 })];
+  const raised = useCard(necro, 0, 13, 10); // rook bolt slays the knight → it rises undead
+  assert.equal((raised.allies || []).filter((a) => a.undead).length, 1, 'a slain foe rises as undead');
+  raised.enemies = [makeEnemy({ kind: 'bishop', x: 10, y: 13 })];
+  raised.player.cards[0].remaining = 0;
+  const again = useCard(raised, 0, 10, 13);
+  assert.equal((again.allies || []).filter((a) => a.undead).length, 1, 'only ONE undead at a time');
+});
+
+test('allies: enemies may capture them, the king swaps with them, the General upgrades', () => {
+  const rook = makeEnemy({ kind: 'rook', x: 12, y: 8 });
+  const s = sorcererWith();
+  s.enemies = [rook];
+  s.allies = [{ id: 'fam', kind: 'berolina', x: 12, y: 10, familiar: true }];
+  assert.ok(getPieceMoves(rook, s).some((m) => m.x === 12 && m.y === 10), 'an ally tile is a valid enemy capture');
+
+  const swap = sorcererWith('s_familiar');
+  swap.allies = [{ id: 'fam', kind: 'berolina', x: 11, y: 10, familiar: true }];
+  swap.player.moveRange = 1;
+  const swapped = movePlayerTo(swap, 11, 10);
+  assert.deepEqual({ x: swapped.player.x, y: swapped.player.y }, { x: 11, y: 10 });
+  assert.deepEqual({ x: swapped.allies[0].x, y: swapped.allies[0].y }, { x: 10, y: 10 }, 'king and familiar trade tiles');
+
+  const gen = sorcererWith('s_familiar', 's_undead', 's_general');
+  assert.ok(gen.allies.some((a) => a.familiar && a.kind === 'general'), 'the familiar becomes a General');
+});
+
+test('Blink fires at most once per turn; Silent lets foes bump but not auto-notice', () => {
+  const bs = sorcererWith('s_blink');
+  bs.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8 })];
+  assert.equal(blinkToSafety(bs), true);
+  assert.equal(blinkToSafety(bs), false, 'the second blink this turn is spent');
+
+  // Over many single enemy phases: a Silent king is bumped sometimes but never all the
+  // time, while a plain unaware adjacent foe simply freezes (surprised) and never hits.
+  const phase = (state) => {
+    const r = beginEnemyPhase(state);
+    let st = r.state;
+    for (const id of r.moverIds) st = moveEnemy(st, id);
+    return st;
+  };
+  let silentBumps = 0;
+  let plainHits = 0;
+  const N = 100;
+  for (let i = 0; i < N; i += 1) {
+    const s = createInitialState('warrior');
+    s.terrain = {};
+    s.player.x = 10; s.player.y = 10; s.player.stealth = true;
+    s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
+    if (phase(s).player.hp < s.player.hp) silentBumps += 1;
+  }
+  for (let i = 0; i < N; i += 1) {
+    const s = createInitialState('warrior');
+    s.terrain = {};
+    s.player.x = 10; s.player.y = 10;
+    s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
+    if (phase(s).player.hp < s.player.hp) plainHits += 1;
+  }
+  assert.ok(silentBumps > 0 && silentBumps < N, `silent bumps happen sometimes (${silentBumps}/${N})`);
+  assert.equal(plainHits, 0, 'a non-silent unaware foe freezes on first sight, never hitting');
+});
+
+test('Silent: attacking reveals you; a foe that wanders adjacent wakes at once', () => {
+  const phase = (state) => {
+    const r = beginEnemyPhase(state);
+    let st = r.state;
+    for (const id of r.moverIds) st = moveEnemy(st, id);
+    return st;
+  };
+
+  // Capturing a foe breaks stealth: a distant unaware bystander wakes that same phase.
+  const atk = createInitialState('warrior');
+  atk.terrain = {};
+  atk.player.x = 10; atk.player.y = 10; atk.player.stealth = true;
+  atk.enemies = [
+    makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false }), // bystander, 2 away, in sight
+    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: false }), // a knight-leap target
+  ];
+  const struck = useCard(atk, 0, 12, 11); // knight card captures the pawn
+  assert.equal(struck.player.attacked, true, 'an attack marks the king as revealed');
+  const seen = phase(struck).enemies.find((e) => e.kind === 'rook');
+  assert.ok(seen && (seen.surprised || seen.awake), 'the bystander wakes — the strike gave the king away');
+
+  // A plain (non-capturing) move does NOT reveal you — the king stays unmarked. (Whether
+  // a distant foe then wanders into you is a separate matter, tested below.)
+  const sneak = createInitialState('warrior');
+  sneak.terrain = {};
+  sneak.player.x = 10; sneak.player.y = 10; sneak.player.stealth = true; sneak.player.moveRange = 1;
+  sneak.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false })];
+  const moved = movePlayerTo(sneak, 10, 9); // step to empty ground
+  assert.equal(moved.player.attacked, false, 'a plain move does not reveal you');
+
+  // A foe that wanders adjacent never lingers unaware — it wakes the instant it's beside you.
+  let adjacentButUnaware = 0;
+  for (let i = 0; i < 200; i += 1) {
+    const s = createInitialState('warrior');
+    s.terrain = {};
+    s.player.x = 10; s.player.y = 10; s.player.stealth = true;
+    s.enemies = [makeEnemy({ kind: 'king', x: 12, y: 10, awake: false })];
+    const e = phase(s).enemies[0];
+    if (e && chebyshev(e.x, e.y, 10, 10) === 1 && e.awake === false && !e.surprised) adjacentButUnaware += 1;
+  }
+  assert.equal(adjacentButUnaware, 0, 'no foe ends its turn adjacent-yet-oblivious');
 });
 
 test('every floor spawns a key and a stair sealed until it is collected', () => {

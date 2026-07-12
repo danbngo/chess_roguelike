@@ -39,12 +39,11 @@ function isJumperKind(kind) {
   return JUMPER_KINDS.includes(kind);
 }
 
-// Whether an enemy may be captured/destroyed by the king right now. Turrets are
-// untouchable; a summoning circle is destroyed by stepping on it; a boss is
-// targetable but soaks HP (handled specially). Ordinary pieces die in one.
+// Whether an enemy may be attacked by the king right now. A summoning circle is
+// destroyed by stepping on it; a boss and now a TURRET are targetable but soak HP
+// (struck in place — see damageBoss / damageTurret). Ordinary pieces die in one.
 function isCapturable(state, enemy) {
   if (!enemy) return false;
-  if (enemy.turret) return false;
   return true;
 }
 function capturableAt(state, x, y) {
@@ -67,6 +66,14 @@ function bossDefeated(state) {
 // or spawn on it (only the king may walk over it, to collect it).
 function keyTileAt(state, x, y) {
   return Boolean(state.key) && !state.key.collected && state.key.x === x && state.key.y === y;
+}
+
+// The player's ally (Necromancer familiar / undead) standing on this tile, if any.
+function allyAt(state, x, y) {
+  return (state.allies || []).find((a) => a.x === x && a.y === y) || null;
+}
+function hasLivingFamiliar(state) {
+  return (state.allies || []).some((a) => a.familiar);
 }
 
 // The spawn pool for a floor. Floors 1-4 draw from the standard pieces; from floor
@@ -99,9 +106,59 @@ function createBoss(floor, x, y) {
   boss.boss = true;
   boss.bossName = spec.name;
   boss.maxHp = spec.hp || 4;
+  boss.originalKind = spec.kind; // a Shifting boss never grows stronger than this
+  boss.bossPerk = BOSS_PERKS[randomInt(BOSS_PERKS.length)];
+  if (boss.bossPerk === 'tough') boss.maxHp += 3; // Hardened: three extra wounds
   boss.hp = boss.maxHp;
   boss.dormant = true; // holds the stair until the king strikes it or draws adjacent
   return boss;
+}
+
+// A boss's blow strength — Brutal guardians hit twice as hard.
+function bossDamage(boss) {
+  return boss && boss.bossPerk === 'brutal' ? 2 : 1;
+}
+
+// A wounded boss's reaction: Shifting bosses morph to a lesser form; Blinkborn
+// bosses flicker away. Called from damageBoss on any non-fatal hit.
+function applyBossHitReaction(state, boss) {
+  if (boss.bossPerk === 'shapeshifter') {
+    const origRank = PIECE_RANK.indexOf(boss.originalKind || boss.kind);
+    const pool = PIECE_RANK.filter((k, i) => i <= origRank && k !== boss.kind);
+    if (pool.length) {
+      boss.kind = pool[randomInt(pool.length)];
+      state.message += ` It shifts into a ${boss.kind}!`;
+    }
+  } else if (boss.bossPerk === 'blinker') {
+    if (bossBlink(state, boss)) state.message += ' It blinks away!';
+  }
+}
+
+// Flicker a struck boss to a random standable tile a few squares off, never adjacent
+// to the king. Returns false if there's nowhere to go.
+function bossBlink(state, boss) {
+  const king = state.player;
+  const spots = [];
+  for (let dx = -4; dx <= 4; dx += 1) {
+    for (let dy = -4; dy <= 4; dy += 1) {
+      const x = boss.x + dx;
+      const y = boss.y + dy;
+      if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+      if (chebyshev(x, y, boss.x, boss.y) < 2) continue; // a real jump, not a shuffle
+      if (chebyshev(x, y, king.x, king.y) <= 1) continue; // never blink into melee
+      if (!isStandable(terrainAt(state, x, y))) continue;
+      if (x === king.x && y === king.y) continue;
+      if (keyTileAt(state, x, y) || allyAt(state, x, y)) continue;
+      if (state.enemies.some((e) => e.id !== boss.id && e.x === x && e.y === y)) continue;
+      if (!kindCanMove(state, boss.kind, x, y)) continue;
+      spots.push({ x, y });
+    }
+  }
+  if (!spots.length) return false;
+  const dest = spots[randomInt(spots.length)];
+  boss.x = dest.x;
+  boss.y = dest.y;
+  return true;
 }
 
 function bossTitle(boss) {
@@ -115,12 +172,31 @@ function damageBoss(state, boss, amount) {
   if (boss.hp > 0) {
     state.message = `The king strikes ${boss.bossName} (${boss.hp}/${boss.maxHp}).`;
     state.lastAction = 'combat';
+    applyBossHitReaction(state, boss);
     return 'hurt';
   }
   state.enemies = state.enemies.filter((e) => e.id !== boss.id);
-  addSpatter(state, boss.x, boss.y);
+  addSpatter(state, boss.x, boss.y, Math.sign(boss.x - state.player.x), Math.sign(boss.y - state.player.y));
+  addCorpse(state, boss.x, boss.y, boss.kind, BOSS_CORPSE_LIFE); // a boss's remains linger far longer
   state.player.killedEnemy = true;
   defeatBoss(state, boss.x, boss.y);
+  return 'slain';
+}
+
+// A turret soaks HP like a boss (a flat, non-scaling pool) and is struck IN PLACE. It
+// grants no boon and is not an "on-kill" trigger — it's a structure, just a destructible one.
+function damageTurret(state, turret, amount) {
+  turret.hp -= amount;
+  if (turret.hp > 0) {
+    state.message = `The ${turret.kind} turret sparks (${turret.hp}/${turret.maxHp}).`;
+    state.lastAction = 'combat';
+    return 'hurt';
+  }
+  state.enemies = state.enemies.filter((e) => e.id !== turret.id);
+  addSpatter(state, turret.x, turret.y);
+  addCorpse(state, turret.x, turret.y, turret.kind);
+  state.message = `The ${turret.kind} turret is destroyed!`;
+  state.lastAction = 'combat';
   return 'slain';
 }
 
@@ -200,6 +276,7 @@ const PERK_FLAGS = [
   'meleeRefund', 'meleePierce', 'leapShock', 'meleeFlourish',
   'terrainImmune', 'seeThroughWalls', 'noChase', 'camouflage', 'recoil',
   'blink', 'phase', 'hexDemote', 'sleepAura', 'multiShot',
+  'familiar', 'necromancy', 'generalForm',
 ];
 
 // Build a card record. The category (from the owning class) sets the cooldown but
@@ -246,6 +323,7 @@ function createPlayer(classKey) {
     takenPerks: [], // perk ids taken (unique ones can't be offered again)
     warded: false,
     firstHitUsedThisTurn: false,
+    blinkedThisTurn: false, // Blink fires at most once per turn
     // Per-floor flags reset on descent:
     extraLifeUsed: false,
     attacked: false,
@@ -288,6 +366,9 @@ function learnPerk(state, perkId) {
   }
   applyPerk(p, perk.grants, chainColorFor(p.className, perk.chain));
   p.takenPerks.push(perkId);
+  // Necromancy: the familiar joins at once; the General upgrade re-forges any living one.
+  if (p.generalForm) for (const a of next.allies || []) if (a.familiar) a.kind = 'general';
+  if (p.familiar && !hasLivingFamiliar(next)) spawnFamiliar(next);
   next.viewSize = p.vision;
   next.pendingLevelUp = false;
   next.levelPerks = null;
@@ -533,9 +614,12 @@ function generateFloor(floor, carryPlayer, score) {
     explored: {},
     enemies: [],
     spatters: [],
+    corpses: [], // fading remains of slain pieces (cosmetic)
+    ashes: [], // fading ash piles left by spell kills (cosmetic)
     scars: [], // permanent marks (shattered summoning circles)
     exit: null,
     key: null, // the floor key; the stair stays locked until it is collected
+    allies: [], // the Necromancer's familiar / undead pieces (the player's side)
     floor,
     turn: 0,
     score: score || 0,
@@ -650,7 +734,7 @@ function generateFloor(floor, carryPlayer, score) {
     state.exit.locked = true;
   }
 
-  const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 6 && chebyshev(x, y, player.x, player.y) >= 3;
+  const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 6 && chebyshev(x, y, player.x, player.y) >= 3 && !seen(x, y);
   // The chamber leans on STATIONARY hazards near the stair, with only a thin screen of
   // mobile guards. Sleeping backup pieces (few).
   for (let i = 0; i < initCount(2 + Math.floor(floor / 2)); i += 1) {
@@ -666,6 +750,8 @@ function generateFloor(floor, carryPlayer, score) {
       if (spot) {
         const t = createEnemy(kind, spot.x, spot.y);
         t.turret = true;
+        t.hp = TURRET_HP;
+        t.maxHp = TURRET_HP;
         state.enemies.push(t);
       }
     }
@@ -704,6 +790,34 @@ function generateFloor(floor, carryPlayer, score) {
     return getPieceMoves(e, solo).length > 0;
   });
 
+  // Tutorials stagger best when the king lands on a quiet-looking floor: guarantee NO
+  // enemy sits in his line of sight on arrival. (The far-off boss on the stair is always
+  // out of view; the floor-1 greeter is a deliberate exception.) The corridor carving
+  // above can newly expose an otherwise-hidden piece, so this is the final check — a
+  // spotted piece slips to the nearest hidden tile, or is dropped if none exists.
+  for (const e of state.enemies) {
+    if (e.boss) continue;
+    if (floor === 1 && e.surprised) continue; // the intentional first-floor foe
+    if (!seen(e.x, e.y)) continue;
+    const canGo = (x, y) =>
+      isStandable(terrainAt(state, x, y)) &&
+      !seen(x, y) &&
+      chebyshev(x, y, player.x, player.y) >= 2 &&
+      (e.turret || e.summonCircle || kindCanMove(state, e.kind, x, y));
+    const hidden = e.turret
+      ? findFreeTile(occupied, (x, y) => canGo(x, y) && turretCoverage(state, e.kind, x, y) >= 4) || findFreeTile(occupied, canGo)
+      : findFreeTile(occupied, canGo);
+    if (hidden) {
+      occupied.delete(`${e.x},${e.y}`);
+      e.x = hidden.x;
+      e.y = hidden.y;
+      occupied.add(hidden.key);
+    } else {
+      e.hideFailed = true; // nowhere out of sight to hide it — drop it entirely
+    }
+  }
+  state.enemies = state.enemies.filter((e) => !e.hideFailed);
+
   // Ranger Eagle Eye: the whole floor is mapped from the outset.
   if (player.revealFloor) {
     for (let ry = 0; ry < WORLD_SIZE; ry += 1) {
@@ -712,6 +826,9 @@ function generateFloor(floor, carryPlayer, score) {
     if (state.exit) state.exit.discovered = true;
     if (state.key) state.key.discovered = true;
   }
+
+  // The Necromancer's familiar rejoins him on each fresh floor (undead do not follow down).
+  if (player.familiar) spawnFamiliar(state);
 
   updateDiscovery(state);
   return state;
@@ -736,13 +853,57 @@ function nextFloor(state) {
 
 /* ---------------------------------- turn ---------------------------------- */
 
-function addSpatter(state, x, y) {
+// Spatter a hit tile with blood, PLUS a few satellite droplets flung to adjacent tiles.
+// The satellites lean toward `momX,momY` (the way the blow carried — e.g. hit from the
+// left, blood sprays right), but not every time, for a natural scatter. Satellites may
+// land on walls, where they render as downward smears.
+function addSpatter(state, x, y, momX, momY) {
   if (!Array.isArray(state.spatters)) state.spatters = [];
-  state.spatters.push({ x, y, life: SPATTER_LIFE, max: SPATTER_LIFE });
+  state.spatters.push({ x, y, life: SPATTER_LIFE, max: SPATTER_LIFE, seed: randomInt(1000) });
+  const extras = 1 + randomInt(2); // 1-2 satellite spatters
+  const dirs = [...ORTHO, ...DIAG];
+  const hasMomentum = Boolean(momX || momY);
+  for (let i = 0; i < extras; i += 1) {
+    let dir;
+    if (hasMomentum && Math.random() < 0.7) {
+      // Bias into the hemisphere the blow carried toward (positive dot product).
+      const arc = dirs.filter(([dx, dy]) => dx * momX + dy * momY > 0);
+      dir = arc.length ? arc[randomInt(arc.length)] : dirs[randomInt(dirs.length)];
+    } else {
+      dir = dirs[randomInt(dirs.length)];
+    }
+    const nx = x + dir[0];
+    const ny = y + dir[1];
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
+    state.spatters.push({ x: nx, y: ny, life: SPATTER_LIFE, max: SPATTER_LIFE, seed: randomInt(1000), satellite: true });
+  }
 }
 function decaySpatters(spatters) {
   if (!Array.isArray(spatters)) return [];
   return spatters.map((s) => ({ ...s, life: s.life - 1 })).filter((s) => s.life > 0);
+}
+// A random in-tile jitter (offset + slant) so stacked remains form a natural-looking pile
+// rather than a single overlaid stamp. Offsets are kept small so a body stays on its tile.
+function remainsJitter() {
+  return {
+    ox: (Math.random() * 2 - 1) * 0.2,
+    oy: (Math.random() * 2 - 1) * 0.2,
+    rot: (Math.random() * 2 - 1) * 0.6,
+  };
+}
+// A corpse: the slain piece's flattened, darkening remains — purely cosmetic, fades faster
+// than blood. (An enemy raised as a Necromancer ally leaves no body.) `life` overrides the
+// default lifespan (a boss's remains linger far longer).
+function addCorpse(state, x, y, kind, life) {
+  if (!Array.isArray(state.corpses)) state.corpses = [];
+  const span = life || CORPSE_LIFE;
+  state.corpses.push({ x, y, kind, life: span, max: span, ...remainsJitter() });
+}
+// An ash pile: what a foe felled by a SPELL leaves instead of a corpse. It decays at the
+// same rate as a corpse and carries no piece identity (all ash looks alike).
+function addAsh(state, x, y) {
+  if (!Array.isArray(state.ashes)) state.ashes = [];
+  state.ashes.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, ...remainsJitter() });
 }
 
 // One turn's upkeep: age counters, recharge cards, fade blood, and lapse wards.
@@ -752,16 +913,40 @@ function passTurn(state) {
   p.totalTurns = (p.totalTurns || 0) + 1;
   const calmHaste = Boolean(p.spellHaste) && getVisibleEnemies(state).length === 0;
   for (const card of p.cards || []) {
-    if (card.remaining > 0) {
+    // A card fired THIS turn doesn't tick down now (so the bar shows its full cooldown);
+    // it starts counting down next turn.
+    if (card.remaining > 0 && !card.justFired) {
       const tick = calmHaste && classCategory(p.className) === 'spell' ? 2 : 1;
       card.remaining = Math.max(0, card.remaining - tick);
     }
+    card.justFired = false;
   }
   state.spatters = decaySpatters(state.spatters);
+  if (Array.isArray(state.corpses)) state.corpses = state.corpses.map((c) => ({ ...c, life: c.life - 1 })).filter((c) => c.life > 0);
+  if (Array.isArray(state.ashes)) state.ashes = state.ashes.map((a) => ({ ...a, life: a.life - 1 })).filter((a) => a.life > 0);
+  // Hex (Sorcerer): each turn, one adjacent foe is warped into a confused (startled) pawn.
+  // Pawns, bosses and structures are immune.
+  if (p.hexDemote) {
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const e = state.enemies.find((en) => en.x === p.x + dx && en.y === p.y + dy);
+      if (e && !e.boss && !e.turret && !e.summonCircle && e.kind !== 'pawn') {
+        e.kind = 'pawn';
+        e.awake = false;
+        e.surprised = false;
+        e.lastSeen = null;
+        e.lastSeenTtl = 0;
+        // Slumber (T3) + Hex (T1): the new pawn drops straight to sleep, not merely confused.
+        if (p.sleepAura) e.asleep = true;
+        break;
+      }
+    }
+  }
   if (p.promotion > 0) p.promotion -= 1; // Promotion (amazon form) wears off after its turns elapse
   p.warded = false;
   p.firstHitUsedThisTurn = false;
-  p.attacked = false;
+  p.blinkedThisTurn = false;
+  // NB: p.attacked is NOT cleared here — it must survive into the enemy phase so a foe
+  // can tell the Silent king struck this turn (it is reset at the start of each action).
 }
 
 function revealSeen(state) {
@@ -782,8 +967,9 @@ function updateDiscovery(state) {
 // Every tile the king may move to.
 function getPlayerMoves(state) {
   const p = state.player;
-  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
-  const isEnemy = (x, y) => capturableAt(state, x, y);
+  // The king stops on a foe (capture) OR an ally (a swap) — both are valid destinations.
+  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || allyAt(state, x, y) || null;
+  const isEnemy = (x, y) => capturableAt(state, x, y) || Boolean(allyAt(state, x, y));
   const moves = [];
   const seen = new Set();
   const add = (tile) => {
@@ -814,6 +1000,7 @@ function getPlayerMoves(state) {
 // circle / capture a foe, grab an item, and take the stair.
 function applyArrival(next, x, y) {
   const pl = next.player;
+  pl.attacked = false; // a fresh action — set true only if the king actually strikes
 
   // A boss is ATTACKED IN PLACE (it has HP): the king never steps onto its tile —
   // even the killing blow leaves him where he stands. The boss (which guards the
@@ -836,8 +1023,40 @@ function applyArrival(next, x, y) {
     return next;
   }
 
+  // A turret is likewise struck IN PLACE (it soaks HP) — the king holds his ground and
+  // chips it down; it grants no boon and no free move (a structure, not a "kill").
+  const turretHere = next.enemies.find((e) => e.x === x && e.y === y && e.turret);
+  if (turretHere) {
+    pl.attacked = true;
+    damageTurret(next, turretHere, 1);
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+
   const fromX = pl.x;
   const fromY = pl.y;
+
+  // Moving onto an ally TRADES places with it (the Necromancer can shuffle his familiar
+  // in and out of the front line).
+  const allyHere = allyAt(next, x, y);
+  if (allyHere) {
+    next.player.x = x;
+    next.player.y = y;
+    allyHere.x = fromX;
+    allyHere.y = fromY;
+    next.enemyTurn = true;
+    next.lastAction = 'move';
+    next.message = `The king trades places with the ${allyHere.kind}.`;
+    collectKeyIfHere(next);
+    if (tryDescend(next)) return next;
+    passTurn(next);
+    updateDiscovery(next);
+    return next;
+  }
+
   next.player.x = x;
   next.player.y = y;
   next.enemyTurn = true;
@@ -858,21 +1077,6 @@ function applyArrival(next, x, y) {
   // Pierce strikes the foe directly behind the corpse, along the king's line of advance.
   if (realKill) applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
 
-  // Hex (Sorcerer): a non-pawn foe left standing one tile ahead of the king's advance is
-  // demoted to a pawn and startled.
-  if (pl.hexDemote && (x - fromX || y - fromY) && !next.gameOver && !next.won) {
-    const hx = x + Math.sign(x - fromX);
-    const hy = y + Math.sign(y - fromY);
-    const foe = next.enemies.find((e) => e.x === hx && e.y === hy);
-    if (foe && !foe.boss && !foe.turret && !foe.summonCircle && foe.kind !== 'pawn') {
-      foe.kind = 'pawn';
-      foe.awake = false;
-      foe.surprised = false;
-      foe.lastSeen = null;
-      foe.lastSeenTtl = 0;
-    }
-  }
-
   collectKeyIfHere(next);
   if (tryDescend(next)) return next;
 
@@ -888,7 +1092,7 @@ function applyArrival(next, x, y) {
 
 // Resolve a piece being slain by the king. Bosses take HP damage; everything else
 // is removed. Returns true if a unit was actually slain.
-function resolveKill(state, enemy) {
+function resolveKill(state, enemy, opts) {
   if (enemy.boss) {
     damageBoss(state, enemy, 1);
     return true;
@@ -896,22 +1100,38 @@ function resolveKill(state, enemy) {
   state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
   const p = state.player;
   p.killedEnemy = true;
-  addSpatter(state, enemy.x, enemy.y);
-  // A shattered summoning circle leaves a permanent scar so its ruin stays visible.
+  const bySpell = Boolean(opts && opts.ash);
+  // Necromancy: a felled real piece rises as an undead ally — but only ONE at a time.
+  // When it dies, the next foe the king slays takes its place.
+  if (p.necromancy && isKillablePiece(enemy) && !(state.allies || []).some((a) => a.undead)) {
+    if (spawnAllyNear(state, enemy.kind, enemy.x, enemy.y, { undead: true })) {
+      state.message = `The slain ${enemy.kind} rises to serve you!`;
+      return true;
+    }
+  }
+  addSpatter(state, enemy.x, enemy.y, Math.sign(enemy.x - p.x), Math.sign(enemy.y - p.y)); // blood flings away from the king
+  // A shattered summoning circle leaves a permanent scar so its ruin stays visible; a foe
+  // burnt down by a spell leaves an ash pile; an ordinary slain piece leaves a fading
+  // corpse (a raised undead, above, left neither).
   if (enemy.summonCircle) {
     if (!Array.isArray(state.scars)) state.scars = [];
     state.scars.push({ x: enemy.x, y: enemy.y, kind: 'circle' });
+  } else if (bySpell) {
+    addAsh(state, enemy.x, enemy.y);
+  } else {
+    addCorpse(state, enemy.x, enemy.y, enemy.kind);
   }
   return true;
 }
 
 // Strike a tile WITHOUT moving the king (spell path, ranged shot, cleave). Handles
 // bosses (HP) and ordinary foes. Returns the slain enemy (or null if nothing fell).
-function attackTile(state, tx, ty) {
+function attackTile(state, tx, ty, opts) {
   const e = state.enemies.find((en) => en.x === tx && en.y === ty);
   if (e && isCapturable(state, e)) {
     if (e.boss) return damageBoss(state, e, 1) === 'slain' ? e : null;
-    resolveKill(state, e);
+    if (e.turret) return damageTurret(state, e, 1) === 'slain' ? e : null;
+    resolveKill(state, e, opts);
     return e;
   }
   return null;
@@ -974,7 +1194,7 @@ function tryDescend(next) {
 // enemy. No-op when no such refuge exists. Returns true if he blinked.
 function blinkToSafety(state) {
   const p = state.player;
-  if (!p.blink || state.gameOver) return false;
+  if (!p.blink || p.blinkedThisTurn || state.gameOver) return false;
   // Danger must be judged as if the king already stood on the candidate — so a slider's
   // FULL line counts (his own body must not "block" a threat behind himself). Compute each
   // visible enemy's reach from a ghost state whose king sits off-board.
@@ -1000,8 +1220,9 @@ function blinkToSafety(state) {
   const pick = options[randomInt(options.length)];
   p.x = pick.x;
   p.y = pick.y;
+  p.blinkedThisTurn = true;
   collectKeyIfHere(state);
-  state.message = 'The king blinks out of harm’s way!';
+  state.message = 'The king blinks away to safety!';
   return true;
 }
 
@@ -1049,6 +1270,7 @@ function canStandEmpty(state, x, y) {
 function useCard(state, cardIndex, x, y) {
   const next = structuredClone(state);
   const p = next.player;
+  p.attacked = false; // reset per action; a weapon card sets it true (breaking stealth)
   const card = p.cards[cardIndex];
   if (!card) {
     next.message = 'No such card.';
@@ -1095,6 +1317,7 @@ function useCard(state, cardIndex, x, y) {
   if (card.kind === 'reload') {
     for (const c of p.cards) if (c !== card) c.remaining = 0;
     card.remaining = card.cooldown;
+    card.justFired = true;
     next.message = 'You reload — every other card is ready.';
     passTurn(next);
     next.enemyTurn = true;
@@ -1117,6 +1340,7 @@ function useCard(state, cardIndex, x, y) {
     unit.x = kx;
     unit.y = ky;
     card.remaining = card.cooldown;
+    card.justFired = true;
     next.message = `The king swaps places with a ${unit.kind}.`;
     collectKeyIfHere(next);
     passTurn(next);
@@ -1133,28 +1357,19 @@ function useCard(state, cardIndex, x, y) {
   let scored = false; // struck the main target (for the flavour message)
   let realKill = false; // felled a real enemy piece (gates the on-kill perks)
   const kills = []; // real pieces felled this cast (for Dazzle)
+  const impactTiles = []; // every tile a spell's fireball detonates on (for the view)
   p.attacked = true;
 
   if (category === 'melee') {
     let survived = false;
     const isLeap = Boolean(move.viaJump) && isJumperKind(card.kind);
-    if (card.kind === 'enpassant') {
-      // The Duellist dashes 2 tiles onto empty ground, then en-passant-strikes the two
-      // tiles flanking the square dashed over (never the landing tile itself).
-      p.x = x;
-      p.y = y;
-      next.message = 'The king dashes past!';
-      for (const f of move.flanks || []) {
-        const felled = attackTile(next, f.x, f.y);
-        if (felled && isKillablePiece(felled)) realKill = true;
-      }
-      scored = realKill;
-    } else if (mainTarget && mainTarget.boss) {
-      // The boss is struck IN PLACE — the king never steps onto its stair tile, even
-      // on the kill (so he must still walk onto the stair afterward to descend).
-      survived = damageBoss(next, mainTarget, 1) !== 'slain';
+    if (mainTarget && (mainTarget.boss || mainTarget.turret)) {
+      // A boss or turret is struck IN PLACE — it soaks HP and the king never steps onto
+      // its tile (so the melee card just chips it down from where he stands).
+      const res = mainTarget.boss ? damageBoss(next, mainTarget, 1) : damageTurret(next, mainTarget, 1);
+      survived = res !== 'slain';
       scored = !survived;
-      realKill = scored;
+      realKill = scored && isKillablePiece(mainTarget); // a felled turret is not an on-kill
     } else if (mainTarget) {
       resolveKill(next, mainTarget);
       p.x = x;
@@ -1168,6 +1383,19 @@ function useCard(state, cardIndex, x, y) {
       p.y = y;
       next.message = 'The king repositions.';
     }
+    // En Passant: after the step, strike one foe "in passing" (a piece that flanked the
+    // ORIGIN square). `move.flanks[0]` is that target.
+    if (card.kind === 'enpassant' && !next.gameOver && !next.won) {
+      const passing = (move.flanks || [])[0];
+      if (passing) {
+        const felled = attackTile(next, passing.x, passing.y);
+        if (felled) {
+          scored = true;
+          if (isKillablePiece(felled)) realKill = true;
+        }
+      }
+      next.message = scored ? 'En passant — the king strikes as he slips by!' : 'The king slips past.';
+    }
     // Trample (leapShock): once the king actually LANDS a knight leap, he strikes every
     // adjacent foe (skipped when a boss was struck in place and he never moved).
     if (isLeap && p.leapShock && p.x === x && p.y === y && !next.gameOver && !next.won) {
@@ -1176,12 +1404,10 @@ function useCard(state, cardIndex, x, y) {
         if (felled && isKillablePiece(felled)) realKill = true;
       }
     }
-    // On-kill perks fan out once (Cleave/Pierce/Leech/Flourish). En-passant's flank
-    // strikes carry no single "behind" line, so Pierce is skipped there (dir 0,0).
+    // On-kill perks fan out once (Cleave/Pierce/Leech/Flourish); Pierce strikes along
+    // the king's line of advance.
     if (realKill && !next.gameOver && !next.won) {
-      const pdx = card.kind === 'enpassant' ? 0 : Math.sign(x - fromX);
-      const pdy = card.kind === 'enpassant' ? 0 : Math.sign(y - fromY);
-      applyOnKill(next, x, y, pdx, pdy);
+      applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
     }
   } else if (category === 'spell' && p.multiShot && !move.viaJump) {
     // Barrage (Conjuration): fire a piercing bolt down EVERY line the piece commands
@@ -1195,7 +1421,9 @@ function useCard(state, cardIndex, x, y) {
         cy += dy;
         if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
         if (terrainAt(next, cx, cy) === 'wall' && !p.seeThroughWalls) break;
-        const felled = attackTile(next, cx, cy);
+        impactTiles.push({ x: cx, y: cy });
+        dispelAllyAt(next, cx, cy); // the barrage burns through your own summons too
+        const felled = attackTile(next, cx, cy, { ash: true }); // spell kills leave ash
         if (felled && isKillablePiece(felled)) kills.push(felled);
       }
     }
@@ -1209,27 +1437,56 @@ function useCard(state, cardIndex, x, y) {
         }
       }
     }
-  } else {
-    if (category === 'spell' && !move.viaJump) {
-      for (const t of straightPath(fromX, fromY, x, y)) {
-        const felled = attackTile(next, t.x, t.y);
-        if (felled && isKillablePiece(felled)) kills.push(felled);
+  } else if (category === 'spell' && !move.viaJump) {
+    // A sorcerer's bolt ALWAYS travels its FULL range in the aimed direction — every
+    // tile out to `reach` is scorched, even past the nearest target (stopped only by a
+    // wall or the board edge). The aimed tile just picks the direction.
+    const reach = cardReach(card.kind, p.cardReach || 0);
+    const dx = Math.sign(x - fromX);
+    const dy = Math.sign(y - fromY);
+    let cx = fromX;
+    let cy = fromY;
+    for (let i = 0; i < reach; i += 1) {
+      cx += dx;
+      cy += dy;
+      if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
+      if (terrainAt(next, cx, cy) === 'wall' && !p.seeThroughWalls) break;
+      impactTiles.push({ x: cx, y: cy }); // every tile the fireball scorches
+      dispelAllyAt(next, cx, cy); // a piercing bolt dispels an ally in its path
+      const felled = attackTile(next, cx, cy, { ash: true }); // spell kills leave ash
+      if (felled) {
+        if (cx === x && cy === y) scored = true; // struck the aimed tile (flavour)
+        if (isKillablePiece(felled)) kills.push(felled);
       }
     }
+    realKill = kills.length > 0;
+    if (!next.gameOver && !next.won && p.spellDazzle) {
+      for (const s of kills) {
+        for (const [dx2, dy2] of [...ORTHO, ...DIAG]) {
+          const e = next.enemies.find((en) => en.x === s.x + dx2 && en.y === s.y + dy2);
+          if (e && !e.boss && unitInSight(next, e.x, e.y)) e.awake = false;
+        }
+      }
+    }
+  } else {
+    // Ranged (or a spell fired via a leap): a single shot that strikes only the target.
+    dispelAllyAt(next, x, y);
     const mainFelled = attackTile(next, x, y);
     if (mainFelled) {
       scored = true;
       if (isKillablePiece(mainFelled)) kills.push(mainFelled);
     }
     realKill = kills.length > 0;
-    if (!next.gameOver && !next.won && category === 'spell' && p.spellDazzle) {
-      for (const s of kills) {
-        for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-          const e = next.enemies.find((en) => en.x === s.x + dx && en.y === s.y + dy);
-          if (e && !e.boss && unitInSight(next, e.x, e.y)) e.awake = false;
-        }
-      }
-    }
+  }
+
+  // Record the shot so the view can fly a projectile (arrow / bolt) from the king to the
+  // target before the hit resolves. Only ranged/spell weapon cards fire one.
+  if (category !== 'melee') {
+    next.lastShot = {
+      fromX, fromY, toX: x, toY: y,
+      role: category === 'ranged' ? 'arrow' : 'fireball',
+      tiles: category === 'spell' && impactTiles.length ? impactTiles : null,
+    };
   }
 
   if (category === 'spell' && p.spellSurprise && !next.gameOver && !next.won) {
@@ -1277,7 +1534,13 @@ function useCard(state, cardIndex, x, y) {
   if (rapidTrigger) card.rapidReady = true;
 
   const free = (category === 'spell' && p.freeSpell) || rapidTrigger;
-  if (!rapidTrigger) card.remaining = card.cooldown;
+  if (!rapidTrigger) {
+    card.remaining = card.cooldown;
+    // The turn this card fires does NOT tick its cooldown, so the bar shows the FULL
+    // cooldown right after use (then counts down each following turn). Free casts skip
+    // passTurn entirely, so they need no flag.
+    if (!free) card.justFired = true;
+  }
   // Keen Edge (meleeRefund): a card that scored a kill recharges one turn faster.
   if (category === 'melee' && realKill && p.meleeRefund) card.remaining = Math.max(0, card.remaining - 1);
   if (!scored && !next.message) next.message = 'The card strikes.';
@@ -1307,8 +1570,8 @@ function movePlayerTo(state, x, y) {
 
 // Keyboard movement: a single ground step in a direction.
 function movePlayer(state, dx, dy) {
-  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
-  const isEnemy = (x, y) => capturableAt(state, x, y);
+  const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || allyAt(state, x, y) || null;
+  const isEnemy = (x, y) => capturableAt(state, x, y) || Boolean(allyAt(state, x, y));
   // Slide the king's FULL move range (2+ with Fleet), stopping only on collision —
   // the furthest reachable stop is the destination.
   const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune), phaseWalls: Boolean(state.player.phase) });
@@ -1322,14 +1585,132 @@ function movePlayer(state, dx, dy) {
   return movePlayerTo(state, dest.x, dest.y);
 }
 
+/* --------------------------------- allies --------------------------------- */
+
+// Place an ally on (x,y) or, failing that, an adjacent free tile — never the king, an
+// enemy, another ally, or the floor key. Returns the placed ally, or null if hemmed in.
+function spawnAllyNear(state, kind, x, y, props) {
+  if (!Array.isArray(state.allies)) state.allies = [];
+  const spots = [{ x, y }];
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) spots.push({ x: x + dx, y: y + dy });
+  for (const s of spots) {
+    if (s.x < 0 || s.x >= WORLD_SIZE || s.y < 0 || s.y >= WORLD_SIZE) continue;
+    if (!isStandable(terrainAt(state, s.x, s.y))) continue;
+    if (s.x === state.player.x && s.y === state.player.y) continue;
+    if (state.enemies.some((e) => e.x === s.x && e.y === s.y)) continue;
+    if (allyAt(state, s.x, s.y)) continue;
+    if (keyTileAt(state, s.x, s.y)) continue;
+    const ally = { id: `ally-${Math.random().toString(36).slice(2)}`, kind, x: s.x, y: s.y, ...(props || {}) };
+    state.allies.push(ally);
+    return ally;
+  }
+  return null;
+}
+
+// Summon (or resummon) the familiar beside the king — a berolina pawn, or a General once
+// upgraded. No-op if one already lives.
+function spawnFamiliar(state) {
+  if (!state.player.familiar || hasLivingFamiliar(state)) return null;
+  const kind = state.player.generalForm ? 'general' : 'berolina';
+  return spawnAllyNear(state, kind, state.player.x, state.player.y, { familiar: true });
+}
+
+// The familiar returns once the coast is clear (no foe in sight).
+function maybeRespawnFamiliar(state) {
+  if (state.player.familiar && !hasLivingFamiliar(state) && getVisibleEnemies(state).length === 0) {
+    spawnFamiliar(state);
+  }
+}
+
+// The move (from `moves`) that steps CLOSEST to (tx,ty), skipping `blocked` tiles — or
+// null if none beats standing still.
+function allyStepToward(moves, ax, ay, tx, ty, blocked) {
+  let best = null;
+  let bestD = distanceSq(ax, ay, tx, ty);
+  for (const m of moves) {
+    if (blocked(m.x, m.y)) continue;
+    const d = distanceSq(m.x, m.y, tx, ty);
+    if (d < bestD) { bestD = d; best = m; }
+  }
+  return best;
+}
+
+// One ally's turn: strike a foe it can reach, else advance on the nearest visible foe,
+// else heel to the king. Allies see what the king sees.
+function moveAlly(state, ally) {
+  const king = state.player;
+  const enemyHere = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || null;
+  const unitAt = (x, y) => {
+    if (x === king.x && y === king.y) return 'king';
+    if (keyTileAt(state, x, y)) return 'key';
+    const other = allyAt(state, x, y);
+    if (other && other.id !== ally.id) return other;
+    return enemyHere(x, y);
+  };
+  const isTarget = (x, y) => {
+    const e = enemyHere(x, y);
+    return Boolean(e) && isCapturable(state, e);
+  };
+  const moves = generateMoves(ally.kind, state, ally.x, ally.y, unitAt, isTarget, {});
+  const cap = moves.find((m) => isTarget(m.x, m.y));
+  if (cap) {
+    const foe = enemyHere(cap.x, cap.y);
+    if (foe) {
+      state.enemies = state.enemies.filter((e) => e.id !== foe.id);
+      addSpatter(state, foe.x, foe.y);
+      addCorpse(state, foe.x, foe.y, foe.kind);
+      ally.x = cap.x;
+      ally.y = cap.y;
+    }
+    return;
+  }
+  const foes = getVisibleEnemies(state);
+  const blocked = (x, y) => isTarget(x, y);
+  if (foes.length) {
+    let target = foes[0];
+    for (const f of foes) if (distanceSq(f.x, f.y, ally.x, ally.y) < distanceSq(target.x, target.y, ally.x, ally.y)) target = f;
+    const step = allyStepToward(moves, ally.x, ally.y, target.x, target.y, blocked);
+    if (step) { ally.x = step.x; ally.y = step.y; }
+    return;
+  }
+  if (chebyshev(ally.x, ally.y, king.x, king.y) > 1) {
+    const step = allyStepToward(moves, ally.x, ally.y, king.x, king.y, blocked);
+    if (step) { ally.x = step.x; ally.y = step.y; }
+  }
+}
+
+// The allies' turn: respawn a lost familiar, then move each ally once.
+function advanceAllies(state) {
+  maybeRespawnFamiliar(state);
+  for (const ally of (state.allies || []).slice()) {
+    if ((state.allies || []).includes(ally)) moveAlly(state, ally);
+  }
+}
+
+// The ally phase as a fresh state (the controller runs it AFTER the foes have moved).
+function runAllyPhase(state) {
+  const next = structuredClone(state);
+  advanceAllies(next);
+  return next;
+}
+
+// A player AOE that crosses an ally's tile dispels it.
+function dispelAllyAt(state, x, y) {
+  if (state.allies) state.allies = state.allies.filter((a) => !(a.x === x && a.y === y));
+}
+
 /* ------------------------------ enemy phase ------------------------------- */
 
-// An unaware enemy shuffles one tile at random, never into the king's sight (so it
-// only ever pokes into view because the KING moved, and is reliably surprised).
-function wanderEnemy(state, enemy) {
+// An unaware enemy shuffles one tile at random. Normally it steers clear of the king's
+// sight (so it only pokes into view when the KING moves, and is reliably surprised). When
+// `hidden` (the king is Silent/stealthed and this enemy can't perceive him at all), it
+// roams freely and may BLUNDER onto his tile — bumping (striking) him and waking at last.
+function wanderEnemy(state, enemy, hidden) {
+  const king = state.player;
   const unitAt = (x, y) => {
-    if (x === state.player.x && y === state.player.y) return 'player';
+    if (x === king.x && y === king.y) return hidden ? null : 'player'; // a hidden king isn't sensed
     if (keyTileAt(state, x, y)) return 'key'; // enemies never path onto the floor key
+    if (allyAt(state, x, y)) return 'ally';
     return state.enemies.find((other) => other.id !== enemy.id && other.x === x && other.y === y) || null;
   };
   const never = () => false;
@@ -1340,13 +1721,23 @@ function wanderEnemy(state, enemy) {
     const stops = slideStops(state, enemy.x, enemy.y, dx, dy, 1, unitAt, never, opts);
     if (!stops.length) continue;
     const dest = stops[stops.length - 1];
-    if (!unitInSight(state, dest.x, dest.y)) candidates.push(dest);
+    // An unaware foe steers clear of tiles from which the KING would spot it — but by its
+    // OWN (wall-blocked) sight line, so Sixth Sense doesn't make it cower behind walls.
+    if (hidden || !enemyAwareOfKing(state, dest.x, dest.y)) candidates.push(dest);
   }
   if (!candidates.length) return null;
   const pick = candidates[randomInt(candidates.length)];
+  if (hidden && pick.x === king.x && pick.y === king.y) {
+    // It walks straight into the hidden king — an accidental blow that gives him away.
+    strikeKing(state, enemy);
+    enemy.awake = true;
+    enemy.lastSeen = { x: king.x, y: king.y };
+    enemy.lastSeenTtl = PURSUIT_TTL;
+    return true; // it BUMPED the king
+  }
   enemy.x = pick.x;
   enemy.y = pick.y;
-  return null;
+  return false;
 }
 
 // The tiles this enemy could move to like its piece, WITHOUT capturing — for
@@ -1434,21 +1825,38 @@ function beginEnemyPhase(state) {
     if (enemy.asleep) continue; // a slumbering foe holds still
     const wasSurprised = enemy.surprised;
     enemy.frustrated = false;
-    const hiddenFromThis = stealthed && !enemy.awake && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
-    if (hiddenFromThis || !unitInSight(next, enemy.x, enemy.y)) {
+    // Silent (stealth): an unaware foe never notices the king by proximity — only if it
+    // bumps into him or he attacks. So it is hidden regardless of distance now.
+    const hiddenFromThis = stealthed && !enemy.awake;
+    if (hiddenFromThis || !enemyAwareOfKing(next, enemy.x, enemy.y)) {
       enemy.awake = false;
       enemy.surprised = false;
       if (!isStationary(enemy)) {
-        // Ghost (noChase): the king shakes pursuers the instant he breaks sight, so a
-        // foe that has lost him wanders instead of hunting his last-seen tile.
-        const canPursue = !p.noChase && enemy.lastSeen && enemy.lastSeenTtl > 0 && pursueLastSeen(next, enemy);
-        if (!canPursue) wanderEnemy(next, enemy);
+        if (hiddenFromThis) {
+          // A Silent-blinded foe roams freely. Adjacency gives the king away the instant
+          // it happens — whether the foe was already beside him or just wandered next to
+          // him: it either blunders into him (a bump) or startles awake (surprised).
+          const wasAdjacent = chebyshev(enemy.x, enemy.y, p.x, p.y) === 1;
+          const bumped = wanderEnemy(next, enemy, true);
+          const nowAdjacent = chebyshev(enemy.x, enemy.y, p.x, p.y) === 1;
+          if (!bumped && (wasAdjacent || nowAdjacent)) {
+            enemy.awake = true;
+            enemy.surprised = true;
+            enemy.lastSeen = { x: p.x, y: p.y };
+            enemy.lastSeenTtl = PURSUIT_TTL;
+          }
+        } else {
+          // Ghost (noChase): the king shakes pursuers the instant he breaks sight, so a
+          // foe that has lost him wanders instead of hunting his last-seen tile.
+          const canPursue = !p.noChase && enemy.lastSeen && enemy.lastSeenTtl > 0 && pursueLastSeen(next, enemy);
+          if (!canPursue) wanderEnemy(next, enemy, false);
+        }
       }
       // Pursuing/wandering can carry an enemy INTO the king's view. It has already
       // spent its move this turn, but it must NOT be left flagged "unaware" while
       // sitting on screen — a hunter that steps into sight is plainly hostile. Mark
       // it aware and refresh its memory so it acts as a mover next turn.
-      if (!hiddenFromThis && unitInSight(next, enemy.x, enemy.y)) {
+      if (!hiddenFromThis && enemyAwareOfKing(next, enemy.x, enemy.y)) {
         enemy.awake = true;
         enemy.lastSeen = { x: p.x, y: p.y };
         enemy.lastSeenTtl = PURSUIT_TTL;
@@ -1540,6 +1948,7 @@ function summonAdjacent(state, origin, kind) {
     if (!isStandable(terrainAt(state, x, y))) continue;
     if (x === state.player.x && y === state.player.y) continue;
     if (keyTileAt(state, x, y)) continue; // never conjure a minion onto the floor key
+    if (allyAt(state, x, y)) continue; // nor onto one of the king's allies
     if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
     if (!kindCanMove(state, minionKind, x, y)) continue; // never conjure a stuck minion
     const minion = createEnemy(minionKind, x, y);
@@ -1593,9 +2002,9 @@ function chooseHostileMove(moves, px, py) {
 function bossHit(state, boss, hitMsg) {
   const mit = rollMitigation(state.player);
   if (!mit) {
-    state.player.hp -= 1;
+    state.player.hp -= bossDamage(boss);
     state.player.wasHit = true;
-    addSpatter(state, state.player.x, state.player.y);
+    addSpatter(state, state.player.x, state.player.y, Math.sign(state.player.x - boss.x), Math.sign(state.player.y - boss.y));
     state.message = hitMsg;
     state.lastAction = 'hit';
     checkDeath(state);
@@ -1619,9 +2028,9 @@ function knockbackKing(state, enemy) {
   const canPush = bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE && standableFor(terrainAt(state, bx, by), {}) && !occupied(bx, by);
   const mit = rollMitigation(king);
   if (!mit) {
-    king.hp -= 1;
+    king.hp -= enemy.boss ? bossDamage(enemy) : 1;
     king.wasHit = true;
-    addSpatter(state, king.x, king.y);
+    addSpatter(state, king.x, king.y, pdx, pdy); // blood carries in the shove direction
   }
   if (canPush) {
     const kx = king.x;
@@ -1661,7 +2070,19 @@ function meleeMove(state, enemy) {
     strikeKing(state, enemy);
     return state;
   }
-  const legal = moves.filter((m) => !(m.x === king.x && m.y === king.y));
+  // The king is out of reach — cut down one of his allies if one is in range instead.
+  const allyHit = moves.find((m) => allyAt(state, m.x, m.y));
+  if (allyHit) {
+    const a = allyAt(state, allyHit.x, allyHit.y);
+    state.allies = state.allies.filter((al) => al.id !== a.id);
+    addSpatter(state, allyHit.x, allyHit.y);
+    enemy.x = allyHit.x;
+    enemy.y = allyHit.y;
+    state.message = `A ${enemy.kind} cuts down your ${a.kind}!`;
+    state.lastAction = 'enemy';
+    return state;
+  }
+  const legal = moves.filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y));
   if (!legal.length) {
     enemy.frustrated = true;
     state.message = 'A cornered piece fumes, unable to move.';
@@ -1682,7 +2103,7 @@ function strikeKing(state, enemy) {
   if (!mit) {
     state.player.hp -= 1;
     state.player.wasHit = true;
-    addSpatter(state, state.player.x, state.player.y);
+    addSpatter(state, state.player.x, state.player.y, Math.sign(state.player.x - enemy.x), Math.sign(state.player.y - enemy.y));
     state.message = `A ${enemy.kind} strikes the king!`;
     state.lastAction = 'hit';
     checkDeath(state);
@@ -1692,6 +2113,79 @@ function strikeKing(state, enemy) {
     state.lastAction = 'enemy';
   }
   return state;
+}
+
+// A Volley/Sorcerer boss looses a bolt at the king when he stands on an orthogonal
+// or diagonal ray. A plain Volley is stopped by anything in the lane (cover or a
+// body); a Sorcerer's bolt pierces every unit on the path, wounding each. Walls stop
+// both. Returns true if it fired (an action taken), false to fall back to advancing.
+function bossRangedAttack(state, boss) {
+  const king = state.player;
+  const ddx = king.x - boss.x;
+  const ddy = king.y - boss.y;
+  const onLine = ddx === 0 || ddy === 0 || Math.abs(ddx) === Math.abs(ddy);
+  if (!onLine || (ddx === 0 && ddy === 0)) return false;
+  const dx = Math.sign(ddx);
+  const dy = Math.sign(ddy);
+  const pierce = boss.bossPerk === 'sorcerer';
+  const path = [];
+  let x = boss.x + dx;
+  let y = boss.y + dy;
+  let reached = false;
+  while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
+    if (blocksSight(terrainAt(state, x, y))) return false; // a wall stops any bolt
+    if (x === king.x && y === king.y) {
+      reached = true;
+      break;
+    }
+    const inLane = state.enemies.some((e) => e.id !== boss.id && e.x === x && e.y === y) || allyAt(state, x, y);
+    if (inLane && !pierce) return false; // a plain volley can't shoot past a body
+    path.push({ x, y });
+    x += dx;
+    y += dy;
+  }
+  if (!reached) return false;
+  // A Sorcerer boss looses a piercing fireball that scorches every tile on the path
+  // (its own bolt lands on the king's tile); a Volley boss looses a plain arrow.
+  state.lastShot = {
+    fromX: boss.x, fromY: boss.y, toX: king.x, toY: king.y,
+    role: pierce ? 'fireball' : 'arrow',
+    tiles: pierce ? [...path.map((t) => ({ x: t.x, y: t.y })), { x: king.x, y: king.y }] : null,
+  };
+  if (pierce) {
+    // Everything caught on the path is wounded (the boss spares only itself).
+    for (const t of path) {
+      const ally = allyAt(state, t.x, t.y);
+      if (ally) {
+        state.allies = state.allies.filter((a) => a.id !== ally.id);
+        addSpatter(state, t.x, t.y, dx, dy);
+        addAsh(state, t.x, t.y); // burnt down by the sorcerer's bolt
+        continue;
+      }
+      const foe = state.enemies.find((e) => e.id !== boss.id && !e.boss && e.x === t.x && e.y === t.y);
+      if (foe) {
+        state.enemies = state.enemies.filter((e) => e.id !== foe.id);
+        addSpatter(state, t.x, t.y, dx, dy);
+        addAsh(state, t.x, t.y);
+      }
+    }
+  }
+  const mit = rollMitigation(king);
+  if (!mit) {
+    king.hp -= 1;
+    king.wasHit = true;
+    addSpatter(state, king.x, king.y, dx, dy); // blood sprays along the bolt's path
+    state.message = pierce
+      ? `${bossTitle(boss)} looses a searing bolt through all in its path!`
+      : `${bossTitle(boss)} looses a bolt at the king!`;
+    state.lastAction = 'hit';
+    checkDeath(state);
+    if (!state.gameOver) blinkToSafety(state);
+  } else {
+    state.message = mitigationMessage(mit, boss.kind);
+    state.lastAction = 'enemy';
+  }
+  return true;
 }
 
 // A boss's turn: hunt like its piece, and strike ONLY if it can capture the king.
@@ -1708,13 +2202,40 @@ function bossMove(state, boss) {
       return state;
     }
   }
+  // Summoner: every third turn it conjures a minion of its own kind instead of acting.
+  if (boss.bossPerk === 'summoner') {
+    boss.perkTick = (boss.perkTick || 0) + 1;
+    if (boss.perkTick % 3 === 0) {
+      const made = summonAdjacent(state, boss, boss.kind);
+      state.message = made
+        ? `${bossTitle(boss)} conjures a ${boss.kind}!`
+        : `${bossTitle(boss)} reaches for aid, but finds no room.`;
+      state.lastAction = 'enemy';
+      return state;
+    }
+  }
+  // Volley / Sorcerer: loose a bolt down an open line rather than closing to melee.
+  if ((boss.bossPerk === 'ranged' || boss.bossPerk === 'sorcerer') && bossRangedAttack(state, boss)) {
+    return state;
+  }
   const moves = getPieceMoves(boss, state);
   const canCapture = moves.some((m) => m.x === king.x && m.y === king.y);
   if (canCapture) {
-    if (isJumperKind(boss.kind)) return knockbackKing(state, boss);
+    if (isJumperKind(boss.kind) || boss.bossPerk === 'knockback') return knockbackKing(state, boss);
     return bossHit(state, boss, `${bossTitle(boss)} strikes the king!`);
   }
-  const legal = moves.filter((m) => !(m.x === king.x && m.y === king.y));
+  const bossAlly = moves.find((m) => allyAt(state, m.x, m.y));
+  if (bossAlly) {
+    const a = allyAt(state, bossAlly.x, bossAlly.y);
+    state.allies = state.allies.filter((al) => al.id !== a.id);
+    addSpatter(state, bossAlly.x, bossAlly.y);
+    boss.x = bossAlly.x;
+    boss.y = bossAlly.y;
+    state.message = `${bossTitle(boss)} destroys your ${a.kind}!`;
+    state.lastAction = 'enemy';
+    return state;
+  }
+  const legal = moves.filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y));
   if (!legal.length) {
     boss.frustrated = true;
     state.message = `${bossTitle(boss)} fumes.`;
@@ -1765,7 +2286,7 @@ function maybeSpawnEnemy(state) {
     // A spawn tile must be standable, unseen, AND let this kind actually move (never
     // drop a piece where it's terrain-stuck — e.g. a knight in a corridor).
     const kind = randomEnemyKind(next.floor);
-    const ok = (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y) && !keyTileAt(next, x, y) && kindCanMove(next, kind, x, y);
+    const ok = (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y);
     // Prefer the ring just outside sight (encroaching); else anywhere unseen it can move.
     const dist = (x, y) => chebyshev(x, y, next.player.x, next.player.y);
     const tile = findFreeTile(occupied, (x, y) => ok(x, y) && dist(x, y) <= radius + 2)

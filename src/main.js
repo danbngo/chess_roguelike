@@ -87,9 +87,11 @@
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
   let animTimer = 0;
-  let pendingAction = null; // null | 'floor' (descend once the move animates)
+  let pendingAction = null; // null | 'floor' | 'shot' (resolve after the projectile lands)
+  let pendingShot = null; // the player state to resolve once a ranged/spell projectile lands
   const PLAYER_MOVE_TIME = 0.16;
   const ENEMY_MOVE_TIME = 0.16;
+  const SHOT_LEAD_TIME = 0.19; // arrow/bolt flies for this long before its hit resolves
 
   // Modal bookkeeping: which screen to return to when a tip / options closes.
   let pendingTips = [];
@@ -289,7 +291,7 @@
       card.kind === 'promotion' ? 'Self-cast: confirm on your own tile. Free action.'
       : card.kind === 'reload' ? 'Self-cast: confirm on your own tile.'
       : card.kind === 'swap' ? 'Target any unit in sight to trade places with it.'
-      : card.kind === 'enpassant' ? 'Dashes past; strikes the two tiles you flank.'
+      : card.kind === 'enpassant' ? 'Step 1 tile; also strikes one foe you pass (marked ✕).'
       : cat === 'melee' ? 'Strikes by moving onto the foe.'
       : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
       : 'A bolt that pierces everything on its path; you hold your tile.';
@@ -306,6 +308,50 @@
     cardTargeting = null;
     cardTargets = [];
     cardCursor = null;
+  }
+
+  // The tiles a spell cast at `cursor` would scorch (its whole AoE), so the aim
+  // overlay can highlight them — the pierced line, or every line under Barrage.
+  // Ranged/melee cards hit only their target, so they return null (no line preview).
+  function spellAoeTiles(state, cardIndex, cursor) {
+    const card = state.player.cards[cardIndex];
+    if (!card || !cursor) return null;
+    if (classCategory(state.player.className) !== 'spell') return null;
+    const p = state.player;
+    const seeWalls = Boolean(p.seeThroughWalls);
+    if (p.multiShot) {
+      // Barrage: every line the piece commands, out to its reach (stopped by walls).
+      const reach = cardReach(card.kind, p.cardReach || 0);
+      const tiles = [];
+      for (const [dx, dy] of cardSlideDirs(card.kind)) {
+        let cx = p.x;
+        let cy = p.y;
+        for (let i = 0; i < reach; i += 1) {
+          cx += dx;
+          cy += dy;
+          if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
+          if (terrainAt(state, cx, cy) === 'wall' && !seeWalls) break;
+          tiles.push({ x: cx, y: cy });
+        }
+      }
+      return tiles;
+    }
+    // A single piercing bolt: it ALWAYS travels its full range in the aimed direction,
+    // so preview every tile out to `reach` (stopped by a wall or the board edge).
+    const reach = cardReach(card.kind, p.cardReach || 0);
+    const dx = Math.sign(cursor.x - p.x);
+    const dy = Math.sign(cursor.y - p.y);
+    const tiles = [];
+    let cx = p.x;
+    let cy = p.y;
+    for (let i = 0; i < reach; i += 1) {
+      cx += dx;
+      cy += dy;
+      if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
+      if (terrainAt(state, cx, cy) === 'wall' && !seeWalls) break;
+      tiles.push({ x: cx, y: cy });
+    }
+    return tiles;
   }
 
   /* ------------------------------ tile popover --------------------------- */
@@ -337,16 +383,21 @@
       if (enemy) {
         let tag;
         if (enemy.turret) {
-          tag = ' (turret — fixed, fires its pattern)';
+          tag = ` (turret — fixed; fires its pattern; HP ${enemy.hp}/${enemy.maxHp})`;
         } else if (enemy.summonCircle) {
           tag = ' (summoning circle — spawns foes; step on it to destroy)';
         } else if (enemy.boss) {
-          tag = ` (boss — HP ${enemy.hp}/${enemy.maxHp})`;
+          const perk = enemy.bossPerk ? `; ${enemy.bossPerk}` : '';
+          tag = ` (boss — HP ${enemy.hp}/${enemy.maxHp}${perk})`;
         } else {
           tag = enemy.asleep ? ' (asleep)' : enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
         lines.push(`Enemy: ${enemy.kind}${tag}`);
       }
+    }
+    const ally = (gameState.allies || []).find((a) => a.x === tx && a.y === ty);
+    if (ally) {
+      lines.push(`Ally: ${ally.kind}${ally.familiar ? ' (familiar)' : ally.undead ? ' (undead)' : ''}`);
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
@@ -393,7 +444,7 @@
     chancellor: 'Moves as a rook or a knight.',
     amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
-    enpassant: 'Dashes 2 tiles orthogonally onto empty ground, striking the two tiles it flanks on the way.',
+    enpassant: 'Step one tile in any direction (capturing a foe there), and strike one foe you pass — a piece that was beside your starting tile.',
     promotion: 'Turns the king into an amazon (queen + knight) for a few turns: move freely, use no weapons. Free to cast.',
     reload: 'Spend your turn to recharge every other card at once.',
     swap: 'Trade places with any unit in sight — enemy or turret. No damage.',
@@ -401,7 +452,7 @@
 
   // One-line descriptions of each enemy role (for the examine pane).
   const ROLE_INFO = {
-    turret: 'Turret — fixed; fires its piece pattern, cannot be destroyed.',
+    turret: 'Turret — fixed; fires its piece pattern. Destructible (3 HP), struck in place like a boss.',
     circle: 'Summoning circle — conjures foes while it sees you; step on it to destroy it.',
     boss: 'Boss — a high-mobility guardian with a HP bar.',
   };
@@ -469,8 +520,9 @@
                 ? 'Hostile — hunting the king'
                 : 'Unaware — wandering';
         const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp}` : null;
+        const perkLine = enemy.boss && enemy.bossPerk ? (BOSS_PERK_LABELS[enemy.bossPerk] || null) : null;
         const title = enemy.boss ? `Boss — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
-        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, hpLine, st]);
+        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, hpLine, perkLine, st]);
       }
     }
 
@@ -619,6 +671,14 @@
       if (TUTORIALS[`terrain-${type}`]) {
         queueTip(`terrain-${type}`);
       }
+    }
+    // Spotting the floor key, and the sealed stair, each get a one-time explainer so the
+    // "grab the key to unlock the stair" loop is never a mystery.
+    if (state.key && !state.key.collected && inLineOfSight(state, state.key.x, state.key.y)) {
+      queueTip('key');
+    }
+    if (state.exit && state.exit.locked && inLineOfSight(state, state.exit.x, state.exit.y)) {
+      queueTip('stairLocked');
     }
   }
 
@@ -825,6 +885,7 @@
   }
 
   function newGame(classKey) {
+    resetSeenTips(); // tutorial tips reset every run, so they play again on a fresh game
     startGame(createInitialState(classKey || 'warrior'));
     saveGame(gameState);
     queueTip('welcome');
@@ -1023,7 +1084,9 @@
       take.textContent = 'Take';
       take.addEventListener('click', () => {
         applyState(learnPerk(gameState, perk.id), false);
-        Renderer.effect('powerup');
+        // Flash the colour of the subclass this perk belongs to (its class colour if the
+        // chain has none), rather than a fixed green.
+        Renderer.effect('powerup', chainColor || (cls && cls.color));
         GameAudio.play('buy');
         closeLevelUp();
       });
@@ -1088,11 +1151,33 @@
       applyState(nextState, false);
       return;
     }
+    // A ranged/spell card: fly the arrow/bolt to the target FIRST, then resolve the hit +
+    // death + screen shake once it lands (state stays as-is so the target is still shown).
+    const shot = nextState.lastShot;
+    if (shot && (shot.role === 'arrow' || shot.role === 'bolt' || shot.role === 'fireball')) {
+      Renderer.rangedShot(shot.fromX, shot.fromY, shot.toX, shot.toY, shot.role, shot.tiles);
+      GameAudio.play(shot.role === 'fireball' ? 'cast' : 'attack');
+      nextState.lastShot = null;
+      pendingShot = nextState;
+      pendingAction = 'shot';
+      animTimer = SHOT_LEAD_TIME;
+      return;
+    }
+    resolveCommitted(nextState);
+  }
 
+  function resolveCommitted(nextState) {
     const prevEnemies = gameState ? gameState.enemies.length : 0;
+    const hadKey = Boolean(gameState && gameState.key && gameState.key.collected);
 
     applyState(nextState, true);
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
+
+    // A yellow flash when the floor key is first collected.
+    if (nextState.key && nextState.key.collected && !hadKey) {
+      Renderer.effect('key');
+      GameAudio.play('buy');
+    }
 
     const felled = prevEnemies - nextState.enemies.length; // captures this action
     const struck = nextState.lastAction === 'combat' || nextState.lastAction === 'move-free';
@@ -1148,7 +1233,8 @@
       applyState(moveEnemy(gameState, id), true);
       if (gameState.lastShot) {
         const s = gameState.lastShot;
-        Renderer.rangedShot(s.fromX, s.fromY, s.toX, s.toY, s.role);
+        Renderer.rangedShot(s.fromX, s.fromY, s.toX, s.toY, s.role, s.tiles);
+        if (s.role === 'fireball') GameAudio.play('cast');
       }
       if (gameState.player.hp < hpBefore) {
         Renderer.effect(gameState.gameOver ? 'death' : 'hit');
@@ -1173,7 +1259,8 @@
       return;
     }
 
-    // Turn complete: maybe reinforce, then persist.
+    // Turn complete: the king's allies act (AFTER the foes), then maybe reinforce.
+    applyState(runAllyPhase(gameState), true);
     applyState(maybeSpawnEnemy(gameState), true);
     saveGame(gameState);
     maybeOpenLevelUp(); // if this turn slew the boss, offer the boon now
@@ -1235,7 +1322,12 @@
     if (screen === 'playing' && animTimer > 0) {
       animTimer = Math.max(0, animTimer - delta);
       if (animTimer === 0) {
-        if (pendingAction === 'floor') {
+        if (pendingAction === 'shot') {
+          pendingAction = null;
+          const s = pendingShot;
+          pendingShot = null;
+          if (s) resolveCommitted(s);
+        } else if (pendingAction === 'floor') {
           pendingAction = null;
           goNextFloor();
         } else if (pendingAction === 'gameover') {
@@ -1261,17 +1353,32 @@
       turnLabel.style.color = Math.floor(timestamp / 350) % 2 ? '#fde047' : '#ef4444';
     }
 
+    // Swap in the tense score once the king has lingered into the high-spawn danger
+    // zone (and back to the calm score whenever he's safe / not in a run).
+    const inDanger = Boolean(gameState) && screen === 'playing' && gameState.turn >= Math.floor(MAX_TURNS_SCARY * 0.6);
+    GameAudio.setTension(inDanger);
+
     Renderer.update(delta);
     // While aiming a card, show its reachable tiles instead of moves.
     const aiming = cardTargeting !== null;
     const targets = aiming ? cardTargets : null;
-    Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null);
+    const aoe = aiming ? spellAoeTiles(gameState, cardTargeting, cardCursor) : null;
+    Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null, aoe);
     requestAnimationFrame(step);
   }
 
   /* ------------------------------- wiring -------------------------------- */
 
   document.addEventListener('keydown', (event) => {
+
+    // A tutorial tip is up: Enter / Space / Escape all dismiss it (like the "Got it" button).
+    if (screen === 'tutorial') {
+      if (event.key === 'Enter' || event.key === 'Escape' || event.key === ' ' || event.code === 'Space') {
+        event.preventDefault();
+        dismissTip();
+      }
+      return;
+    }
 
     // A yes/no confirm modal (e.g. descending past a live boss): Enter = yes, Esc = no.
     if (screen === 'confirm') {

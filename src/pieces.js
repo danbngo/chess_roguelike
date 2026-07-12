@@ -11,6 +11,8 @@ function enemyUnitAt(state, piece) {
     if (keyTileAt(state, x, y)) {
       return 'key'; // the floor key blocks enemies — they can never stop on it
     }
+    const ally = allyAt(state, x, y);
+    if (ally) return ally; // an ally blocks the enemy (and may be captured — see getPieceMoves)
     return state.enemies.find((other) => other.id !== piece.id && other.x === x && other.y === y) || null;
   };
 }
@@ -69,6 +71,13 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
         moves.push(target);
       }
       break;
+    case 'general':
+      // The Necromancer's upgraded familiar: a king that may also leap like a knight.
+      slide([...ORTHO, ...DIAG], 1);
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
+        moves.push(target);
+      }
+      break;
     case 'berolina':
       // The pawn's mirror: steps diagonally onto empty ground...
       for (const [dx, dy] of DIAG) {
@@ -111,9 +120,10 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
 // Enemies may walk over lava.
 function getPieceMoves(piece, state) {
   const unitAt = enemyUnitAt(state, piece);
-  const isKing = (x, y) => x === state.player.x && y === state.player.y;
+  // Enemies may capture the king OR an ally (movement AI prefers the king; see meleeMove).
+  const isTarget = (x, y) => (x === state.player.x && y === state.player.y) || Boolean(allyAt(state, x, y));
   const opts = { lavaOk: true };
-  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isKing, opts);
+  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, opts);
 }
 
 // The straight-line directions a card kind slides/casts along (empty for a pure
@@ -177,28 +187,26 @@ function getCardMoves(state, card) {
   }
 
   if (kind === 'enpassant') {
-    // The Duellist's signature dash: bolt exactly 2 tiles orthogonally onto empty
-    // ground, en-passant-striking the two tiles that FLANK the square dashed over.
-    // Walls/lava block both the pass-through and the landing; a foe on the landing
-    // tile blocks the dash (you must land on clear ground).
-    for (const [dx, dy] of ORTHO) {
-      const mx = p.x + dx;
-      const my = p.y + dy; // the tile dashed over
-      const ex = p.x + 2 * dx;
-      const ey = p.y + 2 * dy; // the landing tile
+    // En Passant: step ONE square in any direction (capturing a foe on that tile, or
+    // repositioning onto empty ground) AND strike one foe "in passing" — a piece that
+    // was adjacent to the ORIGIN square (never the tile you step onto). `flanks` carries
+    // that one in-passing target so the renderer can mark it while aiming.
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const ex = p.x + dx;
+      const ey = p.y + dy;
       if (!inBounds(ex, ey)) continue;
-      const midT = terrainAt(state, mx, my);
       const destT = terrainAt(state, ex, ey);
-      if (midT === 'wall' || midT === 'lava') continue; // can't dash through
-      if (destT === 'wall' || destT === 'lava') continue; // can't land there
-      if (enemyAt(ex, ey)) continue; // must land on empty ground
-      // The two rear diagonals of the landing tile — the squares that flank the tile
-      // dashed over (down-left and down-right relative to the dash direction).
-      const flanks = [
-        { x: ex - dx + dy, y: ey - dy - dx },
-        { x: ex - dx - dy, y: ey - dy + dx },
-      ];
-      if (inLineOfSight(state, ex, ey)) results.push({ x: ex, y: ey, capture: false, viaJump: true, flanks });
+      if (destT === 'wall' || destT === 'lava') continue; // can't step there
+      const foe = enemyAt(ex, ey);
+      if (foe && !targetable(ex, ey)) continue; // blocked by an untouchable unit
+      let passing = null;
+      for (const [ax, ay] of [...ORTHO, ...DIAG]) {
+        const px = p.x + ax;
+        const py = p.y + ay;
+        if (px === ex && py === ey) continue; // not the tile stepped onto
+        if (targetable(px, py)) { passing = { x: px, y: py }; break; }
+      }
+      if (inLineOfSight(state, ex, ey)) results.push({ x: ex, y: ey, capture: Boolean(foe), viaJump: false, flanks: passing ? [passing] : [] });
     }
   } else if (category === 'melee') {
     // The king walks/leaps onto a foe (a capture) OR onto empty ground within reach
@@ -323,6 +331,7 @@ function getPieceLabel(kind) {
     knight: '♞',
     queen: '♛',
     berolina: 'B', // berolina pawn
+    general: '♔', // the Necromancer's upgraded familiar (king + knight)
     archbishop: 'A', // bishop + knight
     chancellor: 'M', // rook + knight (a.k.a. marshall)
     amazon: 'Z', // queen + knight (the final boss)

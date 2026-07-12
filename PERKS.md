@@ -50,13 +50,9 @@ A relentless charger who kills on the move and crushes on landing.
 A show-off who fights with tempo and a signature dash.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `w_enpassant` | En Passant | gain an en-passant card: dash 2 tiles orthogonally onto empty ground, striking the two tiles you flank (base cooldown 3). The hit area is shown while targeting. | `gainCard:enpassant` |
+| 1 | `w_enpassant` | En Passant | gain an en-passant card (cd 3): step 1 tile in any direction (capturing a foe there) AND strike one foe "in passing" — a piece that was beside your starting tile (marked ✕ while aiming) | `gainCard:enpassant` |
 | 2 | `w_flourish` | Flourish | after a kill, foes beside you are caught off guard (surprised) | `meleeFlourish` |
 | 3 | `w_rush` | Charge | a move that kills costs no turn | `freeKillMove` |
-
-_Dropped from the old Warrior: Long Arms (+reach), Reflection, the bishop/rook card
-grants, and Undying — replaced by the four chains above (survive / butcher / charge / duel)._
-
 
 ---
 
@@ -68,16 +64,16 @@ The survivalist who masters the terrain, then becomes the beast.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `r_wade` | Amphibious | water no longer slows your moves or blocks your cards | `terrainImmune` |
-| 2 | `r_xray` | Sixth Sense | see and shoot over walls (symmetric — you can also be seen through them) | `seeThroughWalls` |
+| 2 | `r_xray` | Sixth Sense | see and shoot over walls — ONE-WAY: foes on the far side of a wall don't spot you or wake unless you attack them or step adjacent | `seeThroughWalls` |
 | 3 | `r_promo` | Promotion | gain a promotion card: free to cast; for 3 turns move as an amazon (queen + knight) and use no weapon cards | `gainCard:promotion` |
 
 ### 🎯 Deadeye — "One shot. Then another, before they blink."
 Reach, sight, and foreknowledge.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_reach` | Power Draw | +1 card reach | `cardReach:1` |
-| 2 | `r_eyes2` | Hawk Eyes | +1 sight radius | `vision:2` |
-| 3 | `r_eagle` | Premonition | fresh floors reveal fully the moment you arrive | `revealFloor` |
+| 1 | `r_eyes2` | Hawk Eyes | +1 sight radius | `vision:2` |
+| 2 | `r_reach` | Power Draw | +1 card reach | `cardReach:1` |
+| 3 | `r_eagle` | Premonition | continually see the ENTIRE floor — terrain, stair, key, and every enemy (out of sight, faded) — though you can still only attack within normal vision | `revealFloor` |
 
 ### 🌑 Gloom Stalker — "Seen only when it's already too late."
 The ghost: unchased, ignored by structures, unnoticed.
@@ -85,7 +81,7 @@ The ghost: unchased, ignored by structures, unnoticed.
 |---|---|---|---|---|
 | 1 | `r_ghost` | Ghost | foes stop chasing once you leave their sight | `noChase` |
 | 2 | `r_camo` | Camouflage | turrets and summoning circles ignore you | `camouflage` |
-| 3 | `r_stealth` | Silent | unaware foes don't notice you unless adjacent (or you attack) | `stealth` |
+| 3 | `r_stealth` | Silent | unaware foes don't spot you at range (they roam showing "?"). You're given away by: attacking (all visible foes wake), any foe ending its turn adjacent to you (it wakes at once — or ~11% bumps you for 1), or you stepping next to one | `stealth` |
 
 ### 🏹 Fletcher — "A bow for every range, and the feet to use them."
 The quartermaster: reload, a bigger bow, and kickback.
@@ -99,7 +95,7 @@ _Ranger changes: starter knight → bishop (cd 3); DROPPED the old HP chain (r_h
 
 ---
 
-## SORCERER — the Wizard  (spell · start: rook, cooldown 5 · 3 HP)  ✅ 3/4 CHAINS IMPLEMENTED
+## SORCERER — the Wizard  (spell · start: rook, cooldown 5 · 3 HP)  ✅ IMPLEMENTED
 _A fragile caster whose bolts pierce straight through the ranks — his mighty cards make up for his low HP._
 The starting rook is slow (cd 5) and pierces every tile en route to (and including) the target.
 
@@ -113,9 +109,9 @@ The starting rook is slow (cd 5) and pierces every tile en route to (and includi
 ### 💫 Hexes — fuchsia — the curse-weaver: demote, dazzle, lull.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_hex` | Hex | moving so a non-pawn foe stands one tile ahead demotes it to a pawn and startles it | `hexDemote` |
+| 1 | `s_hex` | Hex | at the start of each turn, one adjacent foe is warped into a confused (startled) pawn — pawns and bosses are immune | `hexDemote` |
 | 2 | `s_cata` | Cataclysm | every visible foe is surprised when you cast a spell | `spellSurprise` |
-| 3 | `s_slumber` | Slumber | non-boss foes adjacent to you fall asleep (blue "z" icon) | `sleepAura` |
+| 3 | `s_slumber` | Slumber | non-boss foes adjacent to you fall asleep (blue "z" icon); with Hex (T1), a hexed pawn drops straight to sleep instead of merely confused | `sleepAura` |
 
 ### 🌀 Conjuration — violet — the artillery-mage: reach, a queen, a full barrage.
 | tier | id | name | effect | `grant` |
@@ -124,5 +120,27 @@ The starting rook is slow (cd 5) and pierces every tile en route to (and includi
 | 2 | `s_staff` | Archstaff | gain a queen card (cooldown 9) | `gainCard:queen`, `gainCooldown:9` |
 | 3 | `s_barrage` | Barrage | your spell fires down EVERY line the piece commands (rook 4, queen 8) | `multiShot` |
 
-### 🔥 Necromancy — necro-green — ⏳ DEFERRED (the ally faction — a dedicated build)
-_Familiar (a berolina-pawn ally that follows, auto-attacks, and respawns), convert-on-kill undead, and a General upgrade. Introduces allies as a new faction (their AI, rendering with a heart icon, swap-on-move, "enemies can attack allies"), so it's slated as its own pass._
+### 🔥 Necromancy — necro-green — the summoner: a familiar, then undead, then a General.  ✅ IMPLEMENTED
+| tier | id | name | effect | `grant` |
+|---|---|---|---|---|
+| 1 | `s_familiar` | Familiar | summon a berolina ally that follows you, auto-attacks foes, swaps places when you step onto it, and respawns each floor / when no foe is in sight (your AOE dispels it) | `familiar` |
+| 2 | `s_undead` | Grave Bond | a foe you slay rises as an undead ally — one at a time; when it dies the next kill replaces it. Undead don't follow you downstairs | `necromancy` |
+| 3 | `s_general` | General | your familiar is upgraded to a General — a king that can also leap like a knight | `generalForm` |
+
+_Allies are green tokens with a ♥ mark; enemies (and bosses) will strike them down but always prefer the king when they can reach both._
+
+## BOSS PERKS — one rolled per floor guardian  ✅ IMPLEMENTED
+
+Every floor boss rolls **one** perk at creation (see `BOSS_PERKS` in `constants.js`,
+`createBoss` / `bossMove` / `damageBoss` in `game.js`). Shown in the Examine panel.
+
+| id | name | effect |
+|---|---|---|
+| `summoner` | Summoner | every third turn it conjures a minion of its **own** kind instead of acting |
+| `blinker` | Blinkborn | flickers to a random tile a few squares off after each wound (never into melee) |
+| `brutal` | Brutal | its blows (melee, knockback) deal **2** damage instead of 1 |
+| `ranged` | Volley | when the king stands on an open orthogonal/diagonal line, it looses a bolt (1 dmg) instead of closing; a body or wall in the lane stops the shot |
+| `sorcerer` | Sorcerer | like Volley but the bolt **pierces** every unit on the path — wounding the king and cutting down any ally/minion in the way (walls still stop it) |
+| `knockback` | Bulwark | its capturing blow shoves the king backward (like a jumper) every time |
+| `shapeshifter` | Shifting | after each wound it morphs into a **random lesser** form (never ranked above its original kind) |
+| `tough` | Hardened | +3 max HP |

@@ -27,7 +27,8 @@ const Renderer = (function () {
     death: { color: '153, 27, 27', peak: 0.85, shake: SHAKE_DURATION * 1.8 }, // deep crimson
     kill: { color: '248, 250, 252', peak: 0.18, shake: SHAKE_DURATION * 0.45 }, // pale impact
     heal: { color: '74, 222, 128', peak: 0.6, shake: SHAKE_DURATION * 0.3 }, // bright green — a quaff
-    powerup: { color: '168, 85, 247', peak: 0.45, shake: 0 }, // violet (level-up)
+    powerup: { color: '74, 222, 128', peak: 0.55, shake: 0 }, // a perk taken — recoloured per-cast to the subclass's colour (green is only the fallback)
+    key: { color: '250, 204, 21', peak: 0.6, shake: 0 }, // yellow — floor key collected
     victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
   };
 
@@ -37,8 +38,11 @@ const Renderer = (function () {
   // In-flight ranged projectiles (turret / boss bolts), each easing from a source
   // tile to a target tile over its lifetime.
   let projectiles = [];
+  // Spell fireballs bloom on every tile they scorch — each impact is a short-lived burst.
+  let bursts = [];
   const PROJECTILE_TIME = 0.16;
-  const PROJECTILE_COLOR = { turret: '#e0894b', boss: '#ffe9a8' };
+  const BURST_TIME = 0.3;
+  const PROJECTILE_COLOR = { turret: '#e0894b', boss: '#ffe9a8', arrow: '#d9f99d', bolt: '#c4b5fd', fireball: '#fb923c' };
 
   // Camera: a movable, zoomable window onto the board. `baseTile` is the on-screen
   // size of a tile at zoom 1 — set so the default view shows half the board (i.e.
@@ -66,12 +70,35 @@ const Renderer = (function () {
     tileSize = baseTile * camera.zoom;
   }
 
+  // A '#rrggbb' hex to an 'r, g, b' triplet (the format EFFECTS colours use). Passes a
+  // triplet straight through so either form works as a colour override.
+  function toRgbTriplet(color) {
+    if (typeof color !== 'string') return null;
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color.trim());
+    if (!m) return color; // already 'r, g, b' (or something else — leave as-is)
+    return `${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}`;
+  }
+
+  // Pick a legible ink (near-black or near-white) for a glyph drawn on a '#rrggbb' fill,
+  // by the fill's perceived luminance.
+  function contrastInk(color) {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec((color || '').trim());
+    if (!m) return '#fbf8ef';
+    const r = parseInt(m[1], 16);
+    const g = parseInt(m[2], 16);
+    const b = parseInt(m[3], 16);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return lum > 0.62 ? '#1c1c22' : '#fbf8ef';
+  }
+
   // Fire a feedback effect by name (see EFFECTS): a tinted flash and optional shake.
-  function effect(kind) {
+  // An optional colorOverride ('#rrggbb' or 'r, g, b') recolours just this flash — used
+  // so a perk-taken flash wears the colour of the subclass it belongs to.
+  function effect(kind, colorOverride) {
     const e = EFFECTS[kind];
     if (!e) return;
     flash = 1;
-    flashColor = e.color;
+    flashColor = colorOverride ? toRgbTriplet(colorOverride) : e.color;
     flashPeak = e.peak;
     if (e.shake) {
       shake = Math.max(shake, e.shake);
@@ -83,9 +110,19 @@ const Renderer = (function () {
     effect('hit');
   }
 
-  // Launch an animated bolt from one tile to another (ranged enemy attacks).
-  function rangedShot(fromX, fromY, toX, toY, role) {
-    projectiles.push({ fromX, fromY, toX, toY, t: 0, color: PROJECTILE_COLOR[role] || '#ffffff' });
+  // Launch an animated projectile from one tile to another (ranged/spell attacks).
+  // A fireball (spell) also blooms on every `tiles` entry, staggered so the burst on
+  // each tile fires as the fireball sweeps across it.
+  function rangedShot(fromX, fromY, toX, toY, role, tiles) {
+    const color = PROJECTILE_COLOR[role] || '#ffffff';
+    projectiles.push({ fromX, fromY, toX, toY, t: 0, role, color });
+    if (role === 'fireball' && Array.isArray(tiles) && tiles.length) {
+      const total = Math.max(1, Math.hypot(toX - fromX, toY - fromY));
+      for (const tile of tiles) {
+        const frac = Math.min(1, Math.hypot(tile.x - fromX, tile.y - fromY) / total);
+        bursts.push({ x: tile.x, y: tile.y, t: 0, delay: frac * PROJECTILE_TIME, color });
+      }
+    }
   }
 
   // Snap the camera onto the king instantly (keeps the current zoom level).
@@ -161,6 +198,8 @@ const Renderer = (function () {
       charged: enemy.charged !== false,
       role: typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal',
     }));
+    projectiles = [];
+    bursts = [];
     snapCameraToPlayer(state);
   }
 
@@ -214,6 +253,13 @@ const Renderer = (function () {
       for (const p of projectiles) p.t += delta / PROJECTILE_TIME;
       projectiles = projectiles.filter((p) => p.t < 1);
     }
+    if (bursts.length) {
+      for (const b of bursts) {
+        if (b.delay > 0) b.delay -= delta; // hold until the fireball reaches this tile
+        else b.t += delta / BURST_TIME;
+      }
+      bursts = bursts.filter((b) => b.t < 1);
+    }
   }
 
   function drawPiece(tileX, tileY, kind, isPlayer, opts) {
@@ -227,13 +273,13 @@ const Renderer = (function () {
     // Spent (recharging) casters are faded.
     if (o.inactive) ctx.globalAlpha = 0.4;
 
-    // Token body / outline, tinted by special role / class / allegiance.
-    let fill = isPlayer ? '#f7e7b8' : '#111118';
-    let stroke = isPlayer ? '#8a6a26' : '#dadada';
-    let glyph = isPlayer ? '#3a2c0a' : '#f3f1e7';
-    if (isPlayer && o.classColor) {
-      stroke = o.classColor; // the king's outline is tinted by his class
-    }
+    // Inverted scheme: the KING is the dark, class-coloured token (his fill is his class
+    // or tier-3 subclass colour); ordinary ENEMIES are the light bone-coloured tokens.
+    // Special roles (turret / boss / circle / ally) keep their own identity below.
+    let fill = isPlayer ? o.classColor || '#dc2626' : '#e7e2d1';
+    let stroke = isPlayer ? '#faf6e9' : '#33333c';
+    // The king's glyph flips to ink on light class colours (e.g. lime) so it stays legible.
+    let glyph = isPlayer ? contrastInk(fill) : '#17171d';
     if (role === 'turret') {
       fill = '#2c2f3a'; // dark steel
       stroke = '#e0894b'; // warm danger ring
@@ -246,6 +292,10 @@ const Renderer = (function () {
       fill = '#241733'; // arcane violet — a summoning circle
       stroke = '#a855f7';
       glyph = '#e9d5ff';
+    } else if (role === 'ally') {
+      fill = '#0f2a1a'; // deep green — the king's own piece
+      stroke = '#34d399';
+      glyph = '#bbf7d0';
     }
 
     // Boss aura: a soft gold outer ring.
@@ -329,6 +379,8 @@ const Renderer = (function () {
       drawStatusMark(tileX, tileY, '!', '#ffd400');
     } else if (mainState === 'asleep') {
       drawStatusMark(tileX, tileY, 'z', '#93c5fd'); // a soft-blue "z" for a slumbering foe
+    } else if (mainState === 'unaware') {
+      drawStatusMark(tileX, tileY, '?', '#a3a3a3'); // a grey "?" — it hasn't noticed the king
     } else if (mainState === 'frustrated') {
       drawStatusMark(tileX, tileY, '✖', '#fca5a5');
     }
@@ -343,9 +395,64 @@ const Renderer = (function () {
       ctx.save();
       ctx.shadowBlur = tileSize * 0.3;
       ctx.shadowColor = p.color;
-      ctx.beginPath();
-      ctx.arc(x, y, tileSize * 0.13, 0, Math.PI * 2);
       ctx.fillStyle = p.color;
+      if (p.role === 'arrow') {
+        // A little arrowhead + shaft pointing along its flight path.
+        ctx.translate(x, y);
+        ctx.rotate(Math.atan2(p.toY - p.fromY, p.toX - p.fromX));
+        const s = tileSize * 0.22;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = Math.max(1.5, tileSize * 0.045);
+        ctx.beginPath();
+        ctx.moveTo(-s, 0);
+        ctx.lineTo(s * 0.35, 0);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(s, 0);
+        ctx.lineTo(s * 0.2, -s * 0.4);
+        ctx.lineTo(s * 0.2, s * 0.4);
+        ctx.closePath();
+        ctx.fill();
+      } else if (p.role === 'fireball') {
+        // A molten orb with a blazing white-hot core.
+        const r = tileSize * 0.18;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fff7ed';
+        ctx.beginPath();
+        ctx.arc(x, y, r * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, tileSize * 0.13, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  // Fireball impact blooms: an expanding, fading ring of flame with a hot core, one
+  // per scorched tile (staggered by drawProjectiles' burst timing above).
+  function drawBursts() {
+    for (const b of bursts) {
+      if (b.delay > 0) continue;
+      const cx = (b.x + 0.5) * tileSize;
+      const cy = (b.y + 0.5) * tileSize;
+      const r = tileSize * (0.22 + 0.3 * b.t);
+      const fade = 1 - b.t;
+      ctx.save();
+      ctx.shadowBlur = tileSize * 0.4;
+      ctx.shadowColor = b.color;
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = fade * 0.85;
+      ctx.fillStyle = '#fff7ed';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.45, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -439,14 +546,32 @@ const Renderer = (function () {
     const cy = tileY * tileSize + tileSize / 2;
     const s = tileSize;
     ctx.save();
+
+    // An animated golden aura pulsing around the key while it is in sight — draws the
+    // eye to the objective. (Only a static, dimmed key shows once merely remembered.)
+    if (!faded) {
+      const pulse = 0.5 + 0.5 * Math.sin(clock * 4.5);
+      const glowR = s * (0.34 + 0.09 * pulse);
+      const grad = ctx.createRadialGradient(cx, cy, s * 0.04, cx, cy, glowR);
+      grad.addColorStop(0, `rgba(253, 224, 71, ${0.5 * (0.55 + 0.45 * pulse)})`);
+      grad.addColorStop(0.6, `rgba(250, 204, 21, ${0.22 * (0.55 + 0.45 * pulse)})`);
+      grad.addColorStop(1, 'rgba(253, 224, 71, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.globalAlpha = faded ? 0.5 : 1;
+    // Centre the key glyph on the tile (bow up-left, teeth down-right — nudged so the
+    // whole shape's midpoint sits on the tile centre).
+    ctx.translate(cx - s * 0.03, cy - s * 0.03);
     ctx.fillStyle = '#fbbf24';
     ctx.strokeStyle = '#b45309';
     ctx.lineWidth = Math.max(1, s * 0.03);
-    // Bow (the round grip), on the upper-left.
     const bowR = s * 0.15;
-    const bx = cx - s * 0.12;
-    const by = cy - s * 0.12;
+    const bx = -s * 0.12;
+    const by = -s * 0.12;
     ctx.beginPath();
     ctx.arc(bx, by, bowR, 0, Math.PI * 2);
     ctx.fill();
@@ -526,6 +651,20 @@ const Renderer = (function () {
     ctx.fill();
   }
 
+  // A fiery wash + outline over a tile a spell's AoE would scorch, so the whole hit
+  // line (not just the final tile) is visible while aiming.
+  function drawAoeTile(tileX, tileY) {
+    const px = tileX * tileSize;
+    const py = tileY * tileSize;
+    ctx.save();
+    ctx.fillStyle = 'rgba(251, 146, 60, 0.26)';
+    ctx.fillRect(px, py, tileSize, tileSize);
+    ctx.strokeStyle = 'rgba(251, 146, 60, 0.85)';
+    ctx.lineWidth = Math.max(1.5, tileSize * 0.04);
+    ctx.strokeRect(px + 1.5, py + 1.5, tileSize - 3, tileSize - 3);
+    ctx.restore();
+  }
+
   // A red strike-mark on a tile an en-passant dash would hit (its flank captures), so
   // the player can see the hit area before committing the dash.
   function drawCardFlank(tileX, tileY) {
@@ -559,23 +698,111 @@ const Renderer = (function () {
 
   // A fading blood spatter: a bright-red central splat plus a scatter of droplets
   // of varied size, alpha by remaining life.
-  function drawSpatter(spatter) {
+  function drawSpatter(spatter, isWall) {
     const px = spatter.x * tileSize;
     const py = spatter.y * tileSize;
+    const seed = spatter.seed || 0; // per-spatter offset so stacked marks differ
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, spatter.life / spatter.max)) * 0.85;
     ctx.fillStyle = '#c81e1e'; // vivid red
-    // A central blob.
+    if (isWall) {
+      // On a wall, blood clings and runs DOWNWARD as a few streaks/smears.
+      const streaks = 2 + (seed % 3); // 2-4 streaks
+      for (let i = 0; i < streaks; i += 1) {
+        const fx = tileHash(spatter.x * 7 + i * 5 + seed, spatter.y * 3 + 2);
+        const top = tileHash(spatter.x + i, spatter.y * 5 + seed + i);
+        const cx = px + tileSize * (0.15 + fx * 0.7);
+        const y0 = py + tileSize * (0.05 + top * 0.15);
+        const len = tileSize * (0.3 + 0.45 * tileHash(spatter.x * 11 + i, spatter.y + seed));
+        const w = tileSize * (0.05 + 0.05 * tileHash(spatter.x + seed, spatter.y * 7 + i));
+        // A rounded vertical run with a heavier drip-blob at the bottom.
+        ctx.beginPath();
+        ctx.moveTo(cx - w / 2, y0);
+        ctx.lineTo(cx + w / 2, y0);
+        ctx.lineTo(cx + w / 2, y0 + len);
+        ctx.lineTo(cx - w / 2, y0 + len);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx, y0 + len, w * 0.85, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      return;
+    }
+    // On the ground: a central blob plus scattered droplets flung outward.
     ctx.beginPath();
     ctx.arc(px + tileSize * 0.5, py + tileSize * 0.5, tileSize * 0.2, 0, Math.PI * 2);
     ctx.fill();
-    // Scattered droplets flung outward, deterministic per tile.
     for (let i = 0; i < 11; i += 1) {
-      const rx = tileHash(spatter.x * 9 + i, spatter.y * 13 + 5);
-      const ry = tileHash(spatter.x * 13 + 5, spatter.y * 9 + i);
-      const r = tileSize * (0.02 + 0.07 * tileHash(spatter.x + i * 3, spatter.y - i));
+      const rx = tileHash(spatter.x * 9 + i + seed, spatter.y * 13 + 5);
+      const ry = tileHash(spatter.x * 13 + 5, spatter.y * 9 + i + seed);
+      const r = tileSize * (0.02 + 0.07 * tileHash(spatter.x + i * 3 + seed, spatter.y - i));
       ctx.beginPath();
       ctx.arc(px + tileSize * (0.08 + rx * 0.84), py + tileSize * (0.08 + ry * 0.84), r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // A corpse: the slain piece's glyph, darkened, flattened and slanted so it reads as a
+  // body lying on the ground. Fades toward transparent as it decays (faster than blood).
+  // A corpse: the fallen piece as a dark, flattened, slanted husk lying on the ground.
+  // (Living enemies are now light-coloured tokens, so this dark shape reads clearly as a
+  // dead one.) It carries the piece glyph so you can still tell what it was.
+  function drawCorpse(corpse, faded) {
+    // Each corpse sits at a small random offset + slant within its tile, so repeated kills
+    // on one square stack into a natural-looking pile rather than a single overlaid stamp.
+    const cx = corpse.x * tileSize + tileSize * (0.5 + (corpse.ox || 0));
+    const cy = corpse.y * tileSize + tileSize * (0.58 + (corpse.oy || 0));
+    const lifeFrac = corpse.max ? Math.max(0, corpse.life / corpse.max) : 1;
+    ctx.save();
+    ctx.globalAlpha = (faded ? 0.4 : 0.8) * Math.max(0.12, lifeFrac);
+    ctx.translate(cx, cy);
+    ctx.rotate(-0.35 + (corpse.rot || 0)); // slanted, as if fallen
+    ctx.scale(1, 0.5); // flattened
+    ctx.beginPath();
+    ctx.arc(0, 0, tileSize * 0.34, 0, Math.PI * 2);
+    ctx.fillStyle = '#0b0b10';
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, tileSize * 0.03);
+    ctx.strokeStyle = '#33333c';
+    ctx.stroke();
+    ctx.fillStyle = '#5a5a66';
+    ctx.font = `bold ${tileSize * 0.42}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(getPieceLabel(corpse.kind), 0, 0);
+    ctx.restore();
+  }
+
+  // An ash pile: a small grey mound left by a spell kill. No piece identity — all ash looks
+  // alike. Jittered + stackable like corpses, and fades toward transparent as it decays.
+  function drawAsh(ash, faded) {
+    const cx = ash.x * tileSize + tileSize * (0.5 + (ash.ox || 0));
+    const cy = ash.y * tileSize + tileSize * (0.58 + (ash.oy || 0));
+    const lifeFrac = ash.max ? Math.max(0, ash.life / ash.max) : 1;
+    const r = tileSize * 0.28;
+    ctx.save();
+    ctx.globalAlpha = (faded ? 0.4 : 0.8) * Math.max(0.12, lifeFrac);
+    ctx.translate(cx, cy);
+    ctx.rotate((ash.rot || 0) * 0.5);
+    ctx.scale(1, 0.42); // a low, flattened mound
+    // A soft charcoal heap with a lighter cap of cinders.
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#2b2b2f';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-r * 0.18, -r * 0.12, r * 0.55, 0, Math.PI * 2);
+    ctx.fillStyle = '#4a4a50';
+    ctx.fill();
+    // A few pale flecks of ash.
+    ctx.fillStyle = '#6f6f77';
+    for (let i = 0; i < 4; i += 1) {
+      const a = (i / 4) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * r * 0.5, Math.sin(a) * r * 0.5, r * 0.1, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
@@ -749,9 +976,12 @@ const Renderer = (function () {
       miniCtx.fill();
     };
     const r = Math.max(1.4, cell * 0.42);
+    const seesAllMini = Boolean(state.player.revealFloor);
     for (const e of state.enemies || []) {
       if (visible.has(`${e.x},${e.y}`)) blip(e.x, e.y, '#ef4444', r);
+      else if (seesAllMini && (explored[`${e.x},${e.y}`])) blip(e.x, e.y, '#7f1d1d', r); // Premonition: dim red
     }
+    for (const a of state.allies || []) blip(a.x, a.y, '#34d399', r); // allies — green
     blip(state.player.x, state.player.y, '#22c55e', r + 0.7);
 
     // A faint frame marking the slice of the level currently on screen.
@@ -761,7 +991,7 @@ const Renderer = (function () {
     miniCtx.strokeRect(ox + b.x * cell, oy + b.y * cell, b.width * cell, b.height * cell);
   }
 
-  function draw(state, showMoves, cardTargets, cardCursor) {
+  function draw(state, showMoves, cardTargets, cardCursor, aoeTiles) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!state) {
@@ -865,10 +1095,21 @@ const Renderer = (function () {
     ctx.lineWidth = 2;
     ctx.strokeRect(bounds.x * tileSize, bounds.y * tileSize, bounds.width * tileSize, bounds.height * tileSize);
 
-    // Blood spatters on explored ground, fading with each turn.
+    // Blood spatters on explored ground/walls, fading with each turn (walls show streaks).
     for (const spatter of state.spatters || []) {
       if (isExplored(spatter.x, spatter.y)) {
-        drawSpatter(spatter);
+        drawSpatter(spatter, terrainAt(state, spatter.x, spatter.y) === 'wall');
+      }
+    }
+    // Ash piles (spell kills) and corpses over the blood, fading faster.
+    for (const ash of state.ashes || []) {
+      if (isExplored(ash.x, ash.y)) {
+        drawAsh(ash, !lit(ash.x, ash.y));
+      }
+    }
+    for (const corpse of state.corpses || []) {
+      if (isExplored(corpse.x, corpse.y)) {
+        drawCorpse(corpse, !lit(corpse.x, corpse.y));
       }
     }
 
@@ -896,6 +1137,11 @@ const Renderer = (function () {
     // While aiming a card, show its reachable tiles in violet; otherwise the plain
     // moves are the light-green tint above and we only mark the special cases:
     // capture targets (ring) and knight-leap tiles (blue dot).
+    // A spell's full AoE (the pierced line, or every Barrage line) under the cursor —
+    // drawn first so the target hints and cursor box sit on top of it.
+    if (aoeTiles && aoeTiles.length) {
+      for (const t of aoeTiles) drawAoeTile(t.x, t.y);
+    }
     if (cardTargets) {
       for (const target of cardTargets) {
         drawCardHint(target.x, target.y, target.capture);
@@ -918,33 +1164,46 @@ const Renderer = (function () {
 
     // Visible enemies, with those currently mid-move (e.g. a knight in the middle
     // of a leap) drawn last so they ride visibly over the pieces they pass over.
-    const visibleEnemies = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY));
+    // Premonition (revealFloor): ALL enemies on the (fully-revealed) floor are shown —
+    // the out-of-sight ones faded, so the player has full battlefield awareness even
+    // though he can still only target within his normal sight.
+    const seesAll = Boolean(state.player.revealFloor);
+    const shown = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY) || (seesAll && isExplored(enemy.targetX, enemy.targetY)));
     const isMoving = (enemy) => Math.abs(enemy.x - enemy.targetX) + Math.abs(enemy.y - enemy.targetY) > 0.05;
-    const ordered = [...visibleEnemies.filter((enemy) => !isMoving(enemy)), ...visibleEnemies.filter(isMoving)];
+    const ordered = [...shown.filter((enemy) => !isMoving(enemy)), ...shown.filter(isMoving)];
     for (const enemy of ordered) {
       const role = enemy.role || 'normal';
-      // A summoning circle that is spent (recharging) can't conjure next turn —
-      // drawn faded so the player can read who is dangerous this turn.
-      const inactive = role === 'circle' && !enemy.charged;
+      const inSight = lit(enemy.targetX, enemy.targetY);
+      // A spent summoning circle, or an enemy seen only through Premonition, is faded.
+      const inactive = (role === 'circle' && !enemy.charged) || !inSight;
       drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, inactive });
       if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
       }
-      // A boss wears a HP bar so the multi-hit fight has a readable state.
-      if (enemy.boss && enemy.maxHp) {
+      // A boss (and now a destructible turret) wears a HP bar so its multi-hit state reads.
+      if ((enemy.boss || enemy.turret) && enemy.maxHp) {
         drawBossHpBar(enemy.x, enemy.y, enemy.hp, enemy.maxHp);
       }
-      // Main-AI-state icon (turrets / circles stay put, so show none).
-      if (role !== 'turret' && role !== 'circle') {
-        const mainState = enemy.asleep ? 'asleep' : enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : null;
+      // Main-AI-state icon (only for enemies in true sight; turrets / circles show none).
+      if (inSight && role !== 'turret' && role !== 'circle') {
+        const mainState = enemy.asleep ? 'asleep' : enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : 'unaware';
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }
     }
 
+    // The king's allies (Necromancer familiar / undead): green tokens with a heart, always
+    // shown (they are on his side, so never hidden by fog).
+    for (const ally of state.allies || []) {
+      drawPiece(ally.x, ally.y, ally.kind, false, { role: 'ally' });
+      drawStatusMark(ally.x, ally.y, '♥', '#f472b6');
+    }
+
     const classColor =
-      typeof highestClass === 'function' && typeof CLASSES !== 'undefined'
-        ? (CLASSES[highestClass(state.player)] || {}).color
-        : null;
+      typeof playerDisplayColor === 'function'
+        ? playerDisplayColor(state.player)
+        : typeof highestClass === 'function' && typeof CLASSES !== 'undefined'
+          ? (CLASSES[highestClass(state.player)] || {}).color
+          : null;
     // While Promoted the king shows as an amazon (he moves and fights as one).
     const playerGlyph = state.player.promotion > 0 ? 'amazon' : 'king';
     drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor });
@@ -953,6 +1212,7 @@ const Renderer = (function () {
     }
 
     drawProjectiles();
+    drawBursts();
 
     ctx.restore();
 

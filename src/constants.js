@@ -5,8 +5,10 @@ const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so cente
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
 const PLAYER_START = { x: 10, y: 10 };
 const STARTING_HP = 5; // Default; each class overrides it (see CLASSES[].hp).
-const MAX_TURNS_SCARY = 50; // Lingering this many turns on a floor maxes spawn rate / dread.
-const SPATTER_LIFE = 5; // Turns a blood spatter lingers before fading away.
+const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread (the player has plenty of time to clear a floor before the pressure peaks).
+const SPATTER_LIFE = 12; // Turns a blood spatter lingers before fading away.
+const CORPSE_LIFE = 6; // Turns a corpse (or ash pile) lingers — fades faster (more transparent) than blood.
+const BOSS_CORPSE_LIFE = 40; // A slain boss leaves remains that linger far longer than a common corpse.
 const PURSUIT_TTL = 6; // Turns an enemy hunts toward the king's last-seen tile before losing the trail.
 const MAX_ENEMIES = 45; // Hard safety cap so over-time spawning can't run away.
 
@@ -90,6 +92,23 @@ const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach 1; sliders reach 3
 const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'promotion', 'reload', 'swap'];
 const CARD_COOLDOWN = 3;
 const PROMOTION_TURNS = 3; // how many turns the Ranger's Promotion (amazon form) lasts
+const TURRET_HP = 3; // turrets are destructible: a flat, non-scaling HP pool (< a boss's)
+
+// Each floor guardian rolls ONE of these boss perks at creation, making every boss
+// fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
+const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough'];
+const BOSS_PERK_LABELS = {
+  summoner: 'Summoner — conjures its own kind every third turn',
+  blinker: 'Blinkborn — flickers away after each wound',
+  brutal: 'Brutal — its blows land twice as hard',
+  ranged: 'Volley — looses bolts down open lines instead of closing',
+  sorcerer: 'Sorcerer — hurls piercing bolts through everything in their path',
+  knockback: 'Bulwark — hammers the king backward with every blow',
+  shapeshifter: 'Shifting — takes a new, lesser form after each wound',
+  tough: 'Hardened — bears three extra wounds',
+};
+// Ordered weakest→strongest; a Shifting boss never becomes a form ranked above its origin.
+const PIECE_RANK = ['pawn', 'knight', 'bishop', 'rook', 'berolina', 'archbishop', 'chancellor', 'queen', 'amazon'];
 
 function isCardKind(kind) {
   return CARD_KINDS.includes(kind);
@@ -146,7 +165,7 @@ const CLASSES = {
       { id: 'w_pierce', chain: 'Cavalier', tier: 2, requires: 'w_fleet', name: 'Pierce', desc: 'A kill by moving also strikes the foe directly behind it', grants: { meleePierce: true } },
       { id: 'w_trample', chain: 'Cavalier', tier: 3, requires: 'w_pierce', name: 'Trample', desc: 'Landing a knight leap strikes every adjacent foe', grants: { leapShock: true } },
       // 🛡 Duellist — the flashy fencer: a signature dash, free-tempo kills, a dazzling flourish.
-      { id: 'w_enpassant', chain: 'Duellist', tier: 1, name: 'En Passant', desc: 'Gain an en-passant card: dash 2 tiles, strike the two you flank', grants: { gainCard: 'enpassant' } },
+      { id: 'w_enpassant', chain: 'Duellist', tier: 1, name: 'En Passant', desc: 'Gain an en-passant card: step 1 tile (capturing there) AND strike one foe you pass (adjacent to your start)', grants: { gainCard: 'enpassant' } },
       { id: 'w_flourish', chain: 'Duellist', tier: 2, requires: 'w_enpassant', name: 'Flourish', desc: 'After a kill, foes beside you are caught off guard', grants: { meleeFlourish: true } },
       { id: 'w_rush', chain: 'Duellist', tier: 3, requires: 'w_flourish', name: 'Charge', desc: 'A move that kills costs no turn', grants: { freeKillMove: true } },
     ],
@@ -166,9 +185,9 @@ const CLASSES = {
       { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Sixth Sense', desc: 'See and shoot over walls', grants: { seeThroughWalls: true } },
       { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Promotion', desc: 'Gain a promotion card: cast free to move as an amazon (queen + knight) for 3 turns (no weapon cards)', grants: { gainCard: 'promotion' } },
       // 🎯 Deadeye — reach, sight, and foreknowledge.
-      { id: 'r_reach', chain: 'Deadeye', tier: 1, name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 'r_eyes2', chain: 'Deadeye', tier: 2, requires: 'r_reach', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
-      { id: 'r_eagle', chain: 'Deadeye', tier: 3, requires: 'r_eyes2', name: 'Premonition', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
+      { id: 'r_eyes2', chain: 'Deadeye', tier: 1, name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
+      { id: 'r_reach', chain: 'Deadeye', tier: 2, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 'r_eagle', chain: 'Deadeye', tier: 3, requires: 'r_reach', name: 'Premonition', desc: 'Fresh floors reveal fully the moment you arrive', grants: { revealFloor: true } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
       { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
       { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles ignore you', grants: { camouflage: true } },
@@ -202,6 +221,10 @@ const CLASSES = {
       { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Amplify', desc: '+1 card reach', grants: { cardReach: 1 } },
       { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Archstaff', desc: 'Gain a queen card (cooldown 9)', grants: { gainCard: 'queen', gainCooldown: 9 } },
       { id: 's_barrage', chain: 'Conjuration', tier: 3, requires: 's_staff', name: 'Barrage', desc: 'Your spell cards fire along EVERY line the piece could (a rook fires 4, a queen 8)', grants: { multiShot: true } },
+      // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.
+      { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', desc: 'Summon a berolina familiar that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
+      { id: 's_undead', chain: 'Necromancy', tier: 2, requires: 's_familiar', name: 'Grave Bond', desc: 'A foe you slay rises as an undead ally (one at a time; undead do not follow you downstairs)', grants: { necromancy: true } },
+      { id: 's_general', chain: 'Necromancy', tier: 3, requires: 's_undead', name: 'General', desc: 'Your familiar becomes a General — a king that can also leap like a knight', grants: { generalForm: true } },
     ],
   },
 };
@@ -215,6 +238,18 @@ for (const cls of Object.values(CLASSES)) {
 function chainColorFor(className, chainName) {
   const cls = CLASSES[className];
   return (cls && cls.chains && cls.chains[chainName]) || (cls && cls.color) || '#888';
+}
+// The colour the king's own token wears: his base class colour, UPGRADED to a subclass
+// colour once he earns that chain's tier-3 capstone (the most recent capstone wins).
+function playerDisplayColor(player) {
+  const className = (player && player.className) || 'warrior';
+  const cls = CLASSES[className] || CLASSES.warrior;
+  let color = cls.color;
+  for (const id of (player && player.takenPerks) || []) {
+    const perk = cls.perks.find((k) => k.id === id);
+    if (perk && perk.tier === 3) color = chainColorFor(className, perk.chain);
+  }
+  return color;
 }
 const LEVEL_PERK_CHOICES = 2; // perks offered per descent
 
