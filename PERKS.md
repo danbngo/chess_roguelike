@@ -42,9 +42,9 @@ A bloodletter who feeds on the crowd he cuts down.
 A relentless charger who kills on the move and crushes on landing.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `w_fleet` | Fleet | +1 move range (forces a full 2-tile slide) | `moveRange:1` |
+| 1 | `w_fleet` | Double-Step | gain a double-step card: dash up to 2 tiles in any direction (capturing at the end), cooldown 3 | `gainCard:doublestep, gainCooldown:3` |
 | 2 | `w_pierce` | Pierce | a kill by moving also strikes the foe directly behind it | `meleePierce` |
-| 3 | `w_trample` | Trample | landing a knight leap strikes every adjacent foe | `leapShock` |
+| 3 | `w_trample` | Trample | landing a knight leap HURLS every adjacent foe back a tile (collision rules apply — see Knockback) | `leapShock` |
 
 ### 🛡 Duellist — the flashy fencer.
 A show-off who fights with tempo and a signature dash.
@@ -73,7 +73,7 @@ Reach, sight, and foreknowledge.
 |---|---|---|---|---|
 | 1 | `r_eyes2` | Hawk Eyes | +1 sight radius | `vision:2` |
 | 2 | `r_reach` | Power Draw | +1 card reach | `cardReach:1` |
-| 3 | `r_eagle` | Premonition | continually see the ENTIRE floor — terrain, stair, key, and every enemy (out of sight, faded) — though you can still only attack within normal vision | `revealFloor` |
+| 3 | `r_eagle` | Premonition | continually see the ENTIRE floor — terrain, stair, key, and every enemy (out of sight, faded); PLUS +1 sight radius and +1 card reach | `revealFloor`, `vision:2`, `cardReach:1` |
 
 ### 🌑 Gloom Stalker — "Seen only when it's already too late."
 The ghost: unchased, ignored by structures, unnoticed.
@@ -89,7 +89,7 @@ The quartermaster: reload, a bigger bow, and kickback.
 |---|---|---|---|---|
 | 1 | `r_reload` | Reload | gain a reload card: spend a turn to recharge all your OTHER cards (cooldown 3) | `gainCard:reload` |
 | 2 | `r_longbow` | Longbow | gain a rook card (cooldown 5) | `gainCard:rook`, `gainCooldown:5` |
-| 3 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (and can strike a foe there) | `recoil` |
+| 3 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile where the ground behind it is clear (structures don't budge) | `recoil` |
 
 _Ranger changes: starter knight → bishop (cd 3); DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet). Silent kept its "(or you attack)" wording — the "in front of them" directional nuance is not yet built._
 
@@ -104,7 +104,7 @@ The starting rook is slow (cd 5) and pierces every tile en route to (and includi
 |---|---|---|---|---|
 | 1 | `s_blink` | Blink | when a foe hits you, blink to a random safe tile in sight (if any) | `blink` |
 | 2 | `s_phase` | Phase | move onto wall tiles; while embedded your sight shrinks to 1 | `phase` |
-| 3 | `s_swap` | Displacement | gain a swap card: trade places with any unit in sight (cooldown 3) | `gainCard:swap`, `gainCooldown:3` |
+| 3 | `s_swap` | Displacement | gain a swap card: trade places with any unit in sight (cooldown 3); arriving knocks every other adjacent foe back a tile | `gainCard:swap`, `gainCooldown:3` |
 
 ### 💫 Hexes — fuchsia — the curse-weaver: demote, dazzle, lull.
 | tier | id | name | effect | `grant` |
@@ -113,12 +113,12 @@ The starting rook is slow (cd 5) and pierces every tile en route to (and includi
 | 2 | `s_cata` | Cataclysm | every visible foe is surprised when you cast a spell | `spellSurprise` |
 | 3 | `s_slumber` | Slumber | non-boss foes adjacent to you fall asleep (blue "z" icon); with Hex (T1), a hexed pawn drops straight to sleep instead of merely confused | `sleepAura` |
 
-### 🌀 Conjuration — violet — the artillery-mage: reach, a queen, a full barrage.
+### 🌀 Conjuration — violet — the artillery-mage: reach, a queen, a double cast.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `s_amp` | Amplify | +1 card reach | `cardReach:1` |
 | 2 | `s_staff` | Archstaff | gain a queen card (cooldown 9) | `gainCard:queen`, `gainCooldown:9` |
-| 3 | `s_barrage` | Barrage | your spell fires down EVERY line the piece commands (rook 4, queen 8) | `multiShot` |
+| 3 | `s_barrage` | Double Cast | after firing a spell, if a targetable foe remains you may aim + fire once more before your turn ends (cancelling the aim ends the turn) | `doubleCast` |
 
 ### 🔥 Necromancy — necro-green — the summoner: a familiar, then undead, then a General.  ✅ IMPLEMENTED
 | tier | id | name | effect | `grant` |
@@ -128,6 +128,20 @@ The starting rook is slow (cd 5) and pierces every tile en route to (and includi
 | 3 | `s_general` | General | your familiar is upgraded to a General — a king that can also leap like a knight | `generalForm` |
 
 _Allies are green tokens with a ♥ mark; enemies (and bosses) will strike them down but always prefer the king when they can reach both._
+
+## KNOCKBACK — one consistent collision rule  ✅ IMPLEMENTED
+
+Every knockback source shares the same behaviour (`resolveShoveInto` / `knockbackEnemy` /
+`knockbackKing` in `game.js`). When a shoved piece is driven into a tile that already holds
+a unit, it **slams** into it:
+- an **ordinary piece or ally** is crushed (destroyed), and the shover takes its tile;
+- an **HP-bearing piece** (boss, turret, or the king) withstands it — it takes 1 damage and
+  the shover **stops short**, merely bumping it;
+- a **wall / lava / board edge** (or a surviving occupant) halts the shove in place.
+
+A foe the **king** is driven into counts as the king's kill (boon / Necromancy). Sources:
+jumper captures & the **Bulwark** boss perk (shove the king), and **Recoil**, **Trample**,
+and **Displacement** (shove adjacent foes).
 
 ## BOSS PERKS — one rolled per floor guardian  ✅ IMPLEMENTED
 
@@ -144,3 +158,4 @@ Every floor boss rolls **one** perk at creation (see `BOSS_PERKS` in `constants.
 | `knockback` | Bulwark | its capturing blow shoves the king backward (like a jumper) every time |
 | `shapeshifter` | Shifting | after each wound it morphs into a **random lesser** form (never ranked above its original kind) |
 | `tough` | Hardened | +3 max HP |
+| `leech` | Leech | heals 1 HP each time it wounds the king (a landed blow — melee, shove, or bolt; never past max) |

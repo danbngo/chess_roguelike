@@ -44,6 +44,25 @@ const Renderer = (function () {
   const BURST_TIME = 0.3;
   const PROJECTILE_COLOR = { turret: '#e0894b', boss: '#ffe9a8', arrow: '#d9f99d', bolt: '#c4b5fd', fireball: '#fb923c' };
 
+  // Blood-speck layout on a piece token, as [x, y, size] fractions of the body radius.
+  // Ordered so a lightly-stained piece shows the first few and a drenched one shows them
+  // all (the count scales with a unit's blood; see drawPiece).
+  const BLOOD_SPECKS = [
+    [-0.34, -0.30, 0.15], [0.30, -0.16, 0.11], [0.12, 0.32, 0.13],
+    [-0.16, 0.10, 0.09], [0.40, 0.24, 0.10], [-0.44, 0.18, 0.08],
+    [0.02, -0.42, 0.10], [-0.06, -0.04, 0.12], [0.28, 0.00, 0.08],
+    [-0.28, -0.04, 0.09],
+  ];
+
+  // How bloodied to draw a piece (0..1). HP-bearing pieces (king, bosses, turrets) show
+  // WOUNDS scaled to their missing HP — so the gore worsens as they near death and recedes
+  // when they heal. Everything else wears the fading combat stain it accumulated.
+  function woundBlood(unit) {
+    if (!unit) return 0;
+    if (unit.maxHp) return Math.max(0, Math.min(1, 1 - unit.hp / unit.maxHp));
+    return unit.blood || 0;
+  }
+
   // Camera: a movable, zoomable window onto the board. `baseTile` is the on-screen
   // size of a tile at zoom 1 — set so the default view shows half the board (i.e.
   // tiles are 2x the size of the old whole-board view). The camera position is the
@@ -322,6 +341,26 @@ const Renderer = (function () {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(getPieceLabel(kind), cx, cy + tileSize * 0.04);
+
+    // Fresh blood clinging to the piece from combat — specks over the token, more of them
+    // (and brighter) the bloodier it is. Clipped to the body so it never spills off.
+    if (o.blood > 0.06) {
+      const b = Math.min(1, o.blood);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.9, 0.4 + b * 0.55);
+      ctx.fillStyle = '#a5121b'; // dark, fresh blood
+      const n = Math.max(1, Math.round(b * BLOOD_SPECKS.length));
+      for (let i = 0; i < n; i += 1) {
+        const [sx, sy, sr] = BLOOD_SPECKS[i];
+        ctx.beginPath();
+        ctx.arc(cx + sx * radius, cy + sy * radius, radius * sr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
     ctx.restore();
   }
 
@@ -730,17 +769,43 @@ const Renderer = (function () {
       ctx.restore();
       return;
     }
-    // On the ground: a central blob plus scattered droplets flung outward.
-    ctx.beginPath();
-    ctx.arc(px + tileSize * 0.5, py + tileSize * 0.5, tileSize * 0.2, 0, Math.PI * 2);
-    ctx.fill();
-    for (let i = 0; i < 11; i += 1) {
-      const rx = tileHash(spatter.x * 9 + i + seed, spatter.y * 13 + 5);
-      const ry = tileHash(spatter.x * 13 + 5, spatter.y * 9 + i + seed);
-      const r = tileSize * (0.02 + 0.07 * tileHash(spatter.x + i * 3 + seed, spatter.y - i));
+    // On the ground: an IRREGULAR central splat (a cluster of offset blobs, never a clean
+    // circle) with elongated droplets flung outward like real spatter — deterministic per
+    // spatter so it doesn't flicker, but varied by its seed.
+    const cx = px + tileSize * 0.5;
+    const cy = py + tileSize * 0.5;
+    const h = (a, b) => tileHash(spatter.x * a + seed + b * 3, spatter.y * b + seed + a * 2);
+    // Main mass: several overlapping lobes of varied size, slightly off-centre.
+    for (let i = 0; i < 5; i += 1) {
+      const ang = h(7, i + 1) * Math.PI * 2;
+      const dist = tileSize * 0.09 * h(3, i + 2);
+      const r = tileSize * (0.08 + 0.1 * h(5, i + 4));
       ctx.beginPath();
-      ctx.arc(px + tileSize * (0.08 + rx * 0.84), py + tileSize * (0.08 + ry * 0.84), r, 0, Math.PI * 2);
+      ctx.arc(cx + Math.cos(ang) * dist, cy + Math.sin(ang) * dist, r, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // Flung droplets: little teardrops stretched along their outward direction, some with a
+    // trailing fleck — this is what makes it read as a splatter rather than a ring of dots.
+    for (let i = 0; i < 9; i += 1) {
+      const ang = h(11, i + 1) * Math.PI * 2;
+      const dist = tileSize * (0.17 + 0.26 * h(13, i + 1));
+      const dropX = cx + Math.cos(ang) * dist;
+      const dropY = cy + Math.sin(ang) * dist;
+      if (dropX < px || dropX > px + tileSize || dropY < py || dropY > py + tileSize) continue; // keep it on-tile
+      const len = tileSize * (0.03 + 0.11 * h(2, i + 5));
+      const wid = tileSize * (0.012 + 0.03 * h(4, i + 3));
+      ctx.save();
+      ctx.translate(dropX, dropY);
+      ctx.rotate(ang); // stretch away from the centre
+      ctx.beginPath();
+      ctx.ellipse(0, 0, len, wid, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (h(6, i + 7) > 0.55) {
+        ctx.beginPath();
+        ctx.arc(len * 1.6, 0, wid * 0.7, 0, Math.PI * 2); // a trailing speck
+        ctx.fill();
+      }
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -751,24 +816,28 @@ const Renderer = (function () {
   // (Living enemies are now light-coloured tokens, so this dark shape reads clearly as a
   // dead one.) It carries the piece glyph so you can still tell what it was.
   function drawCorpse(corpse, faded) {
-    // Each corpse sits at a small random offset + slant within its tile, so repeated kills
-    // on one square stack into a natural-looking pile rather than a single overlaid stamp.
+    // A corpse is the SAME light token as the living enemy (light bone body, dark glyph),
+    // only muted/greyed a touch and flattened + slanted so it reads as that piece toppled
+    // over — NOT a dark shadow. Each sits at a small random offset + slant so repeated
+    // kills on one square stack into a natural-looking pile.
     const cx = corpse.x * tileSize + tileSize * (0.5 + (corpse.ox || 0));
     const cy = corpse.y * tileSize + tileSize * (0.58 + (corpse.oy || 0));
+    // Start nearly opaque and hold that most of the corpse's life, only thinning out near
+    // the very end (sqrt keeps it solid-looking far longer than a linear fade would).
     const lifeFrac = corpse.max ? Math.max(0, corpse.life / corpse.max) : 1;
     ctx.save();
-    ctx.globalAlpha = (faded ? 0.4 : 0.8) * Math.max(0.12, lifeFrac);
+    ctx.globalAlpha = (faded ? 0.6 : 1) * Math.max(0.18, Math.sqrt(lifeFrac));
     ctx.translate(cx, cy);
     ctx.rotate(-0.35 + (corpse.rot || 0)); // slanted, as if fallen
     ctx.scale(1, 0.5); // flattened
     ctx.beginPath();
     ctx.arc(0, 0, tileSize * 0.34, 0, Math.PI * 2);
-    ctx.fillStyle = '#0b0b10';
+    ctx.fillStyle = '#cbc6b7'; // muted bone (living enemy is #e7e2d1) — greyed, not black
     ctx.fill();
     ctx.lineWidth = Math.max(1, tileSize * 0.03);
-    ctx.strokeStyle = '#33333c';
+    ctx.strokeStyle = '#6b6b63';
     ctx.stroke();
-    ctx.fillStyle = '#5a5a66';
+    ctx.fillStyle = '#2c2c30'; // dark glyph, like the living piece
     ctx.font = `bold ${tileSize * 0.42}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1171,12 +1240,15 @@ const Renderer = (function () {
     const shown = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY) || (seesAll && isExplored(enemy.targetX, enemy.targetY)));
     const isMoving = (enemy) => Math.abs(enemy.x - enemy.targetX) + Math.abs(enemy.y - enemy.targetY) > 0.05;
     const ordered = [...shown.filter((enemy) => !isMoving(enemy)), ...shown.filter(isMoving)];
+    // A unit's gore lives on the live state object (render objects only track position), so
+    // look it up by id.
+    const liveById = new Map((state.enemies || []).map((e) => [e.id, e]));
     for (const enemy of ordered) {
       const role = enemy.role || 'normal';
       const inSight = lit(enemy.targetX, enemy.targetY);
       // A spent summoning circle, or an enemy seen only through Premonition, is faded.
       const inactive = (role === 'circle' && !enemy.charged) || !inSight;
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, inactive });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
       }
@@ -1194,7 +1266,7 @@ const Renderer = (function () {
     // The king's allies (Necromancer familiar / undead): green tokens with a heart, always
     // shown (they are on his side, so never hidden by fog).
     for (const ally of state.allies || []) {
-      drawPiece(ally.x, ally.y, ally.kind, false, { role: 'ally' });
+      drawPiece(ally.x, ally.y, ally.kind, false, { role: 'ally', blood: woundBlood(ally) });
       drawStatusMark(ally.x, ally.y, '♥', '#f472b6');
     }
 
@@ -1206,7 +1278,7 @@ const Renderer = (function () {
           : null;
     // While Promoted the king shows as an amazon (he moves and fights as one).
     const playerGlyph = state.player.promotion > 0 ? 'amazon' : 'king';
-    drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor });
+    drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor, blood: woundBlood(state.player) });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);
     }

@@ -133,6 +133,7 @@ function cardSlideDirs(kind) {
     case 'king':
     case 'queen':
     case 'amazon':
+    case 'doublestep': // the Cavalier's dash: any of the 8 directions
       return [...ORTHO, ...DIAG];
     case 'bishop':
     case 'archbishop':
@@ -336,6 +337,7 @@ function getPieceLabel(kind) {
     chancellor: 'M', // rook + knight (a.k.a. marshall)
     amazon: 'Z', // queen + knight (the final boss)
     enpassant: '♙', // the Duellist's en-passant dash card
+    doublestep: '»', // the Cavalier's two-tile dash card
     promotion: '♛', // the Ranger's Promotion (amazon form) card
     reload: '⟳', // the Ranger's Reload card
     swap: '⇄', // the Sorcerer's Displacement (swap) card

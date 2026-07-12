@@ -67,11 +67,11 @@ test('a fresh floor reveals fog around the king but not the far corners', () => 
   assert.ok(!state.explored['0,0']);
 });
 
-test('descending onto a floor leaves no enemy in the king’s line of sight', () => {
-  // Floors 2..8 are reached by descending — the king should arrive to a quiet view so
-  // tutorials stagger one at a time. (Floor 1 is a new game, not a descent, and keeps
-  // its deliberate intro foe; the boss sits far off on the stair, out of sight.)
-  for (let floor = 2; floor <= 8; floor += 1) {
+test('arriving on any floor leaves no enemy in the king’s line of sight', () => {
+  // EVERY floor — the first (a fresh new game) included — should open on a quiet view so
+  // the king explores into danger and tutorials never pop in a pile. (The boss sits far
+  // off on the stair, out of sight.)
+  for (let floor = 1; floor <= 8; floor += 1) {
     const s = generateFloor(floor, createPlayer('warrior'), 0);
     const visibleFoes = s.enemies.filter((e) => !e.boss && unitInSight(s, e.x, e.y));
     assert.equal(visibleFoes.length, 0, `floor ${floor} arrives with no foe in view`);
@@ -138,10 +138,31 @@ test('a boss has HP: it takes several hits, and the final floor boss wins the ru
   assert.equal(n.won, true);
 });
 
-test('every boss rolls one of the eight boss perks', () => {
+test('every boss rolls one of the nine boss perks', () => {
   const boss = createBoss(4, 9, 8);
-  assert.ok(['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough'].includes(boss.bossPerk));
+  assert.ok(['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech'].includes(boss.bossPerk));
   assert.equal(boss.originalKind, boss.kind);
+});
+
+test('a Leech boss mends a wound each time it wounds the king', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  const boss = createBoss(3, 9, 8); // rook
+  boss.bossPerk = 'leech';
+  boss.dormant = false;
+  boss.maxHp = 4; boss.hp = 2; // wounded, with room to heal
+  s.enemies = [boss];
+  s.player.x = 8; s.player.y = 8; s.player.hp = 5; s.player.maxHp = 5;
+  s.player.className = 'warrior'; // no innate mitigation, so the blow lands
+  const n = moveEnemy(s, boss.id); // adjacent rook slides onto the king and strikes
+  const b = n.enemies.find((e) => e.boss);
+  assert.equal(n.player.hp, 4, 'the king takes the blow');
+  assert.equal(b.hp, 3, 'and the guardian knits a wound shut');
+  // It never heals past its maximum.
+  s.player.x = 8; s.player.y = 8;
+  boss.hp = boss.maxHp;
+  const full = moveEnemy(s, boss.id);
+  assert.equal(full.enemies.find((e) => e.boss).hp, boss.maxHp, 'a full-health Leech boss does not overheal');
 });
 
 test('a Hardened boss bears three extra wounds', () => {
@@ -200,6 +221,31 @@ test('a Volley boss shoots down an open line instead of closing', () => {
   assert.equal(b.x, bx, 'it holds position and fires rather than advancing');
   assert.ok(n.lastShot && n.lastShot.toX === 8 && n.lastShot.toY === 8, 'a bolt flies at the king');
   assert.ok(n.player.hp < 5 || n.player.deflected, 'the bolt wounds the king');
+});
+
+test('a ranged boss only shoots along its own movement lines (a bishop won’t fire orthogonally)', () => {
+  // Bishop boss (floor 2), king on the SAME ROW — a bishop can't travel a rank, so it
+  // must NOT fire; it just advances instead.
+  const s1 = createInitialState('warrior');
+  s1.terrain = {}; s1.enemies = [];
+  const b1 = createBoss(2, 12, 8); // the floor-2 boss is a bishop
+  b1.bossPerk = 'ranged'; b1.dormant = false;
+  s1.enemies = [b1];
+  s1.player.x = 8; s1.player.y = 8; s1.player.hp = 5; s1.player.maxHp = 5;
+  s1.player.className = 'warrior';
+  const n1 = moveEnemy(s1, b1.id);
+  assert.equal(n1.player.hp, 5, 'an orthogonal king takes no bolt from a bishop');
+  assert.ok(!n1.lastShot, 'and no bolt is fired');
+  // Same bishop boss, king on a DIAGONAL — now it fires.
+  const s2 = createInitialState('warrior');
+  s2.terrain = {}; s2.enemies = [];
+  const b2 = createBoss(2, 12, 8);
+  b2.bossPerk = 'ranged'; b2.dormant = false;
+  s2.enemies = [b2];
+  s2.player.x = 8; s2.player.y = 4; // (8,4): four tiles up-left of the boss — a diagonal
+  s2.player.hp = 5; s2.player.maxHp = 5; s2.player.className = 'warrior';
+  const n2 = moveEnemy(s2, b2.id);
+  assert.ok(n2.lastShot, 'a diagonal king draws a bolt');
 });
 
 test('a summoning circle conjures a foe when it sees you, and dies when stepped on', () => {
@@ -290,6 +336,73 @@ test('a sorcerer bolt always travels its FULL range, even at a nearer target', (
   assert.equal(n.enemies.length, 0, '...yet both foes on the line fall');
 });
 
+test('a foe felled by a spell leaves an ash pile, not a corpse', () => {
+  const s = createInitialState('sorcerer');
+  s.terrain = {};
+  s.player.x = 8;
+  s.player.y = 8;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true })];
+  s.corpses = [];
+  s.ashes = [];
+  const n = useCard(s, 0, 9, 8);
+  assert.equal(n.enemies.length, 0, 'the bolt slays the foe');
+  assert.ok((n.ashes || []).length >= 1, 'it leaves an ash pile');
+  assert.equal((n.corpses || []).length, 0, 'and no corpse');
+});
+
+test('a hit flings satellite blood spatters onto adjacent tiles', () => {
+  const s = createInitialState('warrior'); // melee knight card
+  s.terrain = {};
+  s.player.x = 10;
+  s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 12, awake: true })]; // a knight's move off
+  s.spatters = [];
+  const n = useCard(s, 0, 11, 12);
+  assert.equal(n.enemies.length, 0, 'the foe is captured');
+  assert.ok(n.spatters.length >= 2, 'the kill leaves the main spatter plus at least one satellite');
+});
+
+test('an ordinary attacker is stained by striking the king (HP-less pieces wear a fading stain)', () => {
+  const b = createInitialState('warrior');
+  b.terrain = {};
+  b.player.x = 10;
+  b.player.y = 10;
+  b.player.hp = 5;
+  const foe = makeEnemy({ kind: 'king', x: 11, y: 10, awake: true }); // adjacent, no maxHp
+  b.enemies = [foe];
+  const hit = moveEnemy(b, foe.id); // the enemy king steps in and strikes
+  assert.equal(hit.player.hp, 4, 'the blow lands');
+  assert.ok((hit.enemies[0].blood || 0) > 0, 'and the striker is spattered');
+  // The king carries NO stain field — his gore is drawn from missing HP instead.
+  assert.ok(!hit.player.blood, 'the king wears wounds (HP-based), not a stain');
+});
+
+test('a slain boss leaves remains that linger far longer than a common corpse', () => {
+  // A common corpse's lifespan, from an ordinary kill...
+  const a = createInitialState('warrior');
+  a.terrain = {};
+  a.player.x = 10;
+  a.player.y = 10;
+  a.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 12, awake: true })];
+  a.corpses = [];
+  const normalMax = useCard(a, 0, 11, 12).corpses[0].max;
+  // ...versus a boss's, which should outlast it by a wide margin.
+  const b = createInitialState('warrior');
+  b.terrain = {};
+  const boss = createBoss(3, 9, 8);
+  boss.hp = 1;
+  boss.maxHp = 1;
+  boss.dormant = false;
+  b.enemies = [boss];
+  b.corpses = [];
+  b.player.x = 8;
+  b.player.y = 8;
+  const bn = movePlayerTo(b, 9, 8);
+  assert.equal(bn.enemies.filter((e) => e.boss).length, 0, 'the boss falls');
+  assert.ok(bn.corpses.length >= 1, 'and leaves remains');
+  assert.ok(bn.corpses[bn.corpses.length - 1].max > normalMax, 'the boss corpse outlasts a common one');
+});
+
 test('a melee card can reposition onto empty ground, not just capture', () => {
   const s = createInitialState('warrior'); // starts with a melee knight (L-leap)
   s.terrain = {};
@@ -346,17 +459,47 @@ test('Cleave and Pierce fire on a plain move-kill, not just a card', () => {
   assert.equal(r.enemies.length, 0, 'pierce strikes the foe directly behind the kill');
 });
 
-test('Trample: landing a knight leap strikes every adjacent foe', () => {
+test('Trample: landing a knight leap HURLS adjacent foes back, colliding with what is behind', () => {
   const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
   const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
   s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 11, y: 11 }),
-    makeEnemy({ kind: 'pawn', x: 13, y: 11 }),
-    makeEnemy({ kind: 'pawn', x: 12, y: 12 }),
+    makeEnemy({ kind: 'pawn', x: 11, y: 11 }), // adjacent (W): shoved toward (10,11)...
+    makeEnemy({ kind: 'pawn', x: 10, y: 11 }), // ...where THIS foe stands — it's crushed
+    makeEnemy({ kind: 'pawn', x: 13, y: 11 }), // adjacent (E): shoved to open (14,11)
   ];
-  const r = useCard(s, idx, 12, 11); // leap onto empty ground
+  const r = useCard(s, idx, 12, 11); // leap onto empty ground at (12,11)
   assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 11 });
-  assert.equal(r.enemies.length, 0, 'all foes around the landing tile fall');
+  assert.ok(r.enemies.some((e) => e.x === 10 && e.y === 11), 'the shoved foe takes the crushed one’s tile');
+  assert.ok(r.enemies.some((e) => e.x === 14 && e.y === 11), 'an open-backed foe is simply pushed back');
+  assert.equal(r.enemies.length, 2, 'the foe slammed into is destroyed; both shovers survive');
+});
+
+test('a foe shoved into a boss merely bumps it — the foe holds, the boss is wounded', () => {
+  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  const boss = createBoss(3, 10, 11); // rook boss, two tiles W of the landing
+  boss.bossPerk = 'brutal'; // a perk with no on-hit reaction, for a deterministic test
+  boss.dormant = false;
+  boss.maxHp = 4;
+  boss.hp = 4;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 11 }), boss];
+  const r = useCard(s, idx, 12, 11); // leap to (12,11); the pawn is shoved W into the boss at (10,11)
+  const b = r.enemies.find((e) => e.boss);
+  assert.equal(b.hp, 3, 'the boss takes a wound from the impact');
+  assert.ok(r.enemies.some((e) => e.x === 11 && e.y === 11 && !e.boss), 'the shoved foe stops short against the boss');
+});
+
+test('Displacement knocks foes adjacent to the arrival tile back a tile', () => {
+  const s = sorcererWith('s_blink', 's_phase', 's_swap');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'swap');
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 13, y: 13 }), // the swap target
+    makeEnemy({ kind: 'pawn', x: 13, y: 12 }), // adjacent to the arrival tile → shoved to (13,11)
+  ];
+  const r = useCard(s, idx, 13, 13);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 13, y: 13 }, 'the king arrives');
+  assert.ok(r.enemies.some((e) => e.x === 13 && e.y === 11), 'the adjacent foe is shoved back');
+  assert.ok(r.enemies.some((e) => e.x === 10 && e.y === 10), 'the swapped unit is spared (it took the king’s old tile)');
 });
 
 // A tiny Ranger fixture: a bare floor, king centered, given perks learned.
@@ -440,6 +583,32 @@ test('Reload readies every other card; Longbow grants a slow rook; Recoil kicks 
   assert.equal(shot.enemies.length, 0);
 });
 
+test('Premonition reveals the floor AND grants +1 sight radius and +1 card reach', () => {
+  const base = createInitialState('ranger').player;
+  const s = rangerWith('r_eyes2', 'r_reach', 'r_eagle'); // full Deadeye chain
+  assert.equal(s.player.revealFloor, true, 'the floor is revealed');
+  // Hawk Eyes (+2) then Premonition (+2) over the base sight radius.
+  assert.equal(s.player.vision, base.vision + 4, 'two +1-radius sight bumps');
+  // Power Draw (+1) then Premonition (+1).
+  assert.equal(s.player.cardReach, 2, 'two +1 card-reach bumps');
+});
+
+test('Recoil also shoves adjacent foes back a tile (blocked ones hold)', () => {
+  const s = rangerWith('r_reload', 'r_longbow', 'r_recoil');
+  s.terrain = { '7,9': 'wall' }; // a wall directly behind one adjacent foe
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 13, y: 13, awake: true }), // the shot target (SE, on the bishop line)
+    makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true }), // adjacent to the king's landing, open behind
+    makeEnemy({ kind: 'pawn', x: 8, y: 9, awake: true }), // adjacent, but a wall sits behind it
+  ];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'bishop');
+  const r = useCard(s, idx, 13, 13);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 9, y: 9 }, 'the archer recoils NW');
+  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 13), 'the target falls');
+  assert.ok(r.enemies.some((e) => e.x === 9 && e.y === 7), 'the open-backed foe is shoved back a tile');
+  assert.ok(r.enemies.some((e) => e.x === 8 && e.y === 9), 'the wall-backed foe holds its ground');
+});
+
 test('Camouflage: turrets hold fire and circles conjure nothing', () => {
   const s = rangerWith('r_ghost', 'r_camo');
   const turret = makeEnemy({ kind: 'rook', x: 10, y: 13, turret: true });
@@ -479,19 +648,37 @@ test('Sorcerer cards carry cooldowns and subclass colours', () => {
   assert.equal(queen.color, '#8b5cf6', 'a granted card wears its subclass colour');
 });
 
-test('Barrage fires a spell down every line the piece commands', () => {
-  const s = sorcererWith('s_amp', 's_staff', 's_barrage');
+test('Double Cast: a spell with a foe still in range fires once more before the turn ends', () => {
+  const s = sorcererWith('s_amp', 's_staff', 's_barrage'); // s_barrage now grants doubleCast
+  assert.equal(s.player.doubleCast, true, 'the tier-3 grants Double Cast');
+  // Two foes on different lines: the first shot clears one, the second is still available.
   s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 12, y: 10 }),
-    makeEnemy({ kind: 'pawn', x: 8, y: 10 }),
-    makeEnemy({ kind: 'pawn', x: 10, y: 12 }),
-    makeEnemy({ kind: 'pawn', x: 10, y: 8 }),
-    makeEnemy({ kind: 'pawn', x: 12, y: 12 }), // diagonal — a rook can't reach
+    makeEnemy({ kind: 'pawn', x: 12, y: 10 }), // east (rook line)
+    makeEnemy({ kind: 'pawn', x: 10, y: 12 }), // south (rook line)
   ];
   const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
+  const first = useCard(s, idx, 12, 10); // shoot east
+  assert.ok(!first.enemies.some((e) => e.x === 12 && e.y === 10), 'the east foe falls');
+  assert.equal(first.lastAction, 'card-followup', 'the caster stays up for a second shot');
+  assert.equal(first.enemyTurn, false, 'the turn has NOT passed yet');
+  assert.equal(first.player.cards[idx].remaining, 0, 'and the card is not yet on cooldown');
+  assert.equal(first.player.cards[idx].doubleReady, true, 'a follow-up is armed');
+  // The follow-up shot ends the turn and puts the card on cooldown.
+  const second = useCard(first, idx, 10, 12); // shoot south
+  assert.ok(!second.enemies.some((e) => e.x === 10 && e.y === 12), 'the south foe falls too');
+  assert.equal(second.enemyTurn, true, 'now the turn passes');
+  assert.ok(second.player.cards[idx].remaining > 0, 'and the card is on cooldown');
+  assert.ok(!second.player.cards[idx].doubleReady, 'the follow-up is spent');
+});
+
+test('Double Cast: the FIRST shot alone ends the turn when no target remains', () => {
+  const s = sorcererWith('s_amp', 's_staff', 's_barrage');
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10 })]; // the only foe
+  const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
   const r = useCard(s, idx, 12, 10);
-  assert.ok(!r.enemies.some((e) => e.y === 10 || e.x === 10), 'all four orthogonal lines are cleared');
-  assert.ok(r.enemies.some((e) => e.x === 12 && e.y === 12), 'the diagonal foe survives a rook barrage');
+  assert.equal(r.enemies.length, 0, 'the lone foe falls');
+  assert.equal(r.enemyTurn, true, 'no target remains, so the turn ends after one shot');
+  assert.ok(r.player.cards[idx].remaining > 0, 'and the card goes on cooldown');
 });
 
 test('Phase lets the king enter walls and blinds him while embedded', () => {
@@ -721,7 +908,7 @@ test('a melee enemy cannot move AND strike in the same turn', () => {
   assert.equal(chebyshev(n.enemies[0].x, n.enemies[0].y, 8, 8), 1, 'it merely closed in');
 });
 
-test('Fleet (+moveRange) forces the FULL slide — 2 tiles, stopping only on collision', () => {
+test('a raised moveRange forces the FULL slide — 2 tiles, stopping only on collision', () => {
   const s = createInitialState('warrior');
   s.terrain = {};
   s.enemies = [];
@@ -742,6 +929,25 @@ test('Fleet (+moveRange) forces the FULL slide — 2 tiles, stopping only on col
   blocked.player.moveRange = 2;
   const stop = movePlayer(blocked, 1, 0);
   assert.deepEqual({ x: stop.player.x, y: stop.player.y }, { x: 11, y: 10 }, 'a wall halts the slide one short');
+});
+
+test('Double-Step: the Cavalier gains an on-demand 2-tile dash; ordinary movement stays 1', () => {
+  const s = warriorWith('w_fleet'); // Cavalier tier 1 now grants the double-step card
+  s.player.x = 10;
+  s.player.y = 10;
+  const card = s.player.cards.find((c) => c.kind === 'doublestep');
+  assert.ok(card, 'the perk grants a double-step card');
+  assert.equal(card.cooldown, 3, 'on a 3-turn cooldown');
+  assert.equal(s.player.moveRange, 1, 'and it does NOT raise move range (normal steps stay 1)');
+  const idx = s.player.cards.indexOf(card);
+  const targets = getCardMoves(s, card);
+  assert.ok(targets.some((t) => t.x === 11 && t.y === 10), 'a 1-tile dash is offered');
+  assert.ok(targets.some((t) => t.x === 12 && t.y === 10), 'and the full 2-tile dash');
+  const n = useCard(s, idx, 12, 10);
+  assert.deepEqual({ x: n.player.x, y: n.player.y }, { x: 12, y: 10 }, 'the king dashes two tiles');
+  // Ordinary movement is unaffected — a single step, both squares reachable one at a time.
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10), 'normal move is a single step');
+  assert.ok(!getPlayerMoves(s).some((m) => m.x === 12 && m.y === 10), 'not a forced 2-tile slide');
 });
 
 test('slaying a boss grants the boon in place — the king does not auto-descend', () => {

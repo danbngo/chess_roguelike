@@ -83,6 +83,9 @@
   let cardTargeting = null;
   let cardTargets = [];
   let cardCursor = null;
+  // Double Cast: true while the caster is aiming his bonus second shot. Firing it ends the
+  // turn normally; cancelling the aim ends the turn too (he declines the extra bolt).
+  let awaitingFollowup = false;
 
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
@@ -250,12 +253,30 @@
     if (!isIdle()) {
       return;
     }
+    // During a Double-Cast follow-up only the SAME card may re-fire; its hotkey otherwise
+    // declines the bonus shot and ends the turn, and other cards are locked out.
+    if (awaitingFollowup) {
+      if (index === cardTargeting) {
+        cancelCardTargeting();
+        endFollowupTurn();
+      }
+      return;
+    }
     if (cardTargeting === index) {
       cancelCardTargeting();
       return;
     }
     const card = gameState.player.cards[index];
     if (!card || card.remaining > 0) {
+      return;
+    }
+    // Can't even AIM a weapon card while wading (Amphibious/Druid lifts this); ability
+    // cards (promotion / reload / swap) are exempt, matching useCard's own guard.
+    const isAbilityCard = card.kind === 'promotion' || card.kind === 'reload' || card.kind === 'swap';
+    const p = gameState.player;
+    if (!isAbilityCard && !p.terrainImmune && isSlowTerrain(terrainAt(gameState, p.x, p.y))) {
+      gameState.message = `You can't ready a weapon while wading through ${terrainAt(gameState, p.x, p.y)}.`;
+      updateHud();
       return;
     }
     cardTargeting = index;
@@ -292,6 +313,7 @@
       : card.kind === 'reload' ? 'Self-cast: confirm on your own tile.'
       : card.kind === 'swap' ? 'Target any unit in sight to trade places with it.'
       : card.kind === 'enpassant' ? 'Step 1 tile; also strikes one foe you pass (marked ✕).'
+      : card.kind === 'doublestep' ? 'Dash up to 2 tiles in any direction (capturing at the end).'
       : cat === 'melee' ? 'Strikes by moving onto the foe.'
       : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
       : 'A bolt that pierces everything on its path; you hold your tile.';
@@ -310,32 +332,14 @@
     cardCursor = null;
   }
 
-  // The tiles a spell cast at `cursor` would scorch (its whole AoE), so the aim
-  // overlay can highlight them — the pierced line, or every line under Barrage.
-  // Ranged/melee cards hit only their target, so they return null (no line preview).
+  // The tiles a spell cast at `cursor` would scorch (its whole pierced line), so the aim
+  // overlay can highlight them. Ranged/melee cards hit only their target, so return null.
   function spellAoeTiles(state, cardIndex, cursor) {
     const card = state.player.cards[cardIndex];
     if (!card || !cursor) return null;
     if (classCategory(state.player.className) !== 'spell') return null;
     const p = state.player;
     const seeWalls = Boolean(p.seeThroughWalls);
-    if (p.multiShot) {
-      // Barrage: every line the piece commands, out to its reach (stopped by walls).
-      const reach = cardReach(card.kind, p.cardReach || 0);
-      const tiles = [];
-      for (const [dx, dy] of cardSlideDirs(card.kind)) {
-        let cx = p.x;
-        let cy = p.y;
-        for (let i = 0; i < reach; i += 1) {
-          cx += dx;
-          cy += dy;
-          if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
-          if (terrainAt(state, cx, cy) === 'wall' && !seeWalls) break;
-          tiles.push({ x: cx, y: cy });
-        }
-      }
-      return tiles;
-    }
     // A single piercing bolt: it ALWAYS travels its full range in the aimed direction,
     // so preview every tile out to `reach` (stopped by a wall or the board edge).
     const reach = cardReach(card.kind, p.cardReach || 0);
@@ -445,6 +449,7 @@
     amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
     enpassant: 'Step one tile in any direction (capturing a foe there), and strike one foe you pass — a piece that was beside your starting tile.',
+    doublestep: 'Dash up to two tiles in any one direction, repositioning onto open ground or capturing a foe at the far tile. A nimble on-demand maneuver.',
     promotion: 'Turns the king into an amazon (queen + knight) for a few turns: move freely, use no weapons. Free to cast.',
     reload: 'Spend your turn to recharge every other card at once.',
     swap: 'Trade places with any unit in sight — enemy or turret. No damage.',
@@ -564,9 +569,18 @@
     if (!target) {
       return;
     }
+    awaitingFollowup = false; // firing (incl. the bonus shot) resolves normally
     cancelCardTargeting();
     GameAudio.play('cast');
     commitMove(useCard(gameState, index, target.x, target.y));
+  }
+
+  // Finish a Double Cast turn the caster is NOT completing with a second shot (he
+  // cancelled the aim, or no target remained): put the fired card on cooldown and run
+  // the enemy phase.
+  function endFollowupTurn() {
+    awaitingFollowup = false;
+    resolveCommitted(finishFollowup(gameState));
   }
 
   // Restart the HP counter's damage animation (re-add the class after a reflow).
@@ -639,12 +653,15 @@
     if (visible.some((enemy) => enemy.surprised)) {
       queueTip('surprise');
     }
-    if (visible.some((enemy) => enemy.kind === 'knight')) {
-      queueTip('knight');
-    }
-    if (visible.some((enemy) => enemy.kind === 'king')) {
-      queueTip('enemyKing');
-    }
+    // Tips for individual (non-boss) piece types are disabled for now — ordinary pieces
+    // read clearly enough, and a little mystery around them is fine. (Left commented so
+    // they're easy to restore.)
+    // if (visible.some((enemy) => enemy.kind === 'knight')) {
+    //   queueTip('knight');
+    // }
+    // if (visible.some((enemy) => enemy.kind === 'king')) {
+    //   queueTip('enemyKing');
+    // }
     if (visible.some((enemy) => enemy.turret)) {
       queueTip('turret');
     }
@@ -654,9 +671,9 @@
     if (visible.some((enemy) => enemy.boss)) {
       queueTip('boss');
     }
-    if (visible.some((enemy) => isJumperKind(enemy.kind) && enemy.awake)) {
-      queueTip('jumper');
-    }
+    // if (visible.some((enemy) => isJumperKind(enemy.kind) && enemy.awake)) {
+    //   queueTip('jumper');
+    // }
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
     }
@@ -821,6 +838,7 @@
     animTimer = 0;
     pendingAction = null;
     pendingTips = [];
+    awaitingFollowup = false;
     cancelCardTargeting();
     setExamineEmpty('Click a tile to inspect it.');
     screen = 'playing';
@@ -1209,6 +1227,20 @@
     // A strike either felled a piece (kill) or merely chipped it (attack).
     if (felled > 0) GameAudio.play('kill');
     else if (struck) GameAudio.play('attack');
+    // Double Cast: the first bolt has landed — stay up and let the caster aim a second
+    // shot at whatever still stands. (If nothing targetable remains, end the turn.)
+    if (nextState.lastAction === 'card-followup') {
+      const idx = gameState.player.cards.findIndex((c) => c.doubleReady);
+      if (idx >= 0 && getCardMoves(gameState, gameState.player.cards[idx]).length > 0) {
+        toggleCardTargeting(idx); // re-open the aim overlay for the bonus shot
+        if (cardTargeting === idx) {
+          awaitingFollowup = true;
+          return;
+        }
+      }
+      endFollowupTurn(); // couldn't re-open / no target left — just end the turn
+      return;
+    }
     // Quick weapons / Bloodrush kills cost no turn — no enemy phase.
     if (nextState.enemyTurn === false || nextState.lastAction === 'card-free' || nextState.lastAction === 'move-free') {
       maybeOpenLevelUp(); // a free-action boss kill still earns its boon
@@ -1288,10 +1320,14 @@
       }
       const target = cardTargets.find((move) => move.x === tileX && move.y === tileY);
       const index = cardTargeting;
+      const wasFollowup = awaitingFollowup;
+      awaitingFollowup = false;
       cancelCardTargeting();
       if (target) {
         GameAudio.play('cast');
         commitMove(useCard(gameState, index, tileX, tileY));
+      } else if (wasFollowup) {
+        endFollowupTurn(); // clicking away declines the bonus shot and ends the turn
       } else {
         examineTile(tileX, tileY);
       }
@@ -1400,6 +1436,12 @@
     if (cardTargeting !== null) {
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (awaitingFollowup) {
+          // Declining the bonus Double-Cast shot simply ends the turn.
+          cancelCardTargeting();
+          endFollowupTurn();
+          return;
+        }
         cancelCardTargeting();
         gameState.message = 'Card cancelled.';
         updateHud();
