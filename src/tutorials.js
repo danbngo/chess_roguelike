@@ -8,7 +8,8 @@ const TUTORIALS = {
       'Move the king with WASD, the diagonals Q E Z X, the numpad, or by clicking ' +
       'a highlighted tile. Pan with the arrow keys or the screen edges, and zoom ' +
       'with the mouse wheel. You see only a short distance — unexplored ground is ' +
-      'shrouded in fog of war until you reach it. Explore to find the stair down.',
+      'shrouded in fog of war until you reach it. You begin beside the stair down — explore ' +
+      'to find the key that unlocks it.',
   },
   surprise: {
     title: 'Caught by surprise',
@@ -65,31 +66,31 @@ const TUTORIALS = {
   boss: {
     title: 'The floor guardian',
     text:
-      'A crowned boss sits ON the stair down — a high-mobility piece with a HP bar. ' +
-      'It holds still until you strike it or step adjacent, then hunts. SLAY it (each ' +
-      'hit chips the bar) to descend AND earn a level-up boon. You can also bait it ' +
-      'off the stair and slip past — but then you descend with NO boon and stay weak.',
+      'A crowned boss GUARDS this floor’s key — a high-mobility piece with a HP bar, sitting ' +
+      'on the key in a walled chamber. It holds still until it SEES you (or you strike it), ' +
+      'then roars and hunts. SLAY it (each hit chips the bar) to claim the key AND earn a ' +
+      'level-up boon — or bait it away and grab the key without the kill, forgoing the boon.',
   },
   key: {
     title: 'The floor key',
     text:
-      'That glinting key unlocks the stair down. WALK ONTO it to pick it up — until you ' +
-      'do, the stair stays sealed. It is always tucked well away from the stair, so you ' +
-      'will have to explore the floor to reach it.',
+      'That glinting key unlocks the stair down. WALK ONTO it to pick it up — until you do, ' +
+      'the stair stays sealed. It is GUARDED by the floor’s boss in a walled chamber, so you ' +
+      'must get past the guardian to claim it.',
   },
   stairLocked: {
     title: 'A sealed stair',
     text:
-      'The stair down is SEALED until you collect this floor’s key — find the key first, ' +
-      'then step onto the stair. (A guardian also holds the stair; slay it to earn your ' +
-      'level-up boon on the way down.)',
+      'You start beside the stair down, but it is SEALED until you collect this floor’s key. ' +
+      'The key is guarded by the boss elsewhere on the floor — claim it, then return here and ' +
+      'step onto the stair to descend. (Slaying the guardian also earns a level-up boon.)',
   },
   orb: {
     title: 'The Orb of Victory',
     text:
-      'This is the LAST floor — no stair down, only a portal home. That radiant Orb opens ' +
-      'it. But the moment you seize the Orb, the realm’s guardians begin converging on you: ' +
-      'grab it, then fight your way to the portal to escape and WIN.',
+      'This is the LAST floor — no stair down, only a portal home. That radiant Orb opens it, ' +
+      'but it is GUARDED by the final guardian. Seize the Orb and the realm’s guardians ' +
+      'converge on you: claim it, then fight your way to the portal to escape and WIN.',
   },
   portalLocked: {
     title: 'The victory portal',
@@ -101,9 +102,9 @@ const TUTORIALS = {
   exit: {
     title: 'Descending',
     text:
-      'Step onto the stair to descend — you fully heal and your cards recharge. But a ' +
-      'level-up boon comes ONLY from slaying the guardian first; slip past it and you ' +
-      'descend empty-handed.',
+      'Step onto the stair to descend — you fully heal and your cards recharge. A level-up ' +
+      'boon comes ONLY from slaying the floor guardian (the one guarding the key); grab the ' +
+      'key without the kill and you descend empty-handed.',
   },
   levelup: {
     title: 'Level up',

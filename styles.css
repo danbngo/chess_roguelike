@@ -422,10 +422,14 @@ body.in-game canvas {
   line-height: 1.3;
   color: #cbd5e1;
   overflow-y: auto;
-  max-height: 40vh;
 }
-.log.collapsed {
-  display: none;
+/* Two modes: SHORT shows the last few lines; LONG opens up to fill the pane. The list always
+   scrolls to the newest line, so each mode simply reveals more or fewer of the recent messages. */
+.log.short {
+  max-height: 5.4rem; /* ~4 recent lines */
+}
+.log.long {
+  max-height: 62vh; /* fills the tall left pane */
 }
 
 .log-line {

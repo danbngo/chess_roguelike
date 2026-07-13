@@ -94,6 +94,11 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
         }
       }
       break;
+    case 'ferz':
+      // A ferz steps (and captures) exactly one square DIAGONALLY — a weak, short-range piece
+      // (what the Hexer's curse warps foes into). It is NOT demonic.
+      slide(DIAG, 1);
+      break;
     case 'pawn':
     default:
       // Cardinal steps onto empty ground (never a straight capture)...
@@ -156,6 +161,20 @@ function cardSlideDirs(kind) {
   }
 }
 
+// The three tiles a knight's-move (dx,dy) traces as an L from (kx,ky): two steps along the
+// MAJOR axis (the one with offset 2), then one along the minor — ending on the destination.
+// Shared by the Conjuration horse spell (aim + AOE) so its move-gen and resolution agree.
+function knightLPath(kx, ky, dx, dy) {
+  if (Math.abs(dx) === 2) {
+    const sx = Math.sign(dx);
+    const sy = Math.sign(dy);
+    return [{ x: kx + sx, y: ky }, { x: kx + 2 * sx, y: ky }, { x: kx + 2 * sx, y: ky + sy }];
+  }
+  const sy = Math.sign(dy);
+  const sx = Math.sign(dx);
+  return [{ x: kx, y: ky + sy }, { x: kx, y: ky + 2 * sy }, { x: kx + sx, y: ky + 2 * sy }];
+}
+
 // The enemy tiles a weapon card may strike from the king's square. Behaviour turns
 // on the card's category:
 //   melee  - the king physically moves onto the target (real movement rules).
@@ -195,6 +214,23 @@ function getCardMoves(state, card) {
     return out;
   }
 
+  // The Conjuration horse: aim at a knight's-move tile in SIGHT; casting tramples the L-path to
+  // it, scorching every foe along the way (it never moves the king). A knight tile is offered
+  // when any tile on its L holds a targetable foe. Reuses the spell aiming overlay.
+  if (kind === 'horse') {
+    const out = [];
+    for (const [dx, dy] of KNIGHT_STEPS) {
+      const ex = p.x + dx;
+      const ey = p.y + dy;
+      if (!inBounds(ex, ey) || !inLineOfSight(state, ex, ey)) continue;
+      const lpath = knightLPath(p.x, p.y, dx, dy);
+      if (lpath.some((t) => inBounds(t.x, t.y) && targetable(t.x, t.y))) {
+        out.push({ x: ex, y: ey, capture: true, viaJump: false });
+      }
+    }
+    return out;
+  }
+
   if (kind === 'enpassant') {
     // En Passant: step ONE square in any direction (capturing a foe on that tile, or
     // repositioning onto empty ground) AND strike one foe "in passing" — a piece that
@@ -223,6 +259,9 @@ function getCardMoves(state, card) {
     const opts = { terrainImmune: Boolean(p.terrainImmune), flying: Boolean(p.terrainImmune) };
     for (const [dx, dy] of dirs) {
       for (const stop of slideStops(state, p.x, p.y, dx, dy, reach, enemyAt, targetable, opts)) {
+        // Double Step is a full DASH — it MUST cover both tiles, so only a 2-tile destination
+        // counts (a foe/wall one tile away simply blocks that direction; it can't stop short).
+        if (kind === 'doublestep' && chebyshev(stop.x, stop.y, p.x, p.y) !== 2) continue;
         add(stop.x, stop.y, false, stop.capture);
       }
       // Double Step charges a boulder: an adjacent boulder is a valid push target — the
@@ -250,30 +289,53 @@ function getCardMoves(state, card) {
       }
     }
   } else {
-    // ranged / spell: projectile rays over terrain, stopped only by walls. Only foes are
-    // valid targets — and NOT summoning circles (a missile passes over a circle without
-    // dispelling it; you must step or be shoved onto it). A circle still BLOCKS a
-    // non-piercing shot, though.
+    // ranged / spell: projectile rays over terrain, stopped only by walls (Sixth Sense flies
+    // over). Only foes are valid targets — never summoning circles (a missile passes over a
+    // circle without dispelling it; you must step or be shoved onto it).
     const shootWalls = Boolean(p.seeThroughWalls); // Sixth Sense: shots fly over walls
     const missileTarget = (x, y) => {
       const e = enemyAt(x, y);
       return Boolean(e) && isCapturable(state, e) && !e.summonCircle;
     };
-    for (const [dx, dy] of dirs) {
-      let x = p.x;
-      let y = p.y;
-      for (let i = 0; i < reach; i += 1) {
-        x += dx;
-        y += dy;
-        if (!inBounds(x, y)) break;
-        const t = terrainAt(state, x, y);
-        if ((t === 'wall' || t === 'boulder') && !shootWalls) {
-          if (t === 'boulder' && pierce) add(x, y, false, true); // a SPELL can blast the first boulder it hits
-          break;
+    if (pierce) {
+      // SORCERER: a piercing bolt ALWAYS travels its FULL range. He aims the END of a firing
+      // line, not a body on it — any max-range tile whose line crosses at least one foe (or ends
+      // on a blastable boulder) is a valid target. The line then scorches everything along it.
+      for (const [dx, dy] of dirs) {
+        let x = p.x;
+        let y = p.y;
+        let far = null; // farthest VISIBLE tile the bolt reaches in this direction (the aim point)
+        let hitsFoe = false;
+        let boulderEnd = false;
+        for (let i = 0; i < reach; i += 1) {
+          x += dx;
+          y += dy;
+          if (!inBounds(x, y)) break;
+          const t = terrainAt(state, x, y);
+          if (t === 'wall' && !shootWalls) break; // a wall stops the bolt short of this tile
+          if (t === 'boulder' && !shootWalls) { if (inLineOfSight(state, x, y)) { far = { x, y }; boulderEnd = true; } break; } // blasted; stops here
+          if (inLineOfSight(state, x, y)) far = { x, y }; // can only AIM a tile he can see; max range is capped by sight
+          if (missileTarget(x, y)) hitsFoe = true;
         }
-        if (enemyAt(x, y)) {
-          if (missileTarget(x, y)) add(x, y, false, true);
-          if (!pierce) break; // a solid unit (including a circle) blocks a non-piercing shot
+        if (far && (hitsFoe || boulderEnd)) {
+          results.push({ x: far.x, y: far.y, capture: Boolean(missileTarget(far.x, far.y)), viaJump: false });
+        }
+      }
+    } else {
+      // RANGED: a single arrow to the FIRST foe it can reach (blocked by the first body / wall).
+      for (const [dx, dy] of dirs) {
+        let x = p.x;
+        let y = p.y;
+        for (let i = 0; i < reach; i += 1) {
+          x += dx;
+          y += dy;
+          if (!inBounds(x, y)) break;
+          const t = terrainAt(state, x, y);
+          if ((t === 'wall' || t === 'boulder') && !shootWalls) break;
+          if (enemyAt(x, y)) {
+            if (missileTarget(x, y)) add(x, y, false, true);
+            break; // a solid unit (including a circle) blocks a non-piercing shot
+          }
         }
       }
     }
@@ -359,12 +421,14 @@ function getPieceLabel(kind) {
     knight: '♞',
     queen: '♛',
     berolina: 'B', // berolina pawn
+    ferz: '♗', // a ferz (1-step diagonal mover) — the Hexer's confused-foe form
     general: '♔', // the Necromancer's upgraded familiar (king + knight)
     archbishop: 'A', // bishop + knight
     chancellor: 'M', // rook + knight (a.k.a. marshall)
     amazon: 'Z', // queen + knight (the final boss)
     enpassant: '♙', // the Duellist's en-passant dash card
     doublestep: '»', // the Cavalier's two-tile dash card
+    horse: '♞', // the Conjuration steed: an L-shaped AOE spell (does NOT move the king)
     promotion: '♛', // the Ranger's Promotion (amazon form) card
     reload: '⟳', // the Ranger's Reload card
     swap: '⇄', // the Sorcerer's Displacement (swap) card

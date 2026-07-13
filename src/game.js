@@ -178,6 +178,34 @@ function bossTitle(boss) {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+// A demon-kind guardian (the fairy/demon pieces of the deeper floors) — its threats are nastier.
+// A demon (fairy) piece — immune to lava (see tickLavaDamage) and drawn with horns/wings.
+function isDemonKind(kind) {
+  return DEMON_KINDS.includes(kind);
+}
+function isDemonBoss(boss) {
+  return isDemonKind(boss.originalKind || boss.kind);
+}
+// The line a guardian snarls the first time it turns hostile toward the king (shown in the log).
+// Demon guardians get scarier, hungrier threats.
+function bossHostileLine(boss) {
+  const name = bossTitle(boss);
+  const demon = [
+    `${name} fixes its burning gaze on you: "Your soul will feed the abyss!"`,
+    `${name} snarls, "Fresh meat... I will wear your bones, little king."`,
+    `${name} shrieks, "Kneel and be devoured, mortal!"`,
+    `${name} hisses, "The dark has waited so long for you to bleed."`,
+  ];
+  const mortal = [
+    `${name} bellows, "You shall not pass, intruder!"`,
+    `${name} levels its guard: "Turn back, or be cut down."`,
+    `${name} roars, "Come no further — meet your end here!"`,
+    `${name} growls, "This is where your journey ends."`,
+  ];
+  const pool = isDemonBoss(boss) ? demon : mortal;
+  return pool[randomInt(pool.length)];
+}
+
 // Deal `amount` damage to a boss. Returns 'slain' if it fell, else 'hurt'.
 function damageBoss(state, boss, amount) {
   boss.hp -= amount;
@@ -696,16 +724,17 @@ function generateFloor(floor, carryPlayer, score) {
   }
 
 
-  // The exit + boss chamber sit at the floor's fixed anchor, ringed by a wall (or a
-  // lava/water moat on watery/fiery floors) with a doorway facing the king. The
-  // boss and a backup cohort (turrets / summoning circles / sleeping pieces) guard it.
+  // The floor KEY (or the Orb of Victory on the last floor) sits GUARDED in a walled chamber at
+  // the floor's fixed anchor: the boss stands ON it, dormant, until it spies the king, ringed by
+  // a wall (or lava/water moat) with a doorway facing the king, plus a backup cohort. The EXIT is
+  // placed SEPARATELY near the king's start (below) — he spawns beside the way out and must
+  // journey to the guarded key and back to leave.
   const level = levelForFloor(floor);
   const anchor = chamberAnchorForFloor(floor);
   const ax = Math.max(2, Math.min(WORLD_SIZE - 3, anchor.x));
   const ay = Math.max(2, Math.min(WORLD_SIZE - 3, anchor.y));
   const portalFloor = isFinalFloor(floor);
   state.isPortalFloor = portalFloor;
-  state.exit = { x: ax, y: ay, discovered: false, portal: portalFloor }; // a victory PORTAL on the last floor
   occupied.add(`${ax},${ay}`);
   for (let dx = -1; dx <= 1; dx += 1) {
     for (let dy = -1; dy <= 1; dy += 1) delete state.terrain[`${ax + dx},${ay + dy}`];
@@ -725,7 +754,11 @@ function generateFloor(floor, carryPlayer, score) {
   }
   delete state.terrain[`${doorX},${doorY}`];
 
-  // The boss stands ON the stair, guarding the way down until roused.
+  // The KEY / Orb at the chamber's heart — the boss stands on it and guards it. A wanderer
+  // scattered earlier may have landed on the anchor before it was reserved; clear it so the
+  // guardian (and the key beneath it) sit alone.
+  state.key = { x: ax, y: ay, collected: false, discovered: false, orb: portalFloor };
+  state.enemies = state.enemies.filter((e) => !(e.x === ax && e.y === ay));
   const boss = createBoss(floor, ax, ay);
   state.enemies.push(boss);
   // A pure jumper (e.g. a knight) only ever lands on the chebyshev-2 ring, so a solid
@@ -741,19 +774,25 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
 
-  // The floor KEY: the stair is sealed until the king picks it up. It favours a tile
-  // well clear of the stair's overlook (chebyshev >= 6) AND out of the king's landing
-  // sight, so he must explore for it; the constraints relax if no such tile exists.
-  // Reserved in `occupied` so NO piece, turret, or circle ever spawns on it, and placed
-  // before the connectivity carve so its pocket is guaranteed reachable.
-  const keyClear = (x, y) => standable(x, y) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, player.x, player.y) >= 2;
-  const keyFar = (x, y) => keyClear(x, y) && chebyshev(x, y, ax, ay) >= 6;
-  const keyHidden = (x, y) => keyFar(x, y) && !seen(x, y);
-  const keyTile = place(keyHidden) || place(keyFar) || place(keyClear) || place(standable);
-  if (keyTile) {
-    state.key = { x: keyTile.x, y: keyTile.y, collected: false, discovered: false, orb: portalFloor }; // the Orb of Victory on the last floor
-    state.exit.locked = true;
+  // The EXIT (stair / victory portal) sits NEAR the king's start — he begins beside the way out,
+  // and it is DISCOVERED from the off so he always knows where to return. It stays sealed until
+  // the guarded key is claimed.
+  // Always within a few tiles of the king (never more than chebyshev 6), preferring a spot well
+  // clear of the guarded chamber; each fallback only relaxes the constraints, never the cap.
+  const nearKing = (x, y, lo, hi) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= lo && chebyshev(x, y, player.x, player.y) <= hi;
+  const exitTile = place((x, y) => nearKing(x, y, 2, 4) && chebyshev(x, y, ax, ay) >= 5)
+    || place((x, y) => nearKing(x, y, 2, 6) && chebyshev(x, y, ax, ay) >= 4)
+    || place((x, y) => nearKing(x, y, 2, 6))
+    || place((x, y) => nearKing(x, y, 1, 6));
+  const exx = exitTile ? exitTile.x : Math.min(WORLD_SIZE - 2, player.x + 2);
+  const exy = exitTile ? exitTile.y : player.y;
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dy = -1; dy <= 1; dy += 1) { const k = `${exx + dx},${exy + dy}`; if (state.terrain[k] === 'wall') delete state.terrain[k]; }
   }
+  state.exit = { x: exx, y: exy, discovered: true, portal: portalFloor, locked: Boolean(state.key) };
+  state.message = portalFloor
+    ? 'The final floor. Seize the Orb of Victory, then reach the portal to escape!'
+    : 'A new floor. You start by the stair — find the floor key to unlock it.';
 
   const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 6 && chebyshev(x, y, player.x, player.y) >= 3 && !seen(x, y);
   // The chamber leans on STATIONARY hazards near the stair, with only a thin screen of
@@ -970,18 +1009,18 @@ function passTurn(state) {
   dryBlood(p);
   for (const e of state.enemies || []) dryBlood(e);
   for (const a of state.allies || []) dryBlood(a);
-  // Hex (Sorcerer): each turn, one adjacent foe is warped into a confused (startled) pawn.
-  // Pawns, bosses and structures are immune.
+  // Hex (Sorcerer): each turn, one adjacent foe is warped into a confused (startled) FERZ (a
+  // weak 1-step diagonal mover). Ferzes, bosses and structures are immune — but pawns are NOT.
   if (p.hexDemote) {
     for (const [dx, dy] of [...ORTHO, ...DIAG]) {
       const e = state.enemies.find((en) => en.x === p.x + dx && en.y === p.y + dy);
-      if (e && !e.boss && !e.turret && !e.summonCircle && e.kind !== 'pawn') {
-        e.kind = 'pawn';
+      if (e && !e.boss && !e.turret && !e.summonCircle && e.kind !== 'ferz') {
+        e.kind = 'ferz';
         e.awake = false;
         e.surprised = false;
         e.lastSeen = null;
         e.lastSeenTtl = 0;
-        // Slumber (T3) + Hex (T1): the new pawn drops straight to sleep, not merely confused.
+        // Slumber (T3) + Hex (T1): the new ferz drops straight to sleep, not merely confused.
         if (p.sleepAura) e.asleep = true;
         break;
       }
@@ -1150,6 +1189,13 @@ function smashBoulder(state, x, y) {
 // A leaper that lands on a boulder crushes it (leaving rubble).
 function crushBoulderUnder(state, unit) {
   smashBoulder(state, unit.x, unit.y);
+}
+// Collapse a wall to open floor, leaving a fading pile of rubble (cosmetic) — the same remains a
+// crushed boulder leaves. Used wherever a wall is destroyed in play (e.g. a cave-in).
+function smashWall(state, x, y) {
+  if (terrainAt(state, x, y) !== 'wall') return;
+  delete state.terrain[`${x},${y}`];
+  addRubble(state, x, y);
 }
 
 // Resolve the king arriving on (x, y): attack a boss in place, destroy a summoning
@@ -1617,6 +1663,21 @@ function useCard(state, cardIndex, x, y) {
     if (realKill && !next.gameOver && !next.won) {
       applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
     }
+  } else if (card.kind === 'horse') {
+    // The Conjuration horse: a spectral steed charges the L-shaped path toward the aimed
+    // knight tile — WITHOUT moving the king — scorching every foe along the L (leaving ash).
+    for (const t of knightLPath(fromX, fromY, x - fromX, y - fromY)) {
+      if (t.x < 0 || t.x >= WORLD_SIZE || t.y < 0 || t.y >= WORLD_SIZE) continue;
+      impactTiles.push({ x: t.x, y: t.y });
+      dispelAllyAt(next, t.x, t.y);
+      const felled = attackTile(next, t.x, t.y, { ash: true });
+      if (felled) {
+        if (t.x === x && t.y === y) scored = true;
+        if (isKillablePiece(felled)) kills.push(felled);
+      }
+    }
+    realKill = kills.length > 0;
+    next.message = scored ? 'A spectral steed tramples through the ranks!' : 'The spectral steed charges past.';
   } else if (category === 'spell' && !move.viaJump) {
     // A sorcerer's bolt ALWAYS travels its FULL range in the aimed direction — every
     // tile out to `reach` is scorched, even past the nearest target (stopped only by a
@@ -2048,12 +2109,28 @@ function isStationary(enemy) {
 
 // Resolve sight at the start of an enemy turn, per piece, and collect the pieces
 // that get to act (movers).
+// Non-demonic enemies and allies SEAR in lava — one hit at the start of each enemy phase, so a
+// foe knocked into a lava field burns down turn by turn (the king can now weaponise lava with
+// knockback). Demon-kind pieces are immune; the king's own lava is handled in passTurn; a boss
+// takes its lava wound in bossMove. Ordinary pieces carry no HP pool, so one hit removes them
+// (burned to ash). Called once per turn from beginEnemyPhase.
+function tickLavaDamage(state) {
+  const burns = (u) => terrainAt(state, u.x, u.y) === 'lava' && !isDemonKind(u.kind);
+  const doomedFoes = state.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle && burns(e));
+  for (const e of doomedFoes) addAsh(state, e.x, e.y);
+  if (doomedFoes.length) state.enemies = state.enemies.filter((e) => !doomedFoes.includes(e));
+  const doomedAllies = (state.allies || []).filter((a) => burns(a));
+  for (const a of doomedAllies) addAsh(state, a.x, a.y);
+  if (doomedAllies.length) state.allies = state.allies.filter((a) => !doomedAllies.includes(a));
+}
+
 function beginEnemyPhase(state) {
   const next = structuredClone(state);
   let moverIds = [];
   const p = next.player;
   const stealthed = Boolean(p.stealth) && !p.attacked;
   recordSeenEnemies(next);
+  tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
 
   // Slumber (Sorcerer): non-boss, non-structure foes adjacent to the king are lulled to
   // sleep and skip their turn; any no longer adjacent wake back up.
@@ -2619,11 +2696,19 @@ function bossMove(state, boss) {
     if (boss.hp < boss.maxHp || enemyAwareOfKing(state, boss.x, boss.y, boss.bossPerk === 'phasing')) {
       boss.dormant = false;
     } else {
-      const guarded = state.exit && state.exit.portal ? 'portal' : 'stair';
+      const guarded = state.key && state.key.orb ? 'Orb' : 'key';
       state.message = `${bossTitle(boss)} guards the ${guarded}, unmoving.`;
       state.lastAction = 'enemy';
       return state;
     }
+  }
+  // The first time it turns hostile, a guardian ROARS its threat (a one-turn telegraph before it
+  // hunts) — logged so the player reads it; demon guardians are scarier (see bossHostileLine).
+  if (!boss.spokeLine) {
+    boss.spokeLine = true;
+    state.message = bossHostileLine(boss);
+    state.lastAction = 'enemy';
+    return state;
   }
   boss.recovering = true; // whatever the boss does below, it must recover next turn
   // Summoner: every third turn it conjures a minion of its own kind instead of acting.
@@ -2751,8 +2836,8 @@ function spawnWave(next) {
 // guardian — is NOT immune to lava, so the king can still play the terrain against it. It
 // spawns already hostile and hunting.
 function spawnBossRush(next) {
-  const live = next.enemies.filter((e) => e.boss).length;
-  if (live >= BOSS_RUSH_CAP) return ''; // don't pile on beyond a handful at once
+  const liveRush = next.enemies.filter((e) => e.boss && e.rush).length;
+  if (liveRush >= BOSS_RUSH_CAP) return ''; // only one rogue guardian loose at a time
   const p = next.player;
   const kind = STANDARD_KINDS[randomInt(STANDARD_KINDS.length)]; // an earlier-age piece
   const occupied = new Set([`${p.x},${p.y}`]);
@@ -2772,12 +2857,11 @@ function spawnBossRush(next) {
   b.hp = b.maxHp;
   b.lavaImmune = false; // an earlier-age guardian: lava still burns it
   b.dormant = false;
-  b.awake = true;
-  b.surprised = false;
-  b.lastSeen = { x: p.x, y: p.y };
-  b.lastSeenTtl = PURSUIT_TTL;
+  // It arrives SURPRISED — it freezes the first time the king lays eyes on it, then turns hostile
+  // (roaring its line) — so a boss never simply materialises in your face. (createEnemy defaults
+  // awake:false / surprised:false, which makes it a fresh sighting → surprised on the next phase.)
   next.enemies.push(b);
-  return `A rogue ${kind} guardian claws into the world!`;
+  return `A rogue ${kind} guardian claws into the world nearby!`;
 }
 // A few turrets rise around the map (out of sight, where they cover real ground).
 function dropTurrets(next) {
@@ -2830,6 +2914,24 @@ function wallsToLava(next) {
   return 'Walls slump into rivers of lava!';
 }
 
+// A cave-in also collapses a few STANDING interior walls to open floor, each leaving a fading
+// pile of rubble. Removing a wall only ever OPENS the map, so it can never seal off a path.
+function collapseWalls(next, count) {
+  const interior = [];
+  for (const k in next.terrain) {
+    if (next.terrain[k] !== 'wall') continue;
+    const [x, y] = k.split(',').map(Number);
+    if (x > 1 && x < WORLD_SIZE - 2 && y > 1 && y < WORLD_SIZE - 2) interior.push([x, y]);
+  }
+  let done = 0;
+  for (let i = 0; i < count && interior.length; i += 1) {
+    const [x, y] = interior.splice(randomInt(interior.length), 1)[0];
+    smashWall(next, x, y);
+    done += 1;
+  }
+  return done;
+}
+
 function fireDangerEvent(next) {
   // Only unleash a hazard the king has ALREADY encountered, so danger events keep pace with
   // the game's normal progression (no lava/pits/boulders/turrets before he's met one).
@@ -2853,6 +2955,7 @@ function fireDangerEvent(next) {
     case 'caveIn':
       scatterTerrain(next, 'boulder', 2 + randomInt(3));
       scatterTerrain(next, 'wall', 1 + randomInt(2));
+      collapseWalls(next, 1 + randomInt(3)); // some standing walls give way, leaving rubble
       msg = 'The ceiling caves in — rubble crashes down!';
       break;
     default: msg = 'The floor darkens with menace.';
@@ -2871,8 +2974,10 @@ function maybeSpawnEnemy(state) {
   // every so often a fresh boss claws into the world near the king, replacing ordinary danger.
   if (next.isPortalFloor && next.orbTaken) {
     next.bossRushTimer = (next.bossRushTimer || 0) + 1;
-    if (next.bossRushTimer >= BOSS_RUSH_INTERVAL) {
+    if (!next.bossRushEvery) next.bossRushEvery = BOSS_RUSH_MIN + randomInt(BOSS_RUSH_MAX - BOSS_RUSH_MIN + 1);
+    if (next.bossRushTimer >= next.bossRushEvery) {
       next.bossRushTimer = 0;
+      next.bossRushEvery = BOSS_RUSH_MIN + randomInt(BOSS_RUSH_MAX - BOSS_RUSH_MIN + 1); // re-roll the next gap
       const msg = spawnBossRush(next);
       if (msg) { next.dangerEvent = { kind: 'bossRush', message: msg }; next.message = msg; }
     }

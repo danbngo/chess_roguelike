@@ -164,7 +164,7 @@
   /* -------------------------------- log --------------------------------- */
 
   let lastLogged = null;
-  const LOG_MAX = 14;
+  const LOG_MAX = 40; // keep plenty of history so LONG mode has something to scroll through
 
   // Append a message to the left-pane log (newest at the bottom), skipping exact
   // consecutive repeats.
@@ -521,7 +521,7 @@
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
         const st = enemy.boss && enemy.dormant
-          ? (gameState.exit && gameState.exit.portal ? 'Dormant — guarding the portal (wakes on sight)' : 'Dormant — guarding the stair (wakes on sight)')
+          ? (gameState.key && gameState.key.orb ? 'Dormant — guarding the Orb (wakes on sight)' : 'Dormant — guarding the key (wakes on sight)')
           : enemy.surprised
             ? 'Surprised — frozen this turn'
             : enemy.frustrated
@@ -1303,9 +1303,11 @@
     applyState(runAllyPhase(gameState), true);
     applyState(maybeSpawnEnemy(gameState), true);
     if (gameState.dangerEvent) {
-      // A danger event fired — heave the screen, sound the alarm, and explain it once.
+      // A danger event fired — heave the screen (rumble only, no flash), sound the alarm, spell
+      // out in the log EXACTLY what happened, and explain the concept once.
       Renderer.effect('danger');
       GameAudio.play('doom');
+      logMessage(gameState.dangerEvent.message);
       queueTip('dangerEvent');
     }
     saveGame(gameState);
@@ -1615,10 +1617,12 @@
   optionsCloseButton.addEventListener('click', closeOptions);
   if (logToggle) {
     logToggle.addEventListener('click', () => {
-      const collapsed = logEl.classList.toggle('collapsed');
-      logToggle.setAttribute('aria-expanded', String(!collapsed));
-      logToggle.textContent = collapsed ? '▸ Log' : '▾ Log';
-      if (!collapsed) logEl.scrollTop = logEl.scrollHeight;
+      // Two modes: SHORT (a few lines) <-> LONG (fills the pane).
+      const long = logEl.classList.toggle('long');
+      logEl.classList.toggle('short', !long);
+      logToggle.setAttribute('aria-expanded', String(long));
+      logToggle.textContent = long ? '▾ Log' : '▸ Log';
+      logEl.scrollTop = logEl.scrollHeight; // keep the newest line in view
     });
   }
   if (optionsCharacterButton) optionsCharacterButton.addEventListener('click', openCharacter);

@@ -10,6 +10,9 @@ const Renderer = (function () {
 
   let playerRender = { x: 0, y: 0, targetX: 0, targetY: 0 };
   let enemyRenders = [];
+  let allyRenders = []; // the king's summons — eased like enemies (they used to snap)
+  let puffs = []; // purple-smoke death puffs for vanished allies (client-side, time-decayed)
+  const PUFF_TIME = 1.25; // seconds a death puff takes to dissipate
 
   // Hit feedback: a brief screen shake + colored full-screen flash, easing out.
   let shake = 0;
@@ -30,7 +33,7 @@ const Renderer = (function () {
     powerup: { color: '74, 222, 128', peak: 0.55, shake: 0 }, // a perk taken — recoloured per-cast to the subclass's colour (green is only the fallback)
     key: { color: '250, 204, 21', peak: 0.6, shake: 0 }, // yellow — floor key collected
     victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
-    danger: { color: '120, 20, 20', peak: 0.5, shake: SHAKE_DURATION * 2 }, // dark-red heave — a danger event
+    danger: { color: '120, 20, 20', peak: 0, shake: SHAKE_DURATION * 2 }, // a danger event: just the rumble, NO flash
   };
 
   // Ever-increasing time accumulator, used for ambient animation (powerup glow).
@@ -218,8 +221,12 @@ const Renderer = (function () {
       charged: enemy.charged !== false,
       role: typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal',
     }));
+    allyRenders = (state.allies || []).map((ally) => ({
+      id: ally.id, x: ally.x, y: ally.y, targetX: ally.x, targetY: ally.y, kind: ally.kind,
+    }));
     projectiles = [];
     bursts = [];
+    puffs = []; // a fresh floor: no lingering smoke
     snapCameraToPlayer(state);
   }
 
@@ -243,12 +250,30 @@ const Renderer = (function () {
       render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.boss = Boolean(enemy.boss);
+      render.rush = Boolean(enemy.rush); // a finale rush-boss (drawn ashen, not royal)
       render.bossPerk = enemy.bossPerk || null;
       render.hp = enemy.hp;
       render.maxHp = enemy.maxHp;
       next.push(render);
     }
     enemyRenders = next;
+
+    // Allies (the king's summons): glide to their new tiles exactly like enemies. Any ally that
+    // has vanished since last sync has DIED — it dissolves into a puff of purple smoke where it
+    // last stood.
+    const nextAllies = [];
+    for (const ally of state.allies || []) {
+      let render = allyRenders.find((it) => it.id === ally.id);
+      if (!render) render = { id: ally.id, x: ally.x, y: ally.y, targetX: ally.x, targetY: ally.y };
+      render.targetX = ally.x;
+      render.targetY = ally.y;
+      render.kind = ally.kind;
+      nextAllies.push(render);
+    }
+    for (const old of allyRenders) {
+      if (!nextAllies.some((r) => r.id === old.id)) puffs.push({ x: old.x, y: old.y, t: 0 });
+    }
+    allyRenders = nextAllies;
   }
 
   function update(delta) {
@@ -259,6 +284,12 @@ const Renderer = (function () {
       enemy.x += (enemy.targetX - enemy.x) * speed;
       enemy.y += (enemy.targetY - enemy.y) * speed;
     }
+    for (const ally of allyRenders) {
+      ally.x += (ally.targetX - ally.x) * speed;
+      ally.y += (ally.targetY - ally.y) * speed;
+    }
+    for (const puff of puffs) puff.t += delta / PUFF_TIME;
+    puffs = puffs.filter((p) => p.t < 1);
     clampCamera();
     camera.x += (camera.targetX - camera.x) * speed;
     camera.y += (camera.targetY - camera.y) * speed;
@@ -281,6 +312,55 @@ const Renderer = (function () {
       }
       bursts = bursts.filter((b) => b.t < 1);
     }
+  }
+
+  // Demon (fairy) pieces are drawn as their NEAREST normal piece — so they read as a familiar
+  // chess unit — then marked as demonic with devil horns (all of them) and bat wings (the
+  // knight-compound movers). berolina = a demonic pawn; archbishop/chancellor/amazon add the
+  // knight leap, hence the wings.
+  const DEMON_BASE_GLYPH = { berolina: '♟', archbishop: '♝', chancellor: '♜', amazon: '♛' };
+  const DEMON_WINGED = new Set(['archbishop', 'chancellor', 'amazon']); // the knight-leapers
+  function isDemonKind(kind) { return Object.prototype.hasOwnProperty.call(DEMON_BASE_GLYPH, kind); }
+  function pieceGlyph(kind) { return DEMON_BASE_GLYPH[kind] || getPieceLabel(kind); }
+
+  // Devil horns (and, for the leapers, bat wings) framing a demon piece's token.
+  function drawDemonMarks(cx, cy, radius, kind) {
+    const r = radius;
+    ctx.save();
+    // Bat wings first, so the token sits over their roots.
+    if (DEMON_WINGED.has(kind)) {
+      ctx.fillStyle = 'rgba(90, 14, 22, 0.92)';
+      ctx.strokeStyle = 'rgba(30, 6, 10, 0.9)';
+      ctx.lineWidth = Math.max(1, r * 0.05);
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(cx + s * r * 0.6, cy - r * 0.35); // shoulder
+        ctx.lineTo(cx + s * r * 1.35, cy - r * 0.5); // top spar
+        ctx.lineTo(cx + s * r * 1.12, cy - r * 0.12);
+        ctx.lineTo(cx + s * r * 1.32, cy + r * 0.12); // mid scallop
+        ctx.lineTo(cx + s * r * 1.02, cy + r * 0.22);
+        ctx.lineTo(cx + s * r * 1.15, cy + r * 0.5); // lower point
+        ctx.lineTo(cx + s * r * 0.62, cy + r * 0.18); // body attach
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    // Two curved horns rising from the crown of the token.
+    ctx.fillStyle = '#c0392b'; // crimson
+    ctx.strokeStyle = 'rgba(40, 8, 8, 0.85)';
+    ctx.lineWidth = Math.max(1, r * 0.05);
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + s * r * 0.34, cy - r * 0.82); // inner base
+      ctx.lineTo(cx + s * r * 0.64, cy - r * 0.7); // outer base
+      ctx.quadraticCurveTo(cx + s * r * 0.9, cy - r * 1.05, cx + s * r * 0.78, cy - r * 1.32); // curve to tip
+      ctx.quadraticCurveTo(cx + s * r * 0.5, cy - r * 1.0, cx + s * r * 0.34, cy - r * 0.82);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function drawPiece(tileX, tileY, kind, isPlayer, opts) {
@@ -306,9 +386,17 @@ const Renderer = (function () {
       stroke = '#e0894b'; // warm danger ring
       glyph = '#f1c9a0';
     } else if (role === 'boss') {
-      fill = '#1a0f1f'; // deep royal
-      stroke = '#e0b341'; // gold
-      glyph = '#ffe9a8';
+      if (o.rush) {
+        // A finale RUSH boss: an ashen, rogue guardian — grey-green, not the royal gold, so it
+        // reads at a glance as "lesser / conjured, grants no boon".
+        fill = '#161a15'; // charred ash
+        stroke = '#7f9e6b'; // sickly moss-green
+        glyph = '#c7d6b5';
+      } else {
+        fill = '#1a0f1f'; // deep royal
+        stroke = '#e0b341'; // gold
+        glyph = '#ffe9a8';
+      }
     } else if (role === 'circle') {
       fill = '#241733'; // arcane violet — a summoning circle
       stroke = '#a855f7';
@@ -319,16 +407,19 @@ const Renderer = (function () {
       glyph = '#bbf7d0';
     }
 
-    // Boss aura: a soft gold outer ring.
+    // Boss aura: a soft outer ring — gold for a true guardian, sickly green for a rush boss.
     if (role === 'boss') {
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, radius + tileSize * 0.12, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(224, 179, 65, 0.85)';
+      ctx.strokeStyle = o.rush ? 'rgba(127, 158, 107, 0.85)' : 'rgba(224, 179, 65, 0.85)';
       ctx.lineWidth = 3;
       ctx.stroke();
       ctx.restore();
     }
+
+    // A demon (fairy) enemy/ally sprouts horns and wings behind its token (never the king).
+    if (!isPlayer && isDemonKind(kind)) drawDemonMarks(cx, cy, radius, kind);
 
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -342,7 +433,7 @@ const Renderer = (function () {
     ctx.font = `${tileSize * 0.62}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(getPieceLabel(kind), cx, cy + tileSize * 0.04);
+    ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.04);
 
     // Fresh blood clinging to the piece from combat — specks over the token, more of them
     // (and brighter) the bloodier it is. Clipped to the body so it never spills off.
@@ -410,15 +501,18 @@ const Renderer = (function () {
     flying: { color: '#bfdbfe', mark: '︿' }, // pale-sky wings
     phasing: { color: '#c4b5fd', mark: '◇' }, // spectral diamond
   };
-  function drawBossTraitHat(tileX, tileY, perk) {
+  function drawBossTraitHat(tileX, tileY, perk, rush) {
     const spec = BOSS_TRAIT_HAT[perk];
     if (!spec) { drawRoleHat(tileX, tileY, 'boss'); return; }
+    // A rush boss keeps its trait emblem but wears an ashen moss-green cap (never royal), to
+    // match its lesser, rogue look.
+    const capColor = rush ? '#7f9e6b' : spec.color;
     const cx = tileX * tileSize + tileSize / 2;
     const topY = tileY * tileSize + tileSize * 0.14;
     const w = tileSize * 0.36;
     ctx.save();
-    // A peaked cap in the trait's colour with a brim.
-    ctx.fillStyle = spec.color;
+    // A peaked cap with a brim.
+    ctx.fillStyle = capColor;
     ctx.beginPath();
     ctx.moveTo(cx, topY - tileSize * 0.08);
     ctx.lineTo(cx - w / 2, topY + tileSize * 0.12);
@@ -430,7 +524,7 @@ const Renderer = (function () {
     ctx.lineWidth = 1;
     ctx.stroke();
     // The trait's emblem, hovering just above the cap's peak.
-    ctx.fillStyle = spec.color;
+    ctx.fillStyle = capColor;
     ctx.font = `${tileSize * 0.3}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -540,6 +634,33 @@ const Renderer = (function () {
       ctx.fillStyle = '#fff7ed';
       ctx.beginPath();
       ctx.arc(cx, cy, r * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // A dying ally's farewell: a puff of purple smoke that swells and fades over PUFF_TIME. A
+  // clutch of drifting violet blobs plus a bright core early on — a slow visual dissolve.
+  function drawPuffs() {
+    for (const puff of puffs) {
+      const cx = (puff.x + 0.5) * tileSize;
+      const cy = (puff.y + 0.5) * tileSize;
+      const t = puff.t;
+      const fade = 1 - t;
+      ctx.save();
+      for (let i = 0; i < 6; i += 1) {
+        const ang = (i / 6) * Math.PI * 2 + t * 1.6;
+        const dist = tileSize * (0.04 + t * 0.34);
+        const r = tileSize * (0.13 + t * 0.16) * (i % 2 ? 0.75 : 1);
+        ctx.fillStyle = `rgba(168, 85, 247, ${(fade * 0.5).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(ang) * dist, cy - tileSize * t * 0.18 + Math.sin(ang) * dist, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // A brighter lilac core that shrinks as the smoke thins.
+      ctx.fillStyle = `rgba(216, 180, 254, ${(fade * 0.65).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.17 * fade, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -977,7 +1098,7 @@ const Renderer = (function () {
     ctx.font = `bold ${tileSize * 0.42}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(getPieceLabel(corpse.kind), 0, 0);
+    ctx.fillText(pieceGlyph(corpse.kind), 0, 0);
     // Blood spattered on the body — reuses the same speck layout as living pieces, drawn
     // in the corpse's flattened/slanted frame and clipped to its body so it reads as gore
     // pooled on the fallen piece (darker, dried).
@@ -1517,9 +1638,9 @@ const Renderer = (function () {
       const inSight = lit(enemy.targetX, enemy.targetY);
       // A spent summoning circle, or an enemy seen only through Premonition, is faded.
       const inactive = (role === 'circle' && !enemy.charged) || !inSight;
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
-        drawBossTraitHat(enemy.x, enemy.y, enemy.bossPerk); // trait-specific crown
+        drawBossTraitHat(enemy.x, enemy.y, enemy.bossPerk, enemy.rush); // trait-specific crown
       } else if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
       }
@@ -1539,10 +1660,13 @@ const Renderer = (function () {
     }
 
     // The king's allies (Necromancer familiar / undead): green tokens with a heart, always
-    // shown (they are on his side, so never hidden by fog).
-    for (const ally of state.allies || []) {
-      drawPiece(ally.x, ally.y, ally.kind, false, { role: 'ally', blood: woundBlood(ally) });
-      drawStatusMark(ally.x, ally.y, '♥', '#f472b6');
+    // shown (they are on his side, so never hidden by fog). Positions come from the EASED ally
+    // renders (so they glide like every other piece); gore is looked up on the live ally by id.
+    const allyById = new Map((state.allies || []).map((a) => [a.id, a]));
+    for (const ar of allyRenders) {
+      const live = allyById.get(ar.id);
+      drawPiece(ar.x, ar.y, ar.kind, false, { role: 'ally', blood: woundBlood(live) });
+      drawStatusMark(ar.x, ar.y, '♥', '#f472b6');
     }
 
     const classColor =
@@ -1560,6 +1684,7 @@ const Renderer = (function () {
 
     drawProjectiles();
     drawBursts();
+    drawPuffs();
 
     ctx.restore();
 

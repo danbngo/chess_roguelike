@@ -56,7 +56,7 @@ A show-off who fights with tempo and a signature dash.
 
 ---
 
-## RANGER — the Hunter  (ranged · start: bishop, cooldown 3 · 4 HP)  ✅ IMPLEMENTED
+## RANGER — the Hunter  (ranged · start: rook, cooldown 5 · 4 HP)  ✅ IMPLEMENTED
 _A hunter who fells foes from across the room._
 
 ### 🌲 Druid — "Weather any storm the wild throws at you."
@@ -88,16 +88,16 @@ The quartermaster: reload, a bigger bow, and kickback.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `r_reload` | Reload | gain a reload card: spend a turn to recharge all your OTHER cards (cooldown 3) | `gainCard:reload` |
-| 2 | `r_longbow` | Longbow | gain a rook card (cooldown 5) | `gainCard:rook`, `gainCooldown:5` |
+| 2 | `r_longbow` | Ballista | gain a queen card (cooldown 9) — a devastating volley in any direction | `gainCard:queen`, `gainCooldown:9` |
 | 3 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile where the ground behind it is clear (structures don't budge) | `recoil` |
 
-_Ranger changes: starter knight → bishop (cd 3); DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet). Silent kept its "(or you attack)" wording — the "in front of them" directional nuance is not yet built._
+_Ranger changes: starter is now a ROOK (cd 5, swapped with the Sorcerer's old rook); Fletcher T2 grants a QUEEN (cd 9) instead of a rook. DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet)._
 
 ---
 
-## SORCERER — the Wizard  (spell · start: rook, cooldown 5 · 3 HP)  ✅ IMPLEMENTED
+## SORCERER — the Wizard  (spell · start: bishop, cooldown 3 · 3 HP)  ✅ IMPLEMENTED
 _A fragile caster whose bolts pierce straight through the ranks — his mighty cards make up for his low HP._
-The starting rook is slow (cd 5) and pierces every tile en route to (and including) the target.
+The starting bishop (cd 3, swapped with the Ranger's old bishop) pierces every tile en route to (and including) the target, diagonally.
 
 ### 🔮 Translocations — cyan — the blink-mage: dodge, phase, displace.
 | tier | id | name | effect | `grant` |
@@ -113,11 +113,11 @@ The starting rook is slow (cd 5) and pierces every tile en route to (and includi
 | 2 | `s_cata` | Cataclysm | every visible foe is surprised when you cast a spell | `spellSurprise` |
 | 3 | `s_slumber` | Slumber | non-boss foes adjacent to you fall asleep (blue "z" icon); with Hex (T1), a hexed pawn drops straight to sleep instead of merely confused | `sleepAura` |
 
-### 🌀 Conjuration — violet — the artillery-mage: reach, a queen, a double cast.
+### 🌀 Conjuration — violet — the artillery-mage: reach, a phantom steed, a double cast.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `s_amp` | Amplify | +1 card reach | `cardReach:1` |
-| 2 | `s_staff` | Archstaff | gain a queen card (cooldown 9) | `gainCard:queen`, `gainCooldown:9` |
+| 2 | `s_staff` | Phantom Steed | gain a horse card: a spectral steed tramples an L-shaped path (aimed via spell targeting at a knight's-move tile), scorching every foe along it — it does NOT move the king (cooldown 4) | `gainCard:horse`, `gainCooldown:4` |
 | 3 | `s_barrage` | Double Cast | after firing a spell, if a targetable foe remains you may aim + fire once more before your turn ends (cancelling the aim ends the turn) | `doubleCast` |
 
 ### 🔥 Necromancy — necro-green — the summoner: a familiar, then undead, then a General.  ✅ IMPLEMENTED

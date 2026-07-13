@@ -23,10 +23,12 @@ const MAX_ENEMIES = 45; // Hard safety cap so over-time spawning can't run away.
 
 const FINAL_FLOOR = 8; // An eight-floor run (an 8x8-board's worth) — floor 8 is the ABSOLUTE last.
 const DEMON_FLOOR = 5; // From floor 5 the fairy/demon pieces take over the roster.
-// The floor-8 finale: after the Orb of Victory is taken, a lesser boss claws in near the king
-// every BOSS_RUSH_INTERVAL turns, capped at BOSS_RUSH_CAP live bosses at once.
-const BOSS_RUSH_INTERVAL = 8;
-const BOSS_RUSH_CAP = 4;
+// The floor-8 finale: after the Orb of Victory is taken, a single lesser boss claws in near the
+// king every so often (a random BOSS_RUSH_MIN..BOSS_RUSH_MAX turns), never more than
+// BOSS_RUSH_CAP of them alive at once.
+const BOSS_RUSH_MIN = 10;
+const BOSS_RUSH_MAX = 20;
+const BOSS_RUSH_CAP = 1;
 const STANDARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'queen'];
 const DEMON_KINDS = ['berolina', 'archbishop', 'chancellor', 'amazon'];
 const ENEMY_UNLOCKS = [
@@ -100,7 +102,7 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 // CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
 // classCategory(). There are no traits or ratings; card power comes from perks.
 const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach 1; sliders reach 3
-const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'doublestep', 'promotion', 'reload', 'swap'];
+const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'doublestep', 'promotion', 'reload', 'swap', 'horse'];
 const CARD_COOLDOWN = 3;
 const PROMOTION_TURNS = 3; // how many turns the Ranger's Promotion (amazon form) lasts
 const TURRET_HP = 3; // turrets are destructible: a flat, non-scaling HP pool (< a boss's)
@@ -190,8 +192,8 @@ const CLASSES = {
     blurb: 'A hunter who fells foes from across the room.',
     color: '#65a30d',
     category: 'ranged', // every Ranger card fires from afar (blocked by cover)
-    start: 'bishop',
-    startCooldown: 3, // his starting bishop uses the class-default cooldown
+    start: 'rook', // the Ranger opens with an orthogonal longbow
+    startCooldown: 5, // the rook's own cooldown (cooldowns are per-UNIT, not per-class)
     hp: 4,
     chains: { Druid: '#16a34a', Deadeye: '#14b8a6', 'Gloom Stalker': '#6366f1', Fletcher: '#a3e635' },
     perks: [
@@ -209,7 +211,7 @@ const CLASSES = {
       { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes more than one tile away never notice you (until you strike); any within one tile — even one that blunders into you — detects you normally', grants: { stealth: true } },
       // 🏹 Fletcher — the quartermaster: reload, a bigger bow, and kickback.
       { id: 'r_reload', chain: 'Fletcher', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
-      { id: 'r_longbow', chain: 'Fletcher', tier: 2, requires: 'r_reload', name: 'Longbow', desc: 'Gain a rook card (cooldown 5)', grants: { gainCard: 'rook', gainCooldown: 5 } },
+      { id: 'r_longbow', chain: 'Fletcher', tier: 2, requires: 'r_reload', name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
       { id: 'r_recoil', chain: 'Fletcher', tier: 3, requires: 'r_longbow', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile if the ground behind it is clear', grants: { recoil: true } },
     ],
   },
@@ -218,8 +220,8 @@ const CLASSES = {
     blurb: 'A fragile caster whose bolts pierce straight through the ranks.',
     color: '#a855f7',
     category: 'spell', // every Sorcerer card is a bolt that pierces the whole path
-    start: 'rook',
-    startCooldown: 5, // his mighty starting rook is slow (it hits the whole line)
+    start: 'bishop', // the Sorcerer opens with a diagonal bolt
+    startCooldown: 3, // the bishop's own cooldown (cooldowns are per-UNIT, not per-class)
     hp: 3,
     // Necromancy (a fourth, ally-summoning chain) is colour-reserved but not yet built.
     chains: { Translocations: '#22d3ee', Necromancy: '#65a30d', Hexes: '#e879f9', Conjuration: '#8b5cf6' },
@@ -234,7 +236,7 @@ const CLASSES = {
       { id: 's_slumber', chain: 'Hexes', tier: 3, requires: 's_cata', name: 'Slumber', desc: 'Non-boss foes adjacent to you fall asleep', grants: { sleepAura: true } },
       // 🌀 Conjuration — the artillery-mage: reach, a queen, then a full barrage.
       { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Amplify', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Archstaff', desc: 'Gain a queen card (cooldown 9)', grants: { gainCard: 'queen', gainCooldown: 9 } },
+      { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Phantom Steed', desc: 'Gain a horse card: a spectral steed that tramples an L-shaped path, scorching every foe along it (cooldown 4)', grants: { gainCard: 'horse', gainCooldown: 4 } },
       { id: 's_barrage', chain: 'Conjuration', tier: 3, requires: 's_staff', name: 'Double Cast', desc: 'After firing a spell, if a targetable foe remains you may aim and fire once more before your turn ends', grants: { doubleCast: true } },
       // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.
       { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', desc: 'Summon a berolina familiar that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
