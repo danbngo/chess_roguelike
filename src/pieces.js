@@ -197,7 +197,7 @@ function getCardMoves(state, card) {
       const ey = p.y + dy;
       if (!inBounds(ex, ey)) continue;
       const destT = terrainAt(state, ex, ey);
-      if (destT === 'wall') continue; // can't step into a wall (lava is walkable, at a cost)
+      if (destT === 'wall' || destT === 'pit' || destT === 'boulder') continue; // can't step into a wall/pit/boulder (lava is walkable, at a cost)
       const foe = enemyAt(ex, ey);
       if (foe && !targetable(ex, ey)) continue; // blocked by an untouchable unit
       let passing = null;
@@ -224,11 +224,11 @@ function getCardMoves(state, card) {
         const y = p.y + dy;
         if (!inBounds(x, y)) continue;
         const t = terrainAt(state, x, y);
-        if (t === 'wall') continue; // can't land in a wall (lava is walkable, at a cost)
+        if (t === 'wall' || t === 'pit') continue; // can't land in a wall or pit (a boulder here gets crushed on landing)
         if (enemyAt(x, y)) {
           if (targetable(x, y)) add(x, y, true, true);
         } else {
-          add(x, y, true, false); // leap to empty ground
+          add(x, y, true, false); // leap to empty ground (crushing a boulder if one's there)
         }
       }
     }
@@ -249,7 +249,11 @@ function getCardMoves(state, card) {
         x += dx;
         y += dy;
         if (!inBounds(x, y)) break;
-        if (terrainAt(state, x, y) === 'wall' && !shootWalls) break;
+        const t = terrainAt(state, x, y);
+        if ((t === 'wall' || t === 'boulder') && !shootWalls) {
+          if (t === 'boulder' && pierce) add(x, y, false, true); // a SPELL can blast the first boulder it hits
+          break;
+        }
         if (enemyAt(x, y)) {
           if (missileTarget(x, y)) add(x, y, false, true);
           if (!pierce) break; // a solid unit (including a circle) blocks a non-piercing shot

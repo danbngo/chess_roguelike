@@ -70,14 +70,6 @@ const TUTORIALS = {
       'hit chips the bar) to descend AND earn a level-up boon. You can also bait it ' +
       'off the stair and slip past — but then you descend with NO boon and stay weak.',
   },
-  danger: {
-    title: 'The longer you linger...',
-    text:
-      'Danger climbs the more turns you spend on a floor — enemies spawn faster and ' +
-      'faster (watch the Turn counter redden). When it flashes amber-and-red you have ' +
-      'lingered to the limit and foes now pour in twice as fast. Don’t dawdle: find ' +
-      'the stairs.',
-  },
   key: {
     title: 'The floor key',
     text:
@@ -120,5 +112,29 @@ const TUTORIALS = {
       'You CAN cross lava, but it sears you for 1 HP each turn you end standing on it — ' +
       'so dash across, never linger. Enemies wade it freely (it shields them). It does ' +
       'not block sight. (Winged Boots makes you immune to the burning.)',
+  },
+  'terrain-pit': {
+    title: 'Pits',
+    text:
+      'A pit is a bottomless hole — NOTHING can step into or over it on foot (you, foes, ' +
+      'and allies alike). But it does not block shots: your arrows and bolts fly right ' +
+      'across it — and so do a turret’s or boss’s. Only leaping pieces (a knight’s hop, ' +
+      'the amazon form) can jump clean over a pit.',
+  },
+  'terrain-boulder': {
+    title: 'Boulders',
+    text:
+      'A boulder blocks movement and sight like a wall — but you can SHOVE it: step into ' +
+      'it and it rolls one tile ahead (if the way is clear; otherwise you shove in vain ' +
+      'and waste the turn). Push one into a pit, lava, or water to FILL the hazard. A ' +
+      'leap crushes a boulder you land on; a spell blasts one you fire at.',
+  },
+  dangerEvent: {
+    title: 'The floor turns against you',
+    text:
+      'The longer you linger, the more the dungeon itself fights back. At quickening ' +
+      'intervals a DANGER EVENT strikes — a wave of foes, turrets rising, the ground ' +
+      'opening into pits or lava, a cave-in, every enemy suddenly hunting you, and more. ' +
+      'The screen heaves and an ominous note sounds each time. Don’t dawdle — descend.',
   },
 };

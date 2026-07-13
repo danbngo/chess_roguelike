@@ -19,7 +19,7 @@ const {
   getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
   getVisibleBounds, capturableAt, createBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
   fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
-  advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor,
+  advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, getPieceThreats, maybeSpawnEnemy,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -333,6 +333,142 @@ test('the king CAN cross lava now, but it sears him 1 HP per turn (Winged Boots 
   immune.player.x = 8; immune.player.y = 8; immune.player.hp = 4; immune.player.terrainImmune = true;
   const safe = movePlayerTo(immune, 9, 8);
   assert.equal(safe.player.hp, 4, 'Winged Boots — no lava burn');
+});
+
+test('pit: impassable to the king, but shots and turret fire cross it', () => {
+  const s = createInitialState('warrior');
+  s.enemies = [];
+  s.terrain = { '9,8': 'pit' };
+  s.player.x = 8; s.player.y = 8;
+  assert.ok(!getPlayerMoves(s).some((m) => m.x === 9 && m.y === 8), 'the king cannot step into a pit');
+  // A rook turret fires OVER a pit onto the king (a mild warrior debuff — he can't shoot back).
+  const t = createInitialState('warrior');
+  t.terrain = { '10,10': 'pit' };
+  t.player.x = 10; t.player.y = 8; t.player.hp = 5; t.player.maxHp = 5;
+  t.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 13, turret: true, hp: 3, maxHp: 3 })];
+  assert.ok(getPieceThreats(t.enemies[0], t).some((th) => th.x === 10 && th.y === 8), 'the turret threatens through the pit');
+  assert.ok(moveEnemy(t, t.enemies[0].id).player.hp < 5, 'and it fires across the pit');
+});
+
+test('a ranger shoots across a pit (mild ranged buff)', () => {
+  const s = createInitialState('ranger'); // bishop, ranged
+  s.terrain = { '11,11': 'pit' };
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true })]; // beyond the pit, on the diagonal
+  assert.ok(getCardMoves(s, s.player.cards[0]).some((tt) => tt.x === 12 && tt.y === 12), 'the shot flies over the pit');
+});
+
+test('boulder: the king shoves it; into a pit it fills the hole', () => {
+  const s = createInitialState('warrior');
+  s.enemies = [];
+  s.terrain = { '9,8': 'boulder', '10,8': 'pit' };
+  s.player.x = 8; s.player.y = 8;
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 9 && m.y === 8 && m.push), 'the boulder is a pushable move');
+  const r = movePlayerTo(s, 9, 8);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 9, y: 8 }, 'the king takes the boulder’s tile');
+  assert.equal(terrainAt(r, 9, 8), 'normal', 'the boulder rolled off its tile');
+  assert.equal(terrainAt(r, 10, 8), 'normal', 'and filled the pit');
+});
+
+test('boulder: pushing onto open ground rolls it forward; a wall-backed boulder wastes the turn', () => {
+  const roll = createInitialState('warrior');
+  roll.enemies = [];
+  roll.terrain = { '9,8': 'boulder' };
+  roll.player.x = 8; roll.player.y = 8;
+  const r = movePlayerTo(roll, 9, 8);
+  assert.equal(terrainAt(r, 10, 8), 'boulder', 'the boulder rolled one tile forward');
+  // A boulder with a wall behind it is still a "push" action — but the shove is futile: the
+  // king stays put, the boulder holds, and the turn is spent.
+  const blocked = createInitialState('warrior');
+  blocked.enemies = [];
+  blocked.terrain = { '9,8': 'boulder', '10,8': 'wall' };
+  blocked.player.x = 8; blocked.player.y = 8;
+  assert.ok(getPlayerMoves(blocked).some((m) => m.x === 9 && m.y === 8 && m.push), 'shoving a blocked boulder is a valid action');
+  const b = movePlayerTo(blocked, 9, 8);
+  assert.deepEqual({ x: b.player.x, y: b.player.y }, { x: 8, y: 8 }, 'the king does not move');
+  assert.equal(terrainAt(b, 9, 8), 'boulder', 'the boulder holds');
+  assert.equal(b.enemyTurn, true, 'but the futile shove wastes the turn');
+});
+
+test('a knight leap crushes a boulder it lands on', () => {
+  const s = createInitialState('warrior'); // starts with a knight card
+  s.enemies = [];
+  s.terrain = { '12,9': 'boulder' };
+  s.player.x = 10; s.player.y = 8;
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  assert.ok(getCardMoves(s, s.player.cards[idx]).some((m) => m.x === 12 && m.y === 9), 'the boulder tile is a leap target');
+  const r = useCard(s, idx, 12, 9);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 9 }, 'the king lands there');
+  assert.equal(terrainAt(r, 12, 9), 'normal', 'the boulder is crushed to rubble');
+});
+
+test('a sorcerer spell blasts the first boulder in its path', () => {
+  const s = createInitialState('sorcerer'); // rook spell
+  s.enemies = [];
+  s.terrain = { '11,8': 'boulder' };
+  s.player.x = 8; s.player.y = 8;
+  assert.ok(getCardMoves(s, s.player.cards[0]).some((tt) => tt.x === 11 && tt.y === 8), 'the boulder is a spell target');
+  const r = useCard(s, 0, 11, 8);
+  assert.equal(terrainAt(r, 11, 8), 'normal', 'the bolt blasts the boulder to rubble');
+  assert.ok((r.rubble || []).some((rb) => rb.x === 11 && rb.y === 8), 'and leaves rubble');
+});
+
+test('leaps clear pits — a knight lands beyond one but never IN it', () => {
+  const s = createInitialState('warrior'); // knight card
+  s.enemies = [];
+  s.terrain = { '12,9': 'pit', '11,8': 'pit' };
+  s.player.x = 10; s.player.y = 8;
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  const moves = getCardMoves(s, s.player.cards[idx]);
+  assert.ok(!moves.some((m) => m.x === 12 && m.y === 9), 'cannot land in a pit');
+  assert.ok(moves.some((m) => m.x === 12 && m.y === 7), 'but leaps to open ground (over any pit between)');
+});
+
+test('a compound piece leaps over a pit even though its slide cannot cross it', () => {
+  const s = createInitialState('warrior');
+  s.terrain = { '11,10': 'pit' };
+  const amazon = makeEnemy({ kind: 'amazon', x: 10, y: 10 });
+  s.enemies = [amazon];
+  const moves = getPieceMoves(amazon, s);
+  assert.ok(!moves.some((m) => m.x === 12 && m.y === 10 && !m.viaJump), 'the queen-slide is stopped by the pit');
+  assert.ok(moves.some((m) => m.viaJump && m.x === 12 && m.y === 11), 'but the knight-leap clears it');
+});
+
+test('a crushed boulder (knight leap) leaves rubble', () => {
+  const s = createInitialState('warrior');
+  s.enemies = [];
+  s.terrain = { '12,9': 'boulder' };
+  s.player.x = 10; s.player.y = 8;
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  const r = useCard(s, idx, 12, 9);
+  assert.equal(terrainAt(r, 12, 9), 'normal', 'the boulder is crushed');
+  assert.ok((r.rubble || []).some((rb) => rb.x === 12 && rb.y === 9), 'rubble is left behind');
+});
+
+test('danger events only unleash hazards the king has already met', () => {
+  let s = createInitialState('warrior');
+  s.floor = 4;
+  const kinds = new Set();
+  for (let i = 0; i < 80; i += 1) {
+    s.turn = 60; s.turnsSinceSpawn = 99;
+    s.player.seenTerrain = []; s.player.seenTurret = false; // pretend he's encountered nothing
+    s = maybeSpawnEnemy(s);
+    if (s.dangerEvent) kinds.add(s.dangerEvent.kind);
+  }
+  for (const k of ['lavaSpread', 'wallsToLava', 'pits', 'caveIn', 'turrets', 'flood']) {
+    assert.ok(!kinds.has(k), `never fires "${k}" before the king has seen its hazard`);
+  }
+  assert.ok(kinds.has('wave') || kinds.has('aggro'), 'only wave / aggro fire when nothing has been seen');
+});
+
+test('a danger event fires at the interval, carrying a kind + message, and keeps state coherent', () => {
+  let s = createInitialState('warrior');
+  s.turn = 40; s.turnsSinceSpawn = 99; // force an event this call
+  s = maybeSpawnEnemy(s);
+  assert.ok(s.dangerEvent && s.dangerEvent.kind && s.dangerEvent.message, 'an event with a kind + message fired');
+  // Repeated events across floors never throw and never lose the exit.
+  for (let i = 0; i < 60; i += 1) { s.floor = 1 + (i % 8); s.turn = 60; s.turnsSinceSpawn = 99; s = maybeSpawnEnemy(s); }
+  assert.ok(s.exit, 'the exit survives repeated danger events');
 });
 
 test('water is passable but slow', () => {

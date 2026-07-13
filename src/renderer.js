@@ -30,6 +30,7 @@ const Renderer = (function () {
     powerup: { color: '74, 222, 128', peak: 0.55, shake: 0 }, // a perk taken — recoloured per-cast to the subclass's colour (green is only the fallback)
     key: { color: '250, 204, 21', peak: 0.6, shake: 0 }, // yellow — floor key collected
     victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
+    danger: { color: '120, 20, 20', peak: 0.5, shake: SHAKE_DURATION * 2 }, // dark-red heave — a danger event
   };
 
   // Ever-increasing time accumulator, used for ambient animation (powerup glow).
@@ -889,6 +890,32 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // Rubble: a scatter of grey rocks left where a boulder was crushed or blasted. Jittered +
+  // stackable like the other remains, and fades toward transparent as it decays.
+  function drawRubble(rubble, faded) {
+    const cx = rubble.x * tileSize + tileSize * (0.5 + (rubble.ox || 0));
+    const cy = rubble.y * tileSize + tileSize * (0.56 + (rubble.oy || 0));
+    const lifeFrac = rubble.max ? Math.max(0, rubble.life / rubble.max) : 1;
+    const seed = ((rubble.rot || 0) * 1000) | 0;
+    ctx.save();
+    ctx.globalAlpha = (faded ? 0.4 : 0.85) * Math.max(0.12, lifeFrac);
+    const rocks = [
+      [-0.16, 0.05, 0.16], [0.14, -0.02, 0.13], [0.02, 0.14, 0.12], [-0.06, -0.12, 0.1], [0.2, 0.12, 0.09],
+    ];
+    for (let i = 0; i < rocks.length; i += 1) {
+      const [ox, oy, rr] = rocks[i];
+      const shade = 70 + ((seed + i * 37) % 30); // varied greys
+      ctx.beginPath();
+      ctx.arc(cx + ox * tileSize, cy + oy * tileSize, tileSize * rr, 0, Math.PI * 2);
+      ctx.fillStyle = `rgb(${shade + 10}, ${shade + 8}, ${shade + 14})`;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // Tile colors per terrain (two shades to keep the checkerboard feel). All kept
   // within a warm cream/tan/brown family — desaturated and fairly light — so the
   // green / red / orange move-and-threat tints overlay legibly on every tile.
@@ -900,7 +927,10 @@ const Renderer = (function () {
         return isDark ? '#1e4d6b' : '#2f6f97'; // deep water
       case 'wall':
         return isDark ? '#54535a' : '#6a696f'; // neutral grey stone (cool, desaturated)
+      case 'pit':
+        return isDark ? '#0b0b12' : '#15151d'; // a dark void
       default:
+        // boulder + normal both sit on sepia ground (the boulder rock is drawn over it).
         return isDark ? '#71481d' : '#e8c589'; // warm SEPIA ground (so fogged floor never reads as wall)
     }
   }
@@ -940,6 +970,51 @@ const Renderer = (function () {
           ctx.quadraticCurveTo(px + tileSize * 0.5, wy + tileSize * 0.08, px + tileSize * 0.85, wy);
           ctx.stroke();
         }
+        break;
+      }
+      case 'pit': {
+        // A dark hole with a faintly-lit near rim, to read as depth.
+        const cx = px + tileSize / 2;
+        const cy = py + tileSize / 2;
+        const g = ctx.createRadialGradient(cx, cy - tileSize * 0.05, tileSize * 0.08, cx, cy, tileSize * 0.5);
+        g.addColorStop(0, 'rgba(0,0,0,0.9)');
+        g.addColorStop(0.65, 'rgba(0,0,0,0.6)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy, tileSize * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(160,160,175,0.22)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, tileSize * 0.4, Math.PI * 1.05, Math.PI * 1.95);
+        ctx.stroke();
+        break;
+      }
+      case 'boulder': {
+        // A rounded grey rock resting on the ground.
+        const cx = px + tileSize / 2;
+        const cy = py + tileSize * 0.52;
+        const r = tileSize * 0.38;
+        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+        ctx.beginPath();
+        ctx.ellipse(cx, py + tileSize * 0.8, r * 1.05, r * 0.32, 0, 0, Math.PI * 2);
+        ctx.fill();
+        const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.2, cx, cy, r * 1.25);
+        g.addColorStop(0, '#93929a');
+        g.addColorStop(1, '#4a4951');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 0.4, cy - r * 0.25);
+        ctx.lineTo(cx + r * 0.15, cy + r * 0.35);
+        ctx.stroke();
         break;
       }
       case 'wall': {
@@ -1218,10 +1293,15 @@ const Renderer = (function () {
         drawSpatter(spatter, terrainAt(state, spatter.x, spatter.y) === 'wall');
       }
     }
-    // Ash piles (spell kills) and corpses over the blood, fading faster.
+    // Ash piles (spell kills), rubble (smashed boulders), and corpses over the blood.
     for (const ash of state.ashes || []) {
       if (isExplored(ash.x, ash.y)) {
         drawAsh(ash, !lit(ash.x, ash.y));
+      }
+    }
+    for (const rub of state.rubble || []) {
+      if (isExplored(rub.x, rub.y)) {
+        drawRubble(rub, !lit(rub.x, rub.y));
       }
     }
     for (const corpse of state.corpses || []) {

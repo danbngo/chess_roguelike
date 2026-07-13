@@ -126,6 +126,12 @@ const GameAudio = (function () {
       [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, t + i * 0.12, 0.24, { type: 'triangle', gain: 0.2 }));
       [523.25, 659.25, 783.99].forEach((f) => tone(f, t + 0.5, 0.75, { type: 'triangle', gain: 0.12 }));
     },
+    // A low, ominous swell — the floor turning against the king (a danger event).
+    doom(t) {
+      tone(88, t, 0.7, { type: 'sawtooth', gain: 0.16, slideTo: 52, attack: 0.04 });
+      tone(132, t + 0.04, 0.6, { type: 'triangle', gain: 0.09, slideTo: 66 });
+      noise(t, 0.3, 0.11);
+    },
   };
 
   function play(name) {

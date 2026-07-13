@@ -296,9 +296,11 @@
       const angB = Math.atan2(b.y - ky, b.x - kx);
       return angA !== angB ? angA - angB : distToKing(a) - distToKing(b);
     });
-    // Start the cursor on the reachable tile nearest the king.
-    const nearest = cardTargets.slice().sort((a, b) => distToKing(a) - distToKing(b))[0];
-    cardCursor = { x: nearest.x, y: nearest.y };
+    // Snap the cursor to the NEAREST HITTABLE ENEMY by default (offensive cards want a
+    // foe, not empty ground) — falling back to the nearest reachable tile if none is armed.
+    const foeTargets = cardTargets.filter((t) => gameState.enemies.some((e) => e.x === t.x && e.y === t.y));
+    const preferred = (foeTargets.length ? foeTargets : cardTargets).slice().sort((a, b) => distToKing(a) - distToKing(b))[0];
+    cardCursor = { x: preferred.x, y: preferred.y };
     gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — cycle targets with the numpad/WSAD, then Enter/Space (or press ${index + 1} again) to fire; Esc to cancel.`;
     showCardInfo(card);
     updateHud();
@@ -365,6 +367,8 @@
     wall: 'Wall — blocks sight & movement',
     lava: 'Lava — crossable, but burns you 1 HP per turn you end on it (enemies wade free); clear to see through',
     water: 'Water — slow (cross one per move); no cards while wading',
+    pit: 'Pit — a bottomless hole: nothing can cross it, but shots (yours OR a turret’s/boss’s) fly right over',
+    boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it',
   };
 
   // Build a human description of a tile (or null if there is nothing to say).
@@ -676,10 +680,6 @@
     // }
     if (getThreatenedTiles(state).size > 0) {
       queueTip('threat');
-    }
-    // Once dread crosses the halfway mark, warn about the rising tide of foes.
-    if (state.turn >= MAX_TURNS_SCARY / 2) {
-      queueTip('danger');
     }
     // First sighting of each terrain type pops an explanatory tip.
     for (const key of computeVisibleTiles(state)) {
@@ -1291,9 +1291,15 @@
       return;
     }
 
-    // Turn complete: the king's allies act (AFTER the foes), then maybe reinforce.
+    // Turn complete: the king's allies act (AFTER the foes), then the floor may turn on him.
     applyState(runAllyPhase(gameState), true);
     applyState(maybeSpawnEnemy(gameState), true);
+    if (gameState.dangerEvent) {
+      // A danger event fired — heave the screen, sound the alarm, and explain it once.
+      Renderer.effect('danger');
+      GameAudio.play('doom');
+      queueTip('dangerEvent');
+    }
     saveGame(gameState);
     maybeOpenLevelUp(); // if this turn slew the boss, offer the boon now
   }
