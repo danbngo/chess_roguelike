@@ -36,7 +36,7 @@ A bloodletter who feeds on the crowd he cuts down.
 |---|---|---|---|---|
 | 1 | `w_edge` | Keen Edge | a card that scores a kill recharges 1 turn faster | `meleeRefund` |
 | 2 | `w_cleave` | Cleave | when you fell a foe, one adjacent foe dies too | `meleeCleave` |
-| 3 | `w_leech` | Vampiric Edge | any turn you fell a foe, heal 1 HP | `meleeLeech` |
+| 3 | `w_leech` | Vampiric Edge | heal 1 HP when a single strike fells **two** foes at once (its partner is Cleave) | `meleeLeech` |
 
 ### 🐎 Cavalier — "Charge and trample through the ranks."
 A relentless charger who kills on the move and crushes on landing.
@@ -52,7 +52,7 @@ A show-off who fights with tempo and a signature dash.
 |---|---|---|---|---|
 | 1 | `w_enpassant` | En Passant | gain an en-passant card (cd 3): step 1 tile in any direction (capturing a foe there) AND strike one foe "in passing" — a piece that was beside your starting tile (marked ✕ while aiming) | `gainCard:enpassant` |
 | 2 | `w_flourish` | Flourish | after a kill, foes beside you are caught off guard (surprised) | `meleeFlourish` |
-| 3 | `w_rush` | Charge | a move that kills costs no turn | `freeKillMove` |
+| 3 | `w_rush` | Charge | the FIRST move that kills each turn costs no turn (further kill-moves that turn cost a turn as usual) | `freeKillMove` |
 
 ---
 
@@ -63,9 +63,9 @@ _A hunter who fells foes from across the room._
 The survivalist who masters the terrain, then becomes the beast.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_wade` | Amphibious | water no longer slows your moves or blocks your cards | `terrainImmune` |
-| 2 | `r_xray` | Sixth Sense | see and shoot over walls — ONE-WAY: foes on the far side of a wall don't spot you or wake unless you attack them or step adjacent | `seeThroughWalls` |
-| 3 | `r_promo` | Promotion | gain a promotion card: free to cast; for 3 turns move as an amazon (queen + knight) and use no weapon cards | `gainCard:promotion` |
+| 1 | `r_wade` | Winged Boots | water no longer slows your moves or blocks your cards, AND lava no longer burns you | `terrainImmune` |
+| 2 | `r_xray` | Sixth Sense | your vision and ranged/spell shots pass through walls — you spot and pick off foes behind cover while they stay blind to you (ONE-WAY); you still can't reach them in melee | `seeThroughWalls` |
+| 3 | `r_promo` | Promotion | gain a promotion card (free to cast, cooldown 9): for 3 turns become an INVINCIBLE warhorse — leap like a knight (and step a tile), take 0 damage, use no weapon cards | `gainCard:promotion`, `gainCooldown:9` |
 
 ### 🎯 Deadeye — "One shot. Then another, before they blink."
 Reach, sight, and foreknowledge.
@@ -81,7 +81,7 @@ The ghost: unchased, ignored by structures, unnoticed.
 |---|---|---|---|---|
 | 1 | `r_ghost` | Ghost | foes stop chasing once you leave their sight | `noChase` |
 | 2 | `r_camo` | Camouflage | turrets and summoning circles ignore you | `camouflage` |
-| 3 | `r_stealth` | Silent | unaware foes don't spot you at range (they roam showing "?"). You're given away by: attacking (all visible foes wake), any foe ending its turn adjacent to you (it wakes at once — or ~11% bumps you for 1), or you stepping next to one | `stealth` |
+| 3 | `r_stealth` | Silent | unaware foes MORE than one tile away never notice you (they roam showing "?"); any within one tile detects you normally (surprised on first sight). Attacking gives you away to all visible foes | `stealth` |
 
 ### 🏹 Fletcher — "A bow for every range, and the feet to use them."
 The quartermaster: reload, a bigger bow, and kickback.

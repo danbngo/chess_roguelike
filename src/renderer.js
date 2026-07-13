@@ -422,6 +422,8 @@ const Renderer = (function () {
       drawStatusMark(tileX, tileY, '?', '#a3a3a3'); // a grey "?" — it hasn't noticed the king
     } else if (mainState === 'frustrated') {
       drawStatusMark(tileX, tileY, '✖', '#fca5a5');
+    } else if (mainState === 'recovering') {
+      drawStatusMark(tileX, tileY, '⟳', '#67e8f9'); // cyan recharge glyph — winded / cooling down
     }
   }
 
@@ -602,34 +604,28 @@ const Renderer = (function () {
     }
 
     ctx.globalAlpha = faded ? 0.5 : 1;
-    // Centre the key glyph on the tile (bow up-left, teeth down-right — nudged so the
-    // whole shape's midpoint sits on the tile centre).
-    ctx.translate(cx - s * 0.03, cy - s * 0.03);
     ctx.fillStyle = '#fbbf24';
     ctx.strokeStyle = '#b45309';
     ctx.lineWidth = Math.max(1, s * 0.03);
-    const bowR = s * 0.15;
-    const bx = -s * 0.12;
-    const by = -s * 0.12;
+    // An upright key CENTRED on the tile: a ringed bow up top, a shaft straight down, and
+    // two teeth on the right. `ax` (the vertical axis) is nudged a hair left so the teeth
+    // don't pull the whole shape off-centre.
+    const ax = cx - s * 0.03;
+    const bowR = s * 0.14;
+    const bowY = cy - s * 0.13;
     ctx.beginPath();
-    ctx.arc(bx, by, bowR, 0, Math.PI * 2);
+    ctx.arc(ax, bowY, bowR, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = faded ? '#1e293b' : '#0b1220';
     ctx.beginPath();
-    ctx.arc(bx, by, bowR * 0.45, 0, Math.PI * 2);
+    ctx.arc(ax, bowY, bowR * 0.44, 0, Math.PI * 2);
     ctx.fill();
-    // Shaft running down to the lower-right, with two teeth.
     ctx.fillStyle = '#fbbf24';
-    ctx.strokeStyle = '#b45309';
     const shaftW = s * 0.07;
-    ctx.save();
-    ctx.translate(bx, by);
-    ctx.rotate(Math.PI / 4);
-    ctx.fillRect(-shaftW / 2, 0, shaftW, s * 0.42);
-    ctx.fillRect(-shaftW / 2, s * 0.3, shaftW + s * 0.1, shaftW); // tooth 1
-    ctx.fillRect(-shaftW / 2, s * 0.4, shaftW + s * 0.16, shaftW); // tooth 2
-    ctx.restore();
+    ctx.fillRect(ax - shaftW / 2, bowY + bowR * 0.5, shaftW, s * 0.33); // shaft, ending near +0.27
+    ctx.fillRect(ax - shaftW / 2, cy + s * 0.11, shaftW + s * 0.1, shaftW); // tooth 1
+    ctx.fillRect(ax - shaftW / 2, cy + s * 0.2, shaftW + s * 0.15, shaftW); // tooth 2
     ctx.restore();
   }
 
@@ -842,6 +838,22 @@ const Renderer = (function () {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(getPieceLabel(corpse.kind), 0, 0);
+    // Blood spattered on the body — reuses the same speck layout as living pieces, drawn
+    // in the corpse's flattened/slanted frame and clipped to its body so it reads as gore
+    // pooled on the fallen piece (darker, dried).
+    const b = Math.min(1, corpse.blood || 0.6);
+    const r = tileSize * 0.34;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = '#7a0f0f';
+    const n = Math.max(2, Math.round(b * BLOOD_SPECKS.length));
+    for (let i = 0; i < n; i += 1) {
+      const [sx, sy, sr] = BLOOD_SPECKS[i];
+      ctx.beginPath();
+      ctx.arc(sx * r, sy * r, r * sr, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -887,9 +899,9 @@ const Renderer = (function () {
       case 'water':
         return isDark ? '#1e4d6b' : '#2f6f97'; // deep water
       case 'wall':
-        return isDark ? '#5a4f45' : '#6b5e52'; // warm brown stone
+        return isDark ? '#54535a' : '#6a696f'; // neutral grey stone (cool, desaturated)
       default:
-        return isDark ? '#6b4a2b' : '#e9cfa0'; // cream/brown ground
+        return isDark ? '#71481d' : '#e8c589'; // warm SEPIA ground (so fogged floor never reads as wall)
     }
   }
 
@@ -983,6 +995,42 @@ const Renderer = (function () {
   function drawEmpty() {
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // Escalating-danger vignette. `dread` ramps 0..1 over MAX_TURNS_SCARY turns on the floor;
+  // the vignette fades in from the edges as an amber warmth, then at MAX danger snaps to a
+  // deeper, strongly-pulsing red that creeps further inward — a clear "get out NOW" cue.
+  // The board's centre is always left untouched (transparent), so nothing is ever hidden.
+  function drawDangerVignette(state) {
+    if (typeof MAX_TURNS_SCARY === 'undefined' || !state || state.gameOver || state.won) return;
+    const dread = (state.turn || 0) / MAX_TURNS_SCARY;
+    const intensity = Math.max(0, Math.min(1, (dread - 0.35) / 0.65)); // starts ~1/3 of the way in
+    const maxed = (state.turn || 0) >= MAX_TURNS_SCARY;
+    if (intensity <= 0 && !maxed) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    const pulse = 0.5 + 0.5 * Math.sin(clock * (maxed ? 6.5 : 2 + dread * 2)); // quickens with danger
+    let color;
+    let peak;
+    let inner;
+    if (maxed) {
+      color = '198, 26, 26'; // angry red
+      peak = 0.34 + 0.34 * pulse; // big alpha jump + strong heartbeat
+      inner = 0.28; // creeps further toward the middle
+    } else {
+      color = '226, 118, 40'; // warm amber
+      peak = (0.12 + 0.2 * intensity) * (0.65 + 0.35 * pulse);
+      inner = 0.44; // hugs the edges
+    }
+    const r = Math.hypot(w, h) / 2;
+    const g = ctx.createRadialGradient(w / 2, h / 2, r * inner, w / 2, h / 2, r);
+    g.addColorStop(0, `rgba(${color}, 0)`);
+    g.addColorStop(0.72, `rgba(${color}, ${(peak * 0.35).toFixed(3)})`);
+    g.addColorStop(1, `rgba(${color}, ${peak.toFixed(3)})`);
+    ctx.save();
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
   }
 
   // A whole-level minimap drawn onto its own screen-fixed canvas (bottom-right of
@@ -1256,8 +1304,12 @@ const Renderer = (function () {
       if ((enemy.boss || enemy.turret) && enemy.maxHp) {
         drawBossHpBar(enemy.x, enemy.y, enemy.hp, enemy.maxHp);
       }
-      // Main-AI-state icon (only for enemies in true sight; turrets / circles show none).
-      if (inSight && role !== 'turret' && role !== 'circle') {
+      // State icon. A boss or turret catching its breath (cooldown) shows the recharge
+      // glyph — otherwise the main-AI-state icon (turrets/circles have none of the latter).
+      const live = liveById.get(enemy.id);
+      if (inSight && live && live.recovering && (enemy.boss || enemy.turret)) {
+        drawStateIcon(enemy.x, enemy.y, 'recovering');
+      } else if (inSight && role !== 'turret' && role !== 'circle') {
         const mainState = enemy.asleep ? 'asleep' : enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : 'unaware';
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }
@@ -1277,7 +1329,7 @@ const Renderer = (function () {
           ? (CLASSES[highestClass(state.player)] || {}).color
           : null;
     // While Promoted the king shows as an amazon (he moves and fights as one).
-    const playerGlyph = state.player.promotion > 0 ? 'amazon' : 'king';
+    const playerGlyph = state.player.promotion > 0 ? 'knight' : 'king'; // an invincible warhorse while promoted
     drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor, blood: woundBlood(state.player) });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);
@@ -1287,6 +1339,11 @@ const Renderer = (function () {
     drawBursts();
 
     ctx.restore();
+
+    // Escalating danger: a warm edge vignette that intensifies the longer the king lingers,
+    // snapping to an angry, pulsing red once the floor hits max danger. Purely atmospheric —
+    // the centre of the board stays perfectly clear, so vision never changes.
+    drawDangerVignette(state);
 
     if (flash > 0) {
       // A tinted wash over the whole canvas, fading out (color set by effect()).

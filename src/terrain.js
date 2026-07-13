@@ -17,17 +17,21 @@ function terrainAt(state, x, y) {
   return (state.terrain && state.terrain[`${x},${y}`]) || 'normal';
 }
 
+// Sight (and projectiles) are stopped by walls and boulders. Pits are open holes and lava/
+// water are low, so none of those block the look or a shot.
 function blocksSight(type) {
-  return type === 'wall';
+  return type === 'wall' || type === 'boulder';
 }
 
-// Whether a mover may enter/stop on a tile. Walls stop everything. Lava is
-// passable only to enemies (opts.lavaOk); water is passable to all (but slow —
-// see slideStops).
+// Whether a mover may enter/stop on a tile. Walls and BOULDERS stop everyone (a phasing
+// king excepted). PITS are bottomless — impassable to all, always. Lava is WALKABLE by
+// default (the king sears 1 HP/turn on it — see passTurn); `opts.lavaOk === false` bars it,
+// which the level generator relies on for a guaranteed safe path. Water is passable (slow).
 function standableFor(type, opts) {
   const o = opts || {};
-  if (type === 'wall') return Boolean(o.phaseWalls); // only a phasing king may enter walls
-  if (type === 'lava') return Boolean(o.lavaOk);
+  if (type === 'wall' || type === 'boulder') return Boolean(o.phaseWalls); // only a phasing king enters these
+  if (type === 'pit') return false; // a bottomless pit is impassable to everything
+  if (type === 'lava') return o.lavaOk !== false; // walkable unless a caller explicitly forbids it
   return true; // water & normal are walkable
 }
 
@@ -36,9 +40,11 @@ function isSlowTerrain(type) {
   return type === 'water';
 }
 
-// Context-free standability (used for placement): a plain walker.
+// Context-free standability (used for placement / spawns): a plain walker who avoids
+// lava. (The king may now WALK onto lava — that goes through standableFor with no
+// lavaOk — but nothing should be PLACED on it.)
 function isStandable(type) {
-  return standableFor(type, {});
+  return standableFor(type, { lavaOk: false });
 }
 
 // Symmetric line of sight: clear unless a wall lies strictly between the two
@@ -112,6 +118,9 @@ function computeVisibleTiles(state) {
 function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
   const o = opts || {};
   const immune = Boolean(o.terrainImmune); // ignore slow-terrain effects
+  // A PROJECTILE ray (turret fire) flies over pits / lava / water, stopped only by walls,
+  // boulders, and the first unit it strikes — so a turret's line of fire crosses a pit.
+  const projectile = Boolean(o.projectile);
   const stops = [];
   let x = sx;
   let y = sy;
@@ -123,7 +132,7 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
     const ny = y + dy;
     if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) break;
     const terrain = terrainAt(state, nx, ny);
-    if (!standableFor(terrain, o)) break; // wall always; water/lava unless it flies / walks lava
+    if (projectile ? blocksSight(terrain) : !standableFor(terrain, o)) break;
     if (unitAt(nx, ny)) {
       // Capturing the target costs a ground step; without the range to spend it,
       // the target is out of reach this move (a 1-range king can't pounce two).
@@ -132,10 +141,10 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
       }
       break;
     }
-    if (isSlowTerrain(terrain) && !immune && slowUsed >= 1) break; // at most one water tile per move
+    if (!projectile && isSlowTerrain(terrain) && !immune && slowUsed >= 1) break; // one water tile / move
     if (groundUsed >= maxGround) break; // out of range
     groundUsed += 1;
-    if (isSlowTerrain(terrain) && !immune) slowUsed += 1;
+    if (!projectile && isSlowTerrain(terrain) && !immune) slowUsed += 1;
     x = nx;
     y = ny;
     stops.push({ x, y, capture: false });
@@ -155,8 +164,8 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'lava') {
-      continue; // Can't land on a wall or in deep water.
+    if (terrain === 'wall' || terrain === 'lava' || terrain === 'pit') {
+      continue; // can't land on a wall, in lava, or in a bottomless pit (a boulder IS landable — a leaper crushes it)
     }
     if (terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall') {
       continue; // Wall blocks the leap.
@@ -185,8 +194,8 @@ function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'lava') {
-      continue; // Can't land on a wall or in deep water.
+    if (terrain === 'wall' || terrain === 'lava' || terrain === 'pit') {
+      continue; // can't land on a wall, in lava, or in a bottomless pit (a boulder IS landable — a leaper crushes it)
     }
     const unit = unitAt(x, y);
     if (unit && !isTarget(x, y)) {

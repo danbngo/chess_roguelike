@@ -117,8 +117,8 @@ const TUTORIALS = {
   'terrain-lava': {
     title: 'Lava',
     text:
-      'You cannot cross lava — but ENEMIES can wade right through it, so it shields ' +
-      'them, not you. Leapers on either side jump over it, and it does not block ' +
-      'sight.',
+      'You CAN cross lava, but it sears you for 1 HP each turn you end standing on it — ' +
+      'so dash across, never linger. Enemies wade it freely (it shields them). It does ' +
+      'not block sight. (Winged Boots makes you immune to the burning.)',
   },
 };

@@ -5,7 +5,8 @@ const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so cente
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
 const PLAYER_START = { x: 10, y: 10 };
 const STARTING_HP = 5; // Default; each class overrides it (see CLASSES[].hp).
-const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes spawn rate / dread (the player has plenty of time to clear a floor before the pressure peaks).
+const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes the dread meter / tension music.
+const SPAWN_RAMP_TURNS = 200; // Turns over which the SPAWN rate ramps to its ceiling — 2x slower than the dread meter, so methodical play isn't punished as harshly.
 const SPATTER_LIFE = 12; // Turns a blood spatter lingers before fading away.
 const CORPSE_LIFE = 18; // Turns a corpse (or ash pile) lingers before fully fading.
 const BOSS_CORPSE_LIFE = 40; // A slain boss leaves remains that linger far longer than a common corpse.
@@ -188,10 +189,10 @@ const CLASSES = {
     hp: 4,
     chains: { Druid: '#16a34a', Deadeye: '#14b8a6', 'Gloom Stalker': '#6366f1', Fletcher: '#a3e635' },
     perks: [
-      // 🌲 Druid — the survivalist: master the terrain, then ascend to the amazon.
-      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Amphibious', desc: 'Water no longer slows you or blocks your cards', grants: { terrainImmune: true } },
-      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Sixth Sense', desc: 'See and shoot over walls', grants: { seeThroughWalls: true } },
-      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Promotion', desc: 'Gain a promotion card: cast free to move as an amazon (queen + knight) for 3 turns (no weapon cards)', grants: { gainCard: 'promotion' } },
+      // 🌲 Druid — the survivalist: master the terrain, then ride to war.
+      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Winged Boots', desc: 'Water no longer slows you or blocks your cards, and lava no longer burns you', grants: { terrainImmune: true } },
+      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Sixth Sense', desc: 'Your vision and your ranged/spell shots pass through walls — you spot and pick off foes behind cover, while they stay blind to you (you still can’t reach them in melee)', grants: { seeThroughWalls: true } },
+      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Promotion', desc: 'Gain a promotion card (cooldown 9): become an INVINCIBLE warhorse for 3 turns — leap like a knight, take no damage, play no cards', grants: { gainCard: 'promotion', gainCooldown: 9 } },
       // 🎯 Deadeye — reach, sight, and foreknowledge.
       { id: 'r_eyes2', chain: 'Deadeye', tier: 1, name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
       { id: 'r_reach', chain: 'Deadeye', tier: 2, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
@@ -199,7 +200,7 @@ const CLASSES = {
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
       { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
       { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles ignore you', grants: { camouflage: true } },
-      { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes do not notice you unless adjacent (or you attack)', grants: { stealth: true } },
+      { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes more than one tile away never notice you (until you strike); any within one tile — even one that blunders into you — detects you normally', grants: { stealth: true } },
       // 🏹 Fletcher — the quartermaster: reload, a bigger bow, and kickback.
       { id: 'r_reload', chain: 'Fletcher', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
       { id: 'r_longbow', chain: 'Fletcher', tier: 2, requires: 'r_reload', name: 'Longbow', desc: 'Gain a rook card (cooldown 5)', grants: { gainCard: 'rook', gainCooldown: 5 } },

@@ -117,6 +117,37 @@ test('turrets are destructible (HP, struck in place); circles and plain pieces d
   assert.ok(!n.enemies.some((e) => e.turret), 'the turret is destroyed on the third hit');
 });
 
+test('a boss recovers (skips a turn) after it acts — every-other-turn cadence', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  const boss = createBoss(3, 9, 8); // rook, adjacent to the king
+  boss.bossPerk = 'tough'; // no on-hit reaction, deterministic
+  boss.dormant = false;
+  s.enemies = [boss];
+  s.player.x = 8; s.player.y = 8; s.player.hp = 5; s.player.maxHp = 5; s.player.className = 'warrior';
+  const t1 = moveEnemy(s, boss.id); // it strikes the king...
+  assert.equal(t1.enemies.find((e) => e.boss).recovering, true, 'it is winded after acting');
+  const hp1 = t1.player.hp;
+  assert.ok(hp1 < 5, 'the first blow lands');
+  const t2 = moveEnemy(t1, boss.id); // ...then recovers, doing nothing
+  assert.equal(t2.enemies.find((e) => e.boss).recovering, false, 'the cooldown clears');
+  assert.equal(t2.player.hp, hp1, 'it does NOT strike on its recovery turn');
+});
+
+test('a turret recharges (skips a turn) after it fires', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {};
+  s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5;
+  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 13, turret: true, hp: 3, maxHp: 3 })]; // covers the column
+  const t1 = moveEnemy(s, s.enemies[0].id);
+  assert.ok(t1.player.hp < 5, 'the turret fires and hits down its line');
+  assert.equal(t1.enemies[0].recovering, true, 'then it must recharge');
+  const hp1 = t1.player.hp;
+  const t2 = moveEnemy(t1, t1.enemies[0].id);
+  assert.equal(t2.player.hp, hp1, 'it does NOT fire on its recharge turn — a window to cross the line');
+  assert.equal(t2.enemies[0].recovering, false, 'the cooldown clears');
+});
+
 test('a boss has HP: it takes several hits, and the final floor boss wins the run', () => {
   const s = createInitialState('warrior');
   s.terrain = {};
@@ -263,28 +294,45 @@ test('a summoning circle conjures a foe when it sees you, and dies when stepped 
   assert.ok(!destroyed.enemies.some((e) => e.summonCircle), 'stepping on it destroys it');
 });
 
+test('a missile (ranged/spell) does NOT dispel a summoning circle — only stepping/bumping does', () => {
+  const s = createInitialState('sorcerer'); // spell bolts pierce
+  s.terrain = {};
+  s.player.x = 8; s.player.y = 8;
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 9, y: 8, summonCircle: true, awake: true }), // a circle on the line
+    makeEnemy({ kind: 'pawn', x: 11, y: 8, awake: true }), // a real foe beyond it
+  ];
+  // The circle is NOT offered as a target...
+  const targets = getCardMoves(s, s.player.cards[0]);
+  assert.ok(!targets.some((t) => t.x === 9 && t.y === 8), 'a circle is not a missile target');
+  // ...and firing down the line kills the foe but leaves the circle standing.
+  const r = useCard(s, 0, 11, 8);
+  assert.ok(r.enemies.some((e) => e.summonCircle), 'the circle survives the bolt passing over it');
+  assert.ok(!r.enemies.some((e) => e.x === 11 && e.y === 8 && !e.summonCircle), 'the real foe still falls');
+});
+
 test('classes start with different HP (Warrior sturdiest, Sorcerer frailest)', () => {
   assert.equal(createPlayer('warrior').maxHp, 5);
   assert.equal(createPlayer('ranger').maxHp, 4);
   assert.equal(createPlayer('sorcerer').maxHp, 3);
 });
 
-test('the king cannot cross lava, but enemies can', () => {
-  const blocked = createInitialState('warrior');
-  blocked.terrain = { '9,8': 'lava' };
-  blocked.player.x = 8;
-  blocked.player.y = 8;
-  assert.ok(!getPlayerMoves(blocked).some((m) => m.x === 9 && m.y === 8), 'king blocked by lava');
-
+test('the king CAN cross lava now, but it sears him 1 HP per turn (Winged Boots negates it)', () => {
   const s = createInitialState('warrior');
   s.terrain = { '9,8': 'lava' };
-  s.floor = 6; // enemies cross lava
-  s.player.x = 8;
-  s.player.y = 8;
-  s.player.hp = 5;
-  s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 8, awake: true })];
-  const n = moveEnemy(s, s.enemies[0].id);
-  assert.ok(n.player.hp < 5 || n.enemies[0].x < 11, 'the rook crossed the lava toward the king');
+  s.enemies = [];
+  s.player.x = 8; s.player.y = 8; s.player.hp = 5;
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 9 && m.y === 8), 'the king may step onto lava');
+  const onLava = movePlayerTo(s, 9, 8);
+  assert.deepEqual({ x: onLava.player.x, y: onLava.player.y }, { x: 9, y: 8 }, 'he steps onto it');
+  assert.equal(onLava.player.hp, 4, 'and it sears him for 1 HP that turn');
+  // Winged Boots (terrainImmune) makes him immune to the burning.
+  const immune = createInitialState('ranger');
+  immune.terrain = { '9,8': 'lava' };
+  immune.enemies = [];
+  immune.player.x = 8; immune.player.y = 8; immune.player.hp = 4; immune.player.terrainImmune = true;
+  const safe = movePlayerTo(immune, 9, 8);
+  assert.equal(safe.player.hp, 4, 'Winged Boots — no lava burn');
 });
 
 test('water is passable but slow', () => {
@@ -517,7 +565,7 @@ function rangerWith(...perkIds) {
   return s;
 }
 
-test('Amphibious lets the Ranger wade freely and cast while in water', () => {
+test('Winged Boots lets the Ranger wade water freely, cast while wading, and shrug off lava', () => {
   const wade = rangerWith('r_wade');
   wade.player.moveRange = 3;
   wade.terrain = { '11,10': 'water', '12,10': 'water' };
@@ -528,6 +576,13 @@ test('Amphibious lets the Ranger wade freely and cast while in water', () => {
   const r = useCard(cast, 0, 12, 12);
   assert.notEqual(r.lastAction, 'blocked', 'a weapon still fires while wading');
   assert.equal(r.enemies.length, 0);
+  // And lava no longer burns.
+  const fire = rangerWith('r_wade');
+  fire.enemies = [];
+  fire.terrain = { '11,10': 'lava' };
+  fire.player.x = 10; fire.player.y = 10; fire.player.hp = 4; fire.player.moveRange = 1;
+  const onLava = movePlayerTo(fire, 11, 10);
+  assert.equal(onLava.player.hp, 4, 'Winged Boots shrugs off the lava');
 });
 
 test('Sixth Sense sees and shoots over walls (diagonally, as a bishop)', () => {
@@ -549,19 +604,66 @@ test('Sixth Sense sees and shoots over walls (diagonally, as a bishop)', () => {
   assert.equal(enemyAwareOfKing(clear, 12, 12), true, 'with the wall gone it can see (and would wake)');
 });
 
-test('Promotion: a free cast that turns the king into an amazon and locks his cards', () => {
+test('Promotion: a free cast that becomes an INVINCIBLE warhorse and locks cards', () => {
   const s = rangerWith('r_wade', 'r_xray', 'r_promo');
   const bi = s.player.cards.findIndex((c) => c.kind === 'promotion');
-  const amazon = useCard(s, bi, s.player.x, s.player.y);
-  assert.equal(amazon.player.promotion, 3);
-  assert.equal(amazon.enemyTurn, false, 'casting it costs no turn');
-  const moves = getPlayerMoves(amazon);
-  assert.ok(moves.some((m) => m.viaJump), 'amazon form can knight-leap');
-  assert.ok(moves.some((m) => !m.viaJump), 'amazon form can also queen-slide');
-  const leap = moves.find((m) => m.viaJump);
-  assert.equal(useCard(amazon, 0, 12, 12).lastAction, 'blocked', 'no weapons while promoted');
-  const after = movePlayerTo(amazon, leap.x, leap.y);
+  assert.equal(s.player.cards[bi].cooldown, 9, 'the promotion card has a long cooldown');
+  const horse = useCard(s, bi, s.player.x, s.player.y);
+  assert.equal(horse.player.promotion, 3);
+  assert.equal(horse.enemyTurn, false, 'casting it costs no turn');
+  const moves = getPlayerMoves(horse);
+  assert.ok(moves.some((m) => m.viaJump), 'the warhorse can knight-leap');
+  assert.ok(moves.some((m) => !m.viaJump), 'and still step a single tile');
+  assert.ok(!moves.some((m) => Math.abs(m.x - horse.player.x) + Math.abs(m.y - horse.player.y) > 3), 'but no long queen-slides');
+  assert.equal(useCard(horse, 0, 12, 12).lastAction, 'blocked', 'no weapons while promoted');
+  // Invincible: an enemy blow deals no damage during the horse form.
+  horse.player.x = 10; horse.player.y = 10;
+  horse.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true })];
+  const hp0 = horse.player.hp;
+  const r = beginEnemyPhase(horse);
+  let st = r.state;
+  for (const id of r.moverIds) st = moveEnemy(st, id);
+  assert.equal(st.player.hp, hp0, 'the warhorse takes no damage');
+  // The timer counts down each turn the king acts.
+  const after = movePlayerTo(horse, moves.find((m) => !m.viaJump).x, moves.find((m) => !m.viaJump).y);
   assert.equal(after.player.promotion, 2, 'the timer counts down each turn');
+});
+
+test('Charge: only the FIRST kill-move each turn is free', () => {
+  const s = warriorWith('w_enpassant', 'w_flourish', 'w_rush'); // Duellist chain → Charge
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }),
+  ];
+  const first = movePlayerTo(s, 11, 10); // kill by moving
+  assert.equal(first.lastAction, 'move-free', 'the first kill-move is free');
+  assert.equal(first.enemyTurn, false, 'no turn spent');
+  assert.equal(first.player.freeMoveUsed, true, 'the free move is now used up');
+  const second = movePlayerTo(first, 12, 10); // a second kill-move THIS turn
+  assert.equal(second.enemyTurn, true, 'the second kill-move spends the turn');
+});
+
+test('Vampiric Edge heals only when a strike fells two foes at once (Cleave supplies the second)', () => {
+  // Kill + Cleave = two deaths in one action → heal.
+  const s = warriorWith('w_edge', 'w_cleave', 'w_leech');
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  s.player.hp = 3; s.player.maxHp = 5;
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }), // moved onto
+    makeEnemy({ kind: 'pawn', x: 11, y: 11, awake: true }), // adjacent → cleaved
+  ];
+  const two = movePlayerTo(s, 11, 10);
+  assert.equal(two.enemies.length, 0, 'both foes fall (kill + cleave)');
+  assert.equal(two.player.hp, 4, 'felling two at once heals 1');
+  // A lone kill (no second death) does NOT heal.
+  const s1 = warriorWith('w_edge', 'w_cleave', 'w_leech');
+  s1.player.x = 10; s1.player.y = 10; s1.player.moveRange = 1;
+  s1.player.hp = 3; s1.player.maxHp = 5;
+  s1.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+  const one = movePlayerTo(s1, 11, 10);
+  assert.equal(one.enemies.length, 0, 'the single foe falls');
+  assert.equal(one.player.hp, 3, 'a lone kill does not heal');
 });
 
 test('Reload readies every other card; Longbow grants a slow rook; Recoil kicks back', () => {
@@ -765,39 +867,28 @@ test('allies: enemies may capture them, the king swaps with them, the General up
   assert.ok(gen.allies.some((a) => a.familiar && a.kind === 'general'), 'the familiar becomes a General');
 });
 
-test('Blink fires at most once per turn; Silent lets foes bump but not auto-notice', () => {
+test('Blink fires at most once per turn; Silent hides only foes beyond a tile', () => {
   const bs = sorcererWith('s_blink');
   bs.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8 })];
   assert.equal(blinkToSafety(bs), true);
   assert.equal(blinkToSafety(bs), false, 'the second blink this turn is spent');
 
-  // Over many single enemy phases: a Silent king is bumped sometimes but never all the
-  // time, while a plain unaware adjacent foe simply freezes (surprised) and never hits.
-  const phase = (state) => {
-    const r = beginEnemyPhase(state);
-    let st = r.state;
-    for (const id of r.moverIds) st = moveEnemy(st, id);
-    return st;
-  };
-  let silentBumps = 0;
-  let plainHits = 0;
-  const N = 100;
-  for (let i = 0; i < N; i += 1) {
-    const s = createInitialState('warrior');
-    s.terrain = {};
-    s.player.x = 10; s.player.y = 10; s.player.stealth = true;
-    s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
-    if (phase(s).player.hp < s.player.hp) silentBumps += 1;
-  }
-  for (let i = 0; i < N; i += 1) {
-    const s = createInitialState('warrior');
-    s.terrain = {};
-    s.player.x = 10; s.player.y = 10;
-    s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
-    if (phase(s).player.hp < s.player.hp) plainHits += 1;
-  }
-  assert.ok(silentBumps > 0 && silentBumps < N, `silent bumps happen sometimes (${silentBumps}/${N})`);
-  assert.equal(plainHits, 0, 'a non-silent unaware foe freezes on first sight, never hitting');
+  const phase = (state) => beginEnemyPhase(state).state;
+  // An unaware foe TWO tiles from the Silent king stays oblivious (it wanders, never wakes).
+  const far = createInitialState('warrior');
+  far.terrain = {};
+  far.player.x = 10; far.player.y = 10; far.player.stealth = true;
+  far.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false })];
+  const farFoe = phase(far).enemies.find((e) => e.kind === 'rook');
+  assert.ok(farFoe && !farFoe.awake && !farFoe.surprised, 'a foe beyond a tile never notices him');
+  // An unaware foe WITHIN a tile detects him at once (surprised) — exactly like a normal
+  // first sighting, not fooled by stealth.
+  const near = createInitialState('warrior');
+  near.terrain = {};
+  near.player.x = 10; near.player.y = 10; near.player.stealth = true;
+  near.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
+  const nearFoe = phase(near).enemies[0];
+  assert.ok(nearFoe.awake || nearFoe.surprised, 'a foe within a tile detects the Silent king');
 });
 
 test('Silent: attacking reveals you; a foe that wanders adjacent wakes at once', () => {
@@ -830,17 +921,14 @@ test('Silent: attacking reveals you; a foe that wanders adjacent wakes at once',
   const moved = movePlayerTo(sneak, 10, 9); // step to empty ground
   assert.equal(moved.player.attacked, false, 'a plain move does not reveal you');
 
-  // A foe that wanders adjacent never lingers unaware — it wakes the instant it's beside you.
-  let adjacentButUnaware = 0;
-  for (let i = 0; i < 200; i += 1) {
-    const s = createInitialState('warrior');
-    s.terrain = {};
-    s.player.x = 10; s.player.y = 10; s.player.stealth = true;
-    s.enemies = [makeEnemy({ kind: 'king', x: 12, y: 10, awake: false })];
-    const e = phase(s).enemies[0];
-    if (e && chebyshev(e.x, e.y, 10, 10) === 1 && e.awake === false && !e.surprised) adjacentButUnaware += 1;
-  }
-  assert.equal(adjacentButUnaware, 0, 'no foe ends its turn adjacent-yet-oblivious');
+  // A foe adjacent at the START of a phase detects the Silent king at once (surprised),
+  // then hunts — within a tile, it is no longer fooled.
+  const adj = createInitialState('warrior');
+  adj.terrain = {};
+  adj.player.x = 10; adj.player.y = 10; adj.player.stealth = true;
+  adj.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
+  const woke = phase(adj).enemies[0];
+  assert.ok(woke.awake || woke.surprised, 'a foe within a tile notices the Silent king at once');
 });
 
 test('every floor spawns a key and a stair sealed until it is collected', () => {

@@ -151,7 +151,7 @@
     const cls = CLASSES[highestClass(p)];
     floorLabel.textContent = `Floor ${toRoman(gameState.floor)}${cls ? ' · ' + cls.name : ''}`;
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
-    turnLabel.textContent = `Turn ${gameState.turn}${p.promotion > 0 ? ` · ♛ Amazon ${p.promotion}` : ''}`;
+    turnLabel.textContent = `Turn ${gameState.turn}${p.promotion > 0 ? ` · ♞ Warhorse ${p.promotion}` : ''}`;
     renderHearts(p.hp, p.maxHp);
     renderLevelBadges(p.level || 1);
     logMessage(gameState.message);
@@ -363,7 +363,7 @@
   const TERRAIN_NAMES = {
     normal: 'Open ground',
     wall: 'Wall — blocks sight & movement',
-    lava: 'Lava — you cannot cross it (enemies can); clear to see through',
+    lava: 'Lava — crossable, but burns you 1 HP per turn you end on it (enemies wade free); clear to see through',
     water: 'Water — slow (cross one per move); no cards while wading',
   };
 
@@ -450,7 +450,7 @@
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
     enpassant: 'Step one tile in any direction (capturing a foe there), and strike one foe you pass — a piece that was beside your starting tile.',
     doublestep: 'Dash up to two tiles in any one direction, repositioning onto open ground or capturing a foe at the far tile. A nimble on-demand maneuver.',
-    promotion: 'Turns the king into an amazon (queen + knight) for a few turns: move freely, use no weapons. Free to cast.',
+    promotion: 'Become an INVINCIBLE warhorse for 3 turns: leap like a knight (and step a tile), take no damage, use no weapon cards. Free to cast, cooldown 9.',
     reload: 'Spend your turn to recharge every other card at once.',
     swap: 'Trade places with any unit in sight — enemy or turret. No damage.',
   };

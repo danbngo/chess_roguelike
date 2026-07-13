@@ -197,7 +197,7 @@ function getCardMoves(state, card) {
       const ey = p.y + dy;
       if (!inBounds(ex, ey)) continue;
       const destT = terrainAt(state, ex, ey);
-      if (destT === 'wall' || destT === 'lava') continue; // can't step there
+      if (destT === 'wall') continue; // can't step into a wall (lava is walkable, at a cost)
       const foe = enemyAt(ex, ey);
       if (foe && !targetable(ex, ey)) continue; // blocked by an untouchable unit
       let passing = null;
@@ -224,7 +224,7 @@ function getCardMoves(state, card) {
         const y = p.y + dy;
         if (!inBounds(x, y)) continue;
         const t = terrainAt(state, x, y);
-        if (t === 'wall' || t === 'lava') continue; // can't land there
+        if (t === 'wall') continue; // can't land in a wall (lava is walkable, at a cost)
         if (enemyAt(x, y)) {
           if (targetable(x, y)) add(x, y, true, true);
         } else {
@@ -233,9 +233,15 @@ function getCardMoves(state, card) {
       }
     }
   } else {
-    // ranged / spell: projectile rays over terrain, stopped only by walls. Only foes
-    // are valid targets (these cards never move the king).
+    // ranged / spell: projectile rays over terrain, stopped only by walls. Only foes are
+    // valid targets — and NOT summoning circles (a missile passes over a circle without
+    // dispelling it; you must step or be shoved onto it). A circle still BLOCKS a
+    // non-piercing shot, though.
     const shootWalls = Boolean(p.seeThroughWalls); // Sixth Sense: shots fly over walls
+    const missileTarget = (x, y) => {
+      const e = enemyAt(x, y);
+      return Boolean(e) && isCapturable(state, e) && !e.summonCircle;
+    };
     for (const [dx, dy] of dirs) {
       let x = p.x;
       let y = p.y;
@@ -245,8 +251,8 @@ function getCardMoves(state, card) {
         if (!inBounds(x, y)) break;
         if (terrainAt(state, x, y) === 'wall' && !shootWalls) break;
         if (enemyAt(x, y)) {
-          if (targetable(x, y)) add(x, y, false, true);
-          if (!pierce) break; // a solid unit blocks a non-piercing shot
+          if (missileTarget(x, y)) add(x, y, false, true);
+          if (!pierce) break; // a solid unit (including a circle) blocks a non-piercing shot
         }
       }
     }
@@ -309,16 +315,16 @@ function getPieceThreats(piece, state, includeOccupied) {
   if (piece.kind === 'berolina') {
     return adjacentThreats(piece, state, ORTHO, includeOccupied);
   }
-  if (!includeOccupied) {
-    return getPieceMoves(piece, state);
-  }
-  // Treat every occupied square (the king OR any other enemy) as a capture target,
-  // so sliders/steppers threaten the tiles their allies sit on too.
   const unitAt = enemyUnitAt(state, piece);
-  const isTarget = (x, y) =>
-    (x === state.player.x && y === state.player.y) ||
-    state.enemies.some((o) => o.id !== piece.id && o.x === x && o.y === y);
-  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, { lavaOk: true });
+  // With `includeOccupied` every occupied square (king OR another enemy) counts as a target,
+  // so sliders threaten the tiles their allies sit on too.
+  const isTarget = includeOccupied
+    ? (x, y) => (x === state.player.x && y === state.player.y) || state.enemies.some((o) => o.id !== piece.id && o.x === x && o.y === y)
+    : (x, y) => (x === state.player.x && y === state.player.y) || Boolean(allyAt(state, x, y));
+  // A TURRET fires a projectile (crossing pits / lava / water, stopped only by walls,
+  // boulders, and the unit it hits); a mobile piece threatens where it can MOVE.
+  const opts = piece.turret ? { projectile: true } : { lavaOk: true };
+  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, opts);
 }
 
 // Standard pieces use solid chess glyphs; the fairy / endgame pieces use a single
