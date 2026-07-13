@@ -409,10 +409,11 @@
     }
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      lines.push(gameState.exit.locked ? 'Stairs down — sealed until you find the key' : 'Stairs down to the next floor');
+      if (gameState.exit.portal) lines.push(gameState.exit.locked ? 'Victory portal — dormant until you seize the Orb' : 'Victory portal — step in to escape and win!');
+      else lines.push(gameState.exit.locked ? 'Stairs down — sealed until you find the key' : 'Stairs down to the next floor');
     }
     if (gameState.key && !gameState.key.collected && onBuilding(gameState.key)) {
-      lines.push('Floor key — collect it to unlock the stair');
+      lines.push(gameState.key.orb ? 'Orb of Victory — seize it to open the portal (but guardians will converge!)' : 'Floor key — collect it to unlock the stair');
     }
     return lines.join('\n');
   }
@@ -520,7 +521,7 @@
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
         const st = enemy.boss && enemy.dormant
-          ? 'Dormant — guarding the stair'
+          ? (gameState.exit && gameState.exit.portal ? 'Dormant — guarding the portal (wakes on sight)' : 'Dormant — guarding the stair (wakes on sight)')
           : enemy.surprised
             ? 'Surprised — frozen this turn'
             : enemy.frustrated
@@ -537,12 +538,19 @@
 
     const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
     if (onBuilding(gameState.exit)) {
-      addExamineBlock('Stairs', gameState.exit.locked
-        ? 'Descend to the next floor — but the stair is sealed until you collect this floor’s key.'
-        : 'Descend to the next floor — you fully heal and gain a level.');
+      if (gameState.exit.portal) {
+        addExamineBlock('Victory portal', gameState.exit.locked
+          ? 'The way home — but it lies dormant until you seize the Orb of Victory. Step in with the Orb to win the run.'
+          : 'Step into the portal to escape the realm and WIN the run.');
+      } else {
+        addExamineBlock('Stairs', gameState.exit.locked
+          ? 'Descend to the next floor — but the stair is sealed until you collect this floor’s key.'
+          : 'Descend to the next floor — you fully heal and gain a level.');
+      }
     }
     if (gameState.key && !gameState.key.collected && onBuilding(gameState.key)) {
-      addExamineBlock('Floor key', 'Walk onto it to collect it — the stair down then unlocks.');
+      if (gameState.key.orb) addExamineBlock('Orb of Victory', 'Seize it to open the portal home — but the realm’s guardians will converge on you the moment you do.');
+      else addExamineBlock('Floor key', 'Walk onto it to collect it — the stair down then unlocks.');
     }
 
     const scar = (gameState.scars || []).find((s) => s.x === tx && s.y === ty);
@@ -692,10 +700,10 @@
     // Spotting the floor key, and the sealed stair, each get a one-time explainer so the
     // "grab the key to unlock the stair" loop is never a mystery.
     if (state.key && !state.key.collected && inLineOfSight(state, state.key.x, state.key.y)) {
-      queueTip('key');
+      queueTip(state.key.orb ? 'orb' : 'key');
     }
     if (state.exit && state.exit.locked && inLineOfSight(state, state.exit.x, state.exit.y)) {
-      queueTip('stairLocked');
+      queueTip(state.exit.portal ? 'portalLocked' : 'stairLocked');
     }
   }
 

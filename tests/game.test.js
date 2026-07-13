@@ -148,7 +148,7 @@ test('a turret recharges (skips a turn) after it fires', () => {
   assert.equal(t2.enemies[0].recovering, false, 'the cooldown clears');
 });
 
-test('a boss has HP: it takes several hits, and the final floor boss wins the run', () => {
+test('a boss has HP and takes several hits; slaying the final guardian no longer wins the run', () => {
   const s = createInitialState('warrior');
   s.terrain = {};
   s.enemies = [];
@@ -166,7 +166,83 @@ test('a boss has HP: it takes several hits, and the final floor boss wins the ru
     n.player.y = b.y;
     n = movePlayerTo(n, b.x, b.y);
   }
-  assert.equal(n.won, true);
+  assert.ok(!n.enemies.some((e) => e.boss), 'the guardian is slain');
+  assert.equal(n.won, false, 'but that no longer wins — the portal does');
+  assert.equal(n.pendingLevelUp, true, 'slaying the final guardian still grants a boon');
+});
+
+test('the final floor holds a portal + Orb of Victory instead of a stair + key', () => {
+  const s = generateFloor(8, createPlayer('warrior'), 0);
+  assert.equal(s.isPortalFloor, true);
+  assert.equal(s.exit.portal, true, 'the exit is a victory portal');
+  assert.ok(s.key && s.key.orb === true, 'the key is the Orb of Victory');
+  // Earlier floors keep the plain stair + key.
+  const s3 = generateFloor(3, createPlayer('warrior'), 0);
+  assert.ok(!s3.isPortalFloor && !s3.exit.portal);
+  assert.ok(!s3.key || !s3.key.orb);
+});
+
+test('the portal wins only with the Orb; taking the Orb opens it and starts the boss-rush', () => {
+  const s = createInitialState('warrior');
+  s.floor = 8; s.isPortalFloor = true; s.enemies = []; s.terrain = {};
+  s.exit = { x: 12, y: 10, discovered: true, portal: true, locked: true };
+  s.key = { x: 11, y: 10, collected: false, discovered: true, orb: true };
+  // Step onto the portal WITHOUT the Orb — it stays shut and does not win.
+  s.player.x = 11; s.player.y = 10; // adjacent to portal, ON the orb tile
+  // First reaching the portal without the orb: simulate standing on the portal tile.
+  const noOrb = structuredClone(s); noOrb.key.x = 3; noOrb.key.y = 3; noOrb.player.x = 12; noOrb.player.y = 10;
+  assert.equal(tryDescend(noOrb), false, 'the dormant portal cannot be entered');
+  assert.equal(noOrb.won, false);
+  // Now walk onto the Orb (collect), then into the portal (win).
+  const got = movePlayerTo(s, 11, 10); // player already there → collectKeyIfHere fires on arrival elsewhere; force it
+  collectKeyIfHere(got);
+  assert.equal(got.key.collected, true, 'the Orb is seized');
+  assert.equal(got.exit.locked, false, 'the portal opens');
+  assert.equal(got.orbTaken, true, 'the finale begins');
+  got.player.x = 12; got.player.y = 10; // step into the open portal
+  const win = tryDescend(got);
+  assert.equal(win, true);
+  assert.equal(got.won, true, 'entering the open portal with the Orb wins the run');
+});
+
+test('the boss-rush spawns lesser (lava-vulnerable) bosses near the king after the Orb', () => {
+  let s = createInitialState('warrior');
+  s.floor = 8; s.isPortalFloor = true; s.orbTaken = true; s.bossRushTimer = 0;
+  s.enemies = []; s.terrain = {};
+  s.player.x = 10; s.player.y = 10;
+  for (let i = 0; i < 40 && s.enemies.filter((e) => e.boss).length === 0; i += 1) s = maybeSpawnEnemy(s);
+  const rush = s.enemies.filter((e) => e.boss);
+  assert.ok(rush.length >= 1, 'a rush boss appeared');
+  assert.equal(rush[0].rush, true, 'flagged as a rush boss (no boon)');
+  assert.equal(rush[0].lavaImmune, false, 'and it is NOT immune to lava');
+  assert.ok(chebyshev(rush[0].x, rush[0].y, 10, 10) <= 7, 'it spawns near the king');
+});
+
+test('demon-floor guardians are lava-immune; earlier/vanilla bosses sear in lava', () => {
+  assert.equal(createBoss(8, 9, 8).lavaImmune, true, 'the floor-8 guardian shrugs off lava');
+  assert.equal(createBoss(3, 9, 8).lavaImmune, false, 'a floor-3 guardian does not');
+  // A non-immune boss standing on lava loses a wound on its turn.
+  const s = createInitialState('warrior');
+  s.terrain = { '9,8': 'lava' }; s.enemies = [];
+  const boss = createBoss(3, 9, 8); // vanilla-era, not lava-immune
+  boss.dormant = false; boss.lavaImmune = false; boss.hp = 4; boss.maxHp = 4;
+  s.enemies = [boss];
+  s.player.x = 15; s.player.y = 15;
+  const n = moveEnemy(s, boss.id);
+  const b = n.enemies.find((e) => e.boss);
+  assert.ok(b && b.hp < 4, 'the lava sears the vanilla boss');
+});
+
+test('a dormant guardian rouses when it SEES the king, not only when he is adjacent', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  const boss = createBoss(3, 13, 10); // three tiles east of the king, clear line of sight
+  s.enemies = [boss];
+  s.player.x = 10; s.player.y = 10;
+  assert.equal(boss.dormant, true);
+  const n = moveEnemy(s, boss.id); // it has LOS but is NOT adjacent
+  const b = n.enemies.find((e) => e.boss);
+  assert.equal(b.dormant, false, 'the guardian wakes on sight');
 });
 
 test('every boss rolls one of the eleven boss perks', () => {

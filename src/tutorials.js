@@ -84,6 +84,20 @@ const TUTORIALS = {
       'then step onto the stair. (A guardian also holds the stair; slay it to earn your ' +
       'level-up boon on the way down.)',
   },
+  orb: {
+    title: 'The Orb of Victory',
+    text:
+      'This is the LAST floor — no stair down, only a portal home. That radiant Orb opens ' +
+      'it. But the moment you seize the Orb, the realm’s guardians begin converging on you: ' +
+      'grab it, then fight your way to the portal to escape and WIN.',
+  },
+  portalLocked: {
+    title: 'The victory portal',
+    text:
+      'The way home lies dormant until you seize the Orb of Victory somewhere on this floor. ' +
+      'Take the Orb, then step into the open portal to win the run — but expect a rush of ' +
+      'guardians the instant the Orb is yours.',
+  },
   exit: {
     title: 'Descending',
     text:

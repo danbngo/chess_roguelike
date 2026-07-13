@@ -89,8 +89,11 @@ function randomEnemyKind(floor) {
   return pool[randomInt(pool.length)];
 }
 
-function isFinalBossFloor(floor) {
-  return floor % FINAL_FLOOR === 0;
+// Floor 8 is the ABSOLUTE last floor — there is no descent past it. Instead of a stair it
+// holds a portal, and instead of a key an Orb of Victory; grabbing the orb opens the portal
+// (and rouses the finale's boss-rush), and stepping into the portal wins the run.
+function isFinalFloor(floor) {
+  return floor >= FINAL_FLOOR;
 }
 
 // The floor's boss piece kind (a unique, high-mobility piece — see the LEVELS table).
@@ -110,7 +113,10 @@ function createBoss(floor, x, y) {
   boss.bossPerk = BOSS_PERKS[randomInt(BOSS_PERKS.length)];
   if (boss.bossPerk === 'tough') boss.maxHp += 3; // Hardened: three extra wounds
   boss.hp = boss.maxHp;
-  boss.dormant = true; // holds the stair until the king strikes it or draws adjacent
+  boss.dormant = true; // holds the stair/portal until it spies the king or is struck
+  // Demon-floor guardians (the fairy/demon pieces from floor 5) shrug off lava; earlier
+  // guardians do not (and the finale's rush of vanilla-type bosses stays vulnerable to it).
+  boss.lavaImmune = floor >= DEMON_FLOOR;
   return boss;
 }
 
@@ -185,7 +191,7 @@ function damageBoss(state, boss, amount) {
   addSpatter(state, boss.x, boss.y, Math.sign(boss.x - state.player.x), Math.sign(boss.y - state.player.y));
   addCorpse(state, boss.x, boss.y, boss.kind, BOSS_CORPSE_LIFE); // a boss's remains linger far longer
   state.player.killedEnemy = true;
-  defeatBoss(state, boss.x, boss.y);
+  defeatBoss(state, boss);
   return 'slain';
 }
 
@@ -206,20 +212,22 @@ function damageTurret(state, turret, amount) {
   return 'slain';
 }
 
-// Resolve the floor's boss being slain: the final floor wins the run; any other
-// floor earns the level-up boon RIGHT HERE (the king does not descend yet — the
-// stair the boss guarded is now clear, and he must still walk onto it).
-function defeatBoss(state, x, y) {
-  if (isFinalBossFloor(state.floor)) {
-    state.won = true;
-    state.message = 'The final guardian falls — the realm is free!';
+// Resolve a boss being slain. The floor GUARDIAN earns the level-up boon RIGHT HERE (the king
+// does not descend yet — the stair/portal it guarded is now clear, and he must still walk onto
+// it). A conjured "rush" boss (the finale's converging guardians) is pure threat — no boon. The
+// run is NEVER won by a kill now; victory comes only from stepping into the portal with the Orb.
+function defeatBoss(state, boss) {
+  if (boss && boss.rush) {
+    state.message = `${bossTitle(boss)} is destroyed!`;
+    state.lastAction = 'combat';
     return;
   }
   const p = state.player;
   p.level = (p.level || 1) + 1;
   state.pendingLevelUp = true;
   state.levelPerks = rollLevelPerks(p, LEVEL_PERK_CHOICES);
-  state.message = `The guardian falls! You reach level ${p.level} — choose a boon, then take the stair.`;
+  const tail = isFinalFloor(state.floor) ? 'choose a boon.' : 'choose a boon, then take the stair.';
+  state.message = `The guardian falls! You reach level ${p.level} — ${tail}`;
 }
 
 /* ------------------------------- the king --------------------------------- */
@@ -695,7 +703,9 @@ function generateFloor(floor, carryPlayer, score) {
   const anchor = chamberAnchorForFloor(floor);
   const ax = Math.max(2, Math.min(WORLD_SIZE - 3, anchor.x));
   const ay = Math.max(2, Math.min(WORLD_SIZE - 3, anchor.y));
-  state.exit = { x: ax, y: ay, discovered: false };
+  const portalFloor = isFinalFloor(floor);
+  state.isPortalFloor = portalFloor;
+  state.exit = { x: ax, y: ay, discovered: false, portal: portalFloor }; // a victory PORTAL on the last floor
   occupied.add(`${ax},${ay}`);
   for (let dx = -1; dx <= 1; dx += 1) {
     for (let dy = -1; dy <= 1; dy += 1) delete state.terrain[`${ax + dx},${ay + dy}`];
@@ -741,7 +751,7 @@ function generateFloor(floor, carryPlayer, score) {
   const keyHidden = (x, y) => keyFar(x, y) && !seen(x, y);
   const keyTile = place(keyHidden) || place(keyFar) || place(keyClear) || place(standable);
   if (keyTile) {
-    state.key = { x: keyTile.x, y: keyTile.y, collected: false, discovered: false };
+    state.key = { x: keyTile.x, y: keyTile.y, collected: false, discovered: false, orb: portalFloor }; // the Orb of Victory on the last floor
     state.exit.locked = true;
   }
 
@@ -1335,9 +1345,19 @@ function tryDescend(next) {
   if (next.won || next.gameOver) return false;
   if (next.exit && next.player.x === next.exit.x && next.player.y === next.exit.y) {
     if (next.exit.locked) {
-      // The king reached the stair but it is sealed until he holds the floor key.
-      next.message = 'The stair is sealed — find the floor key first.';
+      // The king reached the exit but it is sealed until he holds the key / Orb.
+      next.message = next.exit.portal
+        ? 'The portal lies dormant — seize the Orb of Victory first.'
+        : 'The stair is sealed — find the floor key first.';
       return false;
+    }
+    if (next.exit.portal) {
+      // The FINALE: stepping into the open portal, Orb in hand, wins the run outright. Flag it
+      // as 'win' (not 'exit') so no caller tries to generate a floor 9 — there is none.
+      next.won = true;
+      next.lastAction = 'win';
+      next.message = 'You step into the portal, Orb of Victory in hand — the realm is saved!';
+      return true;
     }
     next.lastAction = 'exit';
     next.message = 'You step onto the stair and descend...';
@@ -1391,7 +1411,15 @@ function collectKeyIfHere(next) {
     k.collected = true;
     k.discovered = true;
     if (next.exit) next.exit.locked = false;
-    next.message = 'You seize the floor key — the stair unlocks!';
+    if (k.orb) {
+      // The finale begins: the portal wakes and the realm's guardians start converging (see
+      // maybeSpawnEnemy / spawnBossRush). From here it's a fighting retreat to the portal.
+      next.orbTaken = true;
+      next.bossRushTimer = 0;
+      next.message = 'You seize the Orb of Victory — the portal roars open, and guardians converge!';
+    } else {
+      next.message = 'You seize the floor key — the stair unlocks!';
+    }
     return true;
   }
   return false;
@@ -2569,6 +2597,12 @@ function bossRangedAttack(state, boss) {
 // A boss's turn: hunt like its piece, and strike ONLY if it can capture the king.
 function bossMove(state, boss) {
   const king = state.player;
+  // A non-immune guardian (an earlier-age piece, or one of the finale's rush bosses) sears in
+  // lava it stands on — 1 wound at the start of its turn, so the king can lure or knock a
+  // vanilla-type boss into a lava field to whittle it down. Demon-floor guardians are immune.
+  if (!boss.lavaImmune && terrainAt(state, boss.x, boss.y) === 'lava') {
+    if (damageBoss(state, boss, 1) === 'slain') { state.lastAction = 'combat'; return state; }
+  }
   // A giant guardian must catch its breath after every exertion: the turn AFTER it acts it
   // only RECOVERS, giving the king a window to strike or reposition. (This is what makes
   // these long-reach, high-HP bosses fair to fight.)
@@ -2578,13 +2612,15 @@ function bossMove(state, boss) {
     state.lastAction = 'enemy';
     return state;
   }
-  // A dormant guardian holds the stair until the king strikes it (hp < maxHp) or
-  // steps adjacent — then it rouses for good.
+  // A dormant guardian holds the stair/portal until it SEES the king (line of sight within
+  // view) or is struck (hp < maxHp) — then it rouses for good. Seeing him is the trigger now,
+  // not merely stepping adjacent, so a guardian on the far side of the room stirs on sight.
   if (boss.dormant) {
-    if (boss.hp < boss.maxHp || chebyshev(boss.x, boss.y, king.x, king.y) <= 1) {
+    if (boss.hp < boss.maxHp || enemyAwareOfKing(state, boss.x, boss.y, boss.bossPerk === 'phasing')) {
       boss.dormant = false;
     } else {
-      state.message = `${bossTitle(boss)} guards the stair, unmoving.`;
+      const guarded = state.exit && state.exit.portal ? 'portal' : 'stair';
+      state.message = `${bossTitle(boss)} guards the ${guarded}, unmoving.`;
       state.lastAction = 'enemy';
       return state;
     }
@@ -2709,6 +2745,40 @@ function spawnWave(next) {
   }
   return placed ? 'A wave of enemies pours in nearby!' : 'The shadows stir uneasily.';
 }
+// The finale's boss-rush: once the Orb is taken, one lesser guardian claws into the world near
+// the king every BOSS_RUSH_INTERVAL turns (capped so the board never chokes). It uses an
+// EARLIER, vanilla piece kind (rook, knight, bishop, …) which — unlike the demon-floor
+// guardian — is NOT immune to lava, so the king can still play the terrain against it. It
+// spawns already hostile and hunting.
+function spawnBossRush(next) {
+  const live = next.enemies.filter((e) => e.boss).length;
+  if (live >= BOSS_RUSH_CAP) return ''; // don't pile on beyond a handful at once
+  const p = next.player;
+  const kind = STANDARD_KINDS[randomInt(STANDARD_KINDS.length)]; // an earlier-age piece
+  const occupied = new Set([`${p.x},${p.y}`]);
+  for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
+  const near = (x, y) => isStandable(terrainAt(next, x, y)) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y);
+  const tile = findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 2 && chebyshev(x, y, p.x, p.y) <= 5)
+    || findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) <= 7);
+  if (!tile) return '';
+  const b = createEnemy(kind, tile.x, tile.y);
+  b.boss = true;
+  b.rush = true; // a converging guardian — grants no boon when felled
+  b.bossName = `a rogue ${kind}`;
+  b.originalKind = kind;
+  b.maxHp = 2 + Math.floor(next.floor / 3); // a LESSER boss than the floor guardian
+  b.bossPerk = BOSS_PERKS[randomInt(BOSS_PERKS.length)];
+  if (b.bossPerk === 'tough') b.maxHp += 3;
+  b.hp = b.maxHp;
+  b.lavaImmune = false; // an earlier-age guardian: lava still burns it
+  b.dormant = false;
+  b.awake = true;
+  b.surprised = false;
+  b.lastSeen = { x: p.x, y: p.y };
+  b.lastSeenTtl = PURSUIT_TTL;
+  next.enemies.push(b);
+  return `A rogue ${kind} guardian claws into the world!`;
+}
 // A few turrets rise around the map (out of sight, where they cover real ground).
 function dropTurrets(next) {
   const occupied = new Set([`${next.player.x},${next.player.y}`]);
@@ -2797,6 +2867,17 @@ function fireDangerEvent(next) {
 function maybeSpawnEnemy(state) {
   const next = structuredClone(state);
   next.dangerEvent = null; // cleared each turn; set below only when an event fires
+  // The FINALE: once the Orb is taken on the portal floor, the realm's guardians converge —
+  // every so often a fresh boss claws into the world near the king, replacing ordinary danger.
+  if (next.isPortalFloor && next.orbTaken) {
+    next.bossRushTimer = (next.bossRushTimer || 0) + 1;
+    if (next.bossRushTimer >= BOSS_RUSH_INTERVAL) {
+      next.bossRushTimer = 0;
+      const msg = spawnBossRush(next);
+      if (msg) { next.dangerEvent = { kind: 'bossRush', message: msg }; next.message = msg; }
+    }
+    return next;
+  }
   next.turnsSinceSpawn = (next.turnsSinceSpawn || 0) + 1;
   const ramp = Math.min(1, next.turn / MAX_TURNS_SCARY); // 0 -> 1 over the dread horizon
   const interval = Math.max(6, Math.round(16 - 10 * ramp)); // ~16 turns early, ~6 at max dread

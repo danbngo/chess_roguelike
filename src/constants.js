@@ -21,8 +21,12 @@ const MAX_ENEMIES = 45; // Hard safety cap so over-time spawning can't run away.
 
 // --- Floors -----------------------------------------------------------------
 
-const FINAL_FLOOR = 8; // An eight-floor run (an 8x8-board's worth), victory on floor 8.
+const FINAL_FLOOR = 8; // An eight-floor run (an 8x8-board's worth) — floor 8 is the ABSOLUTE last.
 const DEMON_FLOOR = 5; // From floor 5 the fairy/demon pieces take over the roster.
+// The floor-8 finale: after the Orb of Victory is taken, a lesser boss claws in near the king
+// every BOSS_RUSH_INTERVAL turns, capped at BOSS_RUSH_CAP live bosses at once.
+const BOSS_RUSH_INTERVAL = 8;
+const BOSS_RUSH_CAP = 4;
 const STANDARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'queen'];
 const DEMON_KINDS = ['berolina', 'archbishop', 'chancellor', 'amazon'];
 const ENEMY_UNLOCKS = [

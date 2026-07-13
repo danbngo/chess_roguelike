@@ -675,6 +675,100 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // The victory PORTAL (floor 8): a swirling ring of arcane light where a stair would be. It
+  // lies dark and barred until the Orb of Victory is taken, then blazes open.
+  function drawPortal(tileX, tileY, faded, locked) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const s = tileSize;
+    ctx.save();
+    ctx.globalAlpha = faded ? 0.5 : 1;
+    const spin = clock * (locked ? 0.5 : 1.8);
+    const open = locked ? 0.4 : 1; // brightness/energy of the gate
+    // Outer glow when open.
+    if (!locked && !faded) {
+      const pulse = 0.5 + 0.5 * Math.sin(clock * 3);
+      const grad = ctx.createRadialGradient(cx, cy, s * 0.05, cx, cy, s * 0.5);
+      grad.addColorStop(0, `rgba(196, 132, 252, ${0.55 * (0.6 + 0.4 * pulse)})`);
+      grad.addColorStop(0.6, `rgba(129, 60, 217, ${0.28 * (0.6 + 0.4 * pulse)})`);
+      grad.addColorStop(1, 'rgba(129, 60, 217, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, s * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Dark maw.
+    ctx.fillStyle = '#120821';
+    ctx.beginPath();
+    ctx.arc(cx, cy, s * 0.32, 0, Math.PI * 2);
+    ctx.fill();
+    // Swirling arcs of energy.
+    ctx.lineWidth = Math.max(2, s * 0.06);
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 3; i += 1) {
+      const r = s * (0.14 + i * 0.08);
+      const a0 = spin + (i * Math.PI * 0.7);
+      ctx.strokeStyle = `rgba(${168 + i * 20}, ${85 + i * 30}, ${247}, ${open})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, a0, a0 + Math.PI * 1.3);
+      ctx.stroke();
+    }
+    // A barred (dormant) portal shows crimson bars, like a sealed stair.
+    if (locked) {
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = Math.max(2, s * 0.07);
+      for (let i = 0; i < 3; i += 1) {
+        const bx = cx + (i - 1) * s * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(bx, cy - s * 0.3);
+        ctx.lineTo(bx, cy + s * 0.3);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // The Orb of Victory (floor 8): a radiant sphere that replaces the floor key — collecting it
+  // opens the portal and triggers the finale's boss-rush.
+  function drawOrb(tileX, tileY, faded) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const s = tileSize;
+    ctx.save();
+    if (!faded) {
+      const pulse = 0.5 + 0.5 * Math.sin(clock * 4.5);
+      const glowR = s * (0.36 + 0.1 * pulse);
+      const grad = ctx.createRadialGradient(cx, cy, s * 0.04, cx, cy, glowR);
+      grad.addColorStop(0, `rgba(125, 252, 231, ${0.55 * (0.55 + 0.45 * pulse)})`);
+      grad.addColorStop(0.6, `rgba(56, 189, 248, ${0.24 * (0.55 + 0.45 * pulse)})`);
+      grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = faded ? 0.5 : 1;
+    // The sphere: a shaded ball with a bright highlight.
+    const r = s * 0.2;
+    const grad = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r);
+    grad.addColorStop(0, '#e0fffb');
+    grad.addColorStop(0.5, '#5eead4');
+    grad.addColorStop(1, '#0e7490');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#0e7490';
+    ctx.lineWidth = Math.max(1, s * 0.03);
+    ctx.stroke();
+    // A crisp glint.
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.32, cy - r * 0.38, r * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Draw a pickup. `animated` items (in current view) pulse and glow; remembered
   // ones (out of view) are static and dimmed.
   // A permanent scar left on the ground: the ruin of a shattered summoning circle.
@@ -1196,8 +1290,8 @@ const Renderer = (function () {
       miniCtx.fillStyle = color;
       fill(f.x, f.y);
     };
-    feature(state.exit, '#38bdf8'); // stair down — cyan
-    if (state.key && !state.key.collected) feature(state.key, '#fbbf24'); // floor key — gold
+    feature(state.exit, state.exit && state.exit.portal ? '#c084fc' : '#38bdf8'); // portal — violet / stair — cyan
+    if (state.key && !state.key.collected) feature(state.key, state.key.orb ? '#5eead4' : '#fbbf24'); // Orb — teal / key — gold
     // Permanent scars on explored ground: shattered summoning circles (violet).
     for (const scar of state.scars || []) {
       if (!(state.explored || {})[`${scar.x},${scar.y}`]) continue;
@@ -1359,15 +1453,17 @@ const Renderer = (function () {
     if (state.exit) {
       const seen = lit(state.exit.x, state.exit.y);
       if (seen || state.exit.discovered) {
-        drawExit(state.exit.x, state.exit.y, !seen, state.exit.locked);
+        if (state.exit.portal) drawPortal(state.exit.x, state.exit.y, !seen, state.exit.locked);
+        else drawExit(state.exit.x, state.exit.y, !seen, state.exit.locked);
       }
     }
 
-    // The floor key: shown when in sight, or faded once discovered (persists in fog).
+    // The floor key / Orb of Victory: shown when in sight, or faded once discovered (persists in fog).
     if (state.key && !state.key.collected) {
       const seen = lit(state.key.x, state.key.y);
       if (seen || state.key.discovered) {
-        drawKey(state.key.x, state.key.y, !seen);
+        if (state.key.orb) drawOrb(state.key.x, state.key.y, !seen);
+        else drawKey(state.key.x, state.key.y, !seen);
       }
     }
 
