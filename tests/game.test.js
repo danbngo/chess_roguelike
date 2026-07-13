@@ -169,9 +169,9 @@ test('a boss has HP: it takes several hits, and the final floor boss wins the ru
   assert.equal(n.won, true);
 });
 
-test('every boss rolls one of the nine boss perks', () => {
+test('every boss rolls one of the eleven boss perks', () => {
   const boss = createBoss(4, 9, 8);
-  assert.ok(['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech'].includes(boss.bossPerk));
+  assert.ok(['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing'].includes(boss.bossPerk));
   assert.equal(boss.originalKind, boss.kind);
 });
 
@@ -443,6 +443,135 @@ test('a crushed boulder (knight leap) leaves rubble', () => {
   const r = useCard(s, idx, 12, 9);
   assert.equal(terrainAt(r, 12, 9), 'normal', 'the boulder is crushed');
   assert.ok((r.rubble || []).some((rb) => rb.x === 12 && rb.y === 9), 'rubble is left behind');
+});
+
+test('Winged Boots lets the king step over a pit', () => {
+  const s = rangerWith('r_wade'); // Druid Winged Boots grants terrainImmune → flying over pits
+  assert.equal(s.player.terrainImmune, true);
+  s.terrain = { '11,10': 'pit' };
+  const moves = getPlayerMoves(s);
+  assert.ok(moves.some((m) => m.x === 11 && m.y === 10 && !m.push), 'the pit tile is a walkable move');
+  const r = movePlayerTo(s, 11, 10);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 11, y: 10 }, 'the king stands over the pit');
+});
+
+test('Sixth Sense lets the archer see AND shoot through a boulder', () => {
+  const s = rangerWith('r_wade', 'r_xray'); // Druid line: Sixth Sense grants seeThroughWalls
+  assert.equal(s.player.seeThroughWalls, true);
+  // The Ranger's bishop shoots DIAGONALLY, so place the boulder and foe on the SE diagonal.
+  s.terrain = { '11,11': 'boulder' };
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true })]; // beyond the boulder
+  assert.ok(unitInSight(s, 12, 12), 'the foe is seen through the boulder');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'bishop');
+  assert.ok(getCardMoves(s, s.player.cards[idx]).some((m) => m.x === 12 && m.y === 12), 'and can be shot through the boulder');
+});
+
+test('Phase lets the king move through a boulder just like a wall', () => {
+  const s = sorcererWith('s_blink', 's_phase');
+  assert.equal(s.player.phase, true);
+  s.terrain = { '11,10': 'boulder' };
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10 && !m.push), 'the boulder tile is walkable while phasing');
+});
+
+test('Blink never lands the king on a pit', () => {
+  const s = sorcererWith('s_blink');
+  s.player.blink = true;
+  s.player.hp = 5;
+  // Fill the whole visible window with pits except a couple of safe tiles.
+  s.terrain = {};
+  const b = getVisibleBounds(s);
+  for (let y = b.y; y < b.y + b.height; y += 1) {
+    for (let x = b.x; x < b.x + b.width; x += 1) {
+      if (!(x === s.player.x && y === s.player.y) && !(x === 13 && y === 13)) s.terrain[`${x},${y}`] = 'pit';
+    }
+  }
+  s.enemies = [];
+  const moved = blinkToSafety(s);
+  if (moved) assert.equal(terrainAt(s, s.player.x, s.player.y), 'normal', 'the king never blinks onto a pit');
+});
+
+test('Double Step charges a boulder two tiles forward', () => {
+  const s = warriorWith('w_fleet'); // grants the doublestep card
+  const idx = s.player.cards.findIndex((c) => c.kind === 'doublestep');
+  s.terrain = { '11,10': 'boulder' };
+  s.player.x = 10; s.player.y = 10;
+  assert.ok(getCardMoves(s, s.player.cards[idx]).some((m) => m.x === 11 && m.y === 10 && m.push), 'the boulder is a charge target');
+  const r = useCard(s, idx, 11, 10);
+  assert.equal(terrainAt(r, 13, 10), 'boulder', 'the boulder rolled two tiles');
+  assert.equal(terrainAt(r, 11, 10), 'normal', 'off its start tile');
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 11, y: 10 }, 'the king follows into the old boulder tile');
+});
+
+test('Double Step rolls a boulder into a pit, filling it', () => {
+  const s = warriorWith('w_fleet');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'doublestep');
+  s.terrain = { '11,10': 'boulder', '12,10': 'pit' };
+  s.player.x = 10; s.player.y = 10;
+  const r = useCard(s, idx, 11, 10);
+  assert.equal(terrainAt(r, 12, 10), 'normal', 'the pit is filled by the rolling boulder');
+  assert.equal(terrainAt(r, 11, 10), 'normal', 'and the boulder is consumed');
+});
+
+test('Trample knockback shoves a loose boulder away from the king', () => {
+  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample'); // Cavalier leapShock chain
+  assert.equal(s.player.leapShock, true);
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  // Leap to (12,9); a boulder lands adjacent (east) with clear ground behind it.
+  s.player.x = 10; s.player.y = 8;
+  s.terrain = { '13,9': 'boulder' };
+  s.enemies = [];
+  const r = useCard(s, idx, 12, 9);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 9 }, 'the king lands the leap');
+  assert.equal(terrainAt(r, 13, 9), 'normal', 'the boulder is shoved off its tile');
+  assert.equal(terrainAt(r, 14, 9), 'boulder', 'one tile further from the king');
+});
+
+test('a knocked-back boulder that collides with a foe crushes it and rolls onto its tile', () => {
+  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  s.player.x = 10; s.player.y = 8;
+  s.terrain = { '13,9': 'boulder' };
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 14, y: 9, awake: true })]; // directly behind the boulder
+  const r = useCard(s, idx, 12, 9);
+  assert.ok(!r.enemies.some((e) => e.x === 14 && e.y === 9), 'the foe is crushed by the boulder');
+  assert.equal(terrainAt(r, 14, 9), 'boulder', 'the boulder rolls onto the corpse tile');
+  assert.equal(terrainAt(r, 13, 9), 'normal', 'off its start tile');
+});
+
+test('a Flying boss crosses pits, water, and lava freely', () => {
+  const s = createInitialState('warrior');
+  s.terrain = { '11,10': 'pit', '9,10': 'water', '10,11': 'lava' };
+  const boss = makeEnemy({ kind: 'rook', x: 10, y: 10, boss: true, bossPerk: 'flying', awake: true });
+  s.enemies = [boss];
+  const moves = getPieceMoves(boss, s);
+  assert.ok(moves.some((m) => m.x === 11 && m.y === 10), 'flies over the pit');
+});
+
+test('a Phasing boss moves and sees through walls and boulders', () => {
+  const s = createInitialState('warrior');
+  s.terrain = { '11,10': 'boulder', '9,10': 'wall' };
+  const boss = makeEnemy({ kind: 'rook', x: 10, y: 10, boss: true, bossPerk: 'phasing', awake: true });
+  s.enemies = [boss];
+  const moves = getPieceMoves(boss, s);
+  assert.ok(moves.some((m) => m.x === 11 && m.y === 10), 'drifts through the boulder');
+  assert.ok(moves.some((m) => m.x === 9 && m.y === 10), 'and through the wall');
+});
+
+test('a boss bolt shatters a boulder in its path to the king', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  // A ranged (Volley) rook boss firing east at the king, a boulder standing between them.
+  const boss = createBoss(3, 10, 10); // rook
+  boss.bossPerk = 'ranged';
+  boss.dormant = false;
+  boss.recovering = false;
+  s.enemies = [boss];
+  s.player.x = 13; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5;
+  s.player.className = 'warrior';
+  s.terrain = { '11,10': 'boulder' };
+  const n = moveEnemy(s, boss.id);
+  assert.equal(terrainAt(n, 11, 10), 'normal', 'the bolt blasts the boulder to rubble');
+  assert.equal(n.player.hp, 4, 'and the bolt strikes the king behind it');
 });
 
 test('danger events only unleash hazards the king has already met', () => {

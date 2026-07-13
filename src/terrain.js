@@ -29,8 +29,8 @@ function blocksSight(type) {
 // which the level generator relies on for a guaranteed safe path. Water is passable (slow).
 function standableFor(type, opts) {
   const o = opts || {};
-  if (type === 'wall' || type === 'boulder') return Boolean(o.phaseWalls); // only a phasing king enters these
-  if (type === 'pit') return false; // a bottomless pit is impassable to everything
+  if (type === 'wall' || type === 'boulder') return Boolean(o.phaseWalls); // only a phasing mover enters these
+  if (type === 'pit') return Boolean(o.flying); // only a FLYING mover (Winged Boots / a flying boss) crosses a pit
   if (type === 'lava') return o.lavaOk !== false; // walkable unless a caller explicitly forbids it
   return true; // water & normal are walkable
 }
@@ -92,8 +92,8 @@ function unitInSight(state, x, y) {
 // Whether the foe at (ex,ey) can see the KING. Walls ALWAYS block here: Sixth Sense is
 // one-way, so a foe on the far side of a wall stays oblivious even while the Ranger sees
 // (and shoots) it through the wall.
-function enemyAwareOfKing(state, ex, ey) {
-  return isWithinBounds(getVisibleBounds(state), ex, ey) && hasLineOfSight(state, state.player.x, state.player.y, ex, ey, false);
+function enemyAwareOfKing(state, ex, ey, seeWalls) {
+  return isWithinBounds(getVisibleBounds(state), ex, ey) && hasLineOfSight(state, state.player.x, state.player.y, ex, ey, Boolean(seeWalls));
 }
 
 // The set of tiles the king can currently see (for rendering brightness).

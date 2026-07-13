@@ -1038,7 +1038,7 @@ function getPlayerMoves(state) {
     // Promotion (Druid): the king becomes an invincible WARHORSE — it leaps like a knight
     // (and can still step a single tile) for a few turns, taking no damage and playing no
     // cards. Click/target any reachable tile.
-    const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase) };
+    const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
     for (const t of generateMoves('knight', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
     for (const [dx, dy] of [...ORTHO, ...DIAG]) {
       const stops = slideStops(state, p.x, p.y, dx, dy, 1, enemyAt, isEnemy, opts);
@@ -1046,7 +1046,7 @@ function getPlayerMoves(state) {
     }
     return moves;
   }
-  const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase) };
+  const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     const stops = slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy, opts);
     // The king must COMMIT to the full slide (his moveRange) — he can only stop short
@@ -1093,6 +1093,43 @@ function pushBoulder(state, bx, by, dx, dy) {
   }
   state.player.x = bx;
   state.player.y = by;
+}
+// Shove a boulder up to `dist` tiles in (dx,dy) — a running charge (Double Step) rolls it two
+// tiles where a plain move heaves it one. It travels until a wall / boulder / unit / edge / the
+// floor key halts it (coming to rest on the last clear tile), or drops into a pit / lava / water
+// and FILLS that hazard (consumed). The king always follows one tile, into the boulder's old
+// square. Returns true if the boulder actually moved.
+function pushBoulderFar(state, bx, by, dx, dy, dist) {
+  let cx = bx;
+  let cy = by;
+  let moved = false;
+  for (let i = 0; i < dist; i += 1) {
+    const nx = cx + dx;
+    const ny = cy + dy;
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) break;
+    const t = terrainAt(state, nx, ny);
+    if (t === 'wall' || t === 'boulder') break;
+    if (nx === state.player.x && ny === state.player.y) break;
+    if (state.enemies.some((e) => e.x === nx && e.y === ny) || allyAt(state, nx, ny)) break;
+    if (keyTileAt(state, nx, ny)) break; // never bury the floor key
+    if (t === 'pit' || t === 'lava' || t === 'water') {
+      delete state.terrain[`${bx},${by}`];
+      delete state.terrain[`${nx},${ny}`]; // hazard filled, boulder consumed
+      state.player.x = bx;
+      state.player.y = by;
+      return true;
+    }
+    cx = nx;
+    cy = ny;
+    moved = true;
+  }
+  if (moved) {
+    delete state.terrain[`${bx},${by}`];
+    state.terrain[`${cx},${cy}`] = 'boulder';
+    state.player.x = bx;
+    state.player.y = by;
+  }
+  return moved;
 }
 // Smash a boulder to rubble: clear the tile and leave a fading pile of rocks (cosmetic).
 function smashBoulder(state, x, y) {
@@ -1463,23 +1500,32 @@ function useCard(state, cardIndex, x, y) {
     card.remaining = card.cooldown;
     card.justFired = true;
     next.message = `The king swaps places with a ${unit.kind}.`;
-    // The violent arrival shoves every OTHER foe now adjacent to the king back a tile
-    // (colliding with whatever's behind it); the just-swapped unit is spared.
-    if (!next.gameOver && !next.won) {
-      const ids = [...ORTHO, ...DIAG]
-        .map(([dx, dy]) => next.enemies.find((e) => e.x === p.x + dx && e.y === p.y + dy))
-        .filter(Boolean)
-        .map((e) => e.id);
-      for (const id of ids) {
-        const foe = next.enemies.find((e) => e.id === id);
-        if (!foe || foe.id === unit.id || foe.turret || foe.summonCircle) continue;
-        knockbackEnemy(next, foe, Math.sign(foe.x - p.x), Math.sign(foe.y - p.y));
-      }
-    }
+    // The violent arrival shoves every OTHER foe (and loose boulder) now adjacent to the
+    // king back a tile (colliding with whatever's behind it); the just-swapped unit is spared.
+    if (!next.gameOver && !next.won) shoveAdjacentAway(next, p.x, p.y, unit.id);
     collectKeyIfHere(next);
     passTurn(next);
     next.enemyTurn = true;
     next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+
+  // Double Step charge into a boulder: the running shove rolls it TWO tiles (a plain move
+  // heaves it just one), the king following into the boulder's old square.
+  if (move.push) {
+    const dx = Math.sign(x - p.x);
+    const dy = Math.sign(y - p.y);
+    const rolled = pushBoulderFar(next, x, y, dx, dy, 2);
+    next.message = rolled ? 'The king charges — the boulder rolls two tiles!' : 'The king charges the boulder — but it will not budge.';
+    card.remaining = card.cooldown;
+    card.justFired = true;
+    p.attacked = false; // heaving a boulder is not an attack
+    collectKeyIfHere(next);
+    if (tryDescend(next)) { updateDiscovery(next); return next; }
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'move';
     updateDiscovery(next);
     return next;
   }
@@ -1536,15 +1582,7 @@ function useCard(state, cardIndex, x, y) {
     // HURLS every adjacent foe back a tile (slamming it into whatever's behind it), rather
     // than striking it in place. Fixed structures don't budge.
     if (isLeap && p.leapShock && p.x === x && p.y === y && !next.gameOver && !next.won) {
-      const ids = [...ORTHO, ...DIAG]
-        .map(([dx, dy]) => next.enemies.find((e) => e.x === x + dx && e.y === y + dy))
-        .filter(Boolean)
-        .map((e) => e.id);
-      for (const id of ids) {
-        const foe = next.enemies.find((e) => e.id === id);
-        if (!foe || foe.turret || foe.summonCircle) continue;
-        knockbackEnemy(next, foe, Math.sign(foe.x - x), Math.sign(foe.y - y));
-      }
+      shoveAdjacentAway(next, x, y, null);
     }
     // On-kill perks fan out once (Cleave/Pierce/Leech/Flourish); Pierce strikes along
     // the king's line of advance.
@@ -1635,16 +1673,9 @@ function useCard(state, cardIndex, x, y) {
         // A wall/lava/edge or an untouchable turret behind him simply halts the recoil.
       }
     }
-    // Shockwave: shove every MOBILE foe now adjacent to the king back one tile (away from
-    // him), colliding with whatever's behind it. Fixed structures don't budge.
-    const ids = next.enemies
-      .filter((e) => !e.turret && !e.summonCircle && chebyshev(e.x, e.y, p.x, p.y) === 1)
-      .map((e) => e.id);
-    for (const id of ids) {
-      const foe = next.enemies.find((e) => e.id === id);
-      if (!foe) continue;
-      knockbackEnemy(next, foe, Math.sign(foe.x - p.x), Math.sign(foe.y - p.y));
-    }
+    // Shockwave: shove every MOBILE foe (and loose boulder) now adjacent to the king back one
+    // tile (away from him), colliding with whatever's behind it. Fixed structures don't budge.
+    shoveAdjacentAway(next, p.x, p.y, null);
   }
 
   // A melee reposition / En-Passant dash / Recoil can carry the king onto the key.
@@ -1764,7 +1795,7 @@ function movePlayer(state, dx, dy) {
   const isEnemy = (x, y) => capturableAt(state, x, y) || Boolean(allyAt(state, x, y));
   // Slide the king's FULL move range (normally 1), stopping only on collision —
   // the furthest reachable stop is the destination.
-  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune), phaseWalls: Boolean(state.player.phase) });
+  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune), phaseWalls: Boolean(state.player.phase), flying: Boolean(state.player.terrainImmune) });
   if (!stops.length) {
     const next = structuredClone(state);
     next.message = 'The king cannot move that way.';
@@ -2020,7 +2051,8 @@ function beginEnemyPhase(state) {
     // Silent (stealth): an unaware foe MORE than one tile away never perceives the king;
     // any within one tile detects him normally (see the aware branch below).
     const hiddenFromThis = stealthed && !enemy.awake && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
-    if (hiddenFromThis || !enemyAwareOfKing(next, enemy.x, enemy.y)) {
+    const sensesWalls = enemy.bossPerk === 'phasing'; // a Phasing boss sees the king through walls/boulders
+    if (hiddenFromThis || !enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
       enemy.awake = false;
       enemy.surprised = false;
       if (!isStationary(enemy)) {
@@ -2046,7 +2078,7 @@ function beginEnemyPhase(state) {
       // spent its move this turn, but it must NOT be left flagged "unaware" while
       // sitting on screen — a hunter that steps into sight is plainly hostile. Mark
       // it aware and refresh its memory so it acts as a mover next turn.
-      if (!hiddenFromThis && enemyAwareOfKing(next, enemy.x, enemy.y)) {
+      if (!hiddenFromThis && enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
         enemy.awake = true;
         enemy.lastSeen = { x: p.x, y: p.y };
         enemy.lastSeenTtl = PURSUIT_TTL;
@@ -2287,6 +2319,56 @@ function knockbackEnemy(state, enemy, dx, dy) {
   }
 }
 
+// Shove the BOULDER at (bx,by) one tile in (dx,dy) — the knockback counterpart of a manual
+// push. A wall / boulder / board edge halts it; a pit / lava / water is FILLED (boulder
+// consumed); a unit in the way is struck for 1 exactly like a knocked-back enemy (an ordinary
+// foe is crushed and the boulder rolls onto its tile, while a boss / turret / the king merely
+// takes the hit and stops the boulder). The floor key is never buried.
+function knockbackBoulder(state, bx, by, dx, dy) {
+  if (!dx && !dy) return;
+  if (terrainAt(state, bx, by) !== 'boulder') return;
+  const tx = bx + dx;
+  const ty = by + dy;
+  if (tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) return;
+  const t = terrainAt(state, tx, ty);
+  if (t === 'wall' || t === 'boulder') return; // solid ahead — the boulder can't advance
+  if (t === 'pit' || t === 'lava' || t === 'water') {
+    delete state.terrain[`${bx},${by}`];
+    delete state.terrain[`${tx},${ty}`]; // hazard filled, boulder consumed
+    return;
+  }
+  if (keyTileAt(state, tx, ty)) return; // never bury the floor key
+  const occupied = (tx === state.player.x && ty === state.player.y)
+    || state.enemies.some((e) => e.x === tx && e.y === ty)
+    || Boolean(allyAt(state, tx, ty));
+  if (occupied) {
+    // Collide (1 damage) via the shared resolver; if the tile clears the boulder rolls onto it.
+    if (resolveShoveInto(state, tx, ty, null, false)) {
+      delete state.terrain[`${bx},${by}`];
+      state.terrain[`${tx},${ty}`] = 'boulder';
+    }
+    return;
+  }
+  delete state.terrain[`${bx},${by}`];
+  state.terrain[`${tx},${ty}`] = 'boulder';
+}
+
+// Shove everything ADJACENT to (cx,cy) — mobile foes AND loose boulders — one tile directly
+// away, colliding with whatever's behind it. Fixed structures (turrets / summoning circles)
+// and the excluded piece stay put. Shared by Recoil, Trample, and Displacement.
+function shoveAdjacentAway(state, cx, cy, excludeId) {
+  const ids = state.enemies
+    .filter((e) => !e.turret && !e.summonCircle && e.id !== excludeId && chebyshev(e.x, e.y, cx, cy) === 1)
+    .map((e) => e.id);
+  for (const id of ids) {
+    const foe = state.enemies.find((e) => e.id === id);
+    if (foe) knockbackEnemy(state, foe, Math.sign(foe.x - cx), Math.sign(foe.y - cy));
+  }
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    if (terrainAt(state, cx + dx, cy + dy) === 'boulder') knockbackBoulder(state, cx + dx, cy + dy, dx, dy);
+  }
+}
+
 // A jumper (or a Bulwark boss) leaps onto the king and bowls him back one tile — into
 // whatever stands behind him (crushing an ordinary foe/ally, bumping a boss/turret). The
 // jumper then takes the ground the king vacated.
@@ -2419,11 +2501,14 @@ function bossRangedAttack(state, boss) {
   if (!cardSlideDirs(boss.kind).some(([sx, sy]) => sx === dx && sy === dy)) return false;
   const pierce = boss.bossPerk === 'sorcerer';
   const path = [];
+  const shattered = []; // boulders the bolt smashes through on its way to the king
   let x = boss.x + dx;
   let y = boss.y + dy;
   let reached = false;
   while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
-    if (blocksSight(terrainAt(state, x, y))) return false; // a wall stops any bolt
+    const terr = terrainAt(state, x, y);
+    if (terr === 'wall') return false; // a wall stops any bolt cold
+    if (terr === 'boulder') shattered.push({ x, y }); // the bolt blasts it apart in passing (incidental)
     if (x === king.x && y === king.y) {
       reached = true;
       break;
@@ -2435,6 +2520,8 @@ function bossRangedAttack(state, boss) {
     y += dy;
   }
   if (!reached) return false;
+  // The shot is confirmed — any boulders that stood in the bolt's path are blasted to rubble.
+  for (const b of shattered) smashBoulder(state, b.x, b.y);
   // A Sorcerer boss looses a piercing fireball that scorches every tile on the path
   // (its own bolt lands on the king's tile); a Volley boss looses a plain arrow.
   state.lastShot = {

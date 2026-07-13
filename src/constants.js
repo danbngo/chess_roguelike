@@ -103,7 +103,7 @@ const TURRET_HP = 3; // turrets are destructible: a flat, non-scaling HP pool (<
 
 // Each floor guardian rolls ONE of these boss perks at creation, making every boss
 // fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
-const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech'];
+const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing'];
 const BOSS_PERK_LABELS = {
   summoner: 'Summoner — conjures its own kind every third turn',
   blinker: 'Blinkborn — flickers away after each wound',
@@ -114,6 +114,8 @@ const BOSS_PERK_LABELS = {
   shapeshifter: 'Shifting — takes a new, lesser form after each wound',
   tough: 'Hardened — bears three extra wounds',
   leech: 'Leech — heals a wound each time it draws the king’s blood',
+  flying: 'Winged — soars over pits, water, and lava unharmed',
+  phasing: 'Phantom — sees and drifts through walls and boulders',
 };
 // Ordered weakest→strongest; a Shifting boss never becomes a form ranked above its origin.
 const PIECE_RANK = ['pawn', 'knight', 'bishop', 'rook', 'berolina', 'archbishop', 'chancellor', 'queen', 'amazon'];
@@ -233,7 +235,7 @@ const CLASSES = {
       // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.
       { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', desc: 'Summon a berolina familiar that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
       { id: 's_undead', chain: 'Necromancy', tier: 2, requires: 's_familiar', name: 'Grave Bond', desc: 'A foe you slay rises as an undead ally (one at a time; undead do not follow you downstairs)', grants: { necromancy: true } },
-      { id: 's_general', chain: 'Necromancy', tier: 3, requires: 's_undead', name: 'General', desc: 'Your familiar becomes a General — a king that can also leap like a knight', grants: { generalForm: true } },
+      { id: 's_general', chain: 'Necromancy', tier: 3, requires: 's_undead', name: 'Undead General', desc: 'Your familiar becomes an Undead General — a king that can also leap like a knight', grants: { generalForm: true } },
     ],
   },
 };

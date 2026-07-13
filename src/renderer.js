@@ -243,6 +243,7 @@ const Renderer = (function () {
       render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.boss = Boolean(enemy.boss);
+      render.bossPerk = enemy.bossPerk || null;
       render.hp = enemy.hp;
       render.maxHp = enemy.maxHp;
       next.push(render);
@@ -390,6 +391,50 @@ const Renderer = (function () {
     ctx.strokeStyle = 'rgba(0,0,0,0.5)';
     ctx.lineWidth = 1;
     ctx.stroke();
+    ctx.restore();
+  }
+
+  // Each boss trait wears a DISTINCT crown — a coloured cap with its own emblem — so a
+  // guardian's perk reads at a glance (see BOSS_PERKS). Bosses without a rolled perk fall
+  // back to the plain gold boss cap (drawRoleHat).
+  const BOSS_TRAIT_HAT = {
+    summoner: { color: '#a855f7', mark: '✶' }, // violet conjuring star
+    blinker: { color: '#22d3ee', mark: '↯' }, // cyan flicker
+    brutal: { color: '#dc2626', mark: '✖' }, // blood-red cross
+    ranged: { color: '#84cc16', mark: '↟' }, // lime volley arrow
+    sorcerer: { color: '#fb923c', mark: '✷' }, // ember burst
+    knockback: { color: '#94a3b8', mark: '⛊' }, // steel bulwark shield
+    shapeshifter: { color: '#e879f9', mark: '∞' }, // shifting loop
+    tough: { color: '#f59e0b', mark: '◆' }, // hardened gem
+    leech: { color: '#7f1d1d', mark: '♥' }, // dark leeching heart
+    flying: { color: '#bfdbfe', mark: '︿' }, // pale-sky wings
+    phasing: { color: '#c4b5fd', mark: '◇' }, // spectral diamond
+  };
+  function drawBossTraitHat(tileX, tileY, perk) {
+    const spec = BOSS_TRAIT_HAT[perk];
+    if (!spec) { drawRoleHat(tileX, tileY, 'boss'); return; }
+    const cx = tileX * tileSize + tileSize / 2;
+    const topY = tileY * tileSize + tileSize * 0.14;
+    const w = tileSize * 0.36;
+    ctx.save();
+    // A peaked cap in the trait's colour with a brim.
+    ctx.fillStyle = spec.color;
+    ctx.beginPath();
+    ctx.moveTo(cx, topY - tileSize * 0.08);
+    ctx.lineTo(cx - w / 2, topY + tileSize * 0.12);
+    ctx.lineTo(cx + w / 2, topY + tileSize * 0.12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(cx - w * 0.64, topY + tileSize * 0.1, w * 1.28, tileSize * 0.05);
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // The trait's emblem, hovering just above the cap's peak.
+    ctx.fillStyle = spec.color;
+    ctx.font = `${tileSize * 0.3}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(spec.mark, cx, topY - tileSize * 0.22);
     ctx.restore();
   }
 
@@ -1377,7 +1422,9 @@ const Renderer = (function () {
       // A spent summoning circle, or an enemy seen only through Premonition, is faded.
       const inactive = (role === 'circle' && !enemy.charged) || !inSight;
       drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, inactive, blood: woundBlood(liveById.get(enemy.id)) });
-      if (role !== 'normal') {
+      if (role === 'boss') {
+        drawBossTraitHat(enemy.x, enemy.y, enemy.bossPerk); // trait-specific crown
+      } else if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
       }
       // A boss (and now a destructible turret) wears a HP bar so its multi-hit state reads.

@@ -122,8 +122,16 @@ function getPieceMoves(piece, state) {
   const unitAt = enemyUnitAt(state, piece);
   // Enemies may capture the king OR an ally (movement AI prefers the king; see meleeMove).
   const isTarget = (x, y) => (x === state.player.x && y === state.player.y) || Boolean(allyAt(state, x, y));
+  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, pieceTerrainOpts(piece));
+}
+
+// Terrain opts for an enemy's move/threat generation — normally "wade lava", but the
+// Flying boss trait crosses pits/water/lava freely and Phasing moves through walls/boulders.
+function pieceTerrainOpts(piece) {
   const opts = { lavaOk: true };
-  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, opts);
+  if (piece.bossPerk === 'flying') { opts.flying = true; opts.terrainImmune = true; }
+  if (piece.bossPerk === 'phasing') { opts.phaseWalls = true; }
+  return opts;
 }
 
 // The straight-line directions a card kind slides/casts along (empty for a pure
@@ -212,10 +220,19 @@ function getCardMoves(state, card) {
   } else if (category === 'melee') {
     // The king walks/leaps onto a foe (a capture) OR onto empty ground within reach
     // (a plain repositioning move) — real movement rules apply either way.
-    const opts = { terrainImmune: Boolean(p.terrainImmune) };
+    const opts = { terrainImmune: Boolean(p.terrainImmune), flying: Boolean(p.terrainImmune) };
     for (const [dx, dy] of dirs) {
       for (const stop of slideStops(state, p.x, p.y, dx, dy, reach, enemyAt, targetable, opts)) {
         add(stop.x, stop.y, false, stop.capture);
+      }
+      // Double Step charges a boulder: an adjacent boulder is a valid push target — the
+      // running shove rolls it TWO tiles (resolved in useCard).
+      if (kind === 'doublestep') {
+        const bx = p.x + dx;
+        const by = p.y + dy;
+        if (terrainAt(state, bx, by) === 'boulder' && inLineOfSight(state, bx, by)) {
+          results.push({ x: bx, y: by, capture: false, viaJump: false, push: true });
+        }
       }
     }
     if (hasLeap) {
@@ -327,7 +344,7 @@ function getPieceThreats(piece, state, includeOccupied) {
     : (x, y) => (x === state.player.x && y === state.player.y) || Boolean(allyAt(state, x, y));
   // A TURRET fires a projectile (crossing pits / lava / water, stopped only by walls,
   // boulders, and the unit it hits); a mobile piece threatens where it can MOVE.
-  const opts = piece.turret ? { projectile: true } : { lavaOk: true };
+  const opts = piece.turret ? { projectile: true } : pieceTerrainOpts(piece);
   return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, opts);
 }
 
