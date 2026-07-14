@@ -1174,7 +1174,10 @@
 
   function processPlayerResult(nextState) {
     if (nextState.lastAction === 'blocked') {
-      applyState(nextState, false);
+      // A blocked action (card recharging, no target, etc.) changes no positions — just surface
+      // its message. Do NOT reset the renderer/camera (that caused the move-and-snap-back).
+      gameState = nextState;
+      updateHud();
       return;
     }
     // A ranged/spell card: fly the arrow/bolt to the target FIRST, then resolve the hit +
@@ -1318,7 +1321,16 @@
     if (!isIdle()) {
       return;
     }
-    commitMove(movePlayer(gameState, dx, dy));
+    const result = movePlayer(gameState, dx, dy);
+    if (result.lastAction === 'blocked') {
+      // Walked into a wall / impassable tile: a lean-and-bounce BUMP that spends no turn and,
+      // crucially, does NOT reset the renderer — so the camera never snaps (the old bug).
+      gameState = result;
+      updateHud();
+      Renderer.bump(dx, dy);
+      return;
+    }
+    commitMove(result);
   }
 
   function handleClick(event) {

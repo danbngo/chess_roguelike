@@ -160,6 +160,14 @@ const Renderer = (function () {
     camera.targetY = y + 0.5;
   }
 
+  // A "bump": the king tried to step into a wall/impassable tile but couldn't. Shove his token a
+  // fraction toward (dx,dy); since his render target is unchanged it eases straight back — a lean
+  // into the wall and a bounce off it. The camera is left untouched (no snap).
+  function bump(dx, dy) {
+    playerRender.x += dx * 0.32;
+    playerRender.y += dy * 0.32;
+  }
+
   // Nudge the camera target by a number of tiles (used by pan controls).
   function panBy(dxTiles, dyTiles) {
     camera.targetX += dxTiles;
@@ -1702,5 +1710,5 @@ const Renderer = (function () {
     drawMinimap(state); // whole-level overview, bottom-right (over the hit flash)
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, panBy, panByPixels, zoomBy, screenToTile };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, bump, panBy, panByPixels, zoomBy, screenToTile };
 })();

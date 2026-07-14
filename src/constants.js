@@ -5,7 +5,7 @@ const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so cente
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
 const PLAYER_START = { x: 10, y: 10 };
 const STARTING_HP = 5; // Default; each class overrides it (see CLASSES[].hp).
-const MAX_TURNS_SCARY = 100; // Lingering this many turns on a floor maxes the dread meter / tension music.
+const MAX_TURNS_SCARY = 200; // Lingering this many turns on a floor maxes the dread meter / tension music (a slow ramp).
 const SPAWN_RAMP_TURNS = 200; // Turns over which the SPAWN rate ramps to its ceiling — 2x slower than the dread meter, so methodical play isn't punished as harshly.
 const SPATTER_LIFE = 12; // Turns a blood spatter lingers before fading away.
 const CORPSE_LIFE = 18; // Turns a corpse (or ash pile) lingers before fully fading.
@@ -209,10 +209,10 @@ const CLASSES = {
       { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
       { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles ignore you', grants: { camouflage: true } },
       { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes more than one tile away never notice you (until you strike); any within one tile — even one that blunders into you — detects you normally', grants: { stealth: true } },
-      // 🏹 Fletcher — the quartermaster: reload, a bigger bow, and kickback.
-      { id: 'r_reload', chain: 'Fletcher', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
-      { id: 'r_longbow', chain: 'Fletcher', tier: 2, requires: 'r_reload', name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
-      { id: 'r_recoil', chain: 'Fletcher', tier: 3, requires: 'r_longbow', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile if the ground behind it is clear', grants: { recoil: true } },
+      // 🏹 Fletcher — the quartermaster: a big bow first, then reload, then kickback.
+      { id: 'r_longbow', chain: 'Fletcher', tier: 1, name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
+      { id: 'r_reload', chain: 'Fletcher', tier: 2, requires: 'r_longbow', name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
+      { id: 'r_recoil', chain: 'Fletcher', tier: 3, requires: 'r_reload', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile if the ground behind it is clear', grants: { recoil: true } },
     ],
   },
   sorcerer: {

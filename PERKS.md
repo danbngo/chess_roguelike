@@ -84,14 +84,14 @@ The ghost: unchased, ignored by structures, unnoticed.
 | 3 | `r_stealth` | Silent | unaware foes MORE than one tile away never notice you (they roam showing "?"); any within one tile detects you normally (surprised on first sight). Attacking gives you away to all visible foes | `stealth` |
 
 ### 🏹 Fletcher — "A bow for every range, and the feet to use them."
-The quartermaster: reload, a bigger bow, and kickback.
+The quartermaster: a big bow first, then reload, then kickback.
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_reload` | Reload | gain a reload card: spend a turn to recharge all your OTHER cards (cooldown 3) | `gainCard:reload` |
-| 2 | `r_longbow` | Ballista | gain a queen card (cooldown 9) — a devastating volley in any direction | `gainCard:queen`, `gainCooldown:9` |
+| 1 | `r_longbow` | Ballista | gain a queen card (cooldown 9) — a devastating volley in any direction | `gainCard:queen`, `gainCooldown:9` |
+| 2 | `r_reload` | Reload | gain a reload card: spend a turn to recharge all your OTHER cards (cooldown 3) | `gainCard:reload` |
 | 3 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile where the ground behind it is clear (structures don't budge) | `recoil` |
 
-_Ranger changes: starter is now a ROOK (cd 5, swapped with the Sorcerer's old rook); Fletcher T2 grants a QUEEN (cd 9) instead of a rook. DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet)._
+_Ranger changes: starter is now a ROOK (cd 5, swapped with the Sorcerer's old rook); Fletcher grants the QUEEN at T1 (cd 9) then Reload at T2. DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet)._
 
 ---
 

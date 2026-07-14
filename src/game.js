@@ -1214,7 +1214,11 @@ function applyArrival(next, x, y) {
   if (bossHere) {
     pl.attacked = true;
     const result = damageBoss(next, bossHere, 1);
-    if (result === 'slain') pl.killedEnemy = true;
+    if (result === 'slain') {
+      pl.killedEnemy = true;
+      pl.x = x; pl.y = y; // the KILLING blow — the king strides onto the fallen guardian's tile
+      collectKeyIfHere(next); // it was guarding the key/Orb, so grab it if it lies here
+    }
     if (result === 'slain' && pl.freeKillMove && !pl.freeMoveUsed) {
       pl.freeMoveUsed = true; // Charge: only the FIRST kill-move each turn is free
       next.enemyTurn = false;
@@ -1233,7 +1237,10 @@ function applyArrival(next, x, y) {
   const turretHere = next.enemies.find((e) => e.x === x && e.y === y && e.turret);
   if (turretHere) {
     pl.attacked = true;
-    damageTurret(next, turretHere, 1);
+    if (damageTurret(next, turretHere, 1) === 'slain') {
+      pl.x = x; pl.y = y; // the king steps onto the wreckage of the turret he just destroyed
+      collectKeyIfHere(next);
+    }
     passTurn(next);
     next.enemyTurn = true;
     next.lastAction = 'combat';
@@ -1620,12 +1627,13 @@ function useCard(state, cardIndex, x, y) {
     // A leap card that lands on a boulder crushes it to rubble (the king ends up there).
     if (isLeap) smashBoulder(next, x, y);
     if (mainTarget && (mainTarget.boss || mainTarget.turret)) {
-      // A boss or turret is struck IN PLACE — it soaks HP and the king never steps onto
-      // its tile (so the melee card just chips it down from where he stands).
+      // A boss or turret soaks HP as the king chips it down from where he stands — but the
+      // KILLING blow lets him stride onto its now-empty tile (grabbing the key it guarded).
       const res = mainTarget.boss ? damageBoss(next, mainTarget, 1) : damageTurret(next, mainTarget, 1);
       survived = res !== 'slain';
       scored = !survived;
       realKill = scored && isKillablePiece(mainTarget); // a felled turret is not an on-kill
+      if (res === 'slain') { p.x = x; p.y = y; }
     } else if (mainTarget) {
       resolveKill(next, mainTarget);
       p.x = x;
@@ -1849,19 +1857,20 @@ function movePlayerTo(state, x, y) {
   return applyArrival(next, x, y);
 }
 
-// Resolve the king heaving a boulder (the shove spends the turn like a move — even a
-// FUTILE shove against a blocked boulder wastes the turn).
+// Resolve the king heaving a boulder. A successful shove spends the turn like a move; a FUTILE
+// shove against an immovable boulder spends NO turn — it just BUMPS (like walking into a wall).
 function resolveBoulderPush(next, x, y) {
   const p = next.player;
   const dx = Math.sign(x - p.x);
   const dy = Math.sign(y - p.y);
   p.attacked = false;
-  if (canPushBoulder(next, x, y, dx, dy)) {
-    pushBoulder(next, x, y, dx, dy);
-    next.message = 'The king heaves a boulder aside.';
-  } else {
-    next.message = 'The king shoves the boulder — but it will not budge.';
+  if (!canPushBoulder(next, x, y, dx, dy)) {
+    next.message = 'The boulder will not budge.';
+    next.lastAction = 'blocked'; // no turn — the view bumps the king off it
+    return next;
   }
+  pushBoulder(next, x, y, dx, dy);
+  next.message = 'The king heaves a boulder aside.';
   next.lastAction = 'move';
   collectKeyIfHere(next);
   if (tryDescend(next)) {
@@ -2787,6 +2796,33 @@ function dangerReachOk(next) {
   if (next.key && !next.key.collected) need.push(`${next.key.x},${next.key.y}`);
   return need.every((k) => reach.has(k));
 }
+// Safety net: guarantee the king can still reach the exit AND the (uncollected) key. If he's
+// been walled off — shifting terrain, boulders shoved into a pocket, etc. — wrench him to a
+// random open tile in the exit's connected region (which also holds the key) and log it.
+function ensureReachable(state) {
+  const p = state.player;
+  if (!state.exit) return false;
+  if (p.phase || p.terrainImmune) return false; // he can cross walls / lava / pits — never truly boxed in
+  if (terrainAt(state, p.x, p.y) === 'lava') return false; // mid lava-crossing — he'll step off; don't yank him
+  if (dangerReachOk(state)) return false; // he already reaches all he needs
+  const region = playerReachable(state, state.exit.x, state.exit.y); // the exit+key component
+  const spots = [];
+  for (const k of region) {
+    const [x, y] = k.split(',').map(Number);
+    if (x === state.exit.x && y === state.exit.y) continue;
+    if (state.key && !state.key.collected && x === state.key.x && y === state.key.y) continue;
+    if (!isStandable(terrainAt(state, x, y))) continue;
+    if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+    spots.push({ x, y });
+  }
+  if (!spots.length) return false;
+  const dest = spots[randomInt(spots.length)];
+  state.player.x = dest.x;
+  state.player.y = dest.y;
+  state.message = 'The shifting walls seal you off — you are wrenched to safer ground!';
+  updateDiscovery(state);
+  return true;
+}
 // Convert up to `count` open floor tiles (well clear of the king, never the exit/key/units)
 // to `type`. Undoes ALL of it if that would cut the exit or key off from the king.
 function scatterTerrain(next, type, count) {
@@ -2891,14 +2927,14 @@ function aggroAll(next) {
   let n = 0;
   for (const e of next.enemies) {
     if (e.turret || e.summonCircle) continue;
+    if (e.asleep) continue; // a slumbering foe is NOT stirred by the aggro pulse (it sleeps on)
     e.awake = true;
-    e.asleep = false;
     e.surprised = false;
     e.lastSeen = { x: p.x, y: p.y };
     e.lastSeenTtl = PURSUIT_TTL;
     n += 1;
   }
-  return n ? 'Every foe on the floor senses you — they close in!' : 'A dreadful silence falls.';
+  return n ? 'Every waking foe on the floor senses you — they close in!' : 'A dreadful silence falls.';
 }
 // A fifth of the interior walls slump into lava (opening the map but adding hazard).
 function wallsToLava(next) {
@@ -2960,6 +2996,9 @@ function fireDangerEvent(next) {
       break;
     default: msg = 'The floor darkens with menace.';
   }
+  // The exit (stair / portal) and the key/orb tile must NEVER hold terrain — always clear floor.
+  if (next.exit) delete next.terrain[`${next.exit.x},${next.exit.y}`];
+  if (next.key && !next.key.collected) delete next.terrain[`${next.key.x},${next.key.y}`];
   next.dangerEvent = { kind, message: msg };
   next.message = msg;
   updateDiscovery(next);
@@ -2984,11 +3023,12 @@ function maybeSpawnEnemy(state) {
     return next;
   }
   next.turnsSinceSpawn = (next.turnsSinceSpawn || 0) + 1;
-  const ramp = Math.min(1, next.turn / MAX_TURNS_SCARY); // 0 -> 1 over the dread horizon
-  const interval = Math.max(6, Math.round(16 - 10 * ramp)); // ~16 turns early, ~6 at max dread
-  if (next.turnsSinceSpawn < interval) return next;
+  const ramp = Math.min(1, next.turn / MAX_TURNS_SCARY); // 0 -> 1 over the (now 2x longer) dread horizon
+  const interval = Math.max(12, Math.round(32 - 20 * ramp)); // ~32 turns early, ~12 at max dread (2x less frequent)
+  if (next.turnsSinceSpawn < interval) { ensureReachable(next); return next; }
   next.turnsSinceSpawn = 0;
   fireDangerEvent(next);
+  ensureReachable(next); // never let a terrain event wall the king off from the key/stair
   return next;
 }
 
