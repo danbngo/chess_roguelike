@@ -199,6 +199,21 @@
   // Colors per weapon category (border tint on the card slot).
   const CATEGORY_COLOR = { melee: '#dc2626', ranged: '#65a30d', spell: '#a855f7' };
 
+  // A distinct tint per hostile (danger) event, matching its hazard's colour, so the brief
+  // screen-flicker tells the player which one just struck. (Keyed by dangerEvent.kind.)
+  const DANGER_TINTS = {
+    wave: '#dc2626', // red — a wave of foes
+    turrets: '#e0894b', // rust — turrets
+    flood: '#38bdf8', // blue — water
+    lavaSpread: '#f97316', // orange — lava wells up
+    wallsToLava: '#ea580c', // deep orange — walls melt to lava
+    pits: '#7c3aed', // violet — the void opens
+    caveIn: '#b45309', // brown — rubble crashes down
+    bossRush: '#e0b341', // gold — a rogue guardian (finale)
+    miniBoss: '#b91c1c', // crimson — a mini-boss rises
+    moveStair: '#38bdf8', // cyan — the stair relocates
+  };
+
   function renderCards() {
     cardBar.innerHTML = '';
     if (!gameState) {
@@ -242,8 +257,13 @@
       badge.textContent = String(card.remaining);
       slot.append(badge);
     }
-    slot.disabled = onCooldown && cardTargeting !== i;
+    // NB: not the `disabled` attribute — a disabled button suppresses hover, and we want the
+    // description to float even while the card recharges. toggleCardTargeting guards the click.
     slot.addEventListener('click', () => toggleCardTargeting(i));
+    // Hovering a card floats its brief description + subclass (like the purchase menu).
+    slot.addEventListener('mouseenter', (e) => showCardPopover(card, i, e));
+    slot.addEventListener('mousemove', (e) => showCardPopover(card, i, e));
+    slot.addEventListener('mouseleave', hideTilePopover);
     return slot;
   }
 
@@ -306,20 +326,55 @@
     updateHud();
   }
 
-  // Show the card being aimed (category, movement) in the pane.
+  // The card's SUBCLASS name (from its colour): a granted card wears its chain's colour; a
+  // starter card wears the plain class colour (no subclass). null when it belongs to no chain.
+  function cardSubclass(card) {
+    if (!gameState || !card.color) return null;
+    const cls = CLASSES[gameState.player.className];
+    const chains = (cls && cls.chains) || {};
+    for (const name of Object.keys(chains)) {
+      if (chains[name] === card.color) return name;
+    }
+    return null;
+  }
+
+  // A BRIEF one-line description of a card (used everywhere but the purchase/level-up menus,
+  // which show the full perk text).
+  function cardVerb(card) {
+    const cat = classCategory(gameState.player.className);
+    switch (card.kind) {
+      case 'promotion': return 'Self-cast: confirm on your own tile. Free action.';
+      case 'reload': return 'Self-cast: confirm on your own tile — recharge every other card.';
+      case 'swap': return 'Target any unit in sight to trade places with it. No damage.';
+      case 'enpassant': return 'Step 1 tile; also strikes one foe you pass (marked ✕).';
+      case 'doublestep': return 'Dash the FULL 2 tiles in one direction (capturing at the end).';
+      case 'horse': return 'A spectral steed tramples an L-shaped path to an aimed knight tile — you don’t move.';
+      default:
+        return cat === 'melee' ? 'Strikes by moving onto the foe.'
+          : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
+          : 'A piercing bolt down a line; aim the far tile, you hold your ground.';
+    }
+  }
+
+  // The lines describing a card: subclass tag, brief verb, cooldown.
+  function cardInfoLines(card) {
+    const sub = cardSubclass(card);
+    return [sub ? `${sub} subclass` : null, cardVerb(card), `Cooldown ${card.cooldown} turns`].filter(Boolean);
+  }
+
+  // Show the card being aimed in the right pane (BRIEF description, not the full piece text).
   function showCardInfo(card) {
     examineEl.innerHTML = '';
-    const cat = classCategory(gameState.player.className);
-    const verb =
-      card.kind === 'promotion' ? 'Self-cast: confirm on your own tile. Free action.'
-      : card.kind === 'reload' ? 'Self-cast: confirm on your own tile.'
-      : card.kind === 'swap' ? 'Target any unit in sight to trade places with it.'
-      : card.kind === 'enpassant' ? 'Step 1 tile; also strikes one foe you pass (marked ✕).'
-      : card.kind === 'doublestep' ? 'Dash up to 2 tiles in any direction (capturing at the end).'
-      : cat === 'melee' ? 'Strikes by moving onto the foe.'
-      : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
-      : 'A bolt that pierces everything on its path; you hold your tile.';
-    addExamineBlock(`${card.kind} — ${cat}`, [PIECE_INFO[card.kind] || '', verb, `Cooldown ${card.cooldown} turns`]);
+    addExamineBlock(`${card.kind} — ${classCategory(gameState.player.className)}`, cardInfoLines(card));
+  }
+
+  // Hovering a card slot floats the same brief description (like the purchase menu, minus the
+  // full text).
+  function showCardPopover(card, i, event) {
+    tilePopover.textContent = `[${i + 1}] ${card.kind} — ${classCategory(gameState.player.className)}\n${cardInfoLines(card).join('\n')}`;
+    tilePopover.style.left = `${event.clientX + 14}px`;
+    tilePopover.style.top = `${event.clientY + 14}px`;
+    tilePopover.classList.remove('hidden');
   }
 
   function distToKing(tile) {
@@ -371,6 +426,15 @@
     boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it',
   };
 
+  // The level's outer edge is solid STONE (impassable rock), distinct from interior brick walls.
+  function terrainLabel(tx, ty) {
+    const t = terrainAt(gameState, tx, ty);
+    if (t === 'wall' && (tx === 0 || ty === 0 || tx === WORLD_SIZE - 1 || ty === WORLD_SIZE - 1)) {
+      return 'Stone — the impassable rock edge of the level';
+    }
+    return TERRAIN_NAMES[t] || t;
+  }
+
   // Build a human description of a tile (or null if there is nothing to say).
   function describeTile(tx, ty) {
     if (!gameState || tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) {
@@ -384,8 +448,7 @@
     if (gameState.player.x === tx && gameState.player.y === ty) {
       lines.push('Your king');
     }
-    const terrain = terrainAt(gameState, tx, ty);
-    lines.push(TERRAIN_NAMES[terrain] || terrain);
+    lines.push(terrainLabel(tx, ty));
     if (visible) {
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
@@ -396,7 +459,7 @@
           tag = ' (summoning circle — spawns foes; step on it to destroy)';
         } else if (enemy.boss) {
           const perk = enemy.bossPerk ? `; ${enemy.bossPerk}` : '';
-          tag = ` (boss — HP ${enemy.hp}/${enemy.maxHp}${perk})`;
+          tag = ` (${enemy.mini ? 'mini-boss' : 'boss'} — HP ${enemy.hp}/${enemy.maxHp}${perk})`;
         } else {
           tag = enemy.asleep ? ' (asleep)' : enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
@@ -503,8 +566,7 @@
     }
     examineEl.innerHTML = '';
     const visible = inLineOfSight(gameState, tx, ty);
-    const terrain = terrainAt(gameState, tx, ty);
-    addExamineBlock(`Tile (${tx}, ${ty})`, TERRAIN_NAMES[terrain] || terrain);
+    addExamineBlock(`Tile (${tx}, ${ty})`, terrainLabel(tx, ty));
 
     if (gameState.player.x === tx && gameState.player.y === ty) {
       const p = gameState.player;
@@ -531,7 +593,7 @@
                 : 'Unaware — wandering';
         const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp}` : null;
         const perkLine = enemy.boss && enemy.bossPerk ? (BOSS_PERK_LABELS[enemy.bossPerk] || null) : null;
-        const title = enemy.boss ? `Boss — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
+        const title = enemy.boss ? `${enemy.mini ? 'Mini-boss' : 'Boss'} — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
         addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, hpLine, perkLine, st]);
       }
     }
@@ -1201,6 +1263,12 @@
 
     applyState(nextState, true);
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
+    // The king struck a survivor and bounced off it: pounce onto its tile, then ease to where he
+    // ended (a leap-onto-foe recoil). Cleared so it fires only once.
+    if (nextState.lungeAt) {
+      Renderer.lunge(nextState.lungeAt.x, nextState.lungeAt.y);
+      nextState.lungeAt = null;
+    }
 
     // A yellow flash when the floor key is first collected.
     if (nextState.key && nextState.key.collected && !hadKey) {
@@ -1306,9 +1374,9 @@
     applyState(runAllyPhase(gameState), true);
     applyState(maybeSpawnEnemy(gameState), true);
     if (gameState.dangerEvent) {
-      // A danger event fired — heave the screen (rumble only, no flash), sound the alarm, spell
-      // out in the log EXACTLY what happened, and explain the concept once.
-      Renderer.effect('danger');
+      // A danger event fired — a gentle rumble tinted the event's OWN colour (so the player reads
+      // at a glance which hazard struck), the alarm cue, the exact log line, and a one-time tip.
+      Renderer.effect('danger', DANGER_TINTS[gameState.dangerEvent.kind] || DANGER_TINTS.wave);
       GameAudio.play('doom');
       logMessage(gameState.dangerEvent.message);
       queueTip('dangerEvent');
@@ -1328,6 +1396,10 @@
       gameState = result;
       updateHud();
       Renderer.bump(dx, dy);
+      // Shoved an immovable boulder? Vibrate the rock too (it wouldn't budge).
+      const bx = gameState.player.x + dx;
+      const by = gameState.player.y + dy;
+      if (terrainAt(gameState, bx, by) === 'boulder') Renderer.bumpBoulder(bx, by, dx, dy);
       return;
     }
     commitMove(result);

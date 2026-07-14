@@ -225,6 +225,109 @@ test('the boss-rush spawns lesser (lava-vulnerable) bosses near the king after t
   assert.equal(rush.length, 1, 'the cap holds at one rogue boss');
 });
 
+test('a destroyed turret leaves rusty scrap, not a corpse', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.corpses = []; s.scrap = [];
+  s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, turret: true, hp: 1, maxHp: 3 })];
+  s.player.x = 10; s.player.y = 10;
+  const n = movePlayerTo(s, 11, 10); // step onto the 1-HP turret → destroys it
+  assert.ok(!n.enemies.some((e) => e.turret), 'the turret is destroyed');
+  assert.ok((n.scrap || []).length >= 1, 'it leaves scrap');
+  assert.equal((n.corpses || []).length, 0, 'and NO corpse (scrap is distinct)');
+  assert.deepEqual({ x: n.player.x, y: n.player.y }, { x: 11, y: 10 }, 'and the king steps onto the wreck');
+});
+
+test('turrets are pushable now — Trample shoves an adjacent turret back', () => {
+  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  s.player.x = 10; s.player.y = 8;
+  s.terrain = {};
+  s.enemies = [makeEnemy({ kind: 'rook', x: 13, y: 9, turret: true, hp: 3, maxHp: 3 })]; // adjacent to the leap landing, open behind
+  const r = useCard(s, idx, 12, 9); // leap to (12,9); the shockwave shoves the turret east
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 9 });
+  assert.ok(r.enemies.some((e) => e.turret && e.x === 14 && e.y === 9), 'the turret was shoved a tile back');
+});
+
+test('a foe shoved into a pit plunges to its death; a boss clambers back out for 1 wound', () => {
+  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  s.player.x = 10; s.player.y = 8;
+  s.terrain = { '14,9': 'pit' };
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 13, y: 9, awake: true })]; // shoved east into the pit at (14,9)
+  const r = useCard(s, idx, 12, 9);
+  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 9), 'the pawn is gone');
+  assert.ok(!r.enemies.length, 'plunged into the pit');
+  // A boss instead CLAMBERS back out, taking a wound but holding its ground.
+  const b = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  const bi = b.player.cards.findIndex((c) => c.kind === 'knight');
+  b.player.x = 10; b.player.y = 8;
+  b.terrain = { '14,9': 'pit' };
+  const boss = createBoss(3, 13, 9); boss.dormant = false; boss.spokeLine = true; boss.hp = 4; boss.maxHp = 4;
+  boss.bossPerk = 'brutal'; // a perk with no on-hit reaction (Blinkborn/Shifting would move/morph)
+  b.enemies = [boss];
+  const rb = useCard(b, bi, 12, 9);
+  const bb = rb.enemies.find((e) => e.boss);
+  assert.ok(bb, 'the boss did NOT fall in');
+  assert.deepEqual({ x: bb.x, y: bb.y }, { x: 13, y: 9 }, 'it clambered back to its tile');
+  assert.equal(bb.hp, 3, 'taking a single wound');
+});
+
+test('a LEAP onto a surviving turret knocks it back and the king takes its tile', () => {
+  const s = createInitialState('warrior'); // knight card
+  s.terrain = {}; s.player.x = 10; s.player.y = 8;
+  s.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 9, turret: true, hp: 3, maxHp: 3 })]; // a knight's move away, open behind
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  const r = useCard(s, idx, 12, 9); // leap onto the turret; approach dir (1,1)
+  assert.ok(r.enemies.some((e) => e.turret && e.x === 13 && e.y === 10), 'the turret is knocked back diagonally');
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 9 }, 'and the king takes its vacated tile');
+});
+
+test('Double Step onto a surviving turret lands the king BESIDE it (moves closer, strikes)', () => {
+  const s = warriorWith('w_fleet');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'doublestep');
+  s.player.x = 10; s.player.y = 10;
+  s.terrain = {};
+  s.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, turret: true, hp: 3, maxHp: 3 })]; // 2 tiles east
+  const r = useCard(s, idx, 12, 10); // dash at the turret (a slide, not a leap)
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 11, y: 10 }, 'the king lands one tile short, beside it');
+  assert.ok(r.enemies.some((e) => e.turret && e.x === 12 && e.y === 10), 'the turret holds its ground');
+});
+
+test('a mini-boss (danger event) rises, grants no boon, and is smaller-HP', () => {
+  let s = createInitialState('warrior');
+  s.floor = 3; s.terrain = {}; s.enemies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.player.seenTerrain = []; s.player.seenTurret = false; // pool = wave | miniBoss
+  let mini = null;
+  for (let i = 0; i < 80 && !mini; i += 1) {
+    let t = structuredClone(s);
+    t.turn = 40; t.turnsSinceSpawn = 99;
+    t = maybeSpawnEnemy(t);
+    mini = t.enemies.find((e) => e.boss && e.mini);
+    if (mini) s = t;
+  }
+  assert.ok(mini, 'a mini-boss rose within the samples');
+  assert.equal(mini.mini, true);
+  assert.ok(mini.maxHp <= 4, 'with clearly fewer wounds than a floor guardian');
+  // Slaying it grants NO boon.
+  const guardian = s.enemies.find((e) => e.boss);
+  guardian.hp = 1; guardian.dormant = false; guardian.spokeLine = true;
+  s.player.x = guardian.x - 1; s.player.y = guardian.y;
+  const n = movePlayerTo(s, guardian.x, guardian.y);
+  assert.ok(!n.pendingLevelUp, 'no boon from a mini-boss kill');
+});
+
+test('the stair only relocates AFTER the key is his, out of view and still reachable', () => {
+  // Before the key: moveStair never fires.
+  let before = createInitialState('warrior');
+  before.floor = 3; before.terrain = {}; before.enemies = [];
+  before.key = { x: 3, y: 3, collected: false };
+  before.player.seenTerrain = []; before.player.seenTurret = false;
+  const kinds = new Set();
+  for (let i = 0; i < 60; i += 1) { let t = structuredClone(before); t.turn = 40; t.turnsSinceSpawn = 99; t = maybeSpawnEnemy(t); if (t.dangerEvent) kinds.add(t.dangerEvent.kind); }
+  assert.ok(!kinds.has('moveStair'), 'moveStair is impossible before the key is collected');
+});
+
 test('a guardian roars a hostile line the first time it turns on the king (a one-turn telegraph)', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
@@ -685,7 +788,47 @@ test('danger events only unleash hazards the king has already met', () => {
   for (const k of ['lavaSpread', 'wallsToLava', 'pits', 'caveIn', 'turrets', 'flood']) {
     assert.ok(!kinds.has(k), `never fires "${k}" before the king has seen its hazard`);
   }
-  assert.ok(kinds.has('wave') || kinds.has('aggro'), 'only wave / aggro fire when nothing has been seen');
+  assert.ok(kinds.has('wave'), 'only the enemy wave fires when nothing has been seen');
+});
+
+test('a danger WAVE spawns at least one foe in the king’s view', () => {
+  const base = createInitialState('warrior');
+  base.terrain = {}; // open floor so sight is clear
+  base.player.x = 10; base.player.y = 10;
+  base.player.seenTerrain = []; base.player.seenTurret = false; // pool = wave | miniBoss
+  base.enemies = [];
+  let saw = false;
+  for (let i = 0; i < 80 && !saw; i += 1) {
+    let s = structuredClone(base);
+    s.turn = 40; s.turnsSinceSpawn = 99; // force an event
+    s = maybeSpawnEnemy(s);
+    if (s.dangerEvent && s.dangerEvent.kind === 'wave') {
+      saw = true;
+      assert.ok(s.enemies.length >= 1 && s.enemies.some((e) => unitInSight(s, e.x, e.y)), 'some of the wave arrives in sight');
+    }
+  }
+  assert.ok(saw, 'a wave event fired within the samples');
+});
+
+test('a terrain danger event erupts at least partly in the king’s view', () => {
+  const base = createInitialState('warrior');
+  base.terrain = {};
+  base.player.x = 10; base.player.y = 10;
+  base.player.seenTerrain = ['pit']; base.player.seenTurret = false; // pool = wave | pits
+  base.enemies = [];
+  let sawPits = false;
+  for (let i = 0; i < 80 && !sawPits; i += 1) {
+    let s = structuredClone(base);
+    s.turn = 40; s.turnsSinceSpawn = 99;
+    s = maybeSpawnEnemy(s);
+    if (s.dangerEvent && s.dangerEvent.kind === 'pits') {
+      sawPits = true;
+      const pits = Object.entries(s.terrain).filter(([, v]) => v === 'pit').map(([k]) => k.split(',').map(Number));
+      assert.ok(pits.length >= 1, 'pits opened');
+      assert.ok(pits.some(([x, y]) => unitInSight(s, x, y)), 'at least one fresh pit opened in view');
+    }
+  }
+  assert.ok(sawPits, 'a pits event fired within the samples');
 });
 
 test('a danger event fires at the interval, carrying a kind + message, and keeps state coherent', () => {

@@ -158,6 +158,9 @@ function bossBlink(state, boss) {
       if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
       if (chebyshev(x, y, boss.x, boss.y) < 2) continue; // a real jump, not a shuffle
       if (chebyshev(x, y, king.x, king.y) <= 1) continue; // never blink into melee
+      // Only ever blink to a tile the KING can actually SEE (in his window, strict LOS) — an
+      // enemy never flickers off through / behind a wall to somewhere the player can't watch.
+      if (!isWithinBounds(getVisibleBounds(state), x, y) || !hasLineOfSight(state, king.x, king.y, x, y, false)) continue;
       if (!isStandable(terrainAt(state, x, y))) continue;
       if (x === king.x && y === king.y) continue;
       if (keyTileAt(state, x, y) || allyAt(state, x, y)) continue;
@@ -234,7 +237,7 @@ function damageTurret(state, turret, amount) {
   }
   state.enemies = state.enemies.filter((e) => e.id !== turret.id);
   addSpatter(state, turret.x, turret.y);
-  addCorpse(state, turret.x, turret.y, turret.kind);
+  addScrap(state, turret.x, turret.y); // rusty wreckage, not a corpse
   state.message = `The ${turret.kind} turret is destroyed!`;
   state.lastAction = 'combat';
   return 'slain';
@@ -245,7 +248,8 @@ function damageTurret(state, turret, amount) {
 // it). A conjured "rush" boss (the finale's converging guardians) is pure threat — no boon. The
 // run is NEVER won by a kill now; victory comes only from stepping into the portal with the Orb.
 function defeatBoss(state, boss) {
-  if (boss && boss.rush) {
+  if (boss && (boss.mini || boss.rush)) {
+    // A MINI-BOSS (finale rush OR the "a mini-boss rises" event) is pure threat — no boon.
     state.message = `${bossTitle(boss)} is destroyed!`;
     state.lastAction = 'combat';
     return;
@@ -668,6 +672,7 @@ function generateFloor(floor, carryPlayer, score) {
     corpses: [], // fading remains of slain pieces (cosmetic)
     ashes: [], // fading ash piles left by spell kills (cosmetic)
     rubble: [], // fading rock piles left by crushed / blasted boulders (cosmetic)
+    scrap: [], // fading rusty wreckage left by destroyed turrets (cosmetic)
     scars: [], // permanent marks (shattered summoning circles)
     exit: null,
     key: null, // the floor key; the stair stays locked until it is collected
@@ -974,10 +979,16 @@ function addAsh(state, x, y) {
   if (!Array.isArray(state.ashes)) state.ashes = [];
   state.ashes.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, ...remainsJitter() });
 }
-// Rubble: the scattered rocks a crushed / blasted boulder leaves behind (cosmetic, fades).
+// Rubble: the scattered rocks a crushed / blasted boulder (or a collapsed wall) leaves behind.
 function addRubble(state, x, y) {
   if (!Array.isArray(state.rubble)) state.rubble = [];
   state.rubble.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, ...remainsJitter() });
+}
+// Scrap: the twisted rusty wreckage a DESTROYED turret leaves — a distinct (metallic) remains,
+// coloured apart from grey wall/boulder rubble.
+function addScrap(state, x, y) {
+  if (!Array.isArray(state.scrap)) state.scrap = [];
+  state.scrap.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, ...remainsJitter() });
 }
 
 // One turn's upkeep: age counters, recharge cards, fade blood, and lapse wards.
@@ -999,6 +1010,7 @@ function passTurn(state) {
   if (Array.isArray(state.corpses)) state.corpses = state.corpses.map((c) => ({ ...c, life: c.life - 1 })).filter((c) => c.life > 0);
   if (Array.isArray(state.ashes)) state.ashes = state.ashes.map((a) => ({ ...a, life: a.life - 1 })).filter((a) => a.life > 0);
   if (Array.isArray(state.rubble)) state.rubble = state.rubble.map((r) => ({ ...r, life: r.life - 1 })).filter((r) => r.life > 0);
+  if (Array.isArray(state.scrap)) state.scrap = state.scrap.map((s) => ({ ...s, life: s.life - 1 })).filter((s) => s.life > 0);
   // Blood on pieces dries off over a few turns.
   const dryBlood = (u) => {
     if (u && u.blood) {
@@ -1205,11 +1217,11 @@ function applyArrival(next, x, y) {
   pl.attacked = false; // a fresh action — set true only if the king actually strikes
   // Leapt onto a boulder? He crushes it to rubble as he lands.
   smashBoulder(next, x, y);
+  const fromX = pl.x; // where the king stood before this arrival (for bounce / land-beside)
+  const fromY = pl.y;
 
-  // A boss is ATTACKED IN PLACE (it has HP): the king never steps onto its tile —
-  // even the killing blow leaves him where he stands. The boss (which guards the
-  // stair) is removed and the level-up boon is granted (see defeatBoss); the king
-  // must then walk onto the now-empty stair himself to descend.
+  // A boss soaks HP (it has a bar). The KILLING blow strides onto its tile (grabbing any guarded
+  // key); a survived hit lands the king BESIDE it (nearest his origin) rather than freezing him.
   const bossHere = next.enemies.find((e) => e.x === x && e.y === y && e.boss);
   if (bossHere) {
     pl.attacked = true;
@@ -1218,6 +1230,8 @@ function applyArrival(next, x, y) {
       pl.killedEnemy = true;
       pl.x = x; pl.y = y; // the KILLING blow — the king strides onto the fallen guardian's tile
       collectKeyIfHere(next); // it was guarding the key/Orb, so grab it if it lies here
+    } else {
+      landBesideSurvivor(next, bossHere, x, y, fromX, fromY, false);
     }
     if (result === 'slain' && pl.freeKillMove && !pl.freeMoveUsed) {
       pl.freeMoveUsed = true; // Charge: only the FIRST kill-move each turn is free
@@ -1240,6 +1254,8 @@ function applyArrival(next, x, y) {
     if (damageTurret(next, turretHere, 1) === 'slain') {
       pl.x = x; pl.y = y; // the king steps onto the wreckage of the turret he just destroyed
       collectKeyIfHere(next);
+    } else {
+      landBesideSurvivor(next, turretHere, x, y, fromX, fromY, false);
     }
     passTurn(next);
     next.enemyTurn = true;
@@ -1247,9 +1263,6 @@ function applyArrival(next, x, y) {
     updateDiscovery(next);
     return next;
   }
-
-  const fromX = pl.x;
-  const fromY = pl.y;
 
   // Moving onto an ally TRADES places with it (the Necromancer can shuffle his familiar
   // in and out of the front line).
@@ -1438,7 +1451,9 @@ function blinkToSafety(state) {
   for (let yy = bounds.y; yy < bounds.y + bounds.height; yy += 1) {
     for (let xx = bounds.x; xx < bounds.x + bounds.width; xx += 1) {
       if (xx === p.x && yy === p.y) continue;
-      if (!inLineOfSight(state, xx, yy)) continue;
+      // STRICT line of sight (seeWalls=false): never blink to a tile hidden behind a wall — not
+      // even one the Ranger's Sixth Sense can x-ray. You only blink where you truly see.
+      if (!hasLineOfSight(state, p.x, p.y, xx, yy, false)) continue;
       if (!standableFor(terrainAt(state, xx, yy), {})) continue; // solid ground only
       if (state.enemies.some((e) => e.x === xx && e.y === yy)) continue;
       if (state.exit && xx === state.exit.x && yy === state.exit.y) continue;
@@ -1627,13 +1642,15 @@ function useCard(state, cardIndex, x, y) {
     // A leap card that lands on a boulder crushes it to rubble (the king ends up there).
     if (isLeap) smashBoulder(next, x, y);
     if (mainTarget && (mainTarget.boss || mainTarget.turret)) {
-      // A boss or turret soaks HP as the king chips it down from where he stands — but the
-      // KILLING blow lets him stride onto its now-empty tile (grabbing the key it guarded).
+      // A boss or turret soaks HP. The KILLING blow lets the king stride onto its now-empty tile
+      // (grabbing any key it guarded); a survived hit lands him beside it (a leap first tries to
+      // shove it back and take its square) — never leaving him frozen on his start tile.
       const res = mainTarget.boss ? damageBoss(next, mainTarget, 1) : damageTurret(next, mainTarget, 1);
       survived = res !== 'slain';
       scored = !survived;
       realKill = scored && isKillablePiece(mainTarget); // a felled turret is not an on-kill
       if (res === 'slain') { p.x = x; p.y = y; }
+      else landBesideSurvivor(next, mainTarget, x, y, fromX, fromY, isLeap);
     } else if (mainTarget) {
       resolveKill(next, mainTarget);
       p.x = x;
@@ -2418,15 +2435,30 @@ function resolveShoveInto(state, tx, ty, moverId, moverIsKing) {
   return true; // empty ground
 }
 
-// Shove an ENEMY one tile in (dx,dy), colliding with whatever's there. A wall / the board
-// edge halts it (enemies may be driven across water and onto lava). Fixed structures
-// should be filtered out by the caller.
+// Shove an ENEMY (or a turret — they're pushable now) one tile in (dx,dy), colliding with
+// whatever's there. A wall / boulder / the board edge halts it; it may be driven across water
+// and onto lava (where it then burns). Hurled over a PIT it PLUNGES to its death — except a
+// boss / mini-boss, which clambers back out for 1 wound instead of falling in.
 function knockbackEnemy(state, enemy, dx, dy) {
   if (!dx && !dy) return;
   const tx = enemy.x + dx;
   const ty = enemy.y + dy;
-  if (tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) return;
-  if (!standableFor(terrainAt(state, tx, ty), { lavaOk: true })) return; // a wall stops the shove
+  if (tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) return; // the edge halts it
+  const t = terrainAt(state, tx, ty);
+  if (t === 'wall' || t === 'boulder') return; // solid — the shove just stops
+  if (t === 'pit') {
+    if (enemy.boss) {
+      const slain = damageBoss(state, enemy, 1) === 'slain';
+      state.message = slain
+        ? `${bossTitle(enemy)} is hurled screaming into the pit!`
+        : `${bossTitle(enemy)} clambers back out of the pit!`;
+    } else {
+      addSpatter(state, enemy.x, enemy.y);
+      state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
+      state.message = `The ${enemy.turret ? 'turret' : enemy.kind} plunges into the pit!`;
+    }
+    return;
+  }
   if (resolveShoveInto(state, tx, ty, enemy.id, false)) {
     enemy.x = tx;
     enemy.y = ty;
@@ -2467,12 +2499,12 @@ function knockbackBoulder(state, bx, by, dx, dy) {
   state.terrain[`${tx},${ty}`] = 'boulder';
 }
 
-// Shove everything ADJACENT to (cx,cy) — mobile foes AND loose boulders — one tile directly
-// away, colliding with whatever's behind it. Fixed structures (turrets / summoning circles)
-// and the excluded piece stay put. Shared by Recoil, Trample, and Displacement.
+// Shove everything ADJACENT to (cx,cy) — mobile foes, TURRETS (pushable now), AND loose boulders
+// — one tile directly away, colliding with whatever's behind it. Summoning circles and the
+// excluded piece stay put. Shared by Recoil, Trample, and Displacement.
 function shoveAdjacentAway(state, cx, cy, excludeId) {
   const ids = state.enemies
-    .filter((e) => !e.turret && !e.summonCircle && e.id !== excludeId && chebyshev(e.x, e.y, cx, cy) === 1)
+    .filter((e) => !e.summonCircle && e.id !== excludeId && chebyshev(e.x, e.y, cx, cy) === 1)
     .map((e) => e.id);
   for (const id of ids) {
     const foe = state.enemies.find((e) => e.id === id);
@@ -2481,6 +2513,47 @@ function shoveAdjacentAway(state, cx, cy, excludeId) {
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     if (terrainAt(state, cx + dx, cy + dy) === 'boulder') knockbackBoulder(state, cx + dx, cy + dy, dx, dy);
   }
+}
+
+// Place the king on the free tile ADJACENT to (tx,ty) nearest his origin (fromX,fromY) — so a
+// dash lands just short of the foe and a leap bounces off it toward where he jumped from. If NO
+// tile beside it is free he bounces all the way back to his origin. Returns true if he ended
+// beside the foe (false = bounced home).
+function bounceOffTarget(state, tx, ty, fromX, fromY) {
+  const p = state.player;
+  let best = null;
+  let bestD = Infinity;
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const x = tx + dx;
+    const y = ty + dy;
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+    if (!standableFor(terrainAt(state, x, y), { phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) })) continue;
+    if (terrainAt(state, x, y) === 'lava' && !p.terrainImmune) continue; // never bounce into searing lava
+    if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+    if (state.exit && x === state.exit.x && y === state.exit.y) continue; // don't stumble onto the stair
+    const d = chebyshev(x, y, fromX, fromY);
+    if (d < bestD) { bestD = d; best = { x, y }; }
+  }
+  if (best) { p.x = best.x; p.y = best.y; collectKeyIfHere(state); return true; }
+  p.x = fromX; p.y = fromY; // nowhere beside it — bounce clean back home
+  return false;
+}
+
+// The king struck a boss / turret that SURVIVED. A LEAP tries to knock it back a tile and take
+// its vacated square; a SLIDE (or a leap that can't budge it) lands him on the tile beside it
+// nearest his origin — else bounces him back home. Flags `lungeAt` so the view pounces onto the
+// foe first, then settles where he ends.
+function landBesideSurvivor(state, target, tx, ty, fromX, fromY, isLeap) {
+  const p = state.player;
+  state.lungeAt = { x: tx, y: ty };
+  if (isLeap) {
+    const adx = Math.sign(tx - fromX);
+    const ady = Math.sign(ty - fromY);
+    knockbackEnemy(state, target, adx, ady); // shove it away along the king's line of approach
+    const gone = !state.enemies.some((e) => e.id === target.id) || target.x !== tx || target.y !== ty;
+    if (gone) { p.x = tx; p.y = ty; collectKeyIfHere(state); return; } // it budged/fell — take its old tile
+  }
+  bounceOffTarget(state, tx, ty, fromX, fromY);
 }
 
 // A jumper (or a Bulwark boss) leaps onto the king and bowls him back one tile — into
@@ -2828,49 +2901,85 @@ function ensureReachable(state) {
 function scatterTerrain(next, type, count) {
   const p = next.player;
   const changed = [];
-  for (let tries = 0; changed.length < count && tries < 400; tries += 1) {
-    const x = 1 + randomInt(WORLD_SIZE - 2);
-    const y = 1 + randomInt(WORLD_SIZE - 2);
-    if (terrainAt(next, x, y) !== 'normal') continue;
-    if (chebyshev(x, y, p.x, p.y) <= 3) continue; // leave the king room to react
-    if (next.exit && x === next.exit.x && y === next.exit.y) continue;
-    if (next.key && !next.key.collected && x === next.key.x && y === next.key.y) continue;
-    if (next.enemies.some((e) => e.x === x && e.y === y) || allyAt(next, x, y)) continue;
-    next.terrain[`${x},${y}`] = type;
-    changed.push(`${x},${y}`);
-  }
+  // A candidate tile: open floor, never ON or adjacent to the king (he needs a step of room),
+  // never the exit/key/a unit.
+  const ok = (x, y) => terrainAt(next, x, y) === 'normal'
+    && chebyshev(x, y, p.x, p.y) >= 2
+    && !(next.exit && x === next.exit.x && y === next.exit.y)
+    && !(next.key && !next.key.collected && x === next.key.x && y === next.key.y)
+    && !next.enemies.some((e) => e.x === x && e.y === y) && !allyAt(next, x, y);
+  const drop = (requireVisible) => {
+    for (let tries = 0; tries < 300; tries += 1) {
+      const x = 1 + randomInt(WORLD_SIZE - 2);
+      const y = 1 + randomInt(WORLD_SIZE - 2);
+      if (!ok(x, y)) continue;
+      if (requireVisible && !inLineOfSight(next, x, y)) continue;
+      next.terrain[`${x},${y}`] = type;
+      changed.push(`${x},${y}`);
+      return true;
+    }
+    return false;
+  };
+  // Guarantee that at least HALF the hazard erupts IN the king's view — the danger must read on
+  // screen — then let the rest spread anywhere on the floor.
+  const visibleWanted = Math.max(1, Math.ceil(count / 2));
+  for (let i = 0; i < visibleWanted; i += 1) drop(true);
+  while (changed.length < count) { if (!drop(false)) break; }
   if (!dangerReachOk(next)) for (const k of changed) delete next.terrain[k];
   return changed.length;
 }
-// A cluster of fresh foes just beyond the king's sight.
+// A wave of fresh foes: SOME materialise right in the king's view (a couple of tiles off, so he
+// sees them arrive), the rest pour in nearby (a few further off / out of sight).
 function spawnWave(next) {
   const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5);
-  const radius = Math.floor((next.player.vision || STARTING_VISION) / 2);
-  const occupied = new Set([`${next.player.x},${next.player.y}`]);
+  const p = next.player;
+  const occupied = new Set([`${p.x},${p.y}`]);
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
-  const seed = randomEnemyKind(next.floor);
-  const anchor = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y)
-      && chebyshev(x, y, next.player.x, next.player.y) <= radius + 4 && kindCanMove(next, seed, x, y))
-    || findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y) && kindCanMove(next, seed, x, y));
-  if (!anchor) return 'A distant snarl echoes — but nothing comes.';
   let placed = 0;
   const want = 3 + randomInt(3);
-  for (let i = 0; i < 30 && placed < want && next.enemies.length < cap; i += 1) {
+  const drop = (pred) => {
+    if (next.enemies.length >= cap) return false;
     const kind = randomEnemyKind(next.floor);
-    const tile = findFreeTile(occupied, (x, y) => chebyshev(x, y, anchor.x, anchor.y) <= 2 && isStandable(terrainAt(next, x, y))
-      && !inLineOfSight(next, x, y) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y));
-    if (!tile) continue;
+    const tile = findFreeTile(occupied, (x, y) => pred(x, y) && isStandable(terrainAt(next, x, y))
+      && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y));
+    if (!tile) return false;
     occupied.add(tile.key);
     next.enemies.push(createEnemy(kind, tile.x, tile.y));
     placed += 1;
+    return true;
+  };
+  // At least half arrive IN sight (2-6 tiles away, never adjacent — a fresh sighting freezes them
+  // one turn, so it's a fair scare).
+  const visibleWanted = Math.max(1, Math.ceil(want / 2));
+  for (let i = 0; i < visibleWanted && placed < want; i += 1) {
+    if (!drop((x, y) => chebyshev(x, y, p.x, p.y) >= 2 && chebyshev(x, y, p.x, p.y) <= 6 && inLineOfSight(next, x, y))) break;
+  }
+  // The rest close in from nearby (some out of sight, further off).
+  for (let i = 0; i < 40 && placed < want; i += 1) {
+    drop((x, y) => chebyshev(x, y, p.x, p.y) >= 2 && chebyshev(x, y, p.x, p.y) <= 9);
   }
   return placed ? 'A wave of enemies pours in nearby!' : 'The shadows stir uneasily.';
 }
-// The finale's boss-rush: once the Orb is taken, one lesser guardian claws into the world near
-// the king every BOSS_RUSH_INTERVAL turns (capped so the board never chokes). It uses an
-// EARLIER, vanilla piece kind (rook, knight, bishop, …) which — unlike the demon-floor
-// guardian — is NOT immune to lava, so the king can still play the terrain against it. It
-// spawns already hostile and hunting.
+// Build a MINI-BOSS of `kind` at (x,y): a lesser guardian — fewer wounds than a floor boss and
+// drawn smaller — that grants NO boon when slain (see defeatBoss). Used by the finale's rush and
+// by the "a mini-boss rises" danger event. Lava-immune only if it's a demon-kind piece.
+function makeMiniBoss(next, kind, x, y) {
+  const b = createEnemy(kind, x, y);
+  b.boss = true;
+  b.mini = true; // smaller, lower-HP, no-boon variant
+  b.bossName = `a rogue ${kind}`;
+  b.originalKind = kind;
+  b.maxHp = 2 + Math.floor(next.floor / 3); // clearly fewer wounds than a floor guardian
+  b.bossPerk = BOSS_PERKS[randomInt(BOSS_PERKS.length)]; // NB: a mini never gets the Hardened +3 — it stays lesser
+  b.hp = b.maxHp;
+  b.lavaImmune = isDemonKind(kind);
+  b.dormant = false;
+  return b;
+}
+// The finale's boss-rush: once the Orb is taken, one lesser MINI-BOSS claws in near the king every
+// BOSS_RUSH_INTERVAL turns (capped so the board never chokes). It uses an EARLIER, vanilla piece
+// kind. It arrives SURPRISED (createEnemy defaults awake:false/surprised:false → a fresh sighting
+// freezes it one turn), then turns hostile.
 function spawnBossRush(next) {
   const liveRush = next.enemies.filter((e) => e.boss && e.rush).length;
   if (liveRush >= BOSS_RUSH_CAP) return ''; // only one rogue guardian loose at a time
@@ -2882,34 +2991,62 @@ function spawnBossRush(next) {
   const tile = findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 2 && chebyshev(x, y, p.x, p.y) <= 5)
     || findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) <= 7);
   if (!tile) return '';
-  const b = createEnemy(kind, tile.x, tile.y);
-  b.boss = true;
-  b.rush = true; // a converging guardian — grants no boon when felled
-  b.bossName = `a rogue ${kind}`;
-  b.originalKind = kind;
-  b.maxHp = 2 + Math.floor(next.floor / 3); // a LESSER boss than the floor guardian
-  b.bossPerk = BOSS_PERKS[randomInt(BOSS_PERKS.length)];
-  if (b.bossPerk === 'tough') b.maxHp += 3;
-  b.hp = b.maxHp;
-  b.lavaImmune = false; // an earlier-age guardian: lava still burns it
-  b.dormant = false;
-  // It arrives SURPRISED — it freezes the first time the king lays eyes on it, then turns hostile
-  // (roaring its line) — so a boss never simply materialises in your face. (createEnemy defaults
-  // awake:false / surprised:false, which makes it a fresh sighting → surprised on the next phase.)
+  const b = makeMiniBoss(next, kind, tile.x, tile.y);
+  b.rush = true;
+  b.lavaImmune = false; // vanilla-age: lava still burns it
   next.enemies.push(b);
-  return `A rogue ${kind} guardian claws into the world nearby!`;
+  return `A rogue ${kind} mini-boss claws into the world nearby!`;
 }
-// A few turrets rise around the map (out of sight, where they cover real ground).
+// Danger event: a single MINI-BOSS rises somewhere on the floor to hunt the king — a kind drawn
+// from the floor's own (or a weaker) roster. Prefers to appear IN view, else anywhere clear.
+function spawnMiniBoss(next) {
+  if (next.enemies.filter((e) => e.boss && e.mini && !e.rush).length >= 2) return 'A distant roar — but no new terror rises.';
+  const p = next.player;
+  const kind = randomEnemyKind(next.floor);
+  const occupied = new Set([`${p.x},${p.y}`]);
+  for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
+  const near = (x, y) => isStandable(terrainAt(next, x, y)) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y);
+  const tile = findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 3 && chebyshev(x, y, p.x, p.y) <= 6 && inLineOfSight(next, x, y))
+    || findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 3);
+  if (!tile) return 'A distant roar — but no new terror rises.';
+  next.enemies.push(makeMiniBoss(next, kind, tile.x, tile.y));
+  return `A ${kind} mini-boss rises to hunt you!`;
+}
+// Danger event (only AFTER the key is his): the stair grinds away and reopens at a random tile
+// out of view that the king can still reach — he must hunt it down anew. Never moves the portal.
+function moveStair(next) {
+  if (!next.exit || next.exit.portal || !next.key || !next.key.collected) return '';
+  const p = next.player;
+  const reach = playerReachable(next, p.x, p.y);
+  const spots = [];
+  for (const k of reach) {
+    const [x, y] = k.split(',').map(Number);
+    if (chebyshev(x, y, p.x, p.y) < 5) continue;
+    if (inLineOfSight(next, x, y)) continue; // reopen OUT of sight
+    if (terrainAt(next, x, y) !== 'normal') continue;
+    if (next.enemies.some((e) => e.x === x && e.y === y) || allyAt(next, x, y)) continue;
+    spots.push({ x, y });
+  }
+  if (!spots.length) return '';
+  const dest = spots[randomInt(spots.length)];
+  next.exit.x = dest.x;
+  next.exit.y = dest.y;
+  next.exit.discovered = false; // hidden again until he finds it
+  return 'With a grinding roar the stair sinks away — and reopens somewhere else on the floor!';
+}
+// A few turrets grind up around the map, at least one IN the king's view (a few tiles off, where
+// it covers real ground) so he sees the threat rise; the rest further out.
 function dropTurrets(next) {
-  const occupied = new Set([`${next.player.x},${next.player.y}`]);
+  const p = next.player;
+  const occupied = new Set([`${p.x},${p.y}`]);
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
   let placed = 0;
   const want = 2 + randomInt(2);
-  for (let i = 0; i < 40 && placed < want; i += 1) {
+  const drop = (pred) => {
     const kind = randomEnemyKind(next.floor);
-    const tile = findFreeTile(occupied, (x, y) => isStandable(terrainAt(next, x, y)) && !inLineOfSight(next, x, y)
+    const tile = findFreeTile(occupied, (x, y) => pred(x, y) && isStandable(terrainAt(next, x, y))
       && !keyTileAt(next, x, y) && !allyAt(next, x, y) && turretCoverage(next, kind, x, y) >= 4);
-    if (!tile) continue;
+    if (!tile) return false;
     occupied.add(tile.key);
     const t = createEnemy(kind, tile.x, tile.y);
     t.turret = true;
@@ -2917,51 +3054,44 @@ function dropTurrets(next) {
     t.maxHp = TURRET_HP;
     next.enemies.push(t);
     placed += 1;
-  }
+    return true;
+  };
+  // At least one rises in view (kept 3+ tiles off — turrets fire, so give the king a beat).
+  drop((x, y) => chebyshev(x, y, p.x, p.y) >= 3 && chebyshev(x, y, p.x, p.y) <= 6 && inLineOfSight(next, x, y));
+  for (let i = 0; i < 40 && placed < want; i += 1) drop((x, y) => chebyshev(x, y, p.x, p.y) >= 3);
   return placed ? 'Turrets grind up from the floor around you!' : 'The floor rumbles ominously.';
 }
-// Every mobile foe locks onto the king and gives chase. (Ghost still shakes them once he
-// breaks sight, so it is semi-immune.)
-function aggroAll(next) {
-  const p = next.player;
-  let n = 0;
-  for (const e of next.enemies) {
-    if (e.turret || e.summonCircle) continue;
-    if (e.asleep) continue; // a slumbering foe is NOT stirred by the aggro pulse (it sleeps on)
-    e.awake = true;
-    e.surprised = false;
-    e.lastSeen = { x: p.x, y: p.y };
-    e.lastSeenTtl = PURSUIT_TTL;
-    n += 1;
-  }
-  return n ? 'Every waking foe on the floor senses you — they close in!' : 'A dreadful silence falls.';
-}
-// A fifth of the interior walls slump into lava (opening the map but adding hazard).
-function wallsToLava(next) {
-  const interior = [];
+// Interior wall tiles, SHUFFLED and then ordered so the ones in the king's view come first — so
+// a wall-warping event always shows some of its work on screen.
+function interiorWallsVisibleFirst(next) {
+  const walls = [];
   for (const k in next.terrain) {
     if (next.terrain[k] !== 'wall') continue;
     const [x, y] = k.split(',').map(Number);
-    if (x > 1 && x < WORLD_SIZE - 2 && y > 1 && y < WORLD_SIZE - 2) interior.push(k);
+    if (x > 1 && x < WORLD_SIZE - 2 && y > 1 && y < WORLD_SIZE - 2) walls.push([x, y]);
   }
-  if (!interior.length) return 'The walls groan, but hold.';
-  const n = Math.max(1, Math.round(interior.length * 0.2));
-  for (let i = 0; i < n; i += 1) next.terrain[interior[randomInt(interior.length)]] = 'lava';
+  for (let i = walls.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [walls[i], walls[j]] = [walls[j], walls[i]]; }
+  walls.sort((a, b) => (inLineOfSight(next, b[0], b[1]) ? 1 : 0) - (inLineOfSight(next, a[0], a[1]) ? 1 : 0));
+  return walls;
+}
+// A fifth of the interior walls slump into lava (opening the map but adding hazard) — visible
+// walls first, so the king sees it happen.
+function wallsToLava(next) {
+  const walls = interiorWallsVisibleFirst(next);
+  if (!walls.length) return 'The walls groan, but hold.';
+  const n = Math.max(1, Math.round(walls.length * 0.2));
+  for (let i = 0; i < n && i < walls.length; i += 1) next.terrain[`${walls[i][0]},${walls[i][1]}`] = 'lava';
   return 'Walls slump into rivers of lava!';
 }
 
 // A cave-in also collapses a few STANDING interior walls to open floor, each leaving a fading
-// pile of rubble. Removing a wall only ever OPENS the map, so it can never seal off a path.
+// pile of rubble — visible walls first, so the collapse reads on screen. Removing a wall only ever
+// OPENS the map, so it can never seal off a path.
 function collapseWalls(next, count) {
-  const interior = [];
-  for (const k in next.terrain) {
-    if (next.terrain[k] !== 'wall') continue;
-    const [x, y] = k.split(',').map(Number);
-    if (x > 1 && x < WORLD_SIZE - 2 && y > 1 && y < WORLD_SIZE - 2) interior.push([x, y]);
-  }
+  const walls = interiorWallsVisibleFirst(next); // visible walls ordered first
   let done = 0;
-  for (let i = 0; i < count && interior.length; i += 1) {
-    const [x, y] = interior.splice(randomInt(interior.length), 1)[0];
+  for (const [x, y] of walls) {
+    if (done >= count) break;
     smashWall(next, x, y);
     done += 1;
   }
@@ -2972,18 +3102,21 @@ function fireDangerEvent(next) {
   // Only unleash a hazard the king has ALREADY encountered, so danger events keep pace with
   // the game's normal progression (no lava/pits/boulders/turrets before he's met one).
   const seen = next.player.seenTerrain || [];
-  const pool = ['wave', 'aggro']; // always available (enemies always exist)
+  const pool = ['wave', 'miniBoss']; // always available (enemies always exist)
   if (seen.includes('water')) pool.push('flood');
   if (seen.includes('lava')) pool.push('lavaSpread', 'wallsToLava');
   if (seen.includes('pit')) pool.push('pits');
   if (seen.includes('boulder')) pool.push('caveIn');
   if (next.player.seenTurret) pool.push('turrets');
+  // The stair only relocates AFTER the key is his (never the victory portal).
+  if (next.key && next.key.collected && next.exit && !next.exit.portal) pool.push('moveStair');
   const kind = pool[randomInt(pool.length)];
   let msg = '';
   switch (kind) {
     case 'wave': msg = spawnWave(next); break;
+    case 'miniBoss': msg = spawnMiniBoss(next); break;
+    case 'moveStair': msg = moveStair(next); break;
     case 'turrets': msg = dropTurrets(next); break;
-    case 'aggro': msg = aggroAll(next); break;
     case 'wallsToLava': msg = wallsToLava(next); break;
     case 'lavaSpread': msg = scatterTerrain(next, 'lava', 3 + randomInt(4)) ? 'Lava wells up through the floor!' : 'The floor smoulders.'; break;
     case 'flood': msg = scatterTerrain(next, 'water', 4 + randomInt(4)) ? 'Water floods across the floor!' : 'A damp chill spreads.'; break;

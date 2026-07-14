@@ -13,6 +13,8 @@ const Renderer = (function () {
   let allyRenders = []; // the king's summons — eased like enemies (they used to snap)
   let puffs = []; // purple-smoke death puffs for vanished allies (client-side, time-decayed)
   const PUFF_TIME = 1.25; // seconds a death puff takes to dissipate
+  let boulderRenders = []; // { x, y, targetX, targetY, angle, targetAngle } — boulders ROLL + spin as they move
+  let lungePoint = null; // the king POUNCES onto this tile first, then eases to his real target (leap-onto-foe bounce)
 
   // Hit feedback: a brief screen shake + colored full-screen flash, easing out.
   let shake = 0;
@@ -33,7 +35,7 @@ const Renderer = (function () {
     powerup: { color: '74, 222, 128', peak: 0.55, shake: 0 }, // a perk taken — recoloured per-cast to the subclass's colour (green is only the fallback)
     key: { color: '250, 204, 21', peak: 0.6, shake: 0 }, // yellow — floor key collected
     victory: { color: '234, 179, 8', peak: 0.7, shake: 0 }, // gold
-    danger: { color: '120, 20, 20', peak: 0, shake: SHAKE_DURATION * 2 }, // a danger event: just the rumble, NO flash
+    danger: { color: '120, 20, 20', peak: 0.32, shake: SHAKE_DURATION * 1.1 }, // a danger event: gentler rumble + a colour tint (the hue is overridden per event so the player reads which one)
   };
 
   // Ever-increasing time accumulator, used for ambient animation (powerup glow).
@@ -168,6 +170,19 @@ const Renderer = (function () {
     playerRender.y += dy * 0.32;
   }
 
+  // A "lunge": the king leaps ONTO a foe's tile (ex,ey), then (in update) eases off to wherever
+  // he actually ends — so a bounce reads as a pounce-and-recoil, not a teleport.
+  function lunge(ex, ey) {
+    lungePoint = { x: ex, y: ey };
+  }
+
+  // A boulder the king shoved but couldn't budge: nudge its rock toward the shove; it eases right
+  // back to its tile — a little vibration matching the king's bump.
+  function bumpBoulder(bx, by, dx, dy) {
+    const b = boulderRenders.find((r) => r.targetX === bx && r.targetY === by);
+    if (b) { b.x += dx * 0.16; b.y += dy * 0.16; }
+  }
+
   // Nudge the camera target by a number of tiles (used by pan controls).
   function panBy(dxTiles, dyTiles) {
     camera.targetX += dxTiles;
@@ -232,9 +247,16 @@ const Renderer = (function () {
     allyRenders = (state.allies || []).map((ally) => ({
       id: ally.id, x: ally.x, y: ally.y, targetX: ally.x, targetY: ally.y, kind: ally.kind,
     }));
+    boulderRenders = [];
+    for (const k in state.terrain || {}) {
+      if (state.terrain[k] !== 'boulder') continue;
+      const [x, y] = k.split(',').map(Number);
+      boulderRenders.push({ x, y, targetX: x, targetY: y, angle: 0, targetAngle: 0 });
+    }
     projectiles = [];
     bursts = [];
     puffs = []; // a fresh floor: no lingering smoke
+    lungePoint = null;
     snapCameraToPlayer(state);
   }
 
@@ -259,6 +281,7 @@ const Renderer = (function () {
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.boss = Boolean(enemy.boss);
       render.rush = Boolean(enemy.rush); // a finale rush-boss (drawn ashen, not royal)
+      render.mini = Boolean(enemy.mini); // a MINI-boss: smaller token, less HP, no boon
       render.bossPerk = enemy.bossPerk || null;
       render.hp = enemy.hp;
       render.maxHp = enemy.maxHp;
@@ -282,12 +305,64 @@ const Renderer = (function () {
       if (!nextAllies.some((r) => r.id === old.id)) puffs.push({ x: old.x, y: old.y, t: 0 });
     }
     allyRenders = nextAllies;
+    syncBoulders(state);
+  }
+
+  // Diff the boulder terrain against the eased boulder renders: a boulder that MOVED (its tile is
+  // no longer a boulder, and a fresh boulder tile appeared nearby) keeps its render object so it
+  // ROLLS + spins to the new tile; brand-new boulders appear in place; destroyed ones vanish.
+  function syncBoulders(state) {
+    const newTiles = [];
+    for (const k in state.terrain || {}) if (state.terrain[k] === 'boulder') newTiles.push(k);
+    const newSet = new Set(newTiles);
+    const kept = [];
+    const takenTargets = new Set();
+    const orphans = [];
+    for (const b of boulderRenders) {
+      const key = `${b.targetX},${b.targetY}`;
+      if (newSet.has(key) && !takenTargets.has(key)) { kept.push(b); takenTargets.add(key); }
+      else orphans.push(b);
+    }
+    const usedOrphan = new Set();
+    for (const key of newTiles) {
+      if (takenTargets.has(key)) continue;
+      const [nx, ny] = key.split(',').map(Number);
+      let best = -1;
+      let bestD = Infinity;
+      for (let i = 0; i < orphans.length; i += 1) {
+        if (usedOrphan.has(i)) continue;
+        const d = Math.abs(orphans[i].targetX - nx) + Math.abs(orphans[i].targetY - ny);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      if (best >= 0 && bestD <= 3) {
+        usedOrphan.add(best);
+        const o = orphans[best];
+        const odx = nx - o.targetX;
+        const ody = ny - o.targetY;
+        const dir = Math.abs(odx) >= Math.abs(ody) ? Math.sign(odx) : Math.sign(ody);
+        o.targetAngle = (o.targetAngle || 0) + (Math.abs(odx) + Math.abs(ody)) * (0.8 + Math.random() * 0.6) * (dir || 1);
+        o.targetX = nx;
+        o.targetY = ny;
+        kept.push(o);
+      } else {
+        kept.push({ x: nx, y: ny, targetX: nx, targetY: ny, angle: 0, targetAngle: 0 });
+      }
+      takenTargets.add(key);
+    }
+    boulderRenders = kept;
   }
 
   function update(delta) {
     const speed = Math.min(1, 12 * delta);
-    playerRender.x += (playerRender.targetX - playerRender.x) * speed;
-    playerRender.y += (playerRender.targetY - playerRender.y) * speed;
+    if (lungePoint) {
+      // Snap toward the pounce tile fast; once there, release to ease off to the real target.
+      playerRender.x += (lungePoint.x - playerRender.x) * Math.min(1, speed * 1.8);
+      playerRender.y += (lungePoint.y - playerRender.y) * Math.min(1, speed * 1.8);
+      if (Math.abs(playerRender.x - lungePoint.x) + Math.abs(playerRender.y - lungePoint.y) < 0.14) lungePoint = null;
+    } else {
+      playerRender.x += (playerRender.targetX - playerRender.x) * speed;
+      playerRender.y += (playerRender.targetY - playerRender.y) * speed;
+    }
     for (const enemy of enemyRenders) {
       enemy.x += (enemy.targetX - enemy.x) * speed;
       enemy.y += (enemy.targetY - enemy.y) * speed;
@@ -295,6 +370,11 @@ const Renderer = (function () {
     for (const ally of allyRenders) {
       ally.x += (ally.targetX - ally.x) * speed;
       ally.y += (ally.targetY - ally.y) * speed;
+    }
+    for (const b of boulderRenders) {
+      b.x += (b.targetX - b.x) * speed;
+      b.y += (b.targetY - b.y) * speed;
+      b.angle = (b.angle || 0) + ((b.targetAngle || 0) - (b.angle || 0)) * speed; // spin toward the roll angle
     }
     for (const puff of puffs) puff.t += delta / PUFF_TIME;
     puffs = puffs.filter((p) => p.t < 1);
@@ -376,7 +456,7 @@ const Renderer = (function () {
     const role = o.role || 'normal';
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
-    const radius = tileSize * (role === 'boss' ? 0.46 : 0.4);
+    const radius = tileSize * (role === 'boss' ? (o.mini ? 0.36 : 0.46) : 0.4); // mini-bosses are visibly smaller
 
     ctx.save();
     // Spent (recharging) casters are faded.
@@ -394,9 +474,9 @@ const Renderer = (function () {
       stroke = '#e0894b'; // warm danger ring
       glyph = '#f1c9a0';
     } else if (role === 'boss') {
-      if (o.rush) {
-        // A finale RUSH boss: an ashen, rogue guardian — grey-green, not the royal gold, so it
-        // reads at a glance as "lesser / conjured, grants no boon".
+      if (o.rush || o.mini) {
+        // A MINI-boss (finale rush OR a risen mini-boss): ashen grey-green, not royal gold, so it
+        // reads at a glance as "lesser, grants no boon" — and it's drawn smaller (radius above).
         fill = '#161a15'; // charred ash
         stroke = '#7f9e6b'; // sickly moss-green
         glyph = '#c7d6b5';
@@ -420,7 +500,7 @@ const Renderer = (function () {
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, radius + tileSize * 0.12, 0, Math.PI * 2);
-      ctx.strokeStyle = o.rush ? 'rgba(127, 158, 107, 0.85)' : 'rgba(224, 179, 65, 0.85)';
+      ctx.strokeStyle = (o.rush || o.mini) ? 'rgba(127, 158, 107, 0.85)' : 'rgba(224, 179, 65, 0.85)';
       ctx.lineWidth = 3;
       ctx.stroke();
       ctx.restore();
@@ -1184,6 +1264,43 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // Scrap: the RUSTY WRECKAGE a destroyed turret leaves — jagged metal shards in warm rust/steel
+  // tones, clearly distinct from grey rock rubble.
+  function drawScrap(s, faded) {
+    const cx = s.x * tileSize + tileSize * (0.5 + (s.ox || 0));
+    const cy = s.y * tileSize + tileSize * (0.56 + (s.oy || 0));
+    const lifeFrac = s.max ? Math.max(0, s.life / s.max) : 1;
+    ctx.save();
+    ctx.globalAlpha = (faded ? 0.42 : 0.88) * Math.max(0.12, lifeFrac);
+    // A few angular shards (triangles) of twisted metal.
+    const shards = [
+      { x: -0.16, y: 0.06, s: 0.2, a: 0.4, c: '#8a5a2b' },
+      { x: 0.14, y: -0.04, s: 0.17, a: -0.7, c: '#b07a3a' },
+      { x: 0.04, y: 0.15, s: 0.15, a: 1.2, c: '#6d6a72' },
+      { x: -0.05, y: -0.12, s: 0.13, a: 2.1, c: '#a56b34' },
+    ];
+    for (const sh of shards) {
+      const bx = cx + sh.x * tileSize;
+      const by = cy + sh.y * tileSize;
+      const r = sh.s * tileSize;
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.rotate(sh.a);
+      ctx.fillStyle = sh.c;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.5, r * 0.4);
+      ctx.lineTo(0, -r * 0.55);
+      ctx.lineTo(r * 0.55, r * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   // Tile colors per terrain (two shades to keep the checkerboard feel). All kept
   // within a warm cream/tan/brown family — desaturated and fairly light — so the
   // green / red / orange move-and-threat tints overlay legibly on every tile.
@@ -1317,6 +1434,84 @@ const Renderer = (function () {
       }
     }
     ctx.restore();
+  }
+
+  // The map's outer edge is solid STONE — rough grey rock, not the interior brick walls. A
+  // full-tile rocky block with a couple of deterministic facet cracks so the rampart reads as
+  // chiselled stone all the way around the level.
+  function isBorderTile(x, y) {
+    return x === 0 || y === 0 || x === WORLD_SIZE - 1 || y === WORLD_SIZE - 1;
+  }
+  function drawBorderStone(px, py, isDark, x, y) {
+    ctx.save();
+    const g = ctx.createLinearGradient(px, py, px + tileSize, py + tileSize);
+    g.addColorStop(0, isDark ? '#57545f' : '#6d6a72');
+    g.addColorStop(1, isDark ? '#3a3843' : '#48464e');
+    ctx.fillStyle = g;
+    ctx.fillRect(px, py, tileSize, tileSize);
+    // Chunky facet cracks.
+    ctx.strokeStyle = 'rgba(0,0,0,0.34)';
+    ctx.lineWidth = Math.max(1, tileSize * 0.03);
+    const h1 = tileHash(x, y);
+    const h2 = tileHash(x + 7, y - 3);
+    const h3 = tileHash(x - 5, y + 9);
+    ctx.beginPath();
+    ctx.moveTo(px + tileSize * (0.1 + h1 * 0.28), py);
+    ctx.lineTo(px + tileSize * (0.34 + h2 * 0.28), py + tileSize * (0.42 + h3 * 0.18));
+    ctx.lineTo(px + tileSize * (0.14 + h3 * 0.28), py + tileSize);
+    ctx.moveTo(px + tileSize * (0.56 + h2 * 0.26), py);
+    ctx.lineTo(px + tileSize * (0.7 + h1 * 0.22), py + tileSize * (0.5 + h2 * 0.2));
+    ctx.lineTo(px + tileSize * (0.86 + h3 * 0.1), py + tileSize);
+    ctx.stroke();
+    // A faint top-edge highlight so the rock has a lit face.
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(px, py, tileSize, tileSize * 0.12);
+    ctx.restore();
+  }
+
+  // A single boulder rock centred on (cx, cy), rotated by `angle` (so a rolling boulder visibly
+  // TUMBLES via its cracks). The cast shadow stays flat on the ground. `faded` dims it in fog.
+  function drawBoulderRock(cx, cy, angle, faded) {
+    const r = tileSize * 0.38;
+    ctx.save();
+    ctx.globalAlpha = faded ? 0.5 : 1;
+    // Flat ground shadow (not rotated).
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + r * 0.62, r * 1.05, r * 0.32, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // The rock body, spun about the tile centre.
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    const g = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.2, 0, 0, r * 1.25);
+    g.addColorStop(0, '#93929a');
+    g.addColorStop(1, '#4a4951');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // A couple of cracks so the spin READS as motion.
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.4, -r * 0.25);
+    ctx.lineTo(r * 0.15, r * 0.35);
+    ctx.moveTo(r * 0.12, -r * 0.5);
+    ctx.lineTo(r * 0.3, -r * 0.08);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Draw every boulder from its eased render (rolling ones are mid-tile), respecting fog.
+  function drawBoulders(isExplored, lit) {
+    for (const b of boulderRenders) {
+      if (!isExplored(b.targetX, b.targetY)) continue; // still under the fog
+      const cx = (b.x + 0.5) * tileSize;
+      const cy = (b.y + 0.5) * tileSize;
+      drawBoulderRock(cx, cy, b.angle || 0, !lit(b.targetX, b.targetY));
+    }
   }
 
   // Mark a tile with an OPAQUE box outline hugging its inner edge, in a solid colour,
@@ -1521,9 +1716,15 @@ const Renderer = (function () {
         const isDark = (x + y) % 2 === 1;
 
         const type = terrainAt(state, x, y);
-        ctx.fillStyle = terrainColor(type, isDark);
-        ctx.fillRect(px, py, tileSize, tileSize);
-        drawTexture(type, px, py, isDark, x, y);
+        if (type === 'wall' && isBorderTile(x, y)) {
+          // The level's edge is a rampart of solid STONE, distinct from the brick interior walls.
+          drawBorderStone(px, py, isDark, x, y);
+        } else {
+          ctx.fillStyle = terrainColor(type, isDark);
+          ctx.fillRect(px, py, tileSize, tileSize);
+          // A boulder's ROCK is drawn later (animated — it rolls); here we lay only its ground.
+          if (type !== 'boulder') drawTexture(type, px, py, isDark, x, y);
+        }
 
         const threatCount = inView ? threatened.get(`${x},${y}`) || 0 : 0;
         const canMove = reachable.has(`${x},${y}`);
@@ -1572,11 +1773,18 @@ const Renderer = (function () {
         drawRubble(rub, !lit(rub.x, rub.y));
       }
     }
+    for (const sc of state.scrap || []) {
+      if (isExplored(sc.x, sc.y)) {
+        drawScrap(sc, !lit(sc.x, sc.y));
+      }
+    }
     for (const corpse of state.corpses || []) {
       if (isExplored(corpse.x, corpse.y)) {
         drawCorpse(corpse, !lit(corpse.x, corpse.y));
       }
     }
+    // Boulders (rolling + spinning) sit on the ground above the decor.
+    drawBoulders(isExplored, lit);
 
     // The stair down: shown when in sight, or faded once discovered.
     if (state.exit) {
@@ -1646,9 +1854,9 @@ const Renderer = (function () {
       const inSight = lit(enemy.targetX, enemy.targetY);
       // A spent summoning circle, or an enemy seen only through Premonition, is faded.
       const inactive = (role === 'circle' && !enemy.charged) || !inSight;
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
-        drawBossTraitHat(enemy.x, enemy.y, enemy.bossPerk, enemy.rush); // trait-specific crown
+        drawBossTraitHat(enemy.x, enemy.y, enemy.bossPerk, enemy.rush || enemy.mini); // trait-specific crown (ashen for minis)
       } else if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
       }
@@ -1710,5 +1918,5 @@ const Renderer = (function () {
     drawMinimap(state); // whole-level overview, bottom-right (over the hit flash)
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, bump, panBy, panByPixels, zoomBy, screenToTile };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, bump, bumpBoulder, lunge, panBy, panByPixels, zoomBy, screenToTile };
 })();

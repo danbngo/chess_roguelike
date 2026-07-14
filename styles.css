@@ -519,6 +519,7 @@ body.in-game canvas {
 
 .card-slot.cooldown {
   color: rgba(226, 232, 240, 0.45);
+  opacity: 0.5; /* dim like a disabled button (we no longer set the disabled attr, to keep hover) */
   cursor: not-allowed;
 }
 
