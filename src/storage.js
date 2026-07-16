@@ -27,10 +27,25 @@ function loadSave() {
       return null;
     }
     const parsed = JSON.parse(raw);
-    return parsed && parsed.player && Array.isArray(parsed.enemies) ? parsed : null;
+    if (!(parsed && parsed.player && Array.isArray(parsed.enemies))) {
+      return null;
+    }
+    rehydratePerkText(parsed); // refresh rolled perk wording from the live class defs (post-patch)
+    return parsed;
   } catch {
     return null;
   }
+}
+
+// A perk's NAME/DESCRIPTION is definition data, not save data — but the whole state (including the
+// rolled level-up choices) is serialized, so a save taken before a balance patch can carry stale
+// wording. Re-point each stored choice at its CURRENT class definition, matched by id, on load.
+function rehydratePerkText(state) {
+  const cls = (typeof CLASSES !== 'undefined') && state.player && CLASSES[state.player.className];
+  if (!cls || !Array.isArray(state.levelPerks)) {
+    return;
+  }
+  state.levelPerks = state.levelPerks.map((perk) => cls.perks.find((k) => k.id === (perk && perk.id)) || perk);
 }
 
 function clearSave() {

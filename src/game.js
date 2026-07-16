@@ -252,6 +252,14 @@ function damageBoss(state, boss, amount) {
   boss.provokedBeast = true; // a struck beast (Wild Empathy) turns hostile for good
   boss.hp -= amount;
   if (boss.hp > 0) {
+    // Struck and still standing — it now HUNTS the king, seeing through Silent's veil. A foe you
+    // wound is provoked into the chase however far off you stand (a Ghost can still shake it by
+    // breaking its sight).
+    boss.provoked = true;
+    boss.awake = true;
+    boss.surprised = false;
+    boss.lastSeen = { x: state.player.x, y: state.player.y };
+    boss.lastSeenTtl = PURSUIT_TTL;
     state.message = `The king strikes ${boss.bossName} (${boss.hp}/${boss.maxHp}).`;
     state.lastAction = 'combat';
     applyBossHitReaction(state, boss);
@@ -284,8 +292,7 @@ function makeTurret(state, kind, x, y) {
 }
 
 function damageTurret(state, turret, amount) {
-  turret.provoked = true; // once struck, a turret shrugs off Camouflage and hunts the king for good
-  turret.dozing = false;
+  turret.dozing = false; // a struck turret isn't rendered dozing (Camouflage re-sleeps it by distance)
   turret.hp -= amount;
   if (turret.hp > 0) {
     state.message = `The ${turret.kind} turret sparks (${turret.hp}/${turret.maxHp}).`;
@@ -293,8 +300,7 @@ function damageTurret(state, turret, amount) {
     return 'hurt';
   }
   state.enemies = state.enemies.filter((e) => e.id !== turret.id);
-  addSpatter(state, turret.x, turret.y);
-  addScrap(state, turret.x, turret.y); // rusty wreckage, not a corpse
+  addScrap(state, turret.x, turret.y); // a MACHINE leaves rusty wreckage — no blood, no corpse
   state.message = `The ${turret.kind} turret is destroyed!`;
   state.lastAction = 'combat';
   return 'slain';
@@ -1350,21 +1356,19 @@ function scorchTileTerrain(next, x, y) {
   else if (t === 'devilgrass') clearDevilgrass(next, x, y);
   else if (t === 'boulder') smashBoulder(next, x, y);
 }
-// Blast (Conjuration T1): every spell also detonates on up to 3 RANDOM tiles next to its focus,
-// each scorched exactly like a tile on the bolt's path (adds to `impactTiles` so the view shows it).
-function applySpellBlast(next, cx, cy, impactTiles, kills) {
-  if (!next.player.spellBlast) return;
-  const adj = [...ORTHO, ...DIAG]
-    .map(([dx, dy]) => ({ x: cx + dx, y: cy + dy }))
-    .filter((t) => t.x >= 0 && t.x < WORLD_SIZE && t.y >= 0 && t.y < WORLD_SIZE);
-  for (let i = adj.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [adj[i], adj[j]] = [adj[j], adj[i]]; }
-  for (const t of adj.slice(0, 3)) {
+// Blast (Conjuration T1): after a spell resolves, every foe it STRUCK that STILL STANDS (a boss,
+// mini-boss, or turret — anything the bolt couldn't fell outright) is HURLED one tile along the
+// bolt's own line of travel. They are shoved FARTHEST-first (the last foe the bolt hit before the
+// first) so a knocked foe never slams into one still awaiting its own shove.
+function applySpellBlast(next, impactTiles, dirX, dirY) {
+  if (!next.player.spellBlast || (!dirX && !dirY)) return;
+  const hit = new Set(impactTiles.map((t) => `${t.x},${t.y}`));
+  const survivors = next.enemies
+    .filter((e) => !e.summonCircle && hit.has(`${e.x},${e.y}`))
+    .sort((a, b) => (b.x * dirX + b.y * dirY) - (a.x * dirX + a.y * dirY)); // farthest along the bolt first
+  for (const e of survivors) {
     if (next.gameOver || next.won) break;
-    impactTiles.push({ x: t.x, y: t.y });
-    scorchTileTerrain(next, t.x, t.y);
-    dispelAllyAt(next, t.x, t.y);
-    const felled = attackTile(next, t.x, t.y, { ash: true });
-    if (felled && isKillablePiece(felled)) kills.push(felled);
+    knockbackEnemy(next, e, dirX, dirY);
   }
 }
 
@@ -1667,6 +1671,7 @@ function blinkToSafety(state) {
   p.y = pick.y;
   p.blinkedThisTurn = true;
   collectKeyIfHere(state);
+  updateDiscovery(state); // reveal the fog around wherever he flickered to (a blink is a real move)
   state.message = 'The king blinks away to safety!';
   return true;
 }
@@ -1904,8 +1909,8 @@ function useCard(state, cardIndex, x, y) {
         if (isKillablePiece(felled)) kills.push(felled);
       }
     }
-    applySpellBlast(next, x, y, impactTiles, kills); // Blast detonates around the steed's target too
     realKill = kills.length > 0;
+    applySpellBlast(next, impactTiles, Math.sign(x - fromX), Math.sign(y - fromY)); // Blast hurls survivors along the charge
     next.message = scored ? 'A spectral steed tramples through the ranks!' : 'The spectral steed charges past.';
   } else if (category === 'spell' && !move.viaJump) {
     // A sorcerer's bolt ALWAYS travels its FULL range in the aimed direction — every
@@ -1935,8 +1940,8 @@ function useCard(state, cardIndex, x, y) {
         if (isKillablePiece(felled)) kills.push(felled);
       }
     }
-    applySpellBlast(next, x, y, impactTiles, kills); // Blast: extra detonations around the aimed tile
     realKill = kills.length > 0;
+    applySpellBlast(next, impactTiles, dx, dy); // Blast: hurl any survivor along the bolt's path (farthest-first)
     if (!next.gameOver && !next.won && p.spellDazzle) {
       for (const s of kills) {
         for (const [dx2, dy2] of [...ORTHO, ...DIAG]) {
@@ -1976,6 +1981,8 @@ function useCard(state, cardIndex, x, y) {
   // target — landing on (and capturing) a foe there if one blocks the step — then a shockwave
   // SHOVES every adjacent foe back one tile (colliding with whatever's behind it).
   if (p.recoil && category !== 'melee' && !next.gameOver && !next.won) {
+    const originX = p.x; // where he STOOD when he loosed the shot — the shockwave's true centre
+    const originY = p.y;
     const rdx = Math.sign(p.x - x);
     const rdy = Math.sign(p.y - y);
     if (rdx || rdy) {
@@ -1995,9 +2002,11 @@ function useCard(state, cardIndex, x, y) {
         // A wall/lava/edge or an untouchable turret behind him simply halts the recoil.
       }
     }
-    // Shockwave: shove every MOBILE foe (and loose boulder) now adjacent to the king back one
-    // tile (away from him), colliding with whatever's behind it. Fixed structures don't budge.
-    shoveAdjacentAway(next, p.x, p.y, null);
+    // Shockwave: shove every MOBILE foe (and loose boulder) that was FORMERLY adjacent to him —
+    // i.e. crowding his FIRING tile — back one tile, away from that spot. Anchoring on the firing
+    // position (not his landing) means kicking back toward a foe that stood two tiles off no
+    // longer rolls the king up next to it and wrongly punts it.
+    shoveAdjacentAway(next, originX, originY, null);
   }
 
   // Shrapnel (Marksman T3): a ranged/spell shot SHATTERS on impact — striking every foe adjacent
@@ -2351,6 +2360,7 @@ function pursueLastSeen(state, enemy) {
   }
   enemy.x = best.x;
   enemy.y = best.y;
+  crushBoulderUnder(state, enemy); // a leaper that PURSUES onto a boulder / ice slab shatters it, same as a hunting leap
   enemy.lastSeenTtl -= 1;
   if ((enemy.x === target.x && enemy.y === target.y) || enemy.lastSeenTtl <= 0) forget();
   return true;
@@ -2384,7 +2394,7 @@ function beginEnemyPhase(state) {
   const next = structuredClone(state);
   let moverIds = [];
   const p = next.player;
-  const stealthed = Boolean(p.stealth) && !p.attacked;
+  const stealthed = Boolean(p.stealth);
   recordSeenEnemies(next);
   charmBeasts(next); // Wild Empathy: beasts in view bow and join the king's side before the foes act
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
@@ -2418,21 +2428,14 @@ function beginEnemyPhase(state) {
       if (!isStationary(enemy)) wanderEnemy(next, enemy, false);
       continue;
     }
-    // A foe that materialised in the king's view this turn is STARTLED — it freezes one turn
-    // (shown surprised) before it acts, regardless of whether its own line back to him is clear.
-    if (enemy.spawnedInSight) {
-      enemy.spawnedInSight = false;
-      enemy.awake = true;
-      enemy.surprised = true;
-      enemy.lastSeen = { x: p.x, y: p.y };
-      enemy.lastSeenTtl = PURSUIT_TTL;
-      continue;
-    }
     const wasSurprised = enemy.surprised;
     enemy.frustrated = false;
-    // Silent (stealth): an unaware foe MORE than one tile away never perceives the king;
-    // any within one tile detects him normally (see the aware branch below).
-    const hiddenFromThis = stealthed && !enemy.awake && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
+    // Silent (stealth): a foe MORE than one tile away NEVER perceives the king — even one already
+    // awake loses track of him, and even loosing a shot from range won't give him away. It wanders
+    // on, oblivious, and can only ever harm him by BLUNDERING onto his tile. Only a foe within one
+    // tile detects him and attacks (handled by the aware branch below). The lone EXCEPTION: a foe
+    // he STRUCK that survived (`provoked`) is enraged and hunts him regardless of distance.
+    const hiddenFromThis = stealthed && !enemy.provoked && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
     const sensesWalls = enemy.bossPerk === 'phasing'; // a Phasing boss sees the king through walls/boulders
     if (hiddenFromThis || !enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
       enemy.awake = false;
@@ -2595,19 +2598,17 @@ function fireTurret(state, turret) {
   const hitsKing = turret.fire ? Boolean(fireLine)
     : getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
 
-  // Camouflage (Gloom Stalker): a camouflaged king is INVISIBLE to turrets. A turret only ever fires
-  // if he has PROVOKED it (struck it) AND is still in its line; the instant he slips out of its
-  // sight it FORGETS him and sleeps again. Mere sight never rouses it — only a blow does.
-  if (state.player.camouflage) {
-    if (!hitsKing) turret.provoked = false; // out of its line → it dozes off and forgets him
-    if (!turret.provoked) {
-      turret.aiming = false;
-      turret.recovering = false;
-      turret.dozing = true;
-      state.message = `A ${label} sleeps, blind to the camouflaged king.`;
-      state.lastAction = 'enemy';
-      return state;
-    }
+  // Camouflage (Gloom Stalker): a camouflaged king is INVISIBLE to any turret MORE than one tile
+  // away — it simply dozes (a sleep "z") and never fires, however he moves. Step ADJACENT (within
+  // one tile) and it wakes and targets him exactly like an ordinary turret; back off and it sleeps
+  // again. Purely a matter of distance now — no strike-to-provoke or line-of-fire bookkeeping.
+  if (state.player.camouflage && chebyshev(turret.x, turret.y, state.player.x, state.player.y) > 1) {
+    turret.aiming = false;
+    turret.recovering = false;
+    turret.dozing = true;
+    state.message = `A ${label} sleeps, blind to the distant camouflaged king.`;
+    state.lastAction = 'enemy';
+    return state;
   }
   turret.dozing = false;
   // FIRE turret's 3-beat cycle: after it fires it spends a turn RECOVERING (venting) before it
@@ -2684,11 +2685,12 @@ function summonAdjacent(state, origin, kind) {
 // A summoning circle's turn: while the king can see it, it conjures a minion of its
 // OWN piece type on charged turns (never two running). It never moves or strikes.
 function summonCircleTurn(state, circle) {
-  // Camouflage (Gloom Stalker): a circle can't pick out the camouflaged king, so it never
-  // conjures against him (its wind-up resets). He can still step onto it to dispel it any time.
-  if (state.player.camouflage) {
+  // Camouflage (Gloom Stalker): a circle can't sense a camouflaged king MORE than one tile away, so
+  // it never conjures against him (its wind-up resets). Step adjacent (within one tile) and it
+  // conjures as normal; he can also still step onto it to dispel it any time.
+  if (state.player.camouflage && chebyshev(circle.x, circle.y, state.player.x, state.player.y) > 1) {
     circle.summonTick = 0;
-    state.message = 'A summoning circle gropes blindly for the camouflaged king.';
+    state.message = 'A summoning circle gropes blindly for the distant camouflaged king.';
     state.lastAction = 'enemy';
     return state;
   }
@@ -2819,7 +2821,7 @@ function knockbackEnemy(state, enemy, dx, dy) {
         ? `${bossTitle(enemy)} is hurled screaming into the pit!`
         : `${bossTitle(enemy)} clambers back out of the pit!`;
     } else {
-      addSpatter(state, enemy.x, enemy.y);
+      if (!enemy.turret) addSpatter(state, enemy.x, enemy.y); // a MACHINE leaves no blood as it clangs in
       state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
       state.message = `The ${enemy.turret ? 'turret' : enemy.kind} plunges into the pit!`;
     }
@@ -3395,6 +3397,16 @@ function freezeTerrain(next, count) {
   if (!dangerReachOk(next)) for (const c of changed) { if (c.was === 'normal') delete next.terrain[c.k]; else next.terrain[c.k] = c.was; }
   return changed.length;
 }
+// A freshly-spawned foe that the king can already SEE arrives STARTLED: shown "!" the VERY turn it
+// materialises (never left wandering), frozen for that turn, then it acts the next. Seeding its
+// last-seen memory means even a spawn in the one-way vision band gives chase rather than idling.
+function startleSpawn(enemy, king) {
+  enemy.awake = true;
+  enemy.surprised = true;
+  enemy.lastSeen = { x: king.x, y: king.y };
+  enemy.lastSeenTtl = PURSUIT_TTL;
+}
+
 // A wave of fresh foes: SOME materialise right in the king's view (a couple of tiles off, so he
 // sees them arrive), the rest pour in nearby (a few further off / out of sight).
 function spawnWave(next) {
@@ -3403,7 +3415,8 @@ function spawnWave(next) {
   const occupied = new Set([`${p.x},${p.y}`]);
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
   let placed = 0;
-  const want = 3 + randomInt(3);
+  const ramp = Math.min(1, next.turn / (next.dreadTurns || MAX_TURNS_SCARY));
+  const want = 3 + randomInt(3) + Math.round(ramp * 4); // 3-5 early → 7-9 at max dread
   const drop = (pred, inSight) => {
     if (next.enemies.length >= cap) return false;
     const kind = randomEnemyKind(next.floor);
@@ -3412,9 +3425,9 @@ function spawnWave(next) {
     if (!tile) return false;
     occupied.add(tile.key);
     const e = createEnemy(kind, tile.x, tile.y);
-    // ANY spawn the king can actually SEE arrives startled (freezes one turn, shown "!"), regardless
+    // ANY spawn the king can actually SEE arrives startled ("!") the instant it appears, regardless
     // of which placement bucket dropped it — so an in-view spawn is never left wandering.
-    if (inSight || inLineOfSight(next, tile.x, tile.y)) e.spawnedInSight = true;
+    if (inSight || inLineOfSight(next, tile.x, tile.y)) startleSpawn(e, p);
     next.enemies.push(e);
     placed += 1;
     return true;
@@ -3441,7 +3454,7 @@ function spawnAmbientWanderer(next) {
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
   const kind = randomEnemyKind(next.floor);
   const tile = findFreeTile(occupied, (x, y) => x >= 1 && x < WORLD_SIZE - 1 && y >= 1 && y < WORLD_SIZE - 1
-    && chebyshev(x, y, p.x, p.y) >= 5 && !inLineOfSight(next, x, y) // well away and unseen
+    && chebyshev(x, y, p.x, p.y) >= 4 && !inLineOfSight(next, x, y) // just out of sight (closer, so they reach him sooner)
     && isStandable(terrainAt(next, x, y)) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y));
   if (!tile) return false;
   next.enemies.push(createEnemy(kind, tile.x, tile.y));
@@ -3481,7 +3494,7 @@ function spawnBossRush(next) {
   const b = makeMiniBoss(next, kind, tile.x, tile.y);
   b.rush = true;
   b.lavaImmune = false; // vanilla-age: lava still burns it
-  if (inLineOfSight(next, tile.x, tile.y)) b.spawnedInSight = true; // startled ROAR ("!" telegraph) if it claws in on-screen
+  if (inLineOfSight(next, tile.x, tile.y)) startleSpawn(b, next.player); // startled ROAR ("!" telegraph) if it claws in on-screen
   next.enemies.push(b);
   return `A rogue ${kind} mini-boss claws into the world nearby!`;
 }
@@ -3498,7 +3511,7 @@ function spawnMiniBoss(next) {
     || findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 3);
   if (!tile) return 'A distant roar — but no new terror rises.';
   const mb = makeMiniBoss(next, kind, tile.x, tile.y);
-  if (inLineOfSight(next, tile.x, tile.y)) mb.spawnedInSight = true; // rears up with a startled ROAR (a "!" telegraph turn)
+  if (inLineOfSight(next, tile.x, tile.y)) startleSpawn(mb, next.player); // rears up with a startled ROAR (a "!" telegraph turn)
   next.enemies.push(mb);
   return `A ${kind} mini-boss rises to hunt you!`;
 }
@@ -3564,18 +3577,27 @@ function collapseWalls(next, count) {
   return done;
 }
 
-function fireDangerEvent(next) {
+function fireDangerEvent(next, ramp) {
   // Only unleash a hazard the king has ALREADY encountered, so danger events keep pace with
   // the game's normal progression (no lava/pits/boulders/turrets before he's met one).
   const seen = next.player.seenTerrain || [];
-  const pool = ['wave', 'miniBoss']; // always available (enemies always exist)
+  const dread = Math.min(1, ramp || 0);
+  // ENEMY pressure is the CORE of a danger event; terrain-reshaping is occasional flavour. Weight
+  // the pool so real threats dominate — and MORE so as dread climbs — otherwise, once many hazard
+  // types have been seen, most events would dilute into harmless scenery-shuffling and a maxed
+  // dread meter would still starve the board of foes. Waves scale from 3 entries early to 8 at max.
+  const waveWeight = 3 + Math.round(dread * 5);
+  const pool = [];
+  for (let i = 0; i < waveWeight; i += 1) pool.push('wave');
+  pool.push('miniBoss', 'miniBoss'); // always available (enemies always exist)
+  if (next.player.seenTurret) pool.push('turrets');
+  // Terrain reshaping — each seen hazard contributes ONE entry (kept as garnish, not the main course).
   if (seen.includes('water')) pool.push('flood');
   if (seen.includes('lava')) pool.push('lavaSpread', 'wallsToLava');
   if (seen.includes('pit')) pool.push('pits');
   if (seen.includes('boulder')) pool.push('caveIn');
   if (seen.includes('ice')) pool.push('freeze');
   if (seen.includes('devilgrass')) pool.push('devilgrass');
-  if (next.player.seenTurret) pool.push('turrets');
   const kind = pool[randomInt(pool.length)];
   let msg = '';
   switch (kind) {
@@ -3628,20 +3650,22 @@ function maybeSpawnEnemy(state) {
   next.turnsSinceSpawn = (next.turnsSinceSpawn || 0) + 1;
   const ramp = Math.min(1, next.turn / (next.dreadTurns || MAX_TURNS_SCARY)); // 0 -> 1 over the dread horizon (halved on Nightmare)
 
-  // REINSTATED ambient trickle: beyond the big hostile events, lone wanderers filter in from
-  // around the map at a cadence that quickens as dread climbs — but 2x MILDER than the old
-  // trickle (the events already pile on pressure). They arrive OUT of sight and roam.
+  // Ambient trickle: beyond the big hostile events, lone wanderers filter in from around the map.
+  // Its cadence quickens STEEPLY as dread climbs — gentle early, relentless once the floor has
+  // fully turned against the king — and at high dread they arrive in small BURSTS, so a maxed
+  // meter actually keeps the board full rather than dribbling one distant foe every ~24 turns.
   next.ambientSpawnTimer = (next.ambientSpawnTimer || 0) + 1;
-  const ambientInterval = Math.max(14, Math.round(48 - 24 * ramp)); // ~48 turns early → ~24 at max dread (roughly half as often as before)
+  const ambientInterval = Math.max(8, Math.round(48 - 40 * ramp)); // ~48 turns early → ~8 at max dread
   if (next.ambientSpawnTimer >= ambientInterval) {
     next.ambientSpawnTimer = 0;
-    spawnAmbientWanderer(next);
+    const burst = 1 + Math.round(ramp * 2); // 1 wanderer early → up to 3 at once at max dread
+    for (let i = 0; i < burst; i += 1) spawnAmbientWanderer(next);
   }
 
-  const interval = Math.max(12, Math.round(32 - 20 * ramp)); // ~32 turns early, ~12 at max dread (2x less frequent)
+  const interval = Math.max(7, Math.round(32 - 25 * ramp)); // ~32 turns early → ~7 at max dread (events pile on fast when maxed)
   if (next.turnsSinceSpawn < interval) { ensureReachable(next); return next; }
   next.turnsSinceSpawn = 0;
-  fireDangerEvent(next);
+  fireDangerEvent(next, ramp);
   ensureReachable(next); // never let a terrain event wall the king off from the key/stair
   return next;
 }

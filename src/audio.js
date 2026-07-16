@@ -139,6 +139,12 @@ const GameAudio = (function () {
       tone(340, t + 0.02, 0.55, { type: 'triangle', gain: 0.07, slideTo: 70 });
       noise(t, 0.28, 0.05);
     },
+    // A triumphant FANFARE when a floor guardian falls — a rising arpeggio into a held major chord.
+    fanfare(t) {
+      [392.00, 523.25, 659.25, 783.99].forEach((f, i) => tone(f, t + i * 0.09, 0.2, { type: 'triangle', gain: 0.17 }));
+      [523.25, 659.25, 783.99].forEach((f) => tone(f, t + 0.4, 0.7, { type: 'triangle', gain: 0.14 }));
+      tone(261.63, t + 0.4, 0.7, { type: 'sine', gain: 0.11 }); // bass root
+    },
   };
 
   function play(name) {

@@ -7,9 +7,9 @@ const PLAYER_START = { x: 10, y: 10 };
 const STARTING_HP = 5; // Default; each class overrides it (see CLASSES[].hp).
 const MAX_TURNS_SCARY = 200; // Lingering this many turns on a floor maxes the dread meter / tension music (a slow ramp).
 const SPAWN_RAMP_TURNS = 200; // Turns over which the SPAWN rate ramps to its ceiling — 2x slower than the dread meter, so methodical play isn't punished as harshly.
-const SPATTER_LIFE = 12; // Turns a blood spatter lingers before fading away.
-const CORPSE_LIFE = 18; // Turns a corpse (or ash pile) lingers before fully fading.
-const BOSS_CORPSE_LIFE = 40; // A slain boss leaves remains that linger far longer than a common corpse.
+const SPATTER_LIFE = 48; // Turns a blood spatter lingers before fading away (long — the floor gets messy).
+const CORPSE_LIFE = 72; // Turns a corpse / ash / rubble / scrap / ice-shards linger before fully fading.
+const BOSS_CORPSE_LIFE = 160; // A slain boss leaves remains that linger far longer than a common corpse.
 // Blood that clings to a PIECE from combat (0..1 intensity, rendered as specks on its
 // token). Being struck stains it heavily; landing a blow stains it lightly. It dries
 // (fades) fairly quickly — see the decay in passTurn.
@@ -193,8 +193,8 @@ const CLASSES = {
     blurb: 'A hunter who fells foes from across the room.',
     color: '#65a30d',
     category: 'ranged', // every Ranger card fires from afar (blocked by cover)
-    start: 'rook', // the Ranger opens with an orthogonal longbow
-    startCooldown: 5, // the rook's own cooldown (cooldowns are per-UNIT, not per-class)
+    start: 'bishop', // the Ranger opens with a DIAGONAL bow (swapped with the Sorcerer's — the shorter cooldown suits the hunter)
+    startCooldown: 3, // the bishop's own cooldown
     hp: 5, // sturdier than a glass cannon — foes now close in, so a ranged hunter needs a buffer
     chains: { Druid: '#16a34a', Oracle: '#14b8a6', 'Gloom Stalker': '#6366f1', Marksman: '#a3e635' },
     perks: [
@@ -208,8 +208,8 @@ const CLASSES = {
       { id: 'r_reach', chain: 'Oracle', tier: 3, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 sight radius AND +1 card reach (again) — the extra sight is likewise one-way, so you pick foes off from outside their reach', grants: { visionOneWay: 2, cardReach: 1 } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
       { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
-      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets are BLIND to you (a sleep “z”) and never fire — a turret only wakes if you STRIKE it, and even then it dozes off again the moment you slip out of its firing line. Summoning circles likewise never conjure while you’re hidden', grants: { camouflage: true } },
-      { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes more than one tile away never notice you (until you strike); any within one tile — even one that blunders into you — detects you normally', grants: { stealth: true } },
+      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles more than one tile away are BLIND to you — turrets doze (a sleep “z”) and never fire, circles conjure nothing. Step adjacent (within one tile) and they wake and work as normal', grants: { camouflage: true } },
+      { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Foes never notice or attack you unless you are adjacent (within one tile) — even firing a weapon won’t give you away. A wandering foe can still blunder onto your tile, striking you by accident', grants: { stealth: true } },
       // 🏹 Marksman — the sharpshooter: kickback, a big bow, then exploding shots.
       { id: 'r_recoil', chain: 'Marksman', tier: 1, name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there) AND shoves every adjacent foe back one tile where the ground behind it is clear', grants: { recoil: true } },
       { id: 'r_longbow', chain: 'Marksman', tier: 2, requires: 'r_recoil', name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
@@ -221,8 +221,8 @@ const CLASSES = {
     blurb: 'A fragile caster whose bolts pierce straight through the ranks.',
     color: '#a855f7',
     category: 'spell', // every Sorcerer card is a bolt that pierces the whole path
-    start: 'bishop', // the Sorcerer opens with a diagonal bolt
-    startCooldown: 3, // the bishop's own cooldown (cooldowns are per-UNIT, not per-class)
+    start: 'rook', // the Sorcerer opens with an ORTHOGONAL piercing bolt (swapped with the Ranger's)
+    startCooldown: 5, // the rook's own cooldown
     hp: 4, // was 3 — a fragile caster still, but with a little more cushion now that foes close in
     // Four subclass chains, each a full 3-tier build (Necromancy is the ally-summoning line).
     chains: { Translocations: '#22d3ee', Necromancy: '#65a30d', Hexes: '#e879f9', Conjuration: '#8b5cf6' },
@@ -236,7 +236,7 @@ const CLASSES = {
       { id: 's_cata', chain: 'Hexes', tier: 2, requires: 's_hex', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
       { id: 's_slumber', chain: 'Hexes', tier: 3, requires: 's_cata', name: 'Slumber', desc: 'Non-boss foes adjacent to you fall asleep', grants: { sleepAura: true } },
       // 🌀 Conjuration — the artillery-mage: reach, a queen, then a full barrage.
-      { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Blast', desc: 'Every spell you cast also detonates on 3 random tiles next to your target — a burst of collateral fire', grants: { spellBlast: true } },
+      { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Blast', desc: 'Any foe your spell strikes but does NOT kill (a boss, mini-boss, or turret) is HURLED one tile along the bolt’s path — a concussive shockwave', grants: { spellBlast: true } },
       { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Phantom Steed', desc: 'Gain a horse card: a spectral steed that tramples an L-shaped path, scorching every foe along it (cooldown 4)', grants: { gainCard: 'horse', gainCooldown: 4 } },
       { id: 's_barrage', chain: 'Conjuration', tier: 3, requires: 's_staff', name: 'Double Cast', desc: 'After firing a spell, if a targetable foe remains you may aim and fire once more before your turn ends', grants: { doubleCast: true } },
       // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.

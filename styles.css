@@ -251,6 +251,13 @@ button:disabled {
 
 body.in-game #minimap {
   display: block;
+  pointer-events: auto; /* click-and-drag to pan the main view */
+  cursor: grab;
+  touch-action: none; /* let touch-drag pan the camera instead of scrolling the page */
+}
+
+body.in-game #minimap:active {
+  cursor: grabbing;
 }
 
 /* The three-pane game layout: left controls | board | examine pane. */

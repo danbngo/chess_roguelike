@@ -7,12 +7,13 @@ const Renderer = (function () {
   let tileSize = 0;
   let miniCanvas = null; // the dedicated bottom-right minimap canvas (screen-fixed)
   let miniCtx = null;
+  let miniGeom = null; // last-drawn minimap geometry {cell, ox, oy, world} — maps a minimap pixel to a tile
 
   let playerRender = { x: 0, y: 0, targetX: 0, targetY: 0 };
   let enemyRenders = [];
   let allyRenders = []; // the king's summons — eased like enemies (they used to snap)
   let puffs = []; // purple-smoke death puffs for vanished allies (client-side, time-decayed)
-  const PUFF_TIME = 1.25; // seconds a death puff takes to dissipate
+  const PUFF_TIME = 5; // seconds a death/summon smoke puff takes to dissipate (lingers ~4x longer)
   let shouts = []; // { x, y, text, t } — a boss's one-turn battle-cry speech bubble (client-side)
   const SHOUT_TIME = 1.6; // seconds the bubble lingers before it fades
   let boulderRenders = []; // { x, y, targetX, targetY, angle, targetAngle } — boulders ROLL + spin as they move
@@ -162,6 +163,28 @@ const Renderer = (function () {
   function centerOn(x, y) {
     camera.targetX = x + 0.5;
     camera.targetY = y + 0.5;
+  }
+
+  // Convert a minimap-canvas pixel (in the minimap's own backing-pixel space) to the world tile
+  // under it, or null if the click landed off the mapped area. Uses the geometry the last
+  // drawMinimap laid down so it always matches what's on screen.
+  function minimapToTile(px, py) {
+    if (!miniGeom) return null;
+    const { cell, ox, oy, world } = miniGeom;
+    const x = Math.floor((px - ox) / cell);
+    const y = Math.floor((py - oy) / cell);
+    if (x < 0 || x >= world || y < 0 || y >= world) return null;
+    return { x, y };
+  }
+
+  // Center the view on a world tile IMMEDIATELY (used by minimap click-and-drag): the clicked tile
+  // snaps to the middle of the screen so the drag tracks the cursor 1:1, kept on-board.
+  function centerCameraOn(x, y) {
+    camera.targetX = x + 0.5;
+    camera.targetY = y + 0.5;
+    clampCamera();
+    camera.x = camera.targetX;
+    camera.y = camera.targetY;
   }
 
   // A "bump": the king tried to step into a wall/impassable tile but couldn't. Shove his token a
@@ -546,26 +569,38 @@ const Renderer = (function () {
     // A demon (fairy) enemy/ally sprouts horns and wings behind its token (never the king).
     if (!isPlayer && isDemonKind(kind)) drawDemonMarks(cx, cy, radius, kind);
 
-    ctx.beginPath();
-    ctx.arc(cx, cy, bodyRadius, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.lineWidth = role === 'boss' || (isPlayer && o.classColor) ? 3 : 2;
-    ctx.strokeStyle = stroke;
-    ctx.stroke();
-
     if (isFerz) {
-      // Two wide googly eyes and a wobbly little smile — a dazed, comical blob.
-      const eo = bodyRadius * 0.34;
-      const ey = cy - bodyRadius * 0.12;
+      // A GUMDROP-shaped blob: a high domed top flaring to a wide, rounded base.
+      const r = bodyRadius;
+      const topY = cy - r * 1.05;
+      const botY = cy + r * 0.72;
+      const halfW = r * 0.98;
+      ctx.beginPath();
+      ctx.moveTo(cx - halfW, botY);
+      ctx.quadraticCurveTo(cx, botY + r * 0.34, cx + halfW, botY); // rounded, slightly bulging base
+      ctx.bezierCurveTo(cx + halfW * 1.02, cy - r * 0.25, cx + r * 0.55, topY, cx, topY); // right flank up to the dome
+      ctx.bezierCurveTo(cx - r * 0.55, topY, cx - halfW * 1.02, cy - r * 0.25, cx - halfW, botY); // left flank back down
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = stroke;
+      ctx.stroke();
+      // Two wide, blank eyes and NO mouth — a vacant, dazed stare rather than a cheerful grin.
+      const eo = r * 0.32;
+      const ey = cy - r * 0.04;
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(cx - eo, ey, bodyRadius * 0.24, 0, Math.PI * 2); ctx.arc(cx + eo, ey, bodyRadius * 0.24, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx - eo, ey, r * 0.22, 0, Math.PI * 2); ctx.arc(cx + eo, ey, r * 0.22, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#5b2f52';
-      ctx.beginPath(); ctx.arc(cx - eo + bodyRadius * 0.06, ey + bodyRadius * 0.04, bodyRadius * 0.1, 0, Math.PI * 2); ctx.arc(cx + eo - bodyRadius * 0.05, ey + bodyRadius * 0.05, bodyRadius * 0.1, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#8a4a76';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(cx, cy + bodyRadius * 0.22, bodyRadius * 0.32, 0.18 * Math.PI, 0.82 * Math.PI); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx - eo, ey + r * 0.03, r * 0.09, 0, Math.PI * 2); ctx.arc(cx + eo, ey + r * 0.04, r * 0.09, 0, Math.PI * 2); ctx.fill();
     } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, bodyRadius, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.lineWidth = role === 'boss' || (isPlayer && o.classColor) ? 3 : 2;
+      ctx.strokeStyle = stroke;
+      ctx.stroke();
       ctx.fillStyle = glyph;
       ctx.font = `${tileSize * 0.62}px serif`;
       ctx.textAlign = 'center';
@@ -1844,6 +1879,7 @@ const Renderer = (function () {
     const cell = Math.min(W, H) / world; // the whole level fits, square
     const ox = (W - cell * world) / 2; // center the map if the canvas isn't square
     const oy = (H - cell * world) / 2;
+    miniGeom = { cell, ox, oy, world }; // remember it so a click on the minimap maps back to a tile
 
     // Backing (also the colour of unexplored/void tiles).
     miniCtx.fillStyle = 'rgba(2, 6, 23, 0.92)';
@@ -1901,11 +1937,16 @@ const Renderer = (function () {
     }
     blip(state.player.x, state.player.y, '#22c55e', r + 0.7);
 
-    // A faint frame marking the slice of the level currently on screen.
-    const b = getVisibleBounds(state);
+    // A faint frame marking the slice of the level currently ON SCREEN — the actual camera
+    // viewport (so it tracks panning / zoom and a minimap drag), not the king's sight range.
+    const ts = currentTileSize();
+    const viewTilesX = canvas.width / ts;
+    const viewTilesY = canvas.height / ts;
+    const fx = camera.x - viewTilesX / 2;
+    const fy = camera.y - viewTilesY / 2;
     miniCtx.strokeStyle = 'rgba(226, 232, 240, 0.55)';
     miniCtx.lineWidth = 1;
-    miniCtx.strokeRect(ox + b.x * cell, oy + b.y * cell, b.width * cell, b.height * cell);
+    miniCtx.strokeRect(ox + fx * cell, oy + fy * cell, viewTilesX * cell, viewTilesY * cell);
   }
 
   function draw(state, showMoves, cardTargets, cardCursor, aoeTiles) {
@@ -2215,5 +2256,5 @@ const Renderer = (function () {
     drawMinimap(state); // whole-level overview, bottom-right (over the hit flash)
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, bump, bumpBoulder, lunge, shout, panBy, panByPixels, zoomBy, screenToTile };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, lunge, shout, panBy, panByPixels, zoomBy, screenToTile };
 })();

@@ -46,11 +46,11 @@ test('category is a class property; each class starts with its one card', () => 
   assert.equal(createPlayer('warrior').cards[0].kind, 'knight'); // a melee leap ("horse")
   assert.equal(createPlayer('warrior').cards[0].category, undefined);
   assert.equal(CLASSES.warrior.category, 'melee');
-  assert.equal(createPlayer('ranger').cards[0].kind, 'rook'); // the Ranger now opens with a rook
-  assert.equal(createPlayer('ranger').cards[0].cooldown, 5); // the rook's own (per-unit) cooldown
+  assert.equal(createPlayer('ranger').cards[0].kind, 'bishop'); // the Ranger opens with a bishop (swapped w/ Sorcerer)
+  assert.equal(createPlayer('ranger').cards[0].cooldown, 3); // the bishop's shorter cooldown
   assert.equal(CLASSES.ranger.category, 'ranged');
-  assert.equal(createPlayer('sorcerer').cards[0].kind, 'bishop'); // the Sorcerer now opens with a bishop
-  assert.equal(createPlayer('sorcerer').cards[0].cooldown, 3); // the bishop's own (per-unit) cooldown
+  assert.equal(createPlayer('sorcerer').cards[0].kind, 'rook'); // the Sorcerer now opens with a rook
+  assert.equal(createPlayer('sorcerer').cards[0].cooldown, 5); // the rook's own cooldown
   assert.equal(CLASSES.sorcerer.category, 'spell');
   assert.equal(createPlayer('warrior').cards.length, 1);
 });
@@ -270,7 +270,7 @@ test('the boss-rush spawns lesser (lava-vulnerable) bosses near the king after t
   assert.ok(rush.length >= 1, 'a rush boss appeared');
   assert.equal(rush[0].rush, true, 'flagged as a rush boss (no boon)');
   assert.equal(rush[0].lavaImmune, false, 'and it is NOT immune to lava');
-  assert.ok(!rush[0].awake, 'it arrives surprised, not instantly hunting');
+  assert.ok(!(rush[0].awake && !rush[0].surprised), 'it arrives startled ("!") or unaware, never instantly hunting');
   assert.ok(chebyshev(rush[0].x, rush[0].y, 10, 10) >= 2 && chebyshev(rush[0].x, rush[0].y, 10, 10) <= 7, 'near the king but never adjacent');
   // Only ONE rogue boss loose at a time — keep ticking and it never spawns a second.
   for (let i = 0; i < 60; i += 1) s = maybeSpawnEnemy(s);
@@ -585,20 +585,20 @@ test('a summoning circle conjures a foe when it sees you, and dies when stepped 
 });
 
 test('a missile (ranged/spell) does NOT dispel a summoning circle — only stepping/bumping does', () => {
-  const s = createInitialState('sorcerer'); // spell bolts pierce (now a diagonal bishop)
+  const s = createInitialState('sorcerer'); // spell bolts pierce (now an orthogonal rook)
   s.terrain = {};
   s.player.x = 8; s.player.y = 8;
   s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 9, y: 9, summonCircle: true, awake: true }), // a circle on the diagonal line
-    makeEnemy({ kind: 'pawn', x: 11, y: 11, awake: true }), // a real foe beyond it
+    makeEnemy({ kind: 'pawn', x: 9, y: 8, summonCircle: true, awake: true }), // a circle on the east line
+    makeEnemy({ kind: 'pawn', x: 11, y: 8, awake: true }), // a real foe beyond it
   ];
   // The circle is NOT offered as a target...
   const targets = getCardMoves(s, s.player.cards[0]);
-  assert.ok(!targets.some((t) => t.x === 9 && t.y === 9), 'a circle is not a missile target');
+  assert.ok(!targets.some((t) => t.x === 9 && t.y === 8), 'a circle is not a missile target');
   // ...and firing down the line kills the foe but leaves the circle standing.
-  const r = useCard(s, 0, 11, 11);
+  const r = useCard(s, 0, 11, 8);
   assert.ok(r.enemies.some((e) => e.summonCircle), 'the circle survives the bolt passing over it');
-  assert.ok(!r.enemies.some((e) => e.x === 11 && e.y === 11 && !e.summonCircle), 'the real foe still falls');
+  assert.ok(!r.enemies.some((e) => e.x === 11 && e.y === 8 && !e.summonCircle), 'the real foe still falls');
 });
 
 test('classes start with different HP (Warrior sturdiest, Sorcerer frailest)', () => {
@@ -644,11 +644,11 @@ test('pit: impassable to the king, but shots and turret fire cross it', () => {
 });
 
 test('a ranger shoots across a pit (mild ranged buff)', () => {
-  const s = createInitialState('ranger'); // rook, ranged
-  s.terrain = { '11,10': 'pit' };
+  const s = createInitialState('ranger'); // bishop, ranged (diagonal)
+  s.terrain = { '11,11': 'pit' };
   s.player.x = 10; s.player.y = 10;
-  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true })]; // beyond the pit, on the orthogonal line
-  assert.ok(getCardMoves(s, s.player.cards[0]).some((tt) => tt.x === 12 && tt.y === 10), 'the shot flies over the pit');
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true })]; // beyond the pit, on the diagonal line
+  assert.ok(getCardMoves(s, s.player.cards[0]).some((tt) => tt.x === 12 && tt.y === 12), 'the shot flies over the pit');
 });
 
 test('boulder: the king shoves it; into a pit it fills the hole', () => {
@@ -661,6 +661,28 @@ test('boulder: the king shoves it; into a pit it fills the hole', () => {
   assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 9, y: 8 }, 'the king takes the boulder’s tile');
   assert.equal(terrainAt(r, 9, 8), 'normal', 'the boulder rolled off its tile');
   assert.equal(terrainAt(r, 10, 8), 'normal', 'and filled the pit');
+});
+
+test('a leaping enemy that PURSUES onto ice (or a boulder) shatters it, just like a hunting leap', () => {
+  // A knight OUT of the king's awareness hunts his last-seen tile via pursueLastSeen — a path that
+  // used to move the piece without crushing whatever it leapt onto.
+  const leapPursuitOnto = (terrain) => {
+    const s = createInitialState('warrior');
+    s.terrain = { '6,5': terrain };
+    s.player.x = 11; s.player.y = 10; // the king (and the knight's last-seen tile), well out of range
+    const knight = makeEnemy({ kind: 'knight', x: 4, y: 4, awake: true });
+    knight.lastSeen = { x: 11, y: 10 }; knight.lastSeenTtl = 6;
+    s.enemies = [knight];
+    const after = beginEnemyPhase(s).state;
+    return after;
+  };
+  const onIce = leapPursuitOnto('ice');
+  assert.deepEqual({ x: onIce.enemies[0].x, y: onIce.enemies[0].y }, { x: 6, y: 5 }, 'the knight leaps toward the king, onto the ice');
+  assert.equal(terrainAt(onIce, 6, 5), 'normal', 'the ice slab it pounced onto is shattered to open floor');
+  assert.ok((onIce.iceShards || []).some((sh) => sh.x === 6 && sh.y === 5), 'and leaves frosted shards');
+  const onBoulder = leapPursuitOnto('boulder');
+  assert.deepEqual({ x: onBoulder.enemies[0].x, y: onBoulder.enemies[0].y }, { x: 6, y: 5 }, 'the knight leaps onto the boulder');
+  assert.equal(terrainAt(onBoulder, 6, 5), 'normal', 'the boulder it landed on is crushed to rubble');
 });
 
 test('boulder: pushing onto open ground rolls it forward; a wall-backed boulder strains (SPENDS the turn)', () => {
@@ -697,14 +719,14 @@ test('a knight leap crushes a boulder it lands on', () => {
 });
 
 test('a sorcerer spell blasts the first boulder in its path', () => {
-  const s = createInitialState('sorcerer'); // bishop spell (diagonal)
+  const s = createInitialState('sorcerer'); // rook spell (orthogonal)
   s.enemies = [];
-  s.terrain = { '11,11': 'boulder' };
+  s.terrain = { '11,8': 'boulder' };
   s.player.x = 8; s.player.y = 8;
-  assert.ok(getCardMoves(s, s.player.cards[0]).some((tt) => tt.x === 11 && tt.y === 11), 'the boulder is a spell target');
-  const r = useCard(s, 0, 11, 11);
-  assert.equal(terrainAt(r, 11, 11), 'normal', 'the bolt blasts the boulder to rubble');
-  assert.ok((r.rubble || []).some((rb) => rb.x === 11 && rb.y === 11), 'and leaves rubble');
+  assert.ok(getCardMoves(s, s.player.cards[0]).some((tt) => tt.x === 11 && tt.y === 8), 'the boulder is a spell target');
+  const r = useCard(s, 0, 11, 8);
+  assert.equal(terrainAt(r, 11, 8), 'normal', 'the bolt blasts the boulder to rubble');
+  assert.ok((r.rubble || []).some((rb) => rb.x === 11 && rb.y === 8), 'and leaves rubble');
 });
 
 test('leaps clear pits — a knight lands beyond one but never IN it', () => {
@@ -946,7 +968,7 @@ test('a danger WAVE spawns at least one foe in the king’s view', () => {
       saw = true;
       const inView = s.enemies.filter((e) => unitInSight(s, e.x, e.y));
       assert.ok(inView.length >= 1, 'some of the wave arrives in sight');
-      assert.ok(inView.every((e) => e.spawnedInSight), 'EVERY in-view wave spawn arrives startled (never wandering)');
+      assert.ok(inView.every((e) => e.awake && e.surprised), 'EVERY in-view wave spawn arrives startled ("!"), never wandering');
     }
   }
   assert.ok(saw, 'a wave event fired within the samples');
@@ -1011,37 +1033,37 @@ test('a melee card lunges the king onto the target; a spell card pierces cover',
   assert.deepEqual({ x: m.player.x, y: m.player.y }, { x: 10, y: 9 });
   assert.equal(m.enemies.length, 0);
 
-  const spell = createInitialState('sorcerer'); // now a diagonal bishop bolt
+  const spell = createInitialState('sorcerer'); // now an orthogonal rook bolt
   spell.terrain = {};
   spell.player.x = 8;
   spell.player.y = 8;
-  spell.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 9, awake: true }), makeEnemy({ kind: 'pawn', x: 11, y: 11, awake: true })];
+  spell.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true }), makeEnemy({ kind: 'pawn', x: 11, y: 8, awake: true })];
   const targets = getCardMoves(spell, spell.player.cards[0]);
-  assert.ok(targets.some((t) => t.x === 11 && t.y === 11), 'spell targets through the blocker');
-  const n = useCard(spell, 0, 11, 11);
+  assert.ok(targets.some((t) => t.x === 11 && t.y === 8), 'spell targets through the blocker');
+  const n = useCard(spell, 0, 11, 8);
   assert.deepEqual({ x: n.player.x, y: n.player.y }, { x: 8, y: 8 }, 'the caster holds his tile');
   assert.equal(n.enemies.length, 0, 'the bolt slays both');
-  // The fireball records every tile it scorches (9,9 · 10,10 · the target 11,11) so the
+  // The fireball records every tile it scorches (9,8 · 10,8 · the target 11,8) so the
   // view can bloom an impact on each — not just the final tile.
   assert.equal(n.lastShot.role, 'fireball');
   assert.ok(Array.isArray(n.lastShot.tiles), 'a spell carries its AoE tile list');
   const hit = new Set(n.lastShot.tiles.map((t) => `${t.x},${t.y}`));
-  assert.ok(hit.has('9,9') && hit.has('10,10') && hit.has('11,11'), 'every tile on the path is marked');
+  assert.ok(hit.has('9,8') && hit.has('10,8') && hit.has('11,8'), 'every tile on the path is marked');
 });
 
 test('the Sorcerer aims the max-range END of a firing line, not a body on it', () => {
-  const s = createInitialState('sorcerer'); // bishop spell card (reach 3, diagonal, pierces)
+  const s = createInitialState('sorcerer'); // rook spell card (reach 3, orthogonal, pierces)
   s.terrain = {};
   s.player.x = 8;
   s.player.y = 8;
-  // One foe right next to the king, one two tiles further along the same diagonal.
-  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 9, awake: true }), makeEnemy({ kind: 'pawn', x: 11, y: 11, awake: true })];
+  // One foe right next to the king, one two tiles further along the same rank.
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true }), makeEnemy({ kind: 'pawn', x: 11, y: 8, awake: true })];
   const targets = getCardMoves(s, s.player.cards[0]);
-  assert.ok(targets.some((t) => t.x === 11 && t.y === 11), 'the max-range endpoint is a target');
-  assert.ok(!targets.some((t) => t.x === 9 && t.y === 9), 'a nearer body is NOT — you aim the line END');
-  const n = useCard(s, 0, 11, 11); // AIM the max-range endpoint...
+  assert.ok(targets.some((t) => t.x === 11 && t.y === 8), 'the max-range endpoint is a target');
+  assert.ok(!targets.some((t) => t.x === 9 && t.y === 8), 'a nearer body is NOT — you aim the line END');
+  const n = useCard(s, 0, 11, 8); // AIM the max-range endpoint...
   const hit = new Set(n.lastShot.tiles.map((t) => `${t.x},${t.y}`));
-  assert.ok(hit.has('9,9') && hit.has('10,10') && hit.has('11,11'), 'the bolt reaches all 3 tiles');
+  assert.ok(hit.has('9,8') && hit.has('10,8') && hit.has('11,8'), 'the bolt reaches all 3 tiles');
   assert.equal(n.enemies.length, 0, '...and both foes on the line fall');
 });
 
@@ -1050,10 +1072,10 @@ test('a foe felled by a spell leaves an ash pile, not a corpse', () => {
   s.terrain = {};
   s.player.x = 8;
   s.player.y = 8;
-  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 9, awake: true })];
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 8, awake: true })];
   s.corpses = [];
   s.ashes = [];
-  const n = useCard(s, 0, 11, 11); // aim the max-range endpoint; the line still sweeps the foe at 9,9
+  const n = useCard(s, 0, 11, 8); // aim the max-range endpoint; the line still sweeps the foe at 9,8
   assert.equal(n.enemies.length, 0, 'the bolt slays the foe');
   assert.ok((n.ashes || []).length >= 1, 'it leaves an ash pile');
   assert.equal((n.corpses || []).length, 0, 'and no corpse');
@@ -1233,8 +1255,8 @@ test('Winged Boots lets the Ranger wade water freely, cast while wading, and shr
   assert.ok(getPlayerMoves(wade).some((m) => m.x === 13 && m.y === 10), 'slides across two water tiles');
   const cast = rangerWith('r_wade');
   cast.terrain = { '10,10': 'water' };
-  cast.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10 })]; // on the rook's orthogonal line
-  const r = useCard(cast, 0, 12, 10);
+  cast.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12 })]; // on the bishop's diagonal line
+  const r = useCard(cast, 0, 12, 12);
   assert.notEqual(r.lastAction, 'blocked', 'a weapon still fires while wading');
   assert.equal(r.enemies.length, 0);
   // And lava no longer burns.
@@ -1325,21 +1347,24 @@ test('Marksman: Recoil (T1) kicks back + knocks adjacent foes away; Ballista (T2
   const s = rangerWith('r_recoil', 'r_longbow'); // T1 Recoil, T2 Ballista
   const queen = s.player.cards.find((c) => c.kind === 'queen');
   assert.equal(queen.cooldown, 9, 'the Ballista queen keeps the queen’s own cooldown (9)');
-  const rook = s.player.cards.find((c) => c.kind === 'rook');
-  assert.equal(rook.cooldown, 5, 'the starting rook is cooldown 5');
-  // Recoil: shoot east; the archer kicks one tile WEST and shoves adjacent foes away (not kills).
+  const bow = s.player.cards.find((c) => c.kind === 'bishop'); // the Ranger's starting bishop-bow
+  assert.equal(bow.cooldown, 3, 'the starting bishop-bow is cooldown 3');
+  // Recoil: shoot SE; the archer kicks one tile NW and shoves the foes that were FORMERLY
+  // adjacent to his firing tile away (not kills) — while a foe two tiles off is left alone.
   const rec = rangerWith('r_recoil');
   rec.terrain = {};
   rec.player.x = 10; rec.player.y = 10;
   rec.enemies = [
-    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }), // the shot target (E)
-    makeEnemy({ kind: 'pawn', x: 8, y: 11, awake: true }),  // adjacent to the recoil landing (9,10), open behind
+    makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true }), // the shot target (SE diagonal)
+    makeEnemy({ kind: 'pawn', x: 9, y: 10, awake: true }),  // FORMERLY adjacent to the firing tile (10,10), open behind
+    makeEnemy({ kind: 'pawn', x: 8, y: 8, awake: true }),   // two tiles off — the kickback merely rolls him next to it; must NOT be punted
   ];
-  const rookIdx = rec.player.cards.findIndex((c) => c.kind === 'rook');
-  const shot = useCard(rec, rookIdx, 12, 10);
-  assert.deepEqual({ x: shot.player.x, y: shot.player.y }, { x: 9, y: 10 }, 'the archer recoils west');
-  assert.ok(!shot.enemies.some((e) => e.x === 12 && e.y === 10), 'the shot target falls');
-  assert.ok(shot.enemies.some((e) => e.x === 7 && e.y === 12), 'the adjacent foe is SHOVED back a tile (alive, not cut down)');
+  const bowIdx = rec.player.cards.findIndex((c) => c.kind === 'bishop');
+  const shot = useCard(rec, bowIdx, 12, 12);
+  assert.deepEqual({ x: shot.player.x, y: shot.player.y }, { x: 9, y: 9 }, 'the archer recoils NW');
+  assert.ok(!shot.enemies.some((e) => e.x === 12 && e.y === 12), 'the shot target falls');
+  assert.ok(shot.enemies.some((e) => e.x === 8 && e.y === 10), 'the formerly-adjacent foe is SHOVED back a tile (alive, not cut down)');
+  assert.ok(shot.enemies.some((e) => e.x === 8 && e.y === 8), 'a foe two tiles from the firing spot is NOT punted by the kickback');
 });
 
 test('Oracle chain: Premonition (see/shoot through cover, one-way) → Hawk Eyes / Power Draw', () => {
@@ -1347,13 +1372,13 @@ test('Oracle chain: Premonition (see/shoot through cover, one-way) → Hawk Eyes
   // Premonition: see AND shoot through cover within sight (seeThroughWalls) — one-way.
   const p1 = rangerWith('r_eagle');
   assert.equal(p1.player.seeThroughWalls, true, 'Premonition grants see/shoot through cover');
-  p1.player.x = 10; p1.player.y = 10; p1.terrain = { '11,10': 'wall' };
-  assert.equal(inLineOfSight(p1, 12, 10), true, 'his sight passes through the wall');
-  p1.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true })]; // a foe behind the wall
-  const rookIdx = p1.player.cards.findIndex((c) => c.kind === 'rook');
-  assert.ok(getCardMoves(p1, p1.player.cards[rookIdx]).some((m) => m.x === 12 && m.y === 10), 'and he can SHOOT it through the wall');
+  p1.player.x = 10; p1.player.y = 10; p1.terrain = { '11,11': 'wall' };
+  assert.equal(inLineOfSight(p1, 12, 12), true, 'his sight passes through the wall');
+  p1.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true })]; // a foe behind the wall on the SE diagonal
+  const bowIdx = p1.player.cards.findIndex((c) => c.kind === 'bishop');
+  assert.ok(getCardMoves(p1, p1.player.cards[bowIdx]).some((m) => m.x === 12 && m.y === 12), 'and he can SHOOT it through the wall');
   // ...but ONE-WAY: the walled-off foe can't see the king back.
-  assert.equal(enemyAwareOfKing(p1, 12, 10), false, 'the foe behind the wall cannot see the king');
+  assert.equal(enemyAwareOfKing(p1, 12, 12), false, 'the foe behind the wall cannot see the king');
   // Hawk Eyes AND Power Draw EACH grant +1 sight radius (ONE-WAY) and +1 card reach.
   const s = rangerWith('r_eagle', 'r_eyes2', 'r_reach');
   assert.equal(s.player.vision, base.vision + 4, 'two +1-radius sight bumps');
@@ -1427,18 +1452,18 @@ test('Shrapnel (Marksman T3): a weapon shot shatters, striking every foe adjacen
   s.terrain = {};
   s.player.x = 10; s.player.y = 10;
   s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true }), // the shot target (E on the rook line)
-    makeEnemy({ kind: 'pawn', x: 13, y: 9, awake: true }),  // adjacent to the target
-    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }), // adjacent to the target
-    makeEnemy({ kind: 'pawn', x: 9, y: 9, awake: true }),   // adjacent to the KING, not the target
+    makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true }), // the shot target (SE diagonal, dist 2)
+    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }), // adjacent to the target (off the shot line)
+    makeEnemy({ kind: 'pawn', x: 11, y: 12, awake: true }), // adjacent to the target (off the shot line)
+    makeEnemy({ kind: 'pawn', x: 5, y: 5, awake: true }),   // far from both the target and the king
   ];
-  const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
-  const r = useCard(s, idx, 13, 10);
-  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 10), 'the shot target falls');
-  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 9), 'a foe adjacent to the target is shredded');
-  assert.ok(!r.enemies.some((e) => e.x === 12 && e.y === 11), 'another target-adjacent foe is shredded');
-  // A foe adjacent only to the KING (far from the impact) is not shredded — Recoil merely shoves it clear.
-  assert.ok(r.enemies.some((e) => e.x === 9 && e.y === 8), 'a foe by the king (far from impact) survives, just shoved back');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'bishop');
+  const r = useCard(s, idx, 12, 12);
+  assert.ok(!r.enemies.some((e) => e.x === 12 && e.y === 12), 'the shot target falls');
+  assert.ok(!r.enemies.some((e) => e.x === 12 && e.y === 11), 'a foe adjacent to the target is shredded');
+  assert.ok(!r.enemies.some((e) => e.x === 11 && e.y === 12), 'another target-adjacent foe is shredded');
+  // A foe far from the impact is untouched by the shrapnel.
+  assert.ok(r.enemies.some((e) => e.x === 5 && e.y === 5), 'a foe far from the impact survives');
 });
 
 test('Camouflage: turrets hold fire and circles conjure nothing', () => {
@@ -1471,8 +1496,8 @@ function sorcererWith(...perkIds) {
 
 test('Sorcerer cards carry cooldowns and subclass colours', () => {
   const s = sorcererWith();
-  assert.equal(s.player.cards[0].kind, 'bishop');
-  assert.equal(s.player.cards[0].cooldown, 3, 'the starting bishop uses the bishop’s own cooldown');
+  assert.equal(s.player.cards[0].kind, 'rook');
+  assert.equal(s.player.cards[0].cooldown, 5, 'the starting rook uses the rook’s own cooldown');
   assert.equal(s.player.cards[0].color, '#a855f7', 'a starter card wears the class colour');
   const conj = sorcererWith('s_amp', 's_staff');
   const horse = conj.player.cards.find((c) => c.kind === 'horse');
@@ -1480,77 +1505,69 @@ test('Sorcerer cards carry cooldowns and subclass colours', () => {
   assert.equal(horse.color, '#8b5cf6', 'a granted card wears its subclass colour');
 });
 
-test('Blast: a spell also detonates on tiles beside its target', () => {
+test('Blast: a foe that SURVIVES a spell is hurled one tile along the bolt path', () => {
   const setup = (withBlast) => {
     const s = withBlast ? sorcererWith('s_amp') : sorcererWith(); // s_amp is now Blast
+    s.terrain = {};
     s.player.x = 10; s.player.y = 10;
-    s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true })]; // a foe up the NE diagonal to aim at
-    const bi = s.player.cards.findIndex((c) => c.kind === 'bishop');
-    const aim = getCardMoves(s, s.player.cards[bi]).find((m) => Math.sign(m.x - 10) === 1 && Math.sign(m.y - 10) === 1);
-    // Ring the AIMED tile with foes so Blast (3 random of 8 neighbours) always fells at least one extra.
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const rx = aim.x + dx; const ry = aim.y + dy;
-      if (rx === 10 && ry === 10) continue;
-      if (!s.enemies.some((e) => e.x === rx && e.y === ry)) s.enemies.push(makeEnemy({ kind: 'pawn', x: rx, y: ry, awake: true }));
-    }
-    return { s, bi, aim };
+    // A TURRET on the east bolt line survives the bolt (hp > 1), so Blast can knock it back.
+    s.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, turret: true, hp: 3, maxHp: 3, awake: true })];
+    const bi = s.player.cards.findIndex((c) => c.kind === 'rook');
+    return { s, bi };
   };
   const a = setup(false);
-  assert.ok(a.aim, 'the bishop offers a NE aim');
-  const plain = useCard(a.s, a.bi, a.aim.x, a.aim.y);
+  const plain = useCard(a.s, a.bi, 13, 10); // aim the east endpoint; the bolt sweeps the turret at 12,10
+  assert.ok(plain.enemies.some((e) => e.turret && e.x === 12 && e.y === 10), 'without Blast the struck turret holds its tile');
+
   const b = setup(true);
   assert.equal(b.s.player.spellBlast, true, 'Blast grants spellBlast');
-  const blast = useCard(b.s, b.bi, b.aim.x, b.aim.y);
-  assert.ok(blast.enemies.length < plain.enemies.length, 'Blast fells extra foes around the aimed tile');
+  const blast = useCard(b.s, b.bi, 13, 10);
+  assert.ok(blast.enemies.some((e) => e.turret && e.x === 13 && e.y === 10), 'with Blast the surviving turret is hurled a tile along the bolt');
+  assert.ok(!blast.enemies.some((e) => e.turret && e.x === 12 && e.y === 10), 'and no longer stands where it was struck');
 });
 
-test('Camouflage: turrets sleep, wake only when struck, and doze off again when you leave their line', () => {
+test('Camouflage: a turret sleeps while you are 2+ tiles off, wakes and fires when you step adjacent, then re-sleeps', () => {
   const s = rangerWith('r_ghost', 'r_camo');
   assert.equal(s.player.camouflage, true);
   s.terrain = {};
   s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5;
-  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, turret: true, hp: 3, maxHp: 3, awake: true })];
-  // On its file, but camouflaged — it dozes and never fires (mere sight doesn't wake it).
+  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, turret: true, hp: 3, maxHp: 3, awake: true })]; // 2 tiles up its file
+  // On its file but TWO tiles away — camouflaged, so it just dozes (mere line-of-fire doesn't wake it).
   const dozed = moveEnemy(s, s.enemies[0].id);
-  assert.equal(dozed.player.hp, 5, 'the camouflaged king is safe from the dozing turret');
-  assert.equal(dozed.enemies[0].dozing, true, 'it is shown dormant');
-  // Provoke it: step adjacent and strike it in place.
-  let s2 = structuredClone(s);
-  s2.player.x = 10; s2.player.y = 9;
-  s2 = movePlayerTo(s2, 10, 8);
-  const t = s2.enemies.find((e) => e.turret);
-  assert.equal(t.provoked, true, 'striking wakes it');
-  // Back on its file, the provoked turret locks on and fires despite camouflage.
-  s2.player.x = 10; s2.player.y = 10;
-  let n = moveEnemy(s2, t.id); // locks on
-  n = moveEnemy(n, n.enemies.find((e) => e.turret).id); // fires
-  assert.ok(n.player.hp < 5, 'the provoked turret blasts the king while he stays in its line');
-  // Now slip OFF its line — it loses him, forgets, and dozes off again.
-  n.player.x = 13; n.player.y = 13; // off the turret's rank (8) and file (10)
+  assert.equal(dozed.player.hp, 5, 'the camouflaged king is safe while 2+ tiles from the turret');
+  assert.equal(dozed.enemies[0].dozing, true, 'it is shown dormant (a sleep icon)');
+  // Step ADJACENT (within one tile): it wakes and behaves as a normal turret — locks on, then fires.
+  const adj = structuredClone(s);
+  adj.player.x = 10; adj.player.y = 9; // one tile below the turret at 10,8, still on its file
+  let n = moveEnemy(adj, adj.enemies[0].id); // adjacent → wakes and locks on
+  assert.equal(n.enemies[0].dozing, false, 'adjacent, it is no longer dozing');
+  n = moveEnemy(n, n.enemies[0].id); // still adjacent and in line → fires
+  assert.ok(n.player.hp < 5, 'an adjacent turret fires on the camouflaged king as normal');
+  // Back off to 2+ tiles: it loses him and dozes off again.
+  n.player.hp = 5; n.player.x = 13; n.player.y = 13;
   const slept = moveEnemy(n, n.enemies.find((e) => e.turret).id);
-  const t2 = slept.enemies.find((e) => e.turret);
-  assert.equal(t2.dozing, true, 'off its line the turret dozes off again');
-  assert.equal(Boolean(t2.provoked), false, 'and forgets it was ever provoked');
+  assert.equal(slept.enemies.find((e) => e.turret).dozing, true, 'stepping away puts it back to sleep');
+  assert.equal(slept.player.hp, 5, 'and it cannot fire from afar');
 });
 
 test('Double Cast: a spell with a foe still in range fires once more before the turn ends', () => {
   const s = sorcererWith('s_amp', 's_staff', 's_barrage'); // s_barrage now grants doubleCast
   assert.equal(s.player.doubleCast, true, 'the tier-3 grants Double Cast');
-  // Two foes on different diagonals: the first shot clears one, the second is still available.
+  // Two foes on different rook lines: the first shot clears one, the second is still available.
   s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 12, y: 12 }), // SE (bishop line)
-    makeEnemy({ kind: 'pawn', x: 12, y: 8 }), // NE (bishop line)
+    makeEnemy({ kind: 'pawn', x: 12, y: 10 }), // E (rook rank)
+    makeEnemy({ kind: 'pawn', x: 10, y: 8 }), // N (rook file)
   ];
-  const idx = s.player.cards.findIndex((c) => c.kind === 'bishop');
-  const first = useCard(s, idx, 13, 13); // aim the SE max-range endpoint (line sweeps the foe at 12,12)
-  assert.ok(!first.enemies.some((e) => e.x === 12 && e.y === 12), 'the SE foe falls');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
+  const first = useCard(s, idx, 13, 10); // aim the E max-range endpoint (line sweeps the foe at 12,10)
+  assert.ok(!first.enemies.some((e) => e.x === 12 && e.y === 10), 'the E foe falls');
   assert.equal(first.lastAction, 'card-followup', 'the caster stays up for a second shot');
   assert.equal(first.enemyTurn, false, 'the turn has NOT passed yet');
   assert.equal(first.player.cards[idx].remaining, 0, 'and the card is not yet on cooldown');
   assert.equal(first.player.cards[idx].doubleReady, true, 'a follow-up is armed');
   // The follow-up shot ends the turn and puts the card on cooldown.
-  const second = useCard(first, idx, 13, 7); // aim the NE endpoint (line sweeps the foe at 12,8)
-  assert.ok(!second.enemies.some((e) => e.x === 12 && e.y === 8), 'the NE foe falls too');
+  const second = useCard(first, idx, 10, 7); // aim the N endpoint (line sweeps the foe at 10,8)
+  assert.ok(!second.enemies.some((e) => e.x === 10 && e.y === 8), 'the N foe falls too');
   assert.equal(second.enemyTurn, true, 'now the turn passes');
   assert.ok(second.player.cards[idx].remaining > 0, 'and the card is on cooldown');
   assert.ok(!second.player.cards[idx].doubleReady, 'the follow-up is spent');
@@ -1558,9 +1575,9 @@ test('Double Cast: a spell with a foe still in range fires once more before the 
 
 test('Double Cast: the FIRST shot alone ends the turn when no target remains', () => {
   const s = sorcererWith('s_amp', 's_staff', 's_barrage');
-  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12 })]; // the only foe (SE diagonal)
-  const idx = s.player.cards.findIndex((c) => c.kind === 'bishop');
-  const r = useCard(s, idx, 13, 13); // aim the SE endpoint; the line sweeps the lone foe
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10 })]; // the only foe (E rook line)
+  const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
+  const r = useCard(s, idx, 13, 10); // aim the E endpoint; the line sweeps the lone foe
   assert.equal(r.enemies.length, 0, 'the lone foe falls');
   assert.equal(r.enemyTurn, true, 'no target remains, so the turn ends after one shot');
   assert.ok(r.player.cards[idx].remaining > 0, 'and the card goes on cooldown');
@@ -1719,12 +1736,12 @@ test('Necromancy: familiar spawns and respawns; foes rise as one undead at a tim
 
   const necro = sorcererWith('s_familiar', 's_undead');
   necro.allies = [];
-  necro.enemies = [makeEnemy({ kind: 'knight', x: 13, y: 13 })];
-  const raised = useCard(necro, 0, 13, 13); // bishop bolt (diagonal) slays the knight → it rises undead
+  necro.enemies = [makeEnemy({ kind: 'knight', x: 13, y: 10 })];
+  const raised = useCard(necro, 0, 13, 10); // rook bolt (east) slays the knight → it rises undead
   assert.equal((raised.allies || []).filter((a) => a.undead).length, 1, 'a slain foe rises as undead');
-  raised.enemies = [makeEnemy({ kind: 'bishop', x: 13, y: 7 })];
+  raised.enemies = [makeEnemy({ kind: 'bishop', x: 10, y: 7 })];
   raised.player.cards[0].remaining = 0;
-  const again = useCard(raised, 0, 13, 7);
+  const again = useCard(raised, 0, 10, 7);
   assert.equal((again.allies || []).filter((a) => a.undead).length, 1, 'only ONE undead at a time');
 });
 
@@ -1770,7 +1787,7 @@ test('Blink fires at most once per turn; Silent hides only foes beyond a tile', 
   assert.ok(nearFoe.awake || nearFoe.surprised, 'a foe within a tile detects the Silent king');
 });
 
-test('Silent: attacking reveals you; a foe that wanders adjacent wakes at once', () => {
+test('Silent: even attacking never reveals you — only adjacency does', () => {
   const phase = (state) => {
     const r = beginEnemyPhase(state);
     let st = r.state;
@@ -1778,36 +1795,54 @@ test('Silent: attacking reveals you; a foe that wanders adjacent wakes at once',
     return st;
   };
 
-  // Capturing a foe breaks stealth: a distant unaware bystander wakes that same phase.
-  const atk = createInitialState('warrior');
+  // Firing a weapon from RANGE does NOT give the Silent king away: he holds his tile and a
+  // bystander two tiles off (not the one he shot) stays oblivious.
+  const atk = createInitialState('ranger'); // bishop bow — a ranged shot that doesn't move the king
   atk.terrain = {};
   atk.player.x = 10; atk.player.y = 10; atk.player.stealth = true;
   atk.enemies = [
-    makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false }), // bystander, 2 away, in sight
-    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: false }), // a knight-leap target
+    makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false }), // bystander, 2 east, in sight, OFF the shot line
+    makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: false }), // the shot target, SE diagonal
   ];
-  const struck = useCard(atk, 0, 12, 11); // knight card captures the pawn
-  assert.equal(struck.player.attacked, true, 'an attack marks the king as revealed');
-  const seen = phase(struck).enemies.find((e) => e.kind === 'rook');
-  assert.ok(seen && (seen.surprised || seen.awake), 'the bystander wakes — the strike gave the king away');
+  const bi = atk.player.cards.findIndex((c) => c.kind === 'bishop');
+  const struck = useCard(atk, bi, 12, 12); // loose an arrow SE — the king stays put
+  assert.deepEqual({ x: struck.player.x, y: struck.player.y }, { x: 10, y: 10 }, 'a ranged shot does not move the king');
+  assert.ok(!struck.enemies.some((e) => e.kind === 'pawn'), 'the arrow fells its target');
+  const bystander = phase(struck).enemies.find((e) => e.kind === 'rook');
+  assert.ok(bystander && !bystander.awake && !bystander.surprised, 'a foe beyond a tile stays oblivious even after the shot');
 
-  // A plain (non-capturing) move does NOT reveal you — the king stays unmarked. (Whether
-  // a distant foe then wanders into you is a separate matter, tested below.)
-  const sneak = createInitialState('warrior');
-  sneak.terrain = {};
-  sneak.player.x = 10; sneak.player.y = 10; sneak.player.stealth = true; sneak.player.moveRange = 1;
-  sneak.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false })];
-  const moved = movePlayerTo(sneak, 10, 9); // step to empty ground
-  assert.equal(moved.player.attacked, false, 'a plain move does not reveal you');
-
-  // A foe adjacent at the START of a phase detects the Silent king at once (surprised),
-  // then hunts — within a tile, it is no longer fooled.
+  // A foe ADJACENT at the START of a phase detects the Silent king at once (surprised), then hunts —
+  // within a tile it is no longer fooled.
   const adj = createInitialState('warrior');
   adj.terrain = {};
   adj.player.x = 10; adj.player.y = 10; adj.player.stealth = true;
   adj.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
   const woke = phase(adj).enemies[0];
-  assert.ok(woke.awake || woke.surprised, 'a foe within a tile notices the Silent king at once');
+  assert.ok(woke.awake || woke.surprised, 'only a foe within a tile notices the Silent king');
+});
+
+test('Silent: a foe you strike but do not kill is provoked and hunts you despite stealth', () => {
+  const phase = (state) => beginEnemyPhase(state).state;
+  const mk = () => {
+    const s = createInitialState('ranger'); // bishop bow — a ranged shot that keeps the king in place
+    s.terrain = {};
+    s.player.x = 10; s.player.y = 10; s.player.stealth = true;
+    const boss = makeEnemy({ kind: 'queen', x: 12, y: 12, awake: false });
+    boss.boss = true; boss.bossName = 'the Warden'; boss.hp = 3; boss.maxHp = 3;
+    boss.dormant = false; boss.spokeLine = true; boss.recovering = false;
+    s.enemies = [boss];
+    return s;
+  };
+  // Control: never struck → Silent keeps the distant boss oblivious (it wanders, unaware).
+  const calm = phase(mk());
+  assert.ok(!calm.enemies[0].awake && !calm.enemies[0].surprised, 'un-struck, the distant boss stays oblivious under Silent');
+  // Strike it from range (it survives at 2/3), THEN the enemy phase: it is provoked and gives chase.
+  const s = mk();
+  const bi = s.player.cards.findIndex((c) => c.kind === 'bishop');
+  const shot = useCard(s, bi, 12, 12); // arrow hits the boss on the SE diagonal
+  assert.ok(shot.enemies[0].hp < 3 && shot.enemies[0].provoked, 'the wounded boss is provoked');
+  const hunted = phase(shot).enemies[0];
+  assert.ok(hunted.awake && !hunted.surprised, 'the struck boss hunts the Silent king rather than wandering off');
 });
 
 test('every floor spawns a key and a stair sealed until it is collected', () => {

@@ -55,7 +55,7 @@ onto a foe (or empty ground), clearing anything between.
 
 ---
 
-## RANGER — the Hunter  (ranged · start: **rook**, cooldown 5 · **5 HP**)
+## RANGER — the Hunter  (ranged · start: **bishop**, cooldown 3 · **5 HP**)
 _A hunter who fells foes from across the room._ Ranged cards fire a single shot to the first foe,
 blocked by cover / the first body. (HP was raised 4 → 5 once foes began closing in to melee.)
 
@@ -79,8 +79,8 @@ _Premonition grants **`seeThroughWalls`** (see + shoot through cover within radi
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `r_ghost` | Ghost | foes stop chasing the instant you break their sight | `noChase` |
-| 2 | `r_camo` | Camouflage | **turrets** are BLIND to you (a sleep "z") and never fire; a turret only wakes if you STRIKE it, and it dozes off again the moment you leave its firing line. **Summoning circles** likewise never conjure while you're hidden (step on one to dispel it) | `camouflage` |
-| 3 | `r_stealth` | Silent | unaware foes MORE than one tile away never notice you (they roam showing "?"); any within one tile detects you normally. Attacking gives you away | `stealth` |
+| 2 | `r_camo` | Camouflage | **turrets** and **summoning circles** more than one tile away are BLIND to you — turrets doze (a sleep "z") and never fire, circles conjure nothing. Step ADJACENT (within one tile) and they wake and work as normal (purely distance now — no strike-to-provoke or line tracking) | `camouflage` |
+| 3 | `r_stealth` | Silent | foes never notice or attack you unless you are ADJACENT (within one tile) — even one already hunting loses you, and even firing a weapon won't give you away. A wandering foe can still blunder onto your tile, striking you by accident | `stealth` |
 
 ### 🏹 Marksman — the sharpshooter: kickback, a big bow, then exploding shots. (#a3e635)
 | tier | id | name | effect | `grant` |
@@ -93,9 +93,9 @@ _The old **Fletcher** chain (Reload → Ballista → Recoil) became **Marksman**
 
 ---
 
-## SORCERER — the Wizard  (spell · start: **bishop**, cooldown 3 · **4 HP**)
-_A fragile caster whose bolts PIERCE the whole path._ The bishop scorches every tile along its
-diagonal, hitting every unit on the line. (HP was raised 3 → 4 once foes began closing in.)
+## SORCERER — the Wizard  (spell · start: **rook**, cooldown 5 · **4 HP**)
+_A fragile caster whose bolts PIERCE the whole path._ The rook scorches every tile along its
+rank/file, hitting every unit on the line. (HP was raised 3 → 4 once foes began closing in.)
 
 ### 🔮 Translocations — the blink-mage: dodge, phase, displace. (#22d3ee)
 | tier | id | name | effect | `grant` |
@@ -116,11 +116,11 @@ _Hex now warps foes into a **ferz** (not a "pawn" as the old draft said)._
 ### 🌀 Conjuration — the artillery-mage: a blast, a phantom steed, a double cast. (#8b5cf6)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_amp` | **Blast** | every spell also detonates on 3 RANDOM tiles beside your target — collateral fire (each tile scorched exactly like a bolt-path tile) | `spellBlast` |
+| 1 | `s_amp` | **Blast** | any foe your spell strikes but does NOT kill (a boss, mini-boss, or turret) is HURLED one tile along the bolt's path — survivors are shoved farthest-first so they never pile up | `spellBlast` |
 | 2 | `s_staff` | Phantom Steed | gain a horse card (cd 4): a spectral steed tramples an L-shaped path (aimed via spell targeting), scorching every foe along it — it does NOT move you | `gainCard:horse, gainCooldown:4` |
 | 3 | `s_barrage` | Double Cast | after firing a spell, if a targetable foe remains you may aim + fire once more before your turn ends | `doubleCast` |
 
-_T1 was formerly **Amplify** (+1 card reach); it is now **Blast** (AoE) — the reach bonus is gone from this chain._
+_T1 was formerly **Amplify** (+1 card reach), then a 3-tile collateral AoE; it is now **Blast** (knockback of surviving foes along the bolt) — the reach bonus is gone from this chain, and the AoE overlap with Marksman's Shrapnel is gone._
 
 ### 🔥 Necromancy — the summoner: a familiar, then undead, then a General. (#65a30d)
 | tier | id | name | effect | `grant` |

@@ -3,6 +3,7 @@
 
 (function () {
   const canvas = document.getElementById('game');
+  const minimapEl = document.getElementById('minimap');
   const floorLabel = document.getElementById('floor');
   const floorNameLabel = document.getElementById('floor-name');
   const turnLabel = document.getElementById('turn');
@@ -65,9 +66,9 @@
   Renderer.init(canvas);
 
   // Camera pan controls. `edgePan` is the live direction from the mouse hovering
-  // near a canvas edge; the constants tune the pan / zoom feel.
+  // near a browser-window edge; the constants tune the pan / zoom feel.
   let edgePan = { x: 0, y: 0 };
-  const EDGE_MARGIN = 42; // px from an edge that starts panning
+  const EDGE_MARGIN = 42; // px from a window edge that starts panning
   const EDGE_PAN_SPEED = 9; // tiles per second while at an edge
   const KEY_PAN_STEP = 1.4; // tiles per arrow-key press
   const WHEEL_ZOOM_STEP = 0.12;
@@ -95,6 +96,7 @@
   const PLAYER_MOVE_TIME = 0.16;
   const ENEMY_MOVE_TIME = 0.16;
   const SHOT_LEAD_TIME = 0.19; // arrow/bolt flies for this long before its hit resolves
+  const LEVELUP_LEAD_TIME = 1.5; // beat between a guardian's death fanfare and the boon menu
 
   // Modal bookkeeping: which screen to return to when a tip / options closes.
   let pendingTips = [];
@@ -448,11 +450,8 @@
         push(cx, cy);
       }
     }
-    // Blast (Conjuration): a spell also detonates on 3 RANDOM tiles beside the aimed target — show
-    // the whole ring as the possible collateral zone (the actual 3 are rolled on cast).
-    if (p.spellBlast) {
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) push(cursor.x + dx, cursor.y + dy);
-    }
+    // Blast (Conjuration) now HURLS surviving foes along the bolt's own line — no extra tiles to
+    // preview; the shove happens on the tiles the bolt already lights up.
     return tiles;
   }
 
@@ -1073,7 +1072,14 @@
   // fully resolved (the king then chooses a boon and walks to the now-open stair).
   function maybeOpenLevelUp() {
     if (gameState && screen === 'playing' && gameState.pendingLevelUp && (gameState.levelPerks || []).length) {
-      openLevelUp();
+      // A guardian has fallen: blare a triumphant FANFARE, hold the player still for a beat (a little
+      // victory pause), THEN raise the boon menu. The pending action freezes input meanwhile.
+      if (pendingAction !== 'levelup') {
+        GameAudio.play('fanfare');
+        Renderer.effect('key'); // a bright gold flash to punctuate the kill
+        pendingAction = 'levelup';
+        animTimer = LEVELUP_LEAD_TIME;
+      }
       return true;
     }
     if (gameState && gameState.pendingLevelUp && !(gameState.levelPerks || []).length) {
@@ -1555,6 +1561,9 @@
         } else if (pendingAction === 'victory') {
           pendingAction = null;
           onVictory();
+        } else if (pendingAction === 'levelup') {
+          pendingAction = null;
+          openLevelUp(); // the victory beat has passed — present the boon
         } else {
           advanceEnemyQueue();
         }
@@ -1723,12 +1732,13 @@
     { passive: false },
   );
 
-  // Click-and-drag panning, edge-of-screen panning, and the hover popover all key
+  // Click-and-drag panning, edge-of-window panning, and the hover popover all key
   // off mouse position.
   let dragging = false;
   let dragMoved = false;
   let suppressClick = false;
   let dragLast = { x: 0, y: 0 };
+  let miniDragging = false; // true while dragging on the minimap (suppresses edge-panning)
 
   canvas.addEventListener('mousedown', (event) => {
     dragging = true;
@@ -1757,23 +1767,80 @@
       }
       Renderer.panByPixels(dx * scale, dy * scale);
       dragLast = { x: event.clientX, y: event.clientY };
-      edgePan = { x: 0, y: 0 }; // dragging overrides edge panning
-    } else {
-      // Hovering near an edge pans the camera that way.
-      edgePan = {
-        x: x < EDGE_MARGIN ? -1 : x > rect.width - EDGE_MARGIN ? 1 : 0,
-        y: y < EDGE_MARGIN ? -1 : y > rect.height - EDGE_MARGIN ? 1 : 0,
-      };
     }
 
     showTilePopover(event, x * scale, y * scale);
   });
 
   canvas.addEventListener('mouseleave', () => {
-    edgePan = { x: 0, y: 0 };
     dragging = false;
     hideTilePopover();
   });
+
+  // Edge-of-WINDOW panning: the camera glides only when the cursor rests near an edge of the whole
+  // browser window (not merely the play area) — so it works over the side panels too, and a mouse
+  // resting inside the board never triggers it. Suppressed while dragging the board or the minimap,
+  // or when the cursor is over the minimap itself (its bottom-right corner sits by the edge).
+  const overMinimap = (event) => {
+    if (!minimapEl) return false;
+    const r = minimapEl.getBoundingClientRect();
+    return event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom;
+  };
+  window.addEventListener('mousemove', (event) => {
+    if (screen !== 'playing' || dragging || miniDragging || overMinimap(event)) {
+      edgePan = { x: 0, y: 0 };
+      return;
+    }
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    edgePan = {
+      x: event.clientX < EDGE_MARGIN ? -1 : event.clientX > w - EDGE_MARGIN ? 1 : 0,
+      y: event.clientY < EDGE_MARGIN ? -1 : event.clientY > h - EDGE_MARGIN ? 1 : 0,
+    };
+  });
+  // Pointer left the window entirely (or the tab lost focus) — stop panning.
+  document.addEventListener('mouseleave', () => { edgePan = { x: 0, y: 0 }; });
+  window.addEventListener('blur', () => { edgePan = { x: 0, y: 0 }; });
+
+  // Click-and-drag anywhere on the MINIMAP to pan the main view: the tile under the cursor snaps
+  // to the center of the screen (and the minimap's view frame), so you can fling the camera across
+  // the whole level at a glance. Works with mouse and touch.
+  if (minimapEl) {
+    const miniCenter = (clientX, clientY) => {
+      if (!gameState || screen !== 'playing') return;
+      const rect = minimapEl.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const px = (clientX - rect.left) * (minimapEl.width / rect.width);
+      const py = (clientY - rect.top) * (minimapEl.height / rect.height);
+      const tile = Renderer.minimapToTile(px, py);
+      if (tile) Renderer.centerCameraOn(tile.x, tile.y);
+    };
+    minimapEl.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      miniDragging = true;
+      miniCenter(event.clientX, event.clientY);
+    });
+    window.addEventListener('mousemove', (event) => {
+      if (miniDragging) miniCenter(event.clientX, event.clientY);
+    });
+    window.addEventListener('mouseup', () => {
+      miniDragging = false;
+    });
+    minimapEl.addEventListener('touchstart', (event) => {
+      if (!event.touches.length) return;
+      event.preventDefault();
+      miniDragging = true;
+      miniCenter(event.touches[0].clientX, event.touches[0].clientY);
+    }, { passive: false });
+    minimapEl.addEventListener('touchmove', (event) => {
+      if (!miniDragging || !event.touches.length) return;
+      event.preventDefault();
+      miniCenter(event.touches[0].clientX, event.touches[0].clientY);
+    }, { passive: false });
+    window.addEventListener('touchend', () => {
+      miniDragging = false;
+    });
+  }
 
   newGameButton.addEventListener('click', openClassSelect);
   classBackButton.addEventListener('click', showTitle);
