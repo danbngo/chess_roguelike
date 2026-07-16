@@ -38,13 +38,23 @@ function threatensNextTurn(state, enemy) {
 
 // Map of "x,y" -> how many visible enemies could capture the king on that tile.
 // The renderer tints more heavily where the count is higher.
+// A turret is only a LIVE threat when the king is actually standing in its firing line (then it
+// locks on and fires); off-line it sits idle. Used to gate its danger tiles and its status icon.
+function turretHasKingInLine(state, turret) {
+  return getPieceThreats(turret, state, true).some((t) => t.x === state.player.x && t.y === state.player.y);
+}
+
 function getThreatenedTiles(state) {
   const counts = new Map();
   for (const enemy of getVisibleEnemies(state)) {
     if (!threatensNextTurn(state, enemy)) continue;
     // includeOccupied: a tile an enemy sits on is still dangerous, because the king
     // can capture that enemy and end his move there — where other foes can hit him.
-    for (const tile of getPieceThreats(enemy, state, true)) {
+    const tiles = getPieceThreats(enemy, state, true);
+    // A turret paints its firing lane RED only while the king is in it — an idle turret (king off
+    // its line) is dormant this turn, so its lane isn't marked dangerous.
+    if (enemy.turret && !tiles.some((t) => t.x === state.player.x && t.y === state.player.y)) continue;
+    for (const tile of tiles) {
       const key = `${tile.x},${tile.y}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }

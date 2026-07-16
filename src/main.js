@@ -237,7 +237,6 @@
     caveIn: '#b45309', // brown — rubble crashes down
     bossRush: '#e0b341', // gold — a rogue guardian (finale)
     miniBoss: '#b91c1c', // crimson — a mini-boss rises
-    moveStair: '#38bdf8', // cyan — the stair relocates
   };
 
   function renderCards() {
@@ -792,10 +791,16 @@
   // COPY is kept in tutorials.js so any of these can be re-enabled or surfaced elsewhere later.
   function scanVisibleTips(state) {
     // MINIMAL by design. Everything a player can read on a token or tile lives in the hover EXAMINE
-    // panel (an always-available codex), so the only auto-popups left teach the non-obvious OBJECTIVE:
-    // the key→stair unlock loop, and the finale's portal. (Per-terrain, per-enemy, surprise, and
-    // danger-square tips are OFF — their copy is retained in tutorials.js if ever wanted again.)
-    if (state.exit && state.exit.locked && inLineOfSight(state, state.exit.x, state.exit.y)) {
+    // panel (an always-available codex). Nothing auto-pops merely from SIGHT any more — the one
+    // remaining objective tip (the sealed stair / portal) fires only if the king actually steps onto
+    // it while it's locked (see maybeShowLockedExitTip), so a player who beelines the key never sees it.
+    void state;
+  }
+
+  // Show the "sealed stair / portal" explainer ONLY the first time the king stands on a locked exit.
+  function maybeShowLockedExitTip(state) {
+    if (!state || !state.exit || !state.exit.locked) return;
+    if (state.player.x === state.exit.x && state.player.y === state.exit.y) {
       queueTip(state.exit.portal ? 'portalLocked' : 'stairLocked');
     }
   }
@@ -1006,28 +1011,32 @@
   // After the class, pick a difficulty for the run (reuses the class-select screen).
   const DIFFICULTIES = [
     { key: 'easy', name: 'Easy', color: '#4ade80', blurb: 'Twice the starting HP — a forgiving descent.' },
-    { key: 'hard', name: 'Hard', color: '#fbbf24', blurb: 'The standard trial — baseline HP.' },
+    { key: 'hard', name: 'Hard', color: '#fbbf24', blurb: 'The standard trial — baseline HP.', recommended: true },
     { key: 'nightmare', name: 'Nightmare', color: '#ef4444', blurb: 'Baseline HP, and the floor turns hostile TWICE as fast.' },
   ];
   function openDifficultySelect(classKey) {
     screen = 'class';
     classScreen.classList.remove('hidden');
     classList.innerHTML = '';
+    let defaultBtn = null;
     for (const diff of DIFFICULTIES) {
       const row = document.createElement('li');
       row.className = 'shop-item class-item';
+      if (diff.recommended) row.style.outline = `2px solid ${diff.color}`; // Hard is the highlighted default
       const info = document.createElement('div');
       info.className = 'shop-info';
       info.innerHTML =
-        `<span class="shop-name" style="color:${diff.color}">${diff.name}</span>` +
-        `<span class="shop-desc">${diff.blurb}</span>`;
+        `<span class="shop-name" style="color:${diff.color}">${diff.name}${diff.recommended ? ' ★' : ''}</span>` +
+        `<span class="shop-desc">${diff.blurb}${diff.recommended ? ' (Recommended)' : ''}</span>`;
       const pick = document.createElement('button');
       pick.type = 'button';
       pick.textContent = 'Begin';
       pick.addEventListener('click', () => newGame(classKey, diff.key));
       row.append(info, pick);
       classList.append(row);
+      if (diff.recommended) defaultBtn = pick;
     }
+    if (defaultBtn) defaultBtn.focus(); // pressing Enter starts a Hard run
   }
 
   function newGame(classKey, difficulty) {
@@ -1320,6 +1329,7 @@
     const hadKey = Boolean(gameState && gameState.key && gameState.key.collected);
 
     applyState(nextState, true);
+    maybeShowLockedExitTip(nextState); // explain the seal ONLY if he just stepped onto the locked stair
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
     // The king struck a survivor and bounced off it: pounce onto its tile, then ease to where he
     // ended (a leap-onto-foe recoil). Cleared so it fires only once.
@@ -1403,6 +1413,8 @@
       applyState(moveEnemy(gameState, id), true);
       // A boss's first-sighting ROAR is logged separately so it doesn't cost the boss its action.
       if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
+      // ...and pops a short speech bubble over its head for a beat (only on this scream turn).
+      if (gameState.bossShout) { Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text); gameState.bossShout = null; }
       if (gameState.lastShot) {
         const s = gameState.lastShot;
         Renderer.rangedShot(s.fromX, s.fromY, s.toX, s.toY, s.role, s.tiles);

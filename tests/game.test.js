@@ -370,15 +370,44 @@ test('a mini-boss (danger event) rises, grants no boon, and is smaller-HP', () =
   assert.ok(!n.pendingLevelUp, 'no boon from a mini-boss kill');
 });
 
-test('the stair only relocates AFTER the key is his, out of view and still reachable', () => {
-  // Before the key: moveStair never fires.
-  let before = createInitialState('warrior');
-  before.floor = 3; before.terrain = {}; before.enemies = [];
-  before.key = { x: 3, y: 3, collected: false };
-  before.player.seenTerrain = []; before.player.seenTurret = false;
+test('a ranged slider closes in beside the king before striking (no sniping from afar)', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {}; s.enemies = [];
+  s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5; s.player.className = 'warrior';
+  const rook = makeEnemy({ kind: 'rook', x: 15, y: 10, awake: true }); // five tiles east on the king's rank
+  s.enemies = [rook];
+  const n = moveEnemy(s, rook.id);
+  const r = n.enemies.find((e) => e.kind === 'rook');
+  assert.deepEqual({ x: r.x, y: r.y }, { x: 11, y: 10 }, 'the rook slides right up beside the king');
+  assert.equal(n.player.hp, 4, 'and then strikes for 1');
+  // A piece already adjacent just strikes in place (no phantom shuffle).
+  let s2 = createInitialState('warrior');
+  s2.terrain = {}; s2.player.x = 10; s2.player.y = 10; s2.player.className = 'warrior';
+  const adj = makeEnemy({ kind: 'bishop', x: 11, y: 11, awake: true });
+  s2.enemies = [adj];
+  const n2 = moveEnemy(s2, adj.id);
+  const b = n2.enemies.find((e) => e.kind === 'bishop');
+  assert.deepEqual({ x: b.x, y: b.y }, { x: 11, y: 11 }, 'an adjacent slider holds its tile');
+});
+
+test('a turret marks danger tiles ONLY while the king stands in its firing line', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {};
+  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 7, turret: true, hp: 3, maxHp: 3, awake: true })];
+  s.player.x = 12; s.player.y = 10; // off the turret's rank (7) and file (10)
+  assert.equal(getThreatenedTiles(s).size, 0, 'an idle turret (king off its line) marks nothing');
+  s.player.x = 10; s.player.y = 10; // now on the turret's file
+  assert.ok(getThreatenedTiles(s).size > 0, 'a turret with the king in its line marks danger');
+});
+
+test('the move-stair danger event is gone — the exit never relocates, even after the key is his', () => {
+  let s = createInitialState('warrior');
+  s.floor = 5; s.terrain = {}; s.enemies = [];
+  s.key = { x: 3, y: 3, collected: true }; // even AFTER the key, the old relocate event must not fire
+  s.player.seenTerrain = ['water', 'lava', 'pit', 'boulder']; s.player.seenTurret = true;
   const kinds = new Set();
-  for (let i = 0; i < 60; i += 1) { let t = structuredClone(before); t.turn = 40; t.turnsSinceSpawn = 99; t = maybeSpawnEnemy(t); if (t.dangerEvent) kinds.add(t.dangerEvent.kind); }
-  assert.ok(!kinds.has('moveStair'), 'moveStair is impossible before the key is collected');
+  for (let i = 0; i < 120; i += 1) { let t = structuredClone(s); t.turn = 60; t.turnsSinceSpawn = 99; t = maybeSpawnEnemy(t); if (t.dangerEvent) kinds.add(t.dangerEvent.kind); }
+  assert.ok(!kinds.has('moveStair'), 'moveStair never fires anymore');
 });
 
 test('a guardian roars its line AND acts the same turn (no free telegraph once it is chasing)', () => {
@@ -906,6 +935,7 @@ test('danger events only unleash hazards the king has already met', () => {
 
 test('a danger WAVE spawns at least one foe in the king’s view', () => {
   const base = createInitialState('warrior');
+  base.floor = 3; // danger events only fire from floor 2 onward
   base.terrain = {}; // open floor so sight is clear
   base.player.x = 10; base.player.y = 10;
   base.player.seenTerrain = []; base.player.seenTurret = false; // pool = wave | miniBoss
@@ -917,7 +947,9 @@ test('a danger WAVE spawns at least one foe in the king’s view', () => {
     s = maybeSpawnEnemy(s);
     if (s.dangerEvent && s.dangerEvent.kind === 'wave') {
       saw = true;
-      assert.ok(s.enemies.length >= 1 && s.enemies.some((e) => unitInSight(s, e.x, e.y)), 'some of the wave arrives in sight');
+      const inView = s.enemies.filter((e) => unitInSight(s, e.x, e.y));
+      assert.ok(inView.length >= 1, 'some of the wave arrives in sight');
+      assert.ok(inView.every((e) => e.spawnedInSight), 'EVERY in-view wave spawn arrives startled (never wandering)');
     }
   }
   assert.ok(saw, 'a wave event fired within the samples');
@@ -925,6 +957,7 @@ test('a danger WAVE spawns at least one foe in the king’s view', () => {
 
 test('a terrain danger event erupts at least partly in the king’s view', () => {
   const base = createInitialState('warrior');
+  base.floor = 3; // danger events only fire from floor 2 onward
   base.terrain = {};
   base.player.x = 10; base.player.y = 10;
   base.player.seenTerrain = ['pit']; base.player.seenTurret = false; // pool = wave | pits
@@ -946,12 +979,21 @@ test('a terrain danger event erupts at least partly in the king’s view', () =>
 
 test('a danger event fires at the interval, carrying a kind + message, and keeps state coherent', () => {
   let s = createInitialState('warrior');
+  s.floor = 3; // danger events only fire from floor 2 onward
   s.turn = 40; s.turnsSinceSpawn = 99; // force an event this call
   s = maybeSpawnEnemy(s);
   assert.ok(s.dangerEvent && s.dangerEvent.kind && s.dangerEvent.message, 'an event with a kind + message fired');
   // Repeated events across floors never throw and never lose the exit.
   for (let i = 0; i < 60; i += 1) { s.floor = 1 + (i % 8); s.turn = 60; s.turnsSinceSpawn = 99; s = maybeSpawnEnemy(s); }
   assert.ok(s.exit, 'the exit survives repeated danger events');
+});
+
+test('floor 1 is a gentle on-ramp: no danger events or ambient spawns fire', () => {
+  let s = createInitialState('warrior');
+  s.floor = 1; s.enemies = [];
+  for (let i = 0; i < 60; i += 1) { s.turn = 60; s.turnsSinceSpawn = 99; s.ambientSpawnTimer = 99; s = maybeSpawnEnemy(s); }
+  assert.equal(s.dangerEvent, null, 'no hostile event ever fires on floor 1');
+  assert.equal(s.enemies.length, 0, 'and no wanderers trickle in on floor 1');
 });
 
 test('water is passable but slow', () => {

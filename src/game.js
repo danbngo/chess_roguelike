@@ -219,6 +219,15 @@ function bossHostileLine(boss) {
   return pool[randomInt(pool.length)];
 }
 
+// A SHORT battle-shout for the speech bubble that pops over a guardian the moment it turns
+// hostile — one punchy word or two, demon guardians nastier than mortal ones.
+function bossShoutLine(boss) {
+  const demon = ['Die!', 'Bleed!', 'Kneel!', 'Perish!', 'Suffer!', 'Feed me!'];
+  const mortal = ['Halt!', 'No further!', 'Turn back!', 'Face me!', 'Come, then!', 'Your end!'];
+  const pool = isDemonBoss(boss) ? demon : mortal;
+  return pool[randomInt(pool.length)];
+}
+
 // Deal `amount` damage to a boss. Returns 'slain' if it fell, else 'hurt'.
 function damageBoss(state, boss, amount) {
   boss.provokedBeast = true; // a struck beast (Wild Empathy) turns hostile for good
@@ -230,7 +239,12 @@ function damageBoss(state, boss, amount) {
     return 'hurt';
   }
   state.enemies = state.enemies.filter((e) => e.id !== boss.id);
-  addSpatter(state, boss.x, boss.y, Math.sign(boss.x - state.player.x), Math.sign(boss.y - state.player.y));
+  // A guardian's death is GORY — a wide, dense pool of blood. A true floor boss bleeds far more
+  // than a lesser mini/rush boss.
+  const gushes = (boss.mini || boss.rush) ? 4 : 8;
+  const gmx = Math.sign(boss.x - state.player.x);
+  const gmy = Math.sign(boss.y - state.player.y);
+  for (let i = 0; i < gushes; i += 1) addSpatter(state, boss.x, boss.y, gmx, gmy);
   addCorpse(state, boss.x, boss.y, boss.kind, BOSS_CORPSE_LIFE); // a boss's remains linger far longer
   state.player.killedEnemy = true;
   defeatBoss(state, boss);
@@ -801,20 +815,22 @@ function generateFloor(floor, carryPlayer, score) {
   // journey to the guarded key and back to leave.
   const level = levelForFloor(floor);
   const anchor = chamberAnchorForFloor(floor);
-  const ax = Math.max(2, Math.min(WORLD_SIZE - 3, anchor.x));
-  const ay = Math.max(2, Math.min(WORLD_SIZE - 3, anchor.y));
+  const ax = Math.max(3, Math.min(WORLD_SIZE - 4, anchor.x)); // clamped so the larger 7x7 chamber fits
+  const ay = Math.max(3, Math.min(WORLD_SIZE - 4, anchor.y));
   const portalFloor = isFinalFloor(floor);
   state.isPortalFloor = portalFloor;
   occupied.add(`${ax},${ay}`);
-  for (let dx = -1; dx <= 1; dx += 1) {
-    for (let dy = -1; dy <= 1; dy += 1) delete state.terrain[`${ax + dx},${ay + dy}`];
+  // Clear the CHAMBER INTERIOR (a 5x5 open court around the guardian) so it has room to fight in.
+  for (let dx = -2; dx <= 2; dx += 1) {
+    for (let dy = -2; dy <= 2; dy += 1) delete state.terrain[`${ax + dx},${ay + dy}`];
   }
   const ringType = (level && level.recipe && level.recipe.lava) ? 'lava' : (level && level.recipe && level.recipe.water) ? 'water' : 'wall';
-  const doorX = ax + Math.sign(player.x - ax) * 2;
-  const doorY = ay + Math.sign(player.y - ay) * 2;
-  for (let dx = -2; dx <= 2; dx += 1) {
-    for (let dy = -2; dy <= 2; dy += 1) {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) !== 2) continue;
+  // The enclosing wall sits at chebyshev 3 (a bigger chamber than before), with one doorway toward the king.
+  const doorX = ax + Math.sign(player.x - ax) * 3;
+  const doorY = ay + Math.sign(player.y - ay) * 3;
+  for (let dx = -3; dx <= 3; dx += 1) {
+    for (let dy = -3; dy <= 3; dy += 1) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== 3) continue;
       const rx = ax + dx;
       const ry = ay + dy;
       if (rx < 1 || rx >= WORLD_SIZE - 1 || ry < 1 || ry >= WORLD_SIZE - 1) continue;
@@ -835,9 +851,9 @@ function generateFloor(floor, carryPlayer, score) {
   // wall ring would pen it in forever. If the boss can't move once roused, flood the
   // ring to water so any piece can wade out.
   if (!enemyHasMove(state, boss)) {
-    for (let dx = -2; dx <= 2; dx += 1) {
-      for (let dy = -2; dy <= 2; dy += 1) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== 2) continue;
+    for (let dx = -3; dx <= 3; dx += 1) {
+      for (let dy = -3; dy <= 3; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== 3) continue;
         const key = `${ax + dx},${ay + dy}`;
         if (state.terrain[key] === 'wall') state.terrain[key] = 'water';
       }
@@ -864,17 +880,22 @@ function generateFloor(floor, carryPlayer, score) {
     ? 'The final floor. Seize the Orb of Victory, then reach the portal to escape!'
     : 'A new floor. You start by the stair — find the floor key to unlock it.';
 
-  const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 6 && chebyshev(x, y, player.x, player.y) >= 3 && !seen(x, y);
-  // The chamber leans on STATIONARY hazards near the stair, with only a thin screen of
-  // mobile guards. Sleeping backup pieces (few).
+  const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 7 && chebyshev(x, y, player.x, player.y) >= 3 && !seen(x, y);
+  // CLOSE PROTECTORS stand INSIDE the chamber alongside the guardian (the enlarged court has room).
+  const insideChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) <= 2 && !(x === ax && y === ay);
   for (let i = 0; i < initCount(2 + Math.floor(floor / 2)); i += 1) {
+    const spot = place(insideChamber);
+    if (spot) addMobileEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
+  }
+  // A thicker screen of mobile guards prowling just OUTSIDE the chamber walls.
+  for (let i = 0; i < initCount(4 + Math.floor(floor / 2)); i += 1) {
     const spot = place(nearChamber);
     if (spot) addMobileEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
   }
-  // Turrets guarding the chamber (from floor 3) — placed ONLY where they cover real
-  // ground (never boxed into hitting no/few tiles).
+  // Turrets guarding the chamber (from floor 3) — MORE of them now — placed ONLY where they cover
+  // real ground (never boxed into hitting no/few tiles).
   if (floor >= 3) {
-    for (let i = 0; i < initCount(3 + Math.floor(floor / 2)); i += 1) {
+    for (let i = 0; i < initCount(5 + Math.floor(floor / 2)); i += 1) {
       const kind = randomEnemyKind(floor);
       const spot = place((x, y) => nearChamber(x, y) && turretCoverage(state, kind, x, y) >= 4);
       if (spot) state.enemies.push(makeTurret(state, kind, spot.x, spot.y));
@@ -2932,6 +2953,25 @@ function canMeleeStrike(state, enemy) {
 
 // A piece attacks ONLY if it can move onto the king this turn; otherwise it just
 // advances. Never both. Jumpers knock him back; others strike (persisting).
+// A ranged SLIDER (rook / bishop / queen) that can reach the king CLOSES IN before it strikes —
+// it slides right up to the tile beside him along its approach line rather than sniping from across
+// the room. (Leapers already close the whole gap via knockbackKing; bosses with Volley/Sorcerer and
+// turrets legitimately fire from afar and never call this.) Already-adjacent pieces stay put. The
+// tile beside the king lies on the just-verified capture path, so it's clear — but we re-check for
+// safety and simply strike in place if it isn't (e.g. the king embedded in cover).
+function closeInBeforeStrike(state, mover) {
+  const king = state.player;
+  if (chebyshev(mover.x, mover.y, king.x, king.y) <= 1) return; // already adjacent
+  const ax = king.x - Math.sign(king.x - mover.x);
+  const ay = king.y - Math.sign(king.y - mover.y);
+  if (ax === mover.x && ay === mover.y) return;
+  if (keyTileAt(state, ax, ay)) return;
+  if (state.enemies.some((e) => e.id !== mover.id && e.x === ax && e.y === ay) || allyAt(state, ax, ay)) return;
+  if (!standableFor(terrainAt(state, ax, ay), pieceTerrainOpts(mover))) return; // never slide into a wall/pit/ice
+  mover.x = ax;
+  mover.y = ay;
+}
+
 function meleeMove(state, enemy) {
   const king = state.player;
   const moves = getPieceMoves(enemy, state);
@@ -2940,6 +2980,7 @@ function meleeMove(state, enemy) {
     // A king EMBEDDED in cover (phased into a wall/ice) is struck in place — the foe can't
     // stand on the tile, so even a jumper merely lands a blow without knocking him back.
     if (isJumperKind(enemy.kind) && !capMove.embedded) return knockbackKing(state, enemy);
+    if (!capMove.embedded) closeInBeforeStrike(state, enemy); // a slider slides up adjacent first
     strikeKing(state, enemy);
     return state;
   }
@@ -3123,6 +3164,7 @@ function bossMove(state, boss) {
   if (!boss.spokeLine) {
     boss.spokeLine = true;
     state.bossLine = bossHostileLine(boss);
+    state.bossShout = { x: boss.x, y: boss.y, text: bossShoutLine(boss) }; // a one-turn speech bubble
   }
   boss.recovering = true; // whatever the boss does below, it must recover next turn
   // Summoner: every third turn it conjures a minion of its own kind instead of acting.
@@ -3145,6 +3187,9 @@ function bossMove(state, boss) {
   const canCapture = moves.some((m) => m.x === king.x && m.y === king.y);
   if (canCapture) {
     if (isJumperKind(boss.kind) || boss.bossPerk === 'knockback') return knockbackKing(state, boss);
+    // A non-ranged slider guardian slides up beside the king before it strikes (Volley/Sorcerer
+    // guardians fired from afar above and never reach here).
+    if (terrainAt(state, king.x, king.y) !== 'wall' && terrainAt(state, king.x, king.y) !== 'ice') closeInBeforeStrike(state, boss);
     return bossHit(state, boss, `${bossTitle(boss)} strikes the king!`);
   }
   const bossAlly = moves.find((m) => allyAt(state, m.x, m.y));
@@ -3322,7 +3367,9 @@ function spawnWave(next) {
     if (!tile) return false;
     occupied.add(tile.key);
     const e = createEnemy(kind, tile.x, tile.y);
-    if (inSight) e.spawnedInSight = true; // arrives startled — freezes one turn so the player sees it come in
+    // ANY spawn the king can actually SEE arrives startled (freezes one turn, shown "!"), regardless
+    // of which placement bucket dropped it — so an in-view spawn is never left wandering.
+    if (inSight || inLineOfSight(next, tile.x, tile.y)) e.spawnedInSight = true;
     next.enemies.push(e);
     placed += 1;
     return true;
@@ -3410,28 +3457,8 @@ function spawnMiniBoss(next) {
   next.enemies.push(mb);
   return `A ${kind} mini-boss rises to hunt you!`;
 }
-// Danger event (only AFTER the key is his): the stair grinds away and reopens at a random tile
-// out of view that the king can still reach — he must hunt it down anew. Never moves the portal.
-function moveStair(next) {
-  if (!next.exit || next.exit.portal || !next.key || !next.key.collected) return '';
-  const p = next.player;
-  const reach = playerReachable(next, p.x, p.y);
-  const spots = [];
-  for (const k of reach) {
-    const [x, y] = k.split(',').map(Number);
-    if (chebyshev(x, y, p.x, p.y) < 5) continue;
-    if (inLineOfSight(next, x, y)) continue; // reopen OUT of sight
-    if (terrainAt(next, x, y) !== 'normal') continue;
-    if (next.enemies.some((e) => e.x === x && e.y === y) || allyAt(next, x, y)) continue;
-    spots.push({ x, y });
-  }
-  if (!spots.length) return '';
-  const dest = spots[randomInt(spots.length)];
-  next.exit.x = dest.x;
-  next.exit.y = dest.y;
-  next.exit.discovered = false; // hidden again until he finds it
-  return 'With a grinding roar the stair sinks away — and reopens somewhere else on the floor!';
-}
+// (The old "moveStair" danger event — relocating the stair after the key was claimed — was
+// removed for being confusing.)
 // A few turrets grind up around the map, at least one IN the king's view (a few tiles off, where
 // it covers real ground) so he sees the threat rise; the rest further out.
 function dropTurrets(next) {
@@ -3504,14 +3531,11 @@ function fireDangerEvent(next) {
   if (seen.includes('ice')) pool.push('freeze');
   if (seen.includes('devilgrass')) pool.push('devilgrass');
   if (next.player.seenTurret) pool.push('turrets');
-  // The stair only relocates AFTER the key is his (never the victory portal).
-  if (next.key && next.key.collected && next.exit && !next.exit.portal) pool.push('moveStair');
   const kind = pool[randomInt(pool.length)];
   let msg = '';
   switch (kind) {
     case 'wave': msg = spawnWave(next); break;
     case 'miniBoss': msg = spawnMiniBoss(next); break;
-    case 'moveStair': msg = moveStair(next); break;
     case 'turrets': msg = dropTurrets(next); break;
     case 'wallsToLava': msg = wallsToLava(next); break;
     case 'lavaSpread': msg = scatterTerrain(next, 'lava', hazardCount(next, 0.05, 3, 13)) ? 'Lava wells up across the floor!' : 'The floor smoulders.'; break;
@@ -3553,6 +3577,9 @@ function maybeSpawnEnemy(state) {
     }
     return next;
   }
+  // Floor 1 is a gentle on-ramp: NO ambient spawns and NO hostile events — the dungeon only
+  // starts turning against the king from floor 2 onward.
+  if ((next.floor || 1) < 2) { ensureReachable(next); return next; }
   next.turnsSinceSpawn = (next.turnsSinceSpawn || 0) + 1;
   const ramp = Math.min(1, next.turn / (next.dreadTurns || MAX_TURNS_SCARY)); // 0 -> 1 over the dread horizon (halved on Nightmare)
 

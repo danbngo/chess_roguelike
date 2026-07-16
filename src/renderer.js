@@ -13,6 +13,8 @@ const Renderer = (function () {
   let allyRenders = []; // the king's summons — eased like enemies (they used to snap)
   let puffs = []; // purple-smoke death puffs for vanished allies (client-side, time-decayed)
   const PUFF_TIME = 1.25; // seconds a death puff takes to dissipate
+  let shouts = []; // { x, y, text, t } — a boss's one-turn battle-cry speech bubble (client-side)
+  const SHOUT_TIME = 1.6; // seconds the bubble lingers before it fades
   let boulderRenders = []; // { x, y, targetX, targetY, angle, targetAngle } — boulders ROLL + spin as they move
   let lungePoint = null; // the king POUNCES onto this tile first, then eases to his real target (leap-onto-foe bounce)
 
@@ -176,6 +178,12 @@ const Renderer = (function () {
     lungePoint = { x: ex, y: ey };
   }
 
+  // Pop a boss's short battle-cry as a speech bubble above its tile — appears on its scream turn
+  // and fades on its own over SHOUT_TIME (so it never outlasts that first hostile turn).
+  function shout(x, y, text) {
+    shouts.push({ x, y, text: String(text || ''), t: 0 });
+  }
+
   // A boulder the king shoved but couldn't budge: nudge its rock toward the shove; it eases right
   // back to its tile — a little vibration matching the king's bump.
   function bumpBoulder(bx, by, dx, dy) {
@@ -265,6 +273,7 @@ const Renderer = (function () {
     projectiles = [];
     bursts = [];
     puffs = []; // a fresh floor: no lingering smoke
+    shouts = [];
     lungePoint = null;
     snapCameraToPlayer(state);
   }
@@ -392,6 +401,8 @@ const Renderer = (function () {
     }
     for (const puff of puffs) puff.t += delta / PUFF_TIME;
     puffs = puffs.filter((p) => p.t < 1);
+    for (const s of shouts) s.t += delta / SHOUT_TIME;
+    shouts = shouts.filter((s) => s.t < 1);
     clampCamera();
     camera.x += (camera.targetX - camera.x) * speed;
     camera.y += (camera.targetY - camera.y) * speed;
@@ -571,20 +582,23 @@ const Renderer = (function () {
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.clip();
       if (role === 'turret') {
-        // Jagged fracture lines radiating from a couple of impact points.
-        ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.95, 0.5 + b * 0.5);
-        ctx.strokeStyle = 'rgba(15,15,20,0.85)';
-        ctx.lineWidth = Math.max(1, radius * 0.06);
-        const cracks = Math.max(1, Math.round(b * 4));
+        // PALE fracture lines (bright, so they read on the dark steel) with a thin dark backing for
+        // contrast — kept in the mid-body (short, near the centre) so they never spill over the rim.
+        ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.95, 0.6 + b * 0.35);
+        const cracks = Math.max(2, Math.round(b * 4));
         for (let i = 0; i < cracks; i += 1) {
-          const a0 = (i / 4) * Math.PI * 2 + 0.6;
-          const ox = Math.cos(a0) * radius * 0.2;
-          const oy = Math.sin(a0) * radius * 0.2;
-          ctx.beginPath();
-          ctx.moveTo(cx + ox, cy + oy);
-          ctx.lineTo(cx + Math.cos(a0) * radius * 0.9, cy + Math.sin(a0) * radius * 0.9);
-          ctx.lineTo(cx + Math.cos(a0 + 0.4) * radius * 0.75, cy + Math.sin(a0 + 0.4) * radius * 0.75);
-          ctx.stroke();
+          const a0 = (i / Math.max(2, cracks)) * Math.PI * 2 + 0.5;
+          const r0 = radius * 0.22;
+          const r1 = radius * (0.48 + 0.14 * b);
+          const p0x = cx + Math.cos(a0) * r0; const p0y = cy + Math.sin(a0) * r0;
+          const p1x = cx + Math.cos(a0) * r1; const p1y = cy + Math.sin(a0) * r1;
+          const p2x = cx + Math.cos(a0 + 0.4) * r1 * 0.85; const p2y = cy + Math.sin(a0 + 0.4) * r1 * 0.85;
+          const stroke = (col, w) => {
+            ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, w);
+            ctx.beginPath(); ctx.moveTo(p0x, p0y); ctx.lineTo(p1x, p1y); ctx.lineTo(p2x, p2y); ctx.stroke();
+          };
+          stroke('rgba(10,12,18,0.55)', radius * 0.09); // dark backing
+          stroke('rgba(222,230,244,0.95)', radius * 0.045); // bright crack on top
         }
       } else {
         ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.9, 0.4 + b * 0.55);
@@ -712,7 +726,24 @@ const Renderer = (function () {
     } else if (mainState === 'befriended') {
       drawStatusMark(tileX, tileY, '♥', '#f9a8d4'); // pink heart — a beast tamed by Wild Empathy
     } else if (mainState === 'aiming') {
-      drawStatusMark(tileX, tileY, '◎', '#fca5a5'); // red target reticle — a turret locking on
+      // A small red crosshair (compact + coloured like the other marks, no heavy black glyph) —
+      // a turret locking onto the king.
+      const cx = tileX * tileSize + tileSize * 0.8;
+      const cy = tileY * tileSize + tileSize * 0.2;
+      const r = tileSize * 0.14;
+      ctx.save();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; // thin rim for contrast only
+      ctx.beginPath(); ctx.arc(cx, cy, r + 0.7, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = '#ef4444';
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 1.5, cy); ctx.lineTo(cx + r * 1.5, cy);
+      ctx.moveTo(cx, cy - r * 1.5); ctx.lineTo(cx, cy + r * 1.5);
+      ctx.stroke();
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath(); ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
     }
   }
 
@@ -811,6 +842,60 @@ const Renderer = (function () {
       ctx.beginPath();
       ctx.arc(cx, cy, tileSize * 0.17 * fade, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // A boss's battle-cry speech bubble: a rounded box with a little tail, floating above the tile —
+  // pops in with a slight bounce, holds, then fades out over its life.
+  function drawShouts() {
+    for (const s of shouts) {
+      const t = s.t;
+      const pop = Math.min(1, t / 0.16); // quick scale-in
+      const fade = t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1; // hold, then fade over the last 30%
+      const scale = 0.7 + 0.3 * pop;
+      const cx = (s.x + 0.5) * tileSize;
+      const cy = (s.y + 0.5) * tileSize;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.font = `700 ${Math.round(tileSize * 0.34)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const padX = tileSize * 0.16;
+      const w = ctx.measureText(s.text).width + padX * 2;
+      const h = tileSize * 0.5;
+      const bx = cx - (w / 2) * scale;
+      const by = cy - tileSize * (0.62 + 0.1 * pop) - h * scale; // sits above the head, drifting up as it pops
+      ctx.translate(cx, by + h * scale);
+      ctx.scale(scale, scale);
+      ctx.translate(-cx, -(by + h * scale));
+      // bubble body
+      const r = h * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(bx + r, by);
+      ctx.arcTo(bx + w, by, bx + w, by + h, r);
+      ctx.arcTo(bx + w, by + h, bx, by + h, r);
+      ctx.arcTo(bx, by + h, bx, by, r);
+      ctx.arcTo(bx, by, bx + w, by, r);
+      ctx.closePath();
+      ctx.fillStyle = '#fef2f2';
+      ctx.fill();
+      ctx.strokeStyle = '#b91c1c';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // tail pointing down to the boss
+      ctx.beginPath();
+      ctx.moveTo(cx - tileSize * 0.08, by + h - 1);
+      ctx.lineTo(cx, by + h + tileSize * 0.16);
+      ctx.lineTo(cx + tileSize * 0.08, by + h - 1);
+      ctx.closePath();
+      ctx.fillStyle = '#fef2f2';
+      ctx.fill();
+      ctx.strokeStyle = '#b91c1c';
+      ctx.stroke();
+      // text
+      ctx.fillStyle = '#7f1d1d';
+      ctx.fillText(s.text, cx, by + h / 2);
       ctx.restore();
     }
   }
@@ -2055,10 +2140,12 @@ const Renderer = (function () {
       const live = liveById.get(enemy.id);
       if (inSight && live && live.recovering && (enemy.boss || enemy.turret)) {
         drawStateIcon(enemy.x, enemy.y, 'recovering');
-      } else if (inSight && role === 'turret' && enemy.dozing) {
-        drawStateIcon(enemy.x, enemy.y, 'asleep'); // Camouflaged: the turret dozes, blind to the king
-      } else if (inSight && role === 'turret' && enemy.aiming) {
-        drawStateIcon(enemy.x, enemy.y, 'aiming'); // locking onto the king — the shot is coming
+      } else if (inSight && role === 'turret') {
+        // Show the crosshair ONLY while the king is actually in the turret's line RIGHT NOW (computed
+        // fresh, so a stale aim flag never lingers); otherwise it sits idle with a sleep "z".
+        const live2 = live || enemy;
+        const targetingNow = !enemy.dozing && typeof turretHasKingInLine === 'function' && turretHasKingInLine(state, live2);
+        drawStateIcon(enemy.x, enemy.y, targetingNow ? 'aiming' : 'asleep');
       } else if (inSight && isBefriendedBeast(state, enemy)) {
         drawStateIcon(enemy.x, enemy.y, 'befriended'); // Wild Empathy: a tamed beast (♥)
       } else if (inSight && role !== 'turret' && role !== 'circle') {
@@ -2093,6 +2180,7 @@ const Renderer = (function () {
     drawProjectiles();
     drawBursts();
     drawPuffs();
+    drawShouts();
 
     ctx.restore();
 
@@ -2110,5 +2198,5 @@ const Renderer = (function () {
     drawMinimap(state); // whole-level overview, bottom-right (over the hit flash)
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, bump, bumpBoulder, lunge, panBy, panByPixels, zoomBy, screenToTile };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, bump, bumpBoulder, lunge, shout, panBy, panByPixels, zoomBy, screenToTile };
 })();
