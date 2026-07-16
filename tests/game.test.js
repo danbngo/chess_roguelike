@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -21,6 +21,7 @@ const {
   fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
   advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, getPieceThreats, maybeSpawnEnemy,
   ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast,
+  hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -169,7 +170,7 @@ test('a boss recovers (skips a turn) after it acts — every-other-turn cadence'
   assert.equal(t2.player.hp, hp1, 'it does NOT strike on its recovery turn');
 });
 
-test('a turret TARGETS for one turn before it can fire, then fires each turn he stays in line', () => {
+test('a turret alternates TARGET → FIRE → TARGET: it can never shoot two turns running', () => {
   const s = createInitialState('warrior');
   s.terrain = {};
   s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5;
@@ -179,8 +180,11 @@ test('a turret TARGETS for one turn before it can fire, then fires each turn he 
   assert.equal(t1.enemies[0].aiming, true, 'it is now aiming');
   const t2 = moveEnemy(t1, t1.enemies[0].id);
   assert.ok(t2.player.hp < 5, 'the next turn it FIRES down its line');
+  assert.equal(t2.enemies[0].aiming, false, 'and the shot costs it the lock');
   const t3 = moveEnemy(t2, t2.enemies[0].id);
-  assert.ok(t3.player.hp < t2.player.hp, 'and it keeps firing while he stands in it (no windup window)');
+  assert.equal(t3.player.hp, t2.player.hp, 'so the turn after a shot it must RE-target, not fire again');
+  const t4 = moveEnemy(t3, t3.enemies[0].id);
+  assert.ok(t4.player.hp < t3.player.hp, 'and fires again the turn after that — one shot every OTHER turn');
 });
 
 test('a Regenerating boss knits one wound shut every fourth turn', () => {
@@ -195,12 +199,20 @@ test('a Regenerating boss knits one wound shut every fourth turn', () => {
   assert.equal(n.enemies.find((e) => e.boss).hp, 4, 'it regained a wound on the 4th turn');
 });
 
-test('difficulty: Easy doubles starting HP; Nightmare halves the dread clock', () => {
-  const base = createInitialState('warrior', 'hard').player.maxHp;
-  assert.equal(createInitialState('warrior', 'easy').player.maxHp, base * 2, 'Easy = double HP');
-  assert.equal(createInitialState('warrior', 'nightmare').player.maxHp, base, 'Nightmare keeps baseline HP');
-  const hardClock = createInitialState('warrior', 'hard').dreadTurns;
-  assert.ok(createInitialState('warrior', 'nightmare').dreadTurns < hardClock, 'Nightmare dread clock is faster');
+test('difficulty is ONE dial — starting HP per class; nothing else about the dungeon changes', () => {
+  const hp = (cls, diff) => createInitialState(cls, diff).player.maxHp;
+  // The agreed table: warrior / ranger / sorcerer.
+  assert.deepEqual([hp('warrior', 'easy'), hp('ranger', 'easy'), hp('sorcerer', 'easy')], [12, 11, 8], 'Easy');
+  assert.deepEqual([hp('warrior', 'hard'), hp('ranger', 'hard'), hp('sorcerer', 'hard')], [9, 7, 5], 'Hard');
+  assert.deepEqual([hp('warrior', 'nightmare'), hp('ranger', 'nightmare'), hp('sorcerer', 'nightmare')], [5, 4, 3], 'Nightmare');
+  // hp starts topped up, and an unknown/absent difficulty falls back to Hard.
+  const n = createInitialState('sorcerer', 'nightmare');
+  assert.equal(n.player.hp, n.player.maxHp, 'he starts at full health');
+  assert.equal(createInitialState('warrior').player.maxHp, 9, 'no difficulty given → Hard');
+  assert.equal(createInitialState('warrior', 'bogus').player.maxHp, 9, 'an unknown difficulty → Hard');
+  // The dungeon itself is IDENTICAL at every setting — the dread clock no longer differs.
+  assert.equal(createInitialState('warrior', 'nightmare').dreadTurns, createInitialState('warrior', 'easy').dreadTurns,
+    'the dread clock is the same at every difficulty');
 });
 
 test('a boss has HP and takes several hits; slaying the final guardian no longer wins the run', () => {
@@ -573,13 +585,15 @@ test('a summoning circle conjures a foe when it sees you, and dies when stepped 
   s.enemies = [circle];
   assert.equal(enemyRole(circle), 'circle');
   const before = s.enemies.length;
-  // Circles now conjure only every THIRD turn.
+  // Circles now conjure only every FOURTH turn (a longer, more readable wind-up).
   let acted = moveEnemy(s, circle.id);
   assert.equal(acted.enemies.length, before, 'no minion on turn 1');
   acted = moveEnemy(acted, circle.id);
   assert.equal(acted.enemies.length, before, 'nor turn 2');
   acted = moveEnemy(acted, circle.id);
-  assert.ok(acted.enemies.length > before, 'it conjures a minion on the THIRD turn');
+  assert.equal(acted.enemies.length, before, 'nor turn 3');
+  acted = moveEnemy(acted, circle.id);
+  assert.ok(acted.enemies.length > before, 'it conjures a minion on the FOURTH turn');
   const destroyed = movePlayerTo(s, 9, 8);
   assert.ok(!destroyed.enemies.some((e) => e.summonCircle), 'stepping on it destroys it');
 });
@@ -601,12 +615,18 @@ test('a missile (ranged/spell) does NOT dispel a summoning circle — only stepp
   assert.ok(!r.enemies.some((e) => e.x === 11 && e.y === 8 && !e.summonCircle), 'the real foe still falls');
 });
 
-test('classes start with different HP (Warrior sturdiest, Sorcerer frailest)', () => {
-  assert.equal(createPlayer('warrior').maxHp, 5);
-  assert.equal(createPlayer('ranger').maxHp, 5); // buffed 4->5 (foes now close in, so a ranged hunter needs a buffer)
-  assert.equal(createPlayer('sorcerer').maxHp, 4); // buffed 3->4
-  // Warrior is still no frailer than the others; Sorcerer no sturdier.
-  assert.ok(createPlayer('warrior').maxHp >= createPlayer('sorcerer').maxHp);
+test('classes start with different HP (Warrior sturdiest, Sorcerer frailest) — the Hard baseline', () => {
+  // createPlayer carries the class's baseline; createInitialState then applies the difficulty dial.
+  assert.equal(createPlayer('warrior').maxHp, 9);
+  assert.equal(createPlayer('ranger').maxHp, 7);
+  assert.equal(createPlayer('sorcerer').maxHp, 5);
+  // The pecking order holds at EVERY difficulty: warrior ≥ ranger ≥ sorcerer.
+  for (const diff of ['easy', 'hard', 'nightmare']) {
+    const w = createInitialState('warrior', diff).player.maxHp;
+    const r = createInitialState('ranger', diff).player.maxHp;
+    const s = createInitialState('sorcerer', diff).player.maxHp;
+    assert.ok(w >= r && r >= s, `warrior ≥ ranger ≥ sorcerer on ${diff} (${w}/${r}/${s})`);
+  }
 });
 
 test('the king CAN cross lava now, but it sears him 1 HP per turn (Winged Boots negates it)', () => {
@@ -625,6 +645,80 @@ test('the king CAN cross lava now, but it sears him 1 HP per turn (Winged Boots 
   immune.player.x = 8; immune.player.y = 8; immune.player.hp = 4; immune.player.terrainImmune = true;
   const safe = movePlayerTo(immune, 9, 8);
   assert.equal(safe.player.hp, 4, 'Winged Boots — no lava burn');
+});
+
+test('wall-torches: hasTorch only reports a torch on a standing wall', () => {
+  const s = createInitialState('warrior');
+  s.terrain = { '9,8': 'wall', '10,8': 'lava' };
+  s.torches = { '9,8': true, '10,8': true, '11,8': true };
+  assert.equal(hasTorch(s, 9, 8), true, 'a torch on a wall reads as lit');
+  assert.equal(hasTorch(s, 10, 8), false, 'a torch entry on a non-wall (lava) is inert');
+  assert.equal(hasTorch(s, 11, 8), false, 'a torch entry on open ground is inert');
+  assert.equal(hasTorch(s, 9, 9), false, 'no entry, no torch');
+});
+
+test('wall-torches: density climbs with depth (rare early, a hall of fire by the finale)', () => {
+  assert.ok(torchChance(2) > torchChance(1) && torchChance(8) > torchChance(4), 'the torch rate rises with the floor');
+  assert.ok(torchChance(8) >= 0.4, 'the final floor is heavily lit');
+  // scatterTorches applies torchChance to interior walls. Drive it over a big synthetic field of
+  // interior walls so the lit fraction reflects the rate directly (no dependence on floor layout).
+  const litRate = (floor) => {
+    const s = { terrain: {}, torches: {} };
+    for (let x = 2; x < WORLD_SIZE - 2; x += 1) for (let y = 2; y < WORLD_SIZE - 2; y += 1) s.terrain[`${x},${y}`] = 'wall';
+    scatterTorches(s, floor);
+    let lit = 0; let total = 0;
+    for (const k in s.terrain) { total += 1; if (s.torches[k]) lit += 1; }
+    return total ? lit / total : 0;
+  };
+  assert.ok(litRate(8) > litRate(1) + 0.2, 'a deep floor lights far more of its walls than a shallow one');
+});
+
+test('a wall-torch sears the phasing king each turn he ends embedded in it (Winged Boots negates)', () => {
+  const s = sorcererWith('s_blink', 's_phase'); // Phase lets him stand INSIDE a wall
+  assert.equal(s.player.phase, true);
+  s.terrain = { '11,10': 'wall' };
+  s.torches = { '11,10': true };
+  s.enemies = [];
+  s.player.x = 10; s.player.y = 10; s.player.hp = 4; s.player.moveRange = 1;
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10), 'he may phase into the torch-wall (like lava, at a cost)');
+  const burned = movePlayerTo(s, 11, 10);
+  assert.deepEqual({ x: burned.player.x, y: burned.player.y }, { x: 11, y: 10 }, 'he ends embedded in the wall');
+  assert.equal(burned.player.hp, 3, 'the torch sears him 1 HP');
+  // Winged Boots (terrainImmune) shrugs it off.
+  const immune = sorcererWith('s_blink', 's_phase');
+  immune.terrain = { '11,10': 'wall' };
+  immune.torches = { '11,10': true };
+  immune.enemies = [];
+  immune.player.x = 10; immune.player.y = 10; immune.player.hp = 4; immune.player.moveRange = 1; immune.player.terrainImmune = true;
+  const safe = movePlayerTo(immune, 11, 10);
+  assert.equal(safe.player.hp, 4, 'terrainImmune — no torch burn');
+});
+
+test('a non-immune Phasing boss sears in a wall-torch, and shuns torch-walls in its pathing', () => {
+  // Embedded in a lit wall, it takes a wound on its turn (its own wall-hiding turned against it).
+  const s = createInitialState('warrior');
+  s.terrain = { '9,8': 'wall' };
+  s.torches = { '9,8': true };
+  const boss = createBoss(3, 9, 8); // vanilla-era, not lava-immune
+  boss.kind = 'rook'; boss.originalKind = 'rook';
+  boss.bossPerk = 'phasing'; boss.dormant = false; boss.spokeLine = true; boss.recovering = false; boss.lavaImmune = false;
+  boss.hp = 4; boss.maxHp = 4;
+  s.enemies = [boss];
+  s.player.x = 13; s.player.y = 13;
+  const after = moveEnemy(s, boss.id);
+  assert.ok(after.enemies.find((e) => e.boss).hp < 4, 'the wall-torch sears the phasing boss embedded in it');
+
+  // Pathing: it will phase through a PLAIN wall on its line, but refuses a torch-lit one.
+  const p = createInitialState('warrior');
+  p.player.x = 5; p.player.y = 8;
+  const b2 = createBoss(3, 9, 8);
+  b2.kind = 'rook'; b2.originalKind = 'rook';
+  b2.bossPerk = 'phasing'; b2.dormant = false; b2.spokeLine = true; b2.recovering = false; b2.lavaImmune = false;
+  p.enemies = [b2];
+  p.terrain = { '8,8': 'wall' }; p.torches = {};
+  assert.ok(getPieceMoves(b2, p).some((m) => m.x === 8 && m.y === 8), 'it phases into a plain wall on its line');
+  p.torches = { '8,8': true };
+  assert.ok(!getPieceMoves(b2, p).some((m) => m.x === 8 && m.y === 8), 'but it refuses to enter a torch-wall');
 });
 
 test('pit: impassable to the king, but shots and turret fire cross it', () => {
@@ -1343,6 +1437,191 @@ test('Vampiric Edge heals only when a strike fells two foes at once (Cleave supp
   assert.equal(one.player.hp, 3, 'a lone kill does not heal');
 });
 
+test('threat display: a tile the king SHADOWS from a slider/turret is still flagged (moving there exposes him)', () => {
+  // A mobile rook due north — the king's body currently blocks its line at (10,10). The tile just
+  // BEYOND him (10,11) must still read as threatened: stepping there vacates his own shield.
+  const s = createInitialState('warrior');
+  s.terrain = {};
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, awake: true })];
+  const threats = getThreatenedTiles(s);
+  assert.ok(threats.has('10,10'), 'his own tile in the line is flagged');
+  assert.ok(threats.has('10,11'), 'and the shadowed tile just beyond him — the bug had shown it SAFE');
+  // Same for a turret the king already stands in the lane of (it has locked on and will fire).
+  const tt = createInitialState('warrior');
+  tt.terrain = {};
+  tt.player.x = 10; tt.player.y = 10;
+  tt.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, turret: true, hp: 3, maxHp: 3, awake: true })];
+  assert.ok(getThreatenedTiles(tt).has('10,11'), 'a turret lane is flagged past the king’s body too');
+});
+
+test('a turret ALWAYS spends a turn targeting before it can fire — a lock never survives losing the king', () => {
+  // A rook turret two tiles north of the king, sharing his column (its firing lane).
+  const mk = () => {
+    const s = createInitialState('warrior');
+    s.terrain = {};
+    s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5; s.player.moveRange = 1;
+    s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, turret: true, hp: 3, maxHp: 3, awake: true })];
+    return s;
+  };
+  const turretOf = (st) => st.enemies.find((e) => e.turret);
+  // A full enemy phase: the scan, then the turret's own action.
+  const phase = (st) => {
+    const r = beginEnemyPhase(st);
+    let s2 = r.state;
+    for (const id of r.moverIds) s2 = moveEnemy(s2, id);
+    return s2;
+  };
+
+  // In the lane: turn 1 TARGETS (no damage), turn 2 FIRES.
+  let s = phase(mk());
+  assert.equal(s.player.hp, 5, 'turn 1 in the lane: it only locks on, no shot');
+  assert.equal(turretOf(s).aiming, true, 'it is targeting');
+  s = phase(s);
+  assert.ok(s.player.hp < 5, 'turn 2: now it fires');
+  // Having fired it must RE-target: the very next turn is another targeting turn, not a second shot.
+  const hpAfterShot = s.player.hp;
+  assert.equal(turretOf(s).aiming, false, 'the shot cost it the lock');
+  s = phase(s);
+  assert.equal(s.player.hp, hpAfterShot, 'the turn after a shot it re-targets rather than firing again');
+
+  // THE BUG: lock on, walk OUT of the lane, walk back in → it must target afresh, not fire at once.
+  let b = phase(mk()); // it locks on
+  assert.equal(turretOf(b).aiming, true, 'locked on');
+  b.player.x = 13; b.player.y = 13; // step well out of its lane (and out of sight of it)
+  b = phase(b);
+  assert.equal(turretOf(b).aiming, false, 'out of the lane it drops the lock');
+  assert.equal(turretOf(b).dozing, true, 'and idles with a sleep icon');
+  b.player.x = 10; b.player.y = 10; // round the corner back into the lane
+  const back = phase(b);
+  assert.equal(back.player.hp, 5, 'walking back into the lane does NOT eat an instant shot');
+  assert.equal(turretOf(back).aiming, true, 'it must spend this turn targeting him again');
+});
+
+test('a turret never plugs a hallway (blocks a 1-wide corridor, not a junction or open ground)', () => {
+  const wallsAt = (coords) => { const s = createInitialState('warrior'); s.terrain = {}; for (const [x, y] of coords) s.terrain[`${x},${y}`] = 'wall'; return s; };
+  // A vertical 1-wide corridor through (10,10): walls E/W and all four diagonals; open only N & S.
+  const corridor = wallsAt([[11, 10], [9, 10], [11, 9], [9, 9], [11, 11], [9, 11]]);
+  assert.equal(turretBlocksHallway(corridor, 10, 10), true, 'a turret would wall the corridor shut');
+  // Open ground all around — nothing to sever.
+  const open = createInitialState('warrior'); open.terrain = {};
+  assert.equal(turretBlocksHallway(open, 10, 10), false, 'open ground is fine');
+  // A T-junction (N, S, E open; W and the corners walled): the branch keeps the sides connected.
+  const tee = wallsAt([[9, 10], [9, 9], [11, 9], [9, 11], [11, 11]]);
+  assert.equal(turretBlocksHallway(tee, 10, 10), false, 'a junction is not a hallway block');
+});
+
+test('doors: a shut door blocks sight but is walkable — stepping onto it opens it for good', () => {
+  const s = createInitialState('warrior');
+  s.terrain = { '11,10': 'door' };
+  s.enemies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  assert.equal(blocksSight('door'), true, 'a shut door blocks sight');
+  assert.equal(blocksSight('dooropen'), false, 'an open door does not');
+  assert.ok(!inLineOfSight(s, 12, 10), 'the king cannot see PAST the shut door');
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10 && !m.push), 'a shut door is a plain walkable move (no phase / push)');
+  const opened = movePlayerTo(s, 11, 10);
+  assert.deepEqual({ x: opened.player.x, y: opened.player.y }, { x: 11, y: 10 }, 'the king steps into the doorway');
+  assert.equal(terrainAt(opened, 11, 10), 'dooropen', 'and the door swings OPEN while he stands in it');
+});
+
+test('doors drift shut over two turns once vacated (held open while occupied; re-opens if re-entered)', () => {
+  const s = createInitialState('warrior');
+  s.terrain = { '11,10': 'door', '11,11': 'normal', '12,11': 'normal' };
+  s.enemies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  const onDoor = movePlayerTo(s, 11, 10); // step onto the door → open, standing in it
+  assert.equal(terrainAt(onDoor, 11, 10), 'dooropen', 'open while occupied');
+  const off1 = movePlayerTo(onDoor, 11, 11); // step OFF — 1st vacated turn
+  assert.equal(terrainAt(off1, 11, 10), 'doorajar', '1st turn after vacating: STARTING to close');
+  const off2 = movePlayerTo(off1, 12, 11); // stay away — 2nd turn
+  assert.equal(terrainAt(off2, 11, 10), 'door', '2nd turn: fully SHUT again');
+  // Re-entering a closing door re-opens it.
+  const back = movePlayerTo(off1, 11, 10); // from the ajar state, step back onto it
+  assert.equal(terrainAt(back, 11, 10), 'dooropen', 'stepping back onto a closing door re-opens it');
+});
+
+test('doors and pillars are generated (walkable sight-blocking doorways; lone pillars in the open)', () => {
+  let doorFloors = 0; let pillarFloors = 0;
+  for (let i = 0; i < 14; i += 1) {
+    const s = generateFloor(2, createPlayer('warrior'), 0);
+    let doors = 0; let lonePillars = 0;
+    for (const key in s.terrain) {
+      const t = s.terrain[key];
+      const [x, y] = key.split(',').map(Number);
+      if (t === 'door' || t === 'dooropen') doors += 1;
+      if (t === 'wall' && x > 0 && x < WORLD_SIZE - 1 && y > 0 && y < WORLD_SIZE - 1) {
+        let lone = true;
+        for (let dx = -1; dx <= 1 && lone; dx += 1) for (let dy = -1; dy <= 1; dy += 1) {
+          if (dx === 0 && dy === 0) continue;
+          if ((s.terrain[`${x + dx},${y + dy}`] || 'normal') !== 'normal') { lone = false; break; }
+        }
+        if (lone) lonePillars += 1; // a pillar: a lone wall ringed by floor
+      }
+    }
+    if (doors > 0) doorFloors += 1;
+    if (lonePillars > 0) pillarFloors += 1;
+  }
+  assert.ok(doorFloors >= 12, `most floors have doors (${doorFloors}/14)`);
+  assert.ok(pillarFloors >= 8, `most floors sport pillars (${pillarFloors}/14)`);
+});
+
+test('no door ever leads nowhere: both sides open into a real space', () => {
+  // Flood the open ground out from a tile (never through the door), capped.
+  const area = (t, sx, sy, skip, cap) => {
+    const at = (a, b) => t[`${a},${b}`] || 'normal';
+    const seen = new Set([skip]); const stack = [[sx, sy]]; let n = 0;
+    while (stack.length && n < cap) {
+      const [cx, cy] = stack.pop();
+      const k = `${cx},${cy}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (at(cx, cy) !== 'normal') continue;
+      n += 1;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) stack.push([cx + dx, cy + dy]);
+    }
+    return n;
+  };
+  let doors = 0; let useless = 0;
+  for (const floor of [1, 3, 5, 8]) {
+    for (let i = 0; i < 5; i += 1) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      for (const key in s.terrain) {
+        const t = s.terrain[key];
+        if (t !== 'door' && t !== 'dooropen' && t !== 'doorajar') continue;
+        doors += 1;
+        const [x, y] = key.split(',').map(Number);
+        const at = (a, b) => s.terrain[`${a},${b}`] || 'normal';
+        let a; let b;
+        if (at(x, y - 1) === 'normal' && at(x, y + 1) === 'normal') { a = area(s.terrain, x, y - 1, key, 6); b = area(s.terrain, x, y + 1, key, 6); }
+        else if (at(x - 1, y) === 'normal' && at(x + 1, y) === 'normal') { a = area(s.terrain, x - 1, y, key, 6); b = area(s.terrain, x + 1, y, key, 6); }
+        else { useless += 1; continue; } // no open pair at all — it opens onto rock
+        if (a < 6 || b < 6) useless += 1; // a side is a dead-end nook
+      }
+    }
+  }
+  assert.ok(doors > 0, 'the sample generated doors to check');
+  assert.equal(useless, 0, `every door joins two real spaces (${useless} of ${doors} led nowhere)`);
+});
+
+test('Keen Edge: a card kill CUTS that card\'s remaining cooldown in half (rounded down)', () => {
+  const s = warriorWith('w_edge');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
+  s.player.cards[idx].cooldown = 6; // a longer cooldown so a HALF-cut is distinct from a −1 shave
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true })]; // a knight's-move away
+  const kill = useCard(s, idx, 12, 11); // leap + capture
+  assert.equal(kill.enemies.length, 0, 'the leap fells the foe');
+  assert.equal(kill.player.cards[idx].remaining, 3, 'cd 6 → cut in half → 3 (not 5)');
+  // A card that does NOT kill goes on its FULL cooldown.
+  const miss = warriorWith('w_edge');
+  const i2 = miss.player.cards.findIndex((c) => c.kind === 'knight');
+  miss.player.cards[i2].cooldown = 6;
+  miss.player.x = 10; miss.player.y = 10; miss.enemies = [];
+  const moved = useCard(miss, i2, 12, 11); // leap onto empty ground
+  assert.equal(moved.player.cards[i2].remaining, 6, 'no kill → the full cooldown stands');
+});
+
 test('Marksman: Recoil (T1) kicks back + knocks adjacent foes away; Ballista (T2) grants a queen (cd9)', () => {
   const s = rangerWith('r_recoil', 'r_longbow'); // T1 Recoil, T2 Ballista
   const queen = s.player.cards.find((c) => c.kind === 'queen');
@@ -1503,6 +1782,28 @@ test('Sorcerer cards carry cooldowns and subclass colours', () => {
   const horse = conj.player.cards.find((c) => c.kind === 'horse');
   assert.equal(horse.cooldown, 4, 'Phantom Steed horse has cooldown 4');
   assert.equal(horse.color, '#8b5cf6', 'a granted card wears its subclass colour');
+});
+
+test('Hex warping a SUMMONED foe leaves a ferz — a summon lives as long as the circle that conjured it', () => {
+  const s = sorcererWith('s_hex');
+  assert.equal(s.player.hexDemote, true);
+  s.terrain = {};
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  const circle = makeEnemy({ kind: 'pawn', x: 15, y: 15, summonCircle: true, awake: true });
+  const minion = makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true });
+  minion.summoned = true; minion.summonedBy = circle.id;
+  s.enemies = [circle, minion];
+  // Stepping beside it fires Hex in passTurn — which pacifies it (awake=false).
+  const moved = movePlayerTo(s, 10, 9);
+  const m1 = moved.enemies.find((e) => e.summoned);
+  assert.ok(m1, 'the summon is still there after being hexed');
+  assert.equal(m1.kind, 'ferz', 'and is warped to a ferz, exactly as the perk promises');
+  // The enemy phase (where the dispel lives) must NOT delete it for having gone non-hostile.
+  const after = beginEnemyPhase(moved).state;
+  assert.ok(after.enemies.some((e) => e.summoned && e.kind === 'ferz'), 'a pacified summon is NOT dispelled');
+  // But breaking its CIRCLE does dispel the brood — that's the payoff for popping the circle.
+  const orphaned = { ...after, enemies: after.enemies.filter((e) => !e.summonCircle) };
+  assert.ok(!beginEnemyPhase(orphaned).state.enemies.some((e) => e.summoned), 'destroying the circle dispels what it conjured');
 });
 
 test('Blast: a foe that SURVIVES a spell is hurled one tile along the bolt path', () => {
@@ -1730,9 +2031,18 @@ test('the undead ally sears in lava; a demonic ally is immune', () => {
 test('Necromancy: familiar spawns and respawns; foes rise as one undead at a time', () => {
   const s = sorcererWith('s_familiar');
   assert.equal(s.allies.length, 1);
-  assert.ok(s.allies[0].familiar && s.allies[0].kind === 'berolina');
+  // The familiar is a skeletal MANN — a non-royal king. It steps one tile in ANY direction, so it
+  // can actually follow the king through doorways and around corners (a berolina kept snagging).
+  assert.ok(s.allies[0].familiar && s.allies[0].kind === 'mann');
   assert.equal(chebyshev(s.allies[0].x, s.allies[0].y, s.player.x, s.player.y), 1, 'spawns beside the king');
   assert.ok((nextFloor(s).allies || []).some((a) => a.familiar), 'rejoins on the next floor');
+  assert.ok(!s.allies[0].maxHp, 'a plain familiar is a one-hit wisp');
+
+  // The GENERAL upgrade (T3) re-forges it into a lieutenant carrying a mini-boss's wounds.
+  const gen = sorcererWith('s_familiar', 's_undead', 's_general');
+  const g = (gen.allies || []).find((a) => a.familiar);
+  assert.ok(g && g.kind === 'general', 'the familiar is re-forged into a General');
+  assert.equal(g.maxHp, 3, 'and carries 3 HP, like a mini-boss');
 
   const necro = sorcererWith('s_familiar', 's_undead');
   necro.allies = [];

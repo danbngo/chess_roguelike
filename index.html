@@ -23,6 +23,7 @@
               <div id="health" class="hearts" aria-label="Health"></div>
               <div id="level" class="level-badges" aria-label="Level"></div>
             </div>
+            <p id="card-hint" class="card-hint hidden">Abilities — press 1-9 or click to aim</p>
             <div id="card-bar" class="card-bar"></div>
             <div class="log-wrap">
               <button id="log-toggle" type="button" class="log-toggle" aria-expanded="false">▸ Log</button>
@@ -42,6 +43,7 @@
                 <button id="continue-game" type="button">Continue</button>
               </div>
               <div class="overlay-buttons">
+                <button id="title-trophies" type="button">Trophies</button>
                 <button id="title-options" type="button">Options</button>
               </div>
               <div id="title-runtable" class="run-table"></div>
@@ -52,6 +54,7 @@
             <div class="overlay-card">
               <h2 class="overlay-title">The King Has Fallen</h2>
               <div id="gameover-stats" class="run-summary"></div>
+              <div id="gameover-badges" class="badge-shelf"></div>
               <div id="gameover-runtable" class="run-table"></div>
               <div class="overlay-buttons">
                 <button id="play-again" type="button">Play Again</button>
@@ -64,6 +67,7 @@
             <div class="overlay-card">
               <h2 class="overlay-title">The Realm is Free</h2>
               <p id="victory-stats" class="overlay-sub"></p>
+              <div id="victory-badges" class="badge-shelf"></div>
               <div id="victory-runtable" class="run-table"></div>
               <div class="overlay-buttons">
                 <button id="victory-continue" type="button">New Game +</button>
@@ -131,6 +135,17 @@
             </div>
           </div>
 
+          <div id="trophy-screen" class="overlay hidden">
+            <div class="overlay-card shop-card">
+              <h2 class="overlay-title">Trophy Room</h2>
+              <p id="trophy-sub" class="overlay-sub"></p>
+              <div id="trophy-body" class="character-body"></div>
+              <div class="overlay-buttons">
+                <button id="trophy-close" type="button">Back</button>
+              </div>
+            </div>
+          </div>
+
           <div id="character-screen" class="overlay hidden">
             <div class="overlay-card shop-card">
               <h2 id="character-title" class="overlay-title">Character</h2>
@@ -174,6 +189,7 @@
     <script src="src/board.js"></script>
     <script src="src/game.js"></script>
     <script src="src/storage.js"></script>
+    <script src="src/achievements.js"></script>
     <script src="src/audio.js"></script>
     <script src="src/renderer.js"></script>
     <script src="src/input.js"></script>

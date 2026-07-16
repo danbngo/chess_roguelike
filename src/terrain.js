@@ -17,12 +17,20 @@ function terrainAt(state, x, y) {
   return (state.terrain && state.terrain[`${x},${y}`]) || 'normal';
 }
 
+// A torch bracketed on a WALL. Only a PHASING mover can ever stand inside that wall, and when one
+// does the torch sears it 1 HP a turn exactly as lava does (see passTurn / bossMove / tickLavaDamage).
+// Guarded by the wall check so a stale entry left on a since-cleared tile is harmless.
+function hasTorch(state, x, y) {
+  return terrainAt(state, x, y) === 'wall' && Boolean(state.torches && state.torches[`${x},${y}`]);
+}
+
 // Sight (and projectiles) are stopped by walls and boulders. Pits are open holes and lava/
 // water are low, so none of those block the look or a shot.
 function blocksSight(type) {
   // Devilgrass grows tall enough to hide what's behind it. ICE is see-through — a frozen
-  // pane you can look past but not walk through.
-  return type === 'wall' || type === 'boulder' || type === 'devilgrass';
+  // pane you can look past but not walk through. A SHUT door blocks the look and any shot; an
+  // OPEN one ('dooropen') is a clear passage.
+  return type === 'wall' || type === 'boulder' || type === 'devilgrass' || type === 'door';
 }
 
 // Whether a mover may enter/stop on a tile. Walls and BOULDERS stop everyone (a phasing
@@ -31,6 +39,7 @@ function blocksSight(type) {
 // which the level generator relies on for a guaranteed safe path. Water is passable (slow).
 function standableFor(type, opts) {
   const o = opts || {};
+  if (type === 'door' || type === 'dooropen' || type === 'doorajar') return true; // a door is always walkable — stepping onto a SHUT/closing one (re)opens it (see openDoorsUnderUnits)
   if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // walls, boulders & ice slabs stop everyone but a phasing mover
   if (type === 'pit') return Boolean(o.flying); // only a FLYING mover (Winged Boots / a flying boss) crosses a pit
   if (type === 'lava') return o.lavaOk !== false; // walkable unless a caller explicitly forbids it
@@ -140,7 +149,10 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
     const ny = y + dy;
     if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) break;
     const terrain = terrainAt(state, nx, ny);
-    const blocked = projectile ? blocksSight(terrain) : !standableFor(terrain, o);
+    let blocked = projectile ? blocksSight(terrain) : !standableFor(terrain, o);
+    // A lava-averse phaser (a non-immune Phasing boss) shuns a burning wall-torch, so it reads as
+    // solid to that mover even though it could otherwise slip through the wall.
+    if (!blocked && o.torchAverse && terrain === 'wall' && hasTorch(state, nx, ny)) blocked = true;
     if (projectile && blocked) break; // a bolt stops at opaque cover (wall/boulder) — never reaches a unit behind it
     if (unitAt(nx, ny)) {
       // Capturing the target costs a ground step; without the range to spend it,
@@ -187,6 +199,9 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
       continue; // Friendly piece in the way.
     }
     const capHere = Boolean(unit); // a capturable foe on the landing tile (passed the filter above)
+    if (opts && opts.torchAverse && terrain === 'wall' && hasTorch(state, x, y)) {
+      continue; // a lava-averse phaser never pounces into a burning wall-torch
+    }
     if (terrain === 'wall') {
       // Can't land on a wall — UNLESS a phasing leaper is pouncing onto a foe embedded there.
       if (!(phaseWalls && capHere)) continue;

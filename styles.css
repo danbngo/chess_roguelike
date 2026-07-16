@@ -514,9 +514,30 @@ body.in-game canvas {
   cursor: default;
 }
 
+/* A READY card PULSES a halo in its own subclass colour (currentColor is set inline per card) —
+   deliberately the loudest thing in the panel, so a new player can't miss that an ability is armed
+   and waiting. It stops the moment the card goes on cooldown. */
+@keyframes card-ready-pulse {
+  0%, 100% { box-shadow: 0 0 5px currentColor, inset 0 0 3px currentColor; }
+  50% { box-shadow: 0 0 16px currentColor, inset 0 0 7px currentColor; }
+}
+
 .card-slot.ready {
-  border-color: rgba(168, 85, 247, 0.8);
-  box-shadow: 0 0 10px rgba(168, 85, 247, 0.45);
+  border-width: 2px;
+  animation: card-ready-pulse 1.5s ease-in-out infinite;
+}
+
+/* A quiet caption over the card row telling you the keys — always visible, never in the way. */
+.card-hint {
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin: 0.2rem 0 -0.1rem;
+}
+
+.card-hint.hidden {
+  display: none;
 }
 
 .card-slot.targeting {
@@ -648,4 +669,46 @@ body.in-game canvas {
   color: #1f1300;
   font-size: 0.7rem;
   font-weight: 700;
+}
+
+/* Achievement badges shown on the run-end screens. A shelf of small metal-tinted plaques;
+   freshly-earned ones glow, ones you already held sit muted. */
+.badge-shelf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin: 10px 0 4px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.ach-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  background: rgba(2, 6, 23, 0.55);
+  font-size: 0.78rem;
+  line-height: 1.25;
+  max-width: 220px;
+}
+.ach-badge .badge-name { font-weight: 700; }
+.ach-badge .badge-desc { color: #cbd5e1; font-size: 0.72rem; }
+.ach-badge .badge-tier { font-size: 0.66rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.85; }
+.ach-badge.badge-new { box-shadow: 0 0 10px currentColor; }
+.ach-badge.badge-old { opacity: 0.5; }
+
+/* The trophy room lists every badge, so let its shelf breathe and scroll. */
+.trophy-shelf {
+  max-height: none;
+  overflow: visible;
+  justify-content: flex-start;
+}
+
+.ach-badge.badge-locked {
+  opacity: 0.55;
+  border-style: dashed;
 }

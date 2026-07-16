@@ -12,6 +12,15 @@ const TUTORIALS = {
       'piece to read exactly what it is and does. You begin beside the stair down — explore to find ' +
       'the key that unlocks it.',
   },
+  cards: {
+    title: 'Your abilities win fights',
+    text:
+      'The glowing slots under the board are your ABILITY CARDS — they are the whole point of your ' +
+      'class, and a plain step will not carry you far without them. A card PULSES while it is ready. ' +
+      'Press its number (1-9) or click it to AIM, then push a DIRECTION to swing the target onto what ' +
+      'you want, and press the number again (or Enter) to fire. Escape cancels. Each card then ' +
+      'recharges for a few turns, so spend them, do not hoard them — they cost you nothing but time.',
+  },
   surprise: {
     title: 'Caught by surprise',
     text:

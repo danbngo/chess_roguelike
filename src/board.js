@@ -60,14 +60,21 @@ function turretHasKingInLine(state, turret) {
 
 function getThreatenedTiles(state) {
   const counts = new Map();
+  const p = state.player;
+  // Judge danger as if the king's OWN body were NOT on the board — a slider / turret threatens its
+  // FULL line, so a tile the king currently SHADOWS (one he'd expose the moment he steps onto it)
+  // is correctly flagged, not falsely shown safe. (Mirrors blinkToSafety's ghost.)
+  const ghost = { ...state, player: { ...p, x: -50, y: -50 } };
   for (const enemy of getVisibleEnemies(state)) {
     if (!threatensNextTurn(state, enemy)) continue;
     // includeOccupied: a tile an enemy sits on is still dangerous, because the king
     // can capture that enemy and end his move there — where other foes can hit him.
-    const tiles = getPieceThreats(enemy, state, true);
-    // A turret paints its firing lane RED only while the king is in it — an idle turret (king off
-    // its line) is dormant this turn, so its lane isn't marked dangerous.
-    if (enemy.turret && !tiles.some((t) => t.x === state.player.x && t.y === state.player.y)) continue;
+    const tiles = getPieceThreats(enemy, ghost, true);
+    // A turret only fires the turn the king is ALREADY in its line (it locked on last turn); step
+    // in fresh and it merely aims. So paint its lane RED only when the king currently stands in it
+    // — but thanks to the ghost above, the WHOLE lane is then flagged, including tiles beyond his
+    // own body that he'd slide onto and eat a shot at (the bug this fixes).
+    if (enemy.turret && !tiles.some((t) => t.x === p.x && t.y === p.y)) continue;
     for (const tile of tiles) {
       const key = `${tile.x},${tile.y}`;
       counts.set(key, (counts.get(key) || 0) + 1);

@@ -18,6 +18,13 @@
   const titleScreen = document.getElementById('title-screen');
   const gameoverScreen = document.getElementById('gameover-screen');
   const gameoverStats = document.getElementById('gameover-stats');
+  const trophyScreen = document.getElementById('trophy-screen');
+  const trophyBody = document.getElementById('trophy-body');
+  const trophySub = document.getElementById('trophy-sub');
+  const trophyButton = document.getElementById('title-trophies');
+  const trophyCloseButton = document.getElementById('trophy-close');
+  const gameoverBadges = document.getElementById('gameover-badges');
+  const victoryBadges = document.getElementById('victory-badges');
   const victoryScreen = document.getElementById('victory-screen');
   const victoryStats = document.getElementById('victory-stats');
   const titleRunTable = document.getElementById('title-runtable');
@@ -28,6 +35,7 @@
   const altarMessage = document.getElementById('altar-message');
   const altarCloseButton = document.getElementById('altar-close');
   const cardBar = document.getElementById('card-bar');
+  const cardHint = document.getElementById('card-hint');
   const tilePopover = document.getElementById('tile-popover');
   const tutorialScreen = document.getElementById('tutorial-screen');
   const tutorialTitle = document.getElementById('tutorial-title');
@@ -80,7 +88,7 @@
 
   // Card targeting: the index of the card currently awaiting a destination, or
   // null when not aiming. `cardTargets` are the tiles it can reach; `cardCursor`
-  // is the keyboard-controlled target square.
+  // is the keyboard-controlled target square — steered by DIRECTION (see aimCardCursor).
   let cardTargeting = null;
   let cardTargets = [];
   let cardCursor = null;
@@ -243,6 +251,7 @@
 
   function renderCards() {
     cardBar.innerHTML = '';
+    if (cardHint) cardHint.classList.add('hidden');
     if (!gameState) {
       return;
     }
@@ -250,6 +259,10 @@
     gameState.player.cards.forEach((card, i) => {
       cardBar.append(makeCardSlot(card, i));
     });
+    // The caption only shows when he actually HAS a card to press.
+    if (cardHint && gameState.player.cards.length) cardHint.classList.remove('hidden');
+    // The first time a card is armed, spell out what these things are and how to swing them.
+    if (gameState.player.cards.some((c) => c.remaining === 0)) queueTip('cards');
   }
 
   function makeCardSlot(card, i) {
@@ -466,6 +479,9 @@
     boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it. Knocked, it ROLLS until it hits something',
     ice: 'Ice — a see-through slab: impassable, but you can look past it. Fire/spells MELT it to water; a leap onto it (or a foe slammed into it) SHATTERS it',
     devilgrass: 'Devilgrass — blocks sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
+    door: 'Door (shut) — blocks sight & fire, but you can walk/leap right onto it; doing so pushes it OPEN',
+    dooropen: 'Doorway (open) — a clear, walkable threshold; blocks nothing. Left empty, it starts swinging shut',
+    doorajar: 'Door (swinging shut) — still passable and clear, but it will close fully next turn unless something is in it',
   };
 
   // The level's outer edge is solid STONE (impassable rock), distinct from interior brick walls.
@@ -551,6 +567,7 @@
 
   const PIECE_INFO = {
     pawn: 'Steps one tile orthogonally; captures one tile diagonally.',
+    mann: 'Steps and captures one tile in any direction — a non-royal king. Skeletal: the Necromancer’s risen familiar.',
     berolina: 'Steps one tile diagonally; captures one tile orthogonally.',
     knight: 'Leaps in an L (two and one), clear over anything between.',
     bishop: 'Slides any distance diagonally.',
@@ -666,16 +683,43 @@
     }
   }
 
-  // Step the targeting cursor to the next (+1) or previous (-1) valid target, wrapping
-  // around the ring. A movement key that heads right/down cycles forward; left/up back.
-  function cycleCardCursor(step) {
-    if (cardTargeting === null || !cardTargets.length) {
+  // Aim by DIRECTION rather than blind-cycling a ring: a movement key picks the target whose
+  // BEARING from the king best matches the way you pushed. Pressing the same way again steps
+  // OUTWARD along targets sharing that bearing (a slider's ray), wrapping at the far end. A
+  // direction with nothing that way simply doesn't move the cursor.
+  //
+  // Bearing (not a one-tile walk) is what makes this work for every card: a knight's targets sit on
+  // L-tiles and a spell's are only the far ENDPOINTS of each ray, so a cursor that stepped tile by
+  // tile could never reach either — every intermediate tile is an invalid target.
+  function aimCardCursor(dx, dy) {
+    if (cardTargeting === null || !cardTargets.length || !gameState) {
       return;
     }
-    let idx = cardCursor ? cardTargets.findIndex((t) => t.x === cardCursor.x && t.y === cardCursor.y) : -1;
-    idx = idx < 0 ? 0 : (idx + step + cardTargets.length) % cardTargets.length;
-    const t = cardTargets[idx];
-    cardCursor = { x: t.x, y: t.y };
+    const kx = gameState.player.x;
+    const ky = gameState.player.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const scored = cardTargets
+      .map((t) => {
+        const ox = t.x - kx;
+        const oy = t.y - ky;
+        const d = Math.hypot(ox, oy) || 1;
+        return { t, dot: (ox / d) * ux + (oy / d) * uy, dist: d };
+      })
+      .filter((s) => s.dot > 0.35) // roughly that way (within ~70°) — never snap to something behind him
+      .sort((a, b) => (b.dot - a.dot) || (a.dist - b.dist));
+    if (!scored.length) {
+      return; // nothing lies that way — hold the cursor where it is
+    }
+    // Everything sharing the best bearing forms one ray; repeated presses walk out along it.
+    const ray = scored.filter((s) => Math.abs(s.dot - scored[0].dot) < 0.01).sort((a, b) => a.dist - b.dist);
+    let pick = ray[0].t;
+    if (cardCursor) {
+      const at = ray.findIndex((s) => s.t.x === cardCursor.x && s.t.y === cardCursor.y);
+      if (at >= 0) pick = ray[(at + 1) % ray.length].t; // already on this ray → step further out
+    }
+    cardCursor = { x: pick.x, y: pick.y };
     Renderer.centerOn(cardCursor.x, cardCursor.y); // keep the cursor in view
   }
 
@@ -913,8 +957,56 @@
     tutorialScreen.classList.add('hidden');
     optionsScreen.classList.add('hidden');
     characterScreen.classList.add('hidden');
+    if (trophyScreen) trophyScreen.classList.add('hidden');
     if (confirmScreen) confirmScreen.classList.add('hidden');
     pendingConfirm = null;
+  }
+
+  // The TROPHY ROOM: the whole badge case, earned and unearned, off the title screen. Locked badges
+  // are listed too (greyed, with their condition spelled out) — they double as a to-do list.
+  function renderTrophies() {
+    if (!trophyBody) return;
+    trophyBody.innerHTML = '';
+    let store = {};
+    try {
+      store = loadAchievements() || {};
+    } catch {
+      store = {};
+    }
+    const all = typeof ACHIEVEMENTS !== 'undefined' ? ACHIEVEMENTS : [];
+    const held = all.filter((a) => store[a.id]);
+    if (trophySub) {
+      trophySub.textContent = `${held.length} of ${all.length} earned`
+        + (held.length ? ` · ${held.filter((a) => store[a.id] === 'gold').length} gold` : '');
+    }
+    const shelf = document.createElement('div');
+    shelf.className = 'badge-shelf trophy-shelf';
+    // Earned first (gold → silver → bronze), then the ones still to win.
+    const rank = (a) => (store[a.id] ? 3 - ['bronze', 'silver', 'gold'].indexOf(store[a.id]) : 9);
+    for (const a of all.slice().sort((x, y) => rank(x) - rank(y))) {
+      const tier = store[a.id];
+      const el = document.createElement('div');
+      el.className = `ach-badge ${tier ? 'badge-new' : 'badge-locked'}`;
+      el.style.color = tier ? (ACH_TIER_COLOR[tier] || '#cbd5e1') : '#64748b';
+      el.innerHTML =
+        `<span class="badge-name">${tier ? '' : '🔒 '}${a.name}</span>` +
+        `<span class="badge-tier">${tier ? ACH_TIER_LABEL[tier] : 'Locked'}</span>` +
+        `<span class="badge-desc">${a.desc}</span>`;
+      shelf.append(el);
+    }
+    trophyBody.append(shelf);
+  }
+
+  function openTrophies() {
+    screenBeforeModal = screen;
+    screen = 'trophies';
+    renderTrophies();
+    if (trophyScreen) trophyScreen.classList.remove('hidden');
+  }
+
+  function closeTrophies() {
+    if (trophyScreen) trophyScreen.classList.add('hidden');
+    screen = screenBeforeModal === 'trophies' ? 'title' : screenBeforeModal;
   }
 
   function showTitle() {
@@ -1008,10 +1100,12 @@
   }
 
   // After the class, pick a difficulty for the run (reuses the class-select screen).
+  // Difficulty is ONE dial: starting HP. The dungeon itself — spawns, dread clock, foes — is
+  // identical at every setting. Achievements badge bronze / silver / gold for easy / hard / nightmare.
   const DIFFICULTIES = [
-    { key: 'easy', name: 'Easy', color: '#4ade80', blurb: 'Twice the starting HP — a forgiving descent.' },
-    { key: 'hard', name: 'Hard', color: '#fbbf24', blurb: 'The standard trial — baseline HP.', recommended: true },
-    { key: 'nightmare', name: 'Nightmare', color: '#ef4444', blurb: 'Baseline HP, and the floor turns hostile TWICE as fast.' },
+    { key: 'easy', name: 'Easy', color: '#4ade80', blurb: 'A forgiving descent — the thickest skin. Badges earn BRONZE.' },
+    { key: 'hard', name: 'Hard', color: '#fbbf24', blurb: 'The standard trial. Badges earn SILVER.', recommended: true },
+    { key: 'nightmare', name: 'Nightmare', color: '#ef4444', blurb: 'The same dungeon, met with a thin skin. Badges earn GOLD.' },
   ];
   function openDifficultySelect(classKey) {
     screen = 'class';
@@ -1024,8 +1118,10 @@
       if (diff.recommended) row.style.outline = `2px solid ${diff.color}`; // Hard is the highlighted default
       const info = document.createElement('div');
       info.className = 'shop-info';
+      const hp = (DIFFICULTY_HP[diff.key] || {})[classKey];
       info.innerHTML =
-        `<span class="shop-name" style="color:${diff.color}">${diff.name}${diff.recommended ? ' ★' : ''}</span>` +
+        `<span class="shop-name" style="color:${diff.color}">${diff.name}${diff.recommended ? ' ★' : ''}` +
+        `${hp ? ` — ${hp} HP` : ''}</span>` +
         `<span class="shop-desc">${diff.blurb}${diff.recommended ? ' (Recommended)' : ''}</span>`;
       const pick = document.createElement('button');
       pick.type = 'button';
@@ -1176,6 +1272,42 @@
     container.append(buildScoreTable('Recent runs', recent, highlightId));
   }
 
+  // Bank the run's badges and show them on the run-end screen. Freshly-won / upgraded plaques glow;
+  // ones already in the case sit muted so the shelf still reads as a record of the run.
+  function renderBadges(container, won) {
+    if (!container) {
+      return;
+    }
+    container.innerHTML = '';
+    let earned = [];
+    try {
+      earned = recordRun(gameState, won) || [];
+    } catch {
+      earned = [];
+    }
+    if (!earned.length) {
+      return;
+    }
+    const fresh = earned.filter((a) => a.fresh || a.upgraded);
+    const held = earned.filter((a) => !a.fresh && !a.upgraded);
+    const head = document.createElement('p');
+    head.className = 'overlay-sub';
+    head.textContent = fresh.length
+      ? `${fresh.length} badge${fresh.length > 1 ? 's' : ''} earned!`
+      : 'No new badges this run.';
+    container.append(head);
+    for (const a of [...fresh, ...held]) {
+      const el = document.createElement('div');
+      el.className = `ach-badge ${a.fresh || a.upgraded ? 'badge-new' : 'badge-old'}`;
+      el.style.color = ACH_TIER_COLOR[a.tier] || '#cbd5e1';
+      el.innerHTML =
+        `<span class="badge-name">${a.name}</span>` +
+        `<span class="badge-tier">${ACH_TIER_LABEL[a.tier] || a.tier}${a.upgraded ? ' — upgraded!' : a.fresh ? ' — new!' : ''}</span>` +
+        `<span class="badge-desc">${a.desc}</span>`;
+      container.append(el);
+    }
+  }
+
   function onGameOver() {
     screen = 'gameover';
     document.body.classList.remove('in-game');
@@ -1188,6 +1320,7 @@
       won: false,
     });
     fillRunSummary(gameoverStats);
+    renderBadges(gameoverBadges, false);
     renderRunTable(gameoverRunTable, entry.id);
     hideOverlays();
     gameoverScreen.classList.remove('hidden');
@@ -1206,6 +1339,7 @@
       won: true,
     });
     victoryStats.textContent = `Reached floor ${gameState.floor} in ${gameState.player.totalTurns} turns · Score ${score}`;
+    renderBadges(victoryBadges, true);
     renderRunTable(victoryRunTable, entry.id);
     hideOverlays();
     victoryScreen.classList.remove('hidden');
@@ -1401,8 +1535,20 @@
       return;
     }
 
+    // The king's ALLIES strike first — before the foes, not after. Acting last meant they were
+    // routinely cut down before they ever swung; moving first they trade properly.
+    const alliesBefore = nextState.enemies.length;
+    const withAllies = runAllyPhase(nextState);
+    applyState(withAllies, true);
+    // An ally's kill should LAND like the king's — the same pale impact flash, screenshake and cue —
+    // instead of a foe silently blinking out of existence. (The ally's own pounce onto the tile is
+    // its glide; `lunge` is not used here because that drives the KING's token, not an ally's.)
+    if (withAllies.enemies.length < alliesBefore) {
+      Renderer.effect('kill');
+      GameAudio.play('kill');
+    }
     // Pieces newly in view freeze in surprise; the rest get to move.
-    const phase = beginEnemyPhase(nextState);
+    const phase = beginEnemyPhase(gameState);
     applyState(phase.state, true);
     enemyQueue = phase.moverIds;
     animTimer = PLAYER_MOVE_TIME;
@@ -1449,8 +1595,7 @@
       return;
     }
 
-    // Turn complete: the king's allies act (AFTER the foes), then the floor may turn on him.
-    applyState(runAllyPhase(gameState), true);
+    // Turn complete (allies already struck, BEFORE the foes) — now the floor may turn on him.
     applyState(maybeSpawnEnemy(gameState), true);
     if (gameState.dangerEvent) {
       // A danger event fired — a gentle rumble tinted the event's OWN colour (so the player reads
@@ -1581,8 +1726,21 @@
       turnLabel.style.color = Math.floor(timestamp / 350) % 2 ? '#fde047' : '#ef4444';
     }
 
-    // Swap in the tense score once the king has lingered into the high-spawn danger
-    // zone (and back to the calm score whenever he's safe / not in a run).
+    // Each screen carries its own score: the title theme, a warm theme at the altar (and on
+    // victory), a lament on death, and the exploring loop in play. Modal overlays (options /
+    // character / tips / confirm) deliberately set nothing, so the music doesn't lurch when one
+    // pops open over whatever was already playing.
+    if (screen === 'title' || screen === 'class') GameAudio.setTrack('title');
+    else if (screen === 'gameover') GameAudio.setTrack('death');
+    else if (screen === 'levelup' || screen === 'victory') GameAudio.setTrack('altar');
+    else if (screen === 'playing') GameAudio.setTrack('explore');
+
+    // The exploring score HURRIES a gear at a time as the floor's dread climbs (so the pressure to
+    // get off the floor is audible), and darkens to the tense progression past the danger line.
+    const dread = Boolean(gameState) && screen === 'playing'
+      ? Math.min(1, gameState.turn / (gameState.dreadTurns || MAX_TURNS_SCARY))
+      : 0;
+    GameAudio.setDanger(dread);
     const inDanger = Boolean(gameState) && screen === 'playing' && gameState.turn >= Math.floor((gameState.dreadTurns || MAX_TURNS_SCARY) * 0.6);
     GameAudio.setTension(inDanger);
 
@@ -1662,15 +1820,18 @@
       const aim = resolveMove(event);
       if (aim) {
         event.preventDefault();
-        // Right/down cycles forward through the target ring; left/up cycles back.
-        const forward = aim[0] !== 0 ? aim[0] > 0 : aim[1] > 0;
-        cycleCardCursor(forward ? 1 : -1);
+        aimCardCursor(aim[0], aim[1]); // push a direction → the target that way
         return;
       }
     }
 
     // Not aiming and not in a confirm: Escape toggles the Options menu.
     if (event.key === 'Escape') {
+      if (screen === 'trophies') {
+        event.preventDefault();
+        closeTrophies();
+        return;
+      }
       if (screen === 'options') {
         event.preventDefault();
         closeOptions();
@@ -1846,6 +2007,8 @@
   classBackButton.addEventListener('click', showTitle);
   continueButton.addEventListener('click', continueGame);
   titleOptionsButton.addEventListener('click', openOptions);
+  if (trophyButton) trophyButton.addEventListener('click', openTrophies);
+  if (trophyCloseButton) trophyCloseButton.addEventListener('click', closeTrophies);
   playAgainButton.addEventListener('click', openClassSelect);
   toTitleButton.addEventListener('click', showTitle);
   victoryContinueButton.addEventListener('click', continueAfterVictory);

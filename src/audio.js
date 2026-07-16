@@ -155,40 +155,83 @@ const GameAudio = (function () {
   }
 
   // --- Ambient music: a slow arpeggio over a shifting bass, looped forever. ---
-  // When `tense` is set (the king has lingered into the danger zone) the track
-  // switches to a darker, faster tritone-laden progression with a throbbing bass.
+  // Each SCREEN gets its own short track (see setTrack): the title theme, a warm theme at the
+  // altar, a lament on death, and the exploring loop — which swaps to a darker, faster,
+  // tritone-laden variant with a throbbing bass once `tense` is set (danger is high).
+  let track = 'explore';
   let tense = false;
-  const BEAT = 0.34;
-  const BEAT_TENSE = 0.22; // quicker pulse when danger is high
-  const PROG = [
-    [220.0, 261.63, 329.63], // Am
-    [174.61, 261.63, 349.23], // F
-    [196.0, 246.94, 293.66], // G
-    [164.81, 207.65, 246.94], // Em
-  ];
-  const PROG_TENSE = [
-    [174.61, 246.94, 293.66], // F–B–D (tritone bite)
-    [155.56, 220.0, 277.18], // Eb–A–Db
-    [164.81, 233.08, 311.13], // E–Bb–Eb
-    [146.83, 207.65, 246.94], // D–Ab–B
-  ];
+  let dangerStep = 0;
   const ARP = [0, 1, 2, 1, 0, 1, 2, 1];
+  // The in-play score HURRIES in gears as the floor's dread climbs — the same tune, wound tighter —
+  // so the urgency of getting off the floor is audible. Beat multipliers (lower = faster), one per
+  // fifth of the dread meter. Only the exploring/tense loop hurries; screen themes keep their tempo.
+  const HURRY = [1, 0.88, 0.76, 0.65, 0.55];
+  const TRACKS = {
+    // Exploring: a calm, wandering minor loop (Am–F–G–Em).
+    explore: {
+      beat: 0.34,
+      prog: [[220.0, 261.63, 329.63], [174.61, 261.63, 349.23], [196.0, 246.94, 293.66], [164.81, 207.65, 246.94]],
+      type: 'triangle', gain: 0.05, bass: 0.07,
+    },
+    // Danger: the same pulse turned tritone-laden and dark, with an insistent low throb driving the
+    // dread home. Its TEMPO comes from the HURRY gears above, like the calm loop's.
+    tense: {
+      beat: 0.34,
+      prog: [[174.61, 246.94, 293.66], [155.56, 220.0, 277.18], [164.81, 233.08, 311.13], [146.83, 207.65, 246.94]],
+      type: 'triangle', gain: 0.05, bass: 0.07, throb: true,
+    },
+    // Title / character select: deliberately UNLIKE anything in the dungeon — far-off sine BELLS two
+    // octaves up over a deep sustained drone, slow and cavernous. The dungeon waiting for you.
+    title: {
+      beat: 0.5,
+      prog: [[220.0, 261.63, 329.63], [196.0, 246.94, 293.66], [174.61, 220.0, 261.63], [164.81, 207.65, 246.94]],
+      type: 'sine', gain: 0.045, bass: 0.09, octave: 4, drone: true,
+    },
+    // The altar (choosing a boon) / victory: a bright, hopeful major turn (C–G–Am–F).
+    altar: {
+      beat: 0.30,
+      prog: [[261.63, 329.63, 392.0], [196.0, 246.94, 293.66], [220.0, 261.63, 329.63], [174.61, 220.0, 261.63]],
+      type: 'sine', gain: 0.06, bass: 0.06,
+    },
+    // Death: a slow lament sinking step by step (Am–G–F–E), each chord opening with a sighing
+    // glide down — mournful rather than merely quiet.
+    death: {
+      beat: 0.66,
+      prog: [[220.0, 261.63, 329.63], [196.0, 246.94, 293.66], [174.61, 220.0, 261.63], [164.81, 207.65, 246.94]],
+      type: 'sine', gain: 0.06, bass: 0.08, sigh: true, octave: 1, // sunk an octave — low and mournful
+    },
+  };
 
+  // The track actually playing: `tense` only darkens the exploring loop, never the screen themes.
+  function current() {
+    return TRACKS[track === 'explore' && tense ? 'tense' : track] || TRACKS.explore;
+  }
+
+  // The in-play loop speeds up a gear at a time with the floor's dread; the title / altar / death
+  // themes always keep their own tempo.
   function beat() {
-    return tense ? BEAT_TENSE : BEAT;
+    const hurry = track === 'explore' ? (HURRY[dangerStep] || 1) : 1;
+    return current().beat * hurry;
   }
 
   function scheduleStep(s, when) {
-    const prog = tense ? PROG_TENSE : PROG;
-    const chord = prog[Math.floor(s / ARP.length) % prog.length];
+    const t = current();
+    const chord = t.prog[Math.floor(s / ARP.length) % t.prog.length];
     const inChord = s % ARP.length;
-    tone(chord[ARP[inChord]] * 2, when, beat() * 0.9, { type: 'triangle', gain: 0.05, bus: musicBus });
+    tone(chord[ARP[inChord]] * (t.octave || 2), when, t.beat * 0.9, { type: t.type, gain: t.gain, bus: musicBus });
     if (inChord === 0) {
-      tone(chord[0] / 2, when, beat() * ARP.length, { type: 'sine', gain: 0.07, bus: musicBus, attack: 0.08 });
+      tone(chord[0] / 2, when, t.beat * ARP.length, { type: 'sine', gain: t.bass, bus: musicBus, attack: t.drone ? 0.5 : 0.08 });
+      // A DRONE track lays a second, far deeper pad beneath the root — the cavernous title bed.
+      if (t.drone) {
+        tone(chord[0] / 4, when, t.beat * ARP.length, { type: 'triangle', gain: t.bass * 0.55, bus: musicBus, attack: 0.6 });
+      }
+      if (t.sigh) {
+        // A high voice slides mournfully down over the chord — the sound of the run ending.
+        tone(chord[2] * 2, when, t.beat * 3.2, { type: 'sine', gain: 0.04, bus: musicBus, slideTo: chord[0] * 2, attack: 0.25 });
+      }
     }
-    if (tense) {
-      // An insistent low throb on every beat drives the dread home.
-      tone(chord[0] / 2, when, beat() * 0.5, { type: 'sawtooth', gain: 0.045, bus: musicBus });
+    if (t.throb) {
+      tone(chord[0] / 2, when, t.beat * 0.5, { type: 'sawtooth', gain: 0.045, bus: musicBus });
     }
   }
 
@@ -201,9 +244,25 @@ const GameAudio = (function () {
     }
   }
 
-  // Switch between the calm and tense scores (a no-op if already in that mode).
+  // Switch the looping score by screen ('title' | 'explore' | 'altar' | 'death'). A no-op if it's
+  // already playing, so callers may set it every frame. The new track starts at the top of its
+  // phrase rather than cutting in mid-figure.
+  function setTrack(name) {
+    if (!TRACKS[name] || track === name) return;
+    track = name;
+    step = 0;
+  }
+
+  // Darken the EXPLORING loop once danger is high (a no-op if already in that mode).
   function setTension(on) {
     tense = Boolean(on);
+  }
+
+  // How far the floor's dread meter has climbed (0..1). QUANTISED into HURRY's gears, so the score
+  // steps up audibly as the floor turns against the king rather than drifting imperceptibly.
+  function setDanger(frac) {
+    const f = Math.max(0, Math.min(1, Number(frac) || 0));
+    dangerStep = Math.min(HURRY.length - 1, Math.floor(f * HURRY.length));
   }
 
   function startMusic() {
@@ -255,5 +314,5 @@ const GameAudio = (function () {
     return enabled;
   }
 
-  return { play, startMusic, stopMusic, setTension, isEnabled, setEnabled, toggle };
+  return { play, startMusic, stopMusic, setTension, setTrack, setDanger, isEnabled, setEnabled, toggle };
 })();

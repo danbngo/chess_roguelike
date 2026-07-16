@@ -35,7 +35,7 @@ onto a foe (or empty ground), clearing anything between.
 ### ⚔ Reaver — "Carve a red road through the ranks." (#b91c1c)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `w_edge` | Keen Edge | a card that scores a kill recharges 1 turn faster | `meleeRefund` |
+| 1 | `w_edge` | Keen Edge | a card that scores a kill has its remaining cooldown CUT IN HALF (rounded down) | `meleeRefund` |
 | 2 | `w_cleave` | Cleave | when you fell a foe, one adjacent foe dies too | `meleeCleave` |
 | 3 | `w_leech` | Vampiric Edge | any turn you fell a foe, heal 1 HP | `meleeLeech` |
 

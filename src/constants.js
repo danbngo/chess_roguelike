@@ -5,6 +5,14 @@ const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so cente
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
 const PLAYER_START = { x: 10, y: 10 };
 const STARTING_HP = 5; // Default; each class overrides it (see CLASSES[].hp).
+// DIFFICULTY is one simple dial: starting HP, per class. Nothing else changes between settings —
+// the dread clock, the spawns and the foes are identical, so Nightmare is the same dungeon met with
+// a thinner skin. (Achievements badge bronze/silver/gold for easy/hard/nightmare.)
+const DIFFICULTY_HP = {
+  easy: { warrior: 12, ranger: 11, sorcerer: 8 },
+  hard: { warrior: 9, ranger: 7, sorcerer: 5 },
+  nightmare: { warrior: 5, ranger: 4, sorcerer: 3 },
+};
 const MAX_TURNS_SCARY = 200; // Lingering this many turns on a floor maxes the dread meter / tension music (a slow ramp).
 const SPAWN_RAMP_TURNS = 200; // Turns over which the SPAWN rate ramps to its ceiling — 2x slower than the dread meter, so methodical play isn't punished as harshly.
 const SPATTER_LIFE = 48; // Turns a blood spatter lingers before fading away (long — the floor gets messy).
@@ -101,11 +109,12 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 // A card's category is NOT stored per card — it is a property of the player's
 // CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
 // classCategory(). There are no traits or ratings; card power comes from perks.
-const STEPPER_KINDS = ['king', 'pawn', 'knight']; // reach 1; sliders reach 3
+const STEPPER_KINDS = ['king', 'pawn', 'knight', 'mann']; // reach 1; sliders reach 3
 const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'doublestep', 'promotion', 'reload', 'swap', 'horse'];
 const CARD_COOLDOWN = 3;
 const PROMOTION_TURNS = 3; // how many turns the Ranger's Promotion (amazon form) lasts
 const TURRET_HP = 3; // turrets are destructible: a flat, non-scaling HP pool (< a boss's)
+const GENERAL_HP = 3; // the Necromancer's General (Necromancy T3): a lieutenant with a mini-boss's wounds
 
 // Each floor guardian rolls ONE of these boss perks at creation, making every boss
 // fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
@@ -166,7 +175,7 @@ const CLASSES = {
     // gap-closer that clears walls and pieces between. Not a piece his perks grant
     // (those give bishop & rook), so no overlap.
     start: 'knight',
-    hp: 5,
+    hp: 9, // the HARD baseline; the difficulty dial sets the real value (see DIFFICULTY_HP)
     // Each subclass chain has its own colour; the class colour is the starter card's.
     chains: { Sentinel: '#3b82f6', Reaver: '#b91c1c', Cavalier: '#f59e0b', Duellist: '#ec4899' },
     perks: [
@@ -175,7 +184,7 @@ const CLASSES = {
       { id: 'w_hp2', chain: 'Sentinel', tier: 2, requires: 'w_hp1', name: 'Ironhide', desc: '+2 max HP', grants: { maxHp: 2 } },
       { id: 'w_bulwark', chain: 'Sentinel', tier: 3, requires: 'w_hp2', name: 'Parry', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
       // ⚔ Reaver — the bloodletter: kills fuel more kills.
-      { id: 'w_edge', chain: 'Reaver', tier: 1, name: 'Keen Edge', desc: "A card kill cuts that card's cooldown by 1", grants: { meleeRefund: true } },
+      { id: 'w_edge', chain: 'Reaver', tier: 1, name: 'Keen Edge', desc: "A card kill cuts that card's cooldown IN HALF (rounded down)", grants: { meleeRefund: true } },
       { id: 'w_cleave', chain: 'Reaver', tier: 2, requires: 'w_edge', name: 'Cleave', desc: 'When you fell a foe, one adjacent foe dies too', grants: { meleeCleave: true } },
       { id: 'w_leech', chain: 'Reaver', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', desc: 'Any turn you fell a foe, heal 1 HP', grants: { meleeLeech: true } },
       // 🐎 Cavalier — the charger: kill on the move, trample on landing.
@@ -195,7 +204,7 @@ const CLASSES = {
     category: 'ranged', // every Ranger card fires from afar (blocked by cover)
     start: 'bishop', // the Ranger opens with a DIAGONAL bow (swapped with the Sorcerer's — the shorter cooldown suits the hunter)
     startCooldown: 3, // the bishop's own cooldown
-    hp: 5, // sturdier than a glass cannon — foes now close in, so a ranged hunter needs a buffer
+    hp: 7, // the HARD baseline (see DIFFICULTY_HP) — sturdier than a glass cannon, frailer than the warrior
     chains: { Druid: '#16a34a', Oracle: '#14b8a6', 'Gloom Stalker': '#6366f1', Marksman: '#a3e635' },
     perks: [
       // 🌲 Druid — the survivalist: master the terrain, then ride to war.
@@ -223,7 +232,7 @@ const CLASSES = {
     category: 'spell', // every Sorcerer card is a bolt that pierces the whole path
     start: 'rook', // the Sorcerer opens with an ORTHOGONAL piercing bolt (swapped with the Ranger's)
     startCooldown: 5, // the rook's own cooldown
-    hp: 4, // was 3 — a fragile caster still, but with a little more cushion now that foes close in
+    hp: 5, // the HARD baseline (see DIFFICULTY_HP) — the frailest of the three
     // Four subclass chains, each a full 3-tier build (Necromancy is the ally-summoning line).
     chains: { Translocations: '#22d3ee', Necromancy: '#65a30d', Hexes: '#e879f9', Conjuration: '#8b5cf6' },
     perks: [
@@ -240,7 +249,7 @@ const CLASSES = {
       { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Phantom Steed', desc: 'Gain a horse card: a spectral steed that tramples an L-shaped path, scorching every foe along it (cooldown 4)', grants: { gainCard: 'horse', gainCooldown: 4 } },
       { id: 's_barrage', chain: 'Conjuration', tier: 3, requires: 's_staff', name: 'Double Cast', desc: 'After firing a spell, if a targetable foe remains you may aim and fire once more before your turn ends', grants: { doubleCast: true } },
       // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.
-      { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', desc: 'Summon a berolina familiar that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
+      { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', desc: 'Summon a skeletal MANN familiar (steps one tile any direction) that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
       { id: 's_undead', chain: 'Necromancy', tier: 2, requires: 's_familiar', name: 'Grave Bond', desc: 'A foe you slay rises as an undead ally (one at a time; undead do not follow you downstairs)', grants: { necromancy: true } },
       { id: 's_general', chain: 'Necromancy', tier: 3, requires: 's_undead', name: 'Undead General', desc: 'Your familiar becomes an Undead General — a king that can also leap like a knight', grants: { generalForm: true } },
     ],

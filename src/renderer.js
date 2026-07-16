@@ -150,6 +150,10 @@ const Renderer = (function () {
         const frac = Math.min(1, Math.hypot(tile.x - fromX, tile.y - fromY) / total);
         bursts.push({ x: tile.x, y: tile.y, t: 0, delay: frac * PROJECTILE_TIME, color });
       }
+    } else if (role === 'turret' || role === 'boss' || role === 'bolt') {
+      // A single-target energy bolt blooms a small impact spark where it lands, timed to hit as the
+      // slug arrives — so a turret/boss shot clearly READS as a shot that connects.
+      bursts.push({ x: toX, y: toY, t: 0, delay: PROJECTILE_TIME, color });
     }
   }
 
@@ -317,6 +321,11 @@ const Renderer = (function () {
       }
       render.targetX = enemy.x;
       render.targetY = enemy.y;
+      // HEXED: the king's curse warped this foe into a ferz where it stood — mark the change with
+      // a puff of PINK smoke (the same shape as the purple conjuring/dissolving smoke).
+      if (render.kind && render.kind !== enemy.kind && enemy.kind === 'ferz') {
+        puffs.push({ x: enemy.x, y: enemy.y, t: 0, hex: true });
+      }
       render.kind = enemy.kind;
       render.summonTick = enemy.summonTick || 0; // summoning-circle wind-up (for the charge preview)
       render.surprised = Boolean(enemy.surprised);
@@ -324,6 +333,7 @@ const Renderer = (function () {
       render.awake = Boolean(enemy.awake);
       render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
+      render.summoned = Boolean(enemy.summoned); // conjured — drawn violet, like an ally is drawn green
       render.boss = Boolean(enemy.boss);
       render.rush = Boolean(enemy.rush); // a finale rush-boss (drawn ashen, not royal)
       render.mini = Boolean(enemy.mini); // a MINI-boss: smaller token, less HP, no boon
@@ -547,13 +557,30 @@ const Renderer = (function () {
       fill = '#0f2a1a'; // deep green — the king's own piece
       stroke = '#34d399';
       glyph = '#bbf7d0';
+    } else if (o.summoned) {
+      // CONJURED by a circle (or a summoner-boss): tinted arcane VIOLET the way an ally is tinted
+      // green, so a conjured foe never reads as just another wanderer. Kill its circle and it goes.
+      fill = '#2a1b3d';
+      stroke = '#c084fc';
+      glyph = '#e9d5ff';
     }
 
     // A FERZ (what the Hexer's curse warps a foe into) is a harmless, dazed little blob — drawn
-    // small and goofy in pale pink so it never reads as a real threat.
-    const isFerz = !isPlayer && kind === 'ferz' && role === 'normal';
+    // small and goofy in pale pink so it never reads as a real threat. It keeps that shape in EVERY
+    // role: a ferz raised as undead is still a ferz, so it must still look like one (only its ring
+    // takes the ally/summoned colour, set above).
+    const isFerz = !isPlayer && kind === 'ferz';
     const bodyRadius = isFerz ? radius * 0.66 : radius;
-    if (isFerz) { fill = '#f4d3e7'; stroke = '#cf93c4'; }
+    if (isFerz) { fill = '#f4d3e7'; if (role === 'normal') stroke = '#cf93c4'; }
+
+    // A MANN (the Necromancer's risen familiar) keeps the ordinary mann silhouette but is BONE —
+    // a pale, dead-white token, so it reads as a skeleton at a glance without losing its shape.
+    const isMann = !isPlayer && kind === 'mann';
+    if (isMann) {
+      fill = '#e8e4d8'; // old bone
+      stroke = '#6b6558'; // dry grey-brown
+      glyph = '#2b2a26';
+    }
 
     // Boss aura: a soft outer ring — gold for a true guardian, sickly green for a rush boss.
     if (role === 'boss') {
@@ -606,6 +633,25 @@ const Renderer = (function () {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.04);
+      // A MANN is RISEN: lay a few dry rib-bones across its bone-white token so it reads as a
+      // skeleton, without touching the silhouette that says "mann".
+      if (isMann) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, bodyRadius, 0, Math.PI * 2);
+        ctx.clip(); // keep the bones on the token
+        ctx.strokeStyle = 'rgba(70, 66, 56, 0.5)';
+        ctx.lineWidth = Math.max(1, tileSize * 0.035);
+        ctx.lineCap = 'round';
+        for (let i = -1; i <= 1; i += 1) {
+          const ry = cy + i * bodyRadius * 0.34 + bodyRadius * 0.1;
+          ctx.beginPath();
+          ctx.moveTo(cx - bodyRadius * 0.52, ry);
+          ctx.lineTo(cx + bodyRadius * 0.52, ry);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
     }
 
     // Damage marks over the token, worse the lower its HP — clipped to the body. A TURRET (a
@@ -820,8 +866,28 @@ const Renderer = (function () {
         ctx.arc(x, y, r * 0.5, 0, Math.PI * 2);
         ctx.fill();
       } else {
+        // A glowing energy SLUG (turret / boss bolt) with a bright tracer tail streaking behind it
+        // along its flight path, so it reads clearly as a shot in flight — not a faint dot.
+        const dx = p.toX - p.fromX;
+        const dy = p.toY - p.fromY;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = (dx / len) * tileSize;
+        const uy = (dy / len) * tileSize;
+        ctx.strokeStyle = p.color;
+        ctx.lineCap = 'round';
+        ctx.lineWidth = tileSize * 0.14;
+        ctx.globalAlpha = 0.55;
         ctx.beginPath();
-        ctx.arc(x, y, tileSize * 0.13, 0, Math.PI * 2);
+        ctx.moveTo(x - ux * 0.7, y - uy * 0.7); // a short tail trailing the head
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, tileSize * 0.17, 0, Math.PI * 2); // the glowing head
+        ctx.fill();
+        ctx.fillStyle = '#fff7ed';
+        ctx.beginPath();
+        ctx.arc(x, y, tileSize * 0.08, 0, Math.PI * 2); // hot white core
         ctx.fill();
       }
       ctx.restore();
@@ -867,13 +933,13 @@ const Renderer = (function () {
         const ang = (i / 6) * Math.PI * 2 + t * 1.6;
         const dist = tileSize * (0.04 + t * 0.34);
         const r = tileSize * (0.13 + t * 0.16) * (i % 2 ? 0.75 : 1);
-        ctx.fillStyle = `rgba(168, 85, 247, ${(fade * 0.5).toFixed(3)})`;
+        ctx.fillStyle = `rgba(${puff.hex ? '236, 72, 153' : '168, 85, 247'}, ${(fade * 0.5).toFixed(3)})`;
         ctx.beginPath();
         ctx.arc(cx + Math.cos(ang) * dist, cy - tileSize * t * 0.18 + Math.sin(ang) * dist, r, 0, Math.PI * 2);
         ctx.fill();
       }
       // A brighter lilac core that shrinks as the smoke thins.
-      ctx.fillStyle = `rgba(216, 180, 254, ${(fade * 0.65).toFixed(3)})`;
+      ctx.fillStyle = `rgba(${puff.hex ? '251, 207, 232' : '216, 180, 254'}, ${(fade * 0.65).toFixed(3)})`;
       ctx.beginPath();
       ctx.arc(cx, cy, tileSize * 0.17 * fade, 0, Math.PI * 2);
       ctx.fill();
@@ -1438,28 +1504,45 @@ const Renderer = (function () {
     ctx.restore();
   }
 
-  // Rubble: a scatter of grey rocks left where a boulder was crushed or blasted. Jittered +
-  // stackable like the other remains, and fades toward transparent as it decays.
+  // Rubble: a scatter of grey rocks left where a boulder was crushed or blasted. Every pile is
+  // laid out fresh from its `seed` — a wandering centre, a varied number of ANGULAR chunks each at
+  // its own offset, size, grey and ROTATION — so no two look alike and overlapping piles read as a
+  // real jumble of debris. Deterministic per (tile, seed) so it never flickers.
   function drawRubble(rubble, faded) {
-    const cx = rubble.x * tileSize + tileSize * (0.5 + (rubble.ox || 0));
-    const cy = rubble.y * tileSize + tileSize * (0.56 + (rubble.oy || 0));
+    const px = rubble.x * tileSize;
+    const py = rubble.y * tileSize;
+    const seed = rubble.seed || 0;
     const lifeFrac = rubble.max ? Math.max(0, rubble.life / rubble.max) : 1;
-    const seed = ((rubble.rot || 0) * 1000) | 0;
+    const h = (a, b) => tileHash(rubble.x * a + seed + b * 3, rubble.y * b + seed + a * 2);
+    const cx = px + tileSize * (0.3 + 0.4 * h(7, 1)); // the pile's centre wanders per-instance
+    const cy = py + tileSize * (0.32 + 0.4 * h(3, 2));
     ctx.save();
     ctx.globalAlpha = (faded ? 0.4 : 0.85) * Math.max(0.12, lifeFrac);
-    const rocks = [
-      [-0.16, 0.05, 0.16], [0.14, -0.02, 0.13], [0.02, 0.14, 0.12], [-0.06, -0.12, 0.1], [0.2, 0.12, 0.09],
-    ];
-    for (let i = 0; i < rocks.length; i += 1) {
-      const [ox, oy, rr] = rocks[i];
-      const shade = 70 + ((seed + i * 37) % 30); // varied greys
+    const count = rubble.satellite ? 2 + (seed % 2) : 4 + (seed % 3); // 2-3 for a flung bit, 4-6 for a pile
+    for (let i = 0; i < count; i += 1) {
+      const ang = h(11, i + 1) * Math.PI * 2;
+      const dist = tileSize * 0.22 * h(13, i + 2);
+      const rx = cx + Math.cos(ang) * dist;
+      const ry = cy + Math.sin(ang) * dist;
+      const r = tileSize * (0.06 + 0.09 * h(5, i + 3));
+      const shade = 70 + Math.floor(h(9, i + 4) * 34); // varied greys
+      ctx.save();
+      ctx.translate(rx, ry);
+      ctx.rotate(h(17, i + 5) * Math.PI * 2); // each chunk tilted its own way
+      // An irregular angular chunk (a squashed, rotated quad), never a clean circle.
+      const w = r * (0.8 + 0.5 * h(2, i + 6));
       ctx.beginPath();
-      ctx.arc(cx + ox * tileSize, cy + oy * tileSize, tileSize * rr, 0, Math.PI * 2);
+      ctx.moveTo(-w, r * 0.5);
+      ctx.lineTo(-r * 0.4, -r);
+      ctx.lineTo(w, -r * 0.3);
+      ctx.lineTo(r * 0.5, r);
+      ctx.closePath();
       ctx.fillStyle = `rgb(${shade + 10}, ${shade + 8}, ${shade + 14})`;
       ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.3)';
       ctx.lineWidth = 1;
       ctx.stroke();
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -1550,6 +1633,12 @@ const Renderer = (function () {
         return isDark ? '#9ecfe4' : '#cdeefb'; // pale frozen slab — dark shade brightened toward the light (unlike murky water)
       case 'devilgrass':
         return isDark ? '#1c3a1e' : '#2f5f33'; // dark, sickly thicket
+      case 'door':
+        return isDark ? '#5a3a1c' : '#7a5024'; // a SHUT wooden door — warm timber
+      case 'doorajar':
+      case 'dooropen':
+        // An OPEN / half-closing doorway: the sepia floor of the threshold (a leaf/frame is drawn over it).
+        return isDark ? '#71481d' : '#e8c589';
       default:
         // boulder + normal both sit on sepia ground (the boulder rock is drawn over it).
         return isDark ? '#71481d' : '#e8c589'; // warm SEPIA ground (so fogged floor never reads as wall)
@@ -1594,21 +1683,42 @@ const Renderer = (function () {
         break;
       }
       case 'pit': {
-        // A dark hole with a faintly-lit near rim, to read as depth.
+        // A bottomless SHAFT punched through ordinary ground. The tile's base is plain floor (laid
+        // by the caller), so the rim is drawn like any other floor — grit specks and all — and only
+        // the shaft itself goes black. Keeping the hole well inside the tile is what stops a field
+        // of pits reading as one big dark blot.
         const cx = px + tileSize / 2;
         const cy = py + tileSize / 2;
-        const g = ctx.createRadialGradient(cx, cy - tileSize * 0.05, tileSize * 0.08, cx, cy, tileSize * 0.5);
-        g.addColorStop(0, 'rgba(0,0,0,0.9)');
-        g.addColorStop(0.65, 'rgba(0,0,0,0.6)');
-        g.addColorStop(1, 'rgba(0,0,0,0)');
+        const hole = tileSize * 0.36;
+        // Floor grit on the ground AROUND the shaft (same speckle as plain floor).
+        ctx.fillStyle = isDark ? 'rgba(0, 0, 0, 0.13)' : 'rgba(120, 80, 40, 0.16)';
+        for (let i = 0; i < 4; i += 1) {
+          const gx = px + tileSize * (0.12 + tileHash(x * 4 + i, y) * 0.76);
+          const gy = py + tileSize * (0.12 + tileHash(x, y * 4 + i) * 0.76);
+          if (Math.hypot(gx - cx, gy - cy) < hole * 1.08) continue; // never inside the shaft
+          ctx.beginPath();
+          ctx.arc(gx, gy, tileSize * (0.025 + 0.025 * tileHash(x + i, y - i)), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // The shaft: black at the mouth, easing to the rim.
+        const g = ctx.createRadialGradient(cx, cy - tileSize * 0.04, tileSize * 0.05, cx, cy, hole);
+        g.addColorStop(0, 'rgba(0, 0, 0, 0.97)');
+        g.addColorStop(0.7, 'rgba(0, 0, 0, 0.92)');
+        g.addColorStop(1, 'rgba(10, 10, 16, 0.8)');
         ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(cx, cy, tileSize * 0.5, 0, Math.PI * 2);
+        ctx.arc(cx, cy, hole, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = 'rgba(160,160,175,0.22)';
+        // A soft shadow where ground meets hole, and a lit near lip so it reads as depth.
+        ctx.strokeStyle = 'rgba(60, 38, 16, 0.5)';
+        ctx.lineWidth = Math.max(1.5, tileSize * 0.05);
+        ctx.beginPath();
+        ctx.arc(cx, cy, hole, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(214, 214, 228, 0.3)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(cx, cy, tileSize * 0.4, Math.PI * 1.05, Math.PI * 1.95);
+        ctx.arc(cx, cy, hole * 0.92, Math.PI * 1.05, Math.PI * 1.95);
         ctx.stroke();
         break;
       }
@@ -1711,6 +1821,49 @@ const Renderer = (function () {
         ctx.stroke();
         break;
       }
+      case 'door': {
+        // A SHUT wooden door: a stone frame with vertical planks and an iron ring handle.
+        const m = tileSize * 0.14;
+        ctx.strokeStyle = 'rgba(30, 18, 8, 0.75)';
+        ctx.lineWidth = Math.max(1.5, tileSize * 0.05);
+        ctx.strokeRect(px + m, py + m * 0.4, tileSize - m * 2, tileSize - m * 0.8); // door frame
+        ctx.strokeStyle = 'rgba(40, 24, 10, 0.5)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i <= 3; i += 1) { // plank seams
+          const lx = px + m + (tileSize - m * 2) * (i / 4);
+          ctx.beginPath();
+          ctx.moveTo(lx, py + m * 0.6);
+          ctx.lineTo(lx, py + tileSize - m * 0.5);
+          ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(20, 12, 5, 0.8)'; // handle
+        ctx.beginPath();
+        ctx.arc(px + tileSize - m * 1.5, py + tileSize * 0.5, tileSize * 0.05, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'dooropen': {
+        // An OPEN doorway: just the empty stone jambs at either side (the leaf swung aside).
+        ctx.fillStyle = 'rgba(30, 18, 8, 0.55)';
+        const jw = tileSize * 0.14;
+        ctx.fillRect(px + tileSize * 0.08, py + tileSize * 0.08, jw, tileSize * 0.84);
+        ctx.fillRect(px + tileSize * 0.92 - jw, py + tileSize * 0.08, jw, tileSize * 0.84);
+        break;
+      }
+      case 'doorajar': {
+        // A door SWINGING SHUT: a jamb plus the leaf drawn partway across (it fully closes next turn).
+        const jw = tileSize * 0.13;
+        ctx.fillStyle = 'rgba(30, 18, 8, 0.5)';
+        ctx.fillRect(px + tileSize * 0.08, py + tileSize * 0.1, jw, tileSize * 0.8); // left jamb
+        const m = tileSize * 0.12;
+        const lw = tileSize * 0.44; // the leaf covers ~half — swinging closed
+        ctx.fillStyle = isDark ? 'rgba(90, 58, 28, 0.85)' : 'rgba(148, 99, 48, 0.9)';
+        ctx.fillRect(px + tileSize * 0.14, py + m, lw, tileSize - m * 2);
+        ctx.strokeStyle = 'rgba(30, 18, 8, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(px + tileSize * 0.14, py + m, lw, tileSize - m * 2);
+        break;
+      }
       default: {
         // Open ground: scattered grit specks.
         ctx.fillStyle = isDark ? 'rgba(0, 0, 0, 0.13)' : 'rgba(120, 80, 40, 0.16)';
@@ -1725,6 +1878,42 @@ const Renderer = (function () {
         break;
       }
     }
+    ctx.restore();
+  }
+
+  // A wall-mounted TORCH: a short sconce with a layered, glowing flame that flickers off the render
+  // clock (seeded per tile so neighbours dance out of phase). Marks a wall that sears any creature
+  // phased into it — a hazard for the Phase-perk king.
+  function drawTorch(px, py, x, y) {
+    const seed = x * 7.3 + y * 3.1;
+    const flick = Math.sin(clock * 8 + seed) * 0.5 + Math.sin(clock * 19 + seed * 1.7) * 0.5; // -1..1
+    const cx = px + tileSize * (0.5 + 0.03 * flick);
+    const baseY = py + tileSize * 0.5;
+    ctx.save();
+    // Iron sconce stub.
+    ctx.strokeStyle = '#2a1d14';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(1.5, tileSize * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(px + tileSize * 0.5, baseY + tileSize * 0.14);
+    ctx.lineTo(px + tileSize * 0.5, baseY);
+    ctx.stroke();
+    // Glowing flame — three nested teardrops (orange → amber → white-hot core).
+    ctx.shadowBlur = tileSize * (0.45 + 0.18 * flick);
+    ctx.shadowColor = 'rgba(255, 140, 30, 0.95)';
+    const h = tileSize * (0.3 + 0.05 * flick);
+    const w = tileSize * 0.15;
+    const flame = (scale, color) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(cx, baseY - h * scale);
+      ctx.quadraticCurveTo(cx + w * scale, baseY - h * scale * 0.35, cx, baseY);
+      ctx.quadraticCurveTo(cx - w * scale, baseY - h * scale * 0.35, cx, baseY - h * scale);
+      ctx.fill();
+    };
+    flame(1, '#f97316'); // outer orange
+    flame(0.6, '#fbbf24'); // amber
+    flame(0.28, '#fff7ed'); // white-hot core
     ctx.restore();
   }
 
@@ -1990,6 +2179,9 @@ const Renderer = (function () {
     // special jump / capture markers drawn later.
     const playerMoves = showMoves ? getPlayerMoves(state) : [];
     const reachable = new Set(playerMoves.map((move) => `${move.x},${move.y}`));
+    // Aiming a card: its target squares outrank the danger boxes (see the outline block below).
+    const aiming = Boolean(cardTargets && cardTargets.length);
+    const targetKeys = aiming ? new Set(cardTargets.map((t) => `${t.x},${t.y}`)) : null;
 
     ctx.save();
     if (shake > 0) {
@@ -2030,30 +2222,47 @@ const Renderer = (function () {
           // The level's edge is a rampart of solid STONE, distinct from the brick interior walls.
           drawBorderStone(px, py, isDark, x, y);
         } else {
-          ctx.fillStyle = terrainColor(type, isDark);
+          // A PIT is a hole punched through ORDINARY ground, so lay plain floor first — its rim then
+          // reads as the floor you walk beside, and drawTexture sinks only the shaft. (terrainColor
+          // keeps its own dark shade for the minimap, where a pit must still stand out.)
+          ctx.fillStyle = terrainColor(type === 'pit' ? 'normal' : type, isDark);
           ctx.fillRect(px, py, tileSize, tileSize);
           // A boulder's ROCK is drawn later (animated — it rolls); here we lay only its ground.
           if (type !== 'boulder') drawTexture(type, px, py, isDark, x, y);
+          // A wall may bear a flickering torch (sears anything phased into it).
+          if (type === 'wall' && typeof hasTorch === 'function' && hasTorch(state, x, y)) drawTorch(px, py, x, y);
         }
 
         const threatCount = inView ? threatened.get(`${x},${y}`) || 0 : 0;
         const canMove = reachable.has(`${x},${y}`);
         const isKingTile = x === state.player.x && y === state.player.y;
-        // Markers are drawn as an opaque box outline (not a translucent wash) so the
-        // tile stays fully visible and the colour never blends with the ground.
-        if ((canMove || isKingTile) && threatCount > 0) {
-          // RED — you get hit if you move onto (or stand on) this tile; the king's
-          // OWN square counts. Thicker where more enemies converge.
-          tileOutline(px, py, '#ef4444', threatCount);
-        } else if (canMove) {
-          // GREEN — a safe tile the king can move to.
-          tileOutline(px, py, '#22c55e', 1);
-        } else if (threatCount > 0) {
-          // A covered square the king can't reach: ORANGE if it's open ground he simply can't get
-          // to, but GRAY if it's IMPASSABLE (a wall / ice / boulder he could never stand on anyway).
-          const passable = typeof standableFor === 'function'
-            && standableFor(type, { phaseWalls: Boolean(state.player.phase), flying: Boolean(state.player.terrainImmune) });
-          tileOutline(px, py, passable ? '#f97316' : '#9ca3af', threatCount);
+        // While AIMING, the danger boxes step back so the shot reads: a tile you can actually FIRE
+        // at gets no box at all (its violet hint owns the square), and every other danger box is
+        // drawn faint. On a board crowded with foes the red would otherwise bury the very thing
+        // you're trying to hit.
+        const isTargetTile = targetKeys && targetKeys.has(`${x},${y}`);
+        if (!isTargetTile) {
+          if (aiming) {
+            ctx.save();
+            ctx.globalAlpha = 0.3;
+          }
+          // Markers are drawn as an opaque box outline (not a translucent wash) so the
+          // tile stays fully visible and the colour never blends with the ground.
+          if ((canMove || isKingTile) && threatCount > 0) {
+            // RED — you get hit if you move onto (or stand on) this tile; the king's
+            // OWN square counts. Thicker where more enemies converge.
+            tileOutline(px, py, '#ef4444', threatCount);
+          } else if (canMove) {
+            // GREEN — a safe tile the king can move to.
+            tileOutline(px, py, '#22c55e', 1);
+          } else if (threatCount > 0) {
+            // A covered square the king can't reach: ORANGE if it's open ground he simply can't get
+            // to, but GRAY if it's IMPASSABLE (a wall / ice / boulder he could never stand on anyway).
+            const passable = typeof standableFor === 'function'
+              && standableFor(type, { phaseWalls: Boolean(state.player.phase), flying: Boolean(state.player.terrainImmune) });
+            tileOutline(px, py, passable ? '#f97316' : '#9ca3af', threatCount);
+          }
+          if (aiming) ctx.restore();
         }
 
         if (!inView) {
@@ -2185,9 +2394,10 @@ const Renderer = (function () {
         drawRoleHat(enemy.x, enemy.y, role);
       }
       // A charging summoning circle shows the minion-to-be gathering — a ghost of its own piece
-      // kind that grows more solid as the conjuring nears (fires on the 3rd tick).
-      if (role === 'circle' && inSight && (enemy.summonTick % 3) > 0) {
-        drawSummonCharge(enemy.x, enemy.y, enemy.kind, (enemy.summonTick % 3) / 3);
+      // kind that grows more solid as the conjuring nears (fires on the 4th tick, so a slower,
+      // more gradual wind-up).
+      if (role === 'circle' && inSight && (enemy.summonTick % 4) > 0) {
+        drawSummonCharge(enemy.x, enemy.y, enemy.kind, (enemy.summonTick % 4) / 4);
       }
       // A boss (and now a destructible turret) wears a HP bar so its multi-hit state reads.
       if ((enemy.boss || enemy.turret) && enemy.maxHp) {

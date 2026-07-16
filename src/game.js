@@ -300,6 +300,7 @@ function damageTurret(state, turret, amount) {
     return 'hurt';
   }
   state.enemies = state.enemies.filter((e) => e.id !== turret.id);
+  state.player.turretsDestroyed = (state.player.turretsDestroyed || 0) + 1; // badge ledger
   addScrap(state, turret.x, turret.y); // a MACHINE leaves rusty wreckage — no blood, no corpse
   state.message = `The ${turret.kind} turret is destroyed!`;
   state.lastAction = 'combat';
@@ -313,11 +314,13 @@ function damageTurret(state, turret, amount) {
 function defeatBoss(state, boss) {
   if (boss && (boss.mini || boss.rush)) {
     // A MINI-BOSS (finale rush OR the "a mini-boss rises" event) is pure threat — no boon.
+    state.player.miniBossesSlain = (state.player.miniBossesSlain || 0) + 1;
     state.message = `${bossTitle(boss)} is destroyed!`;
     state.lastAction = 'combat';
     return;
   }
   const p = state.player;
+  p.bossesSlain = (p.bossesSlain || 0) + 1; // a floor GUARDIAN felled (badge ledger)
   p.level = (p.level || 1) + 1;
   state.pendingLevelUp = true;
   state.levelPerks = rollLevelPerks(p, LEVEL_PERK_CHOICES);
@@ -451,6 +454,22 @@ function createPlayer(classKey) {
     // Conduct trackers:
     killedEnemy: false,
     wasHit: false,
+    // ACHIEVEMENT trackers — a running tally of the whole descent (see achievements.js). Every one
+    // is a "never did X" / "how many X" ledger, so they only ever move one way.
+    hitThisFloor: false, // reset each descent; feeds clearedFloorUnhit
+    clearedFloorUnhit: false, // he took a WHOLE floor without a scratch at least once
+    bossesSlain: 0,
+    miniBossesSlain: 0,
+    miniBossesSpawned: 0,
+    turretsDestroyed: 0,
+    circlesDispelled: 0,
+    maxFloorTurns: 0, // the longest he ever lingered on a single floor
+    usedCard: false,
+    usedNormalAttack: false, // struck by simply moving onto a foe (no card)
+    openedDoor: false,
+    pushedBoulder: false,
+    brokeIce: false, // shattered or melted an ice slab by his own hand
+    touchedWater: false,
   };
   for (const flag of PERK_FLAGS) player[flag] = false;
   player.cards.push(makeCard(cls.start, cls.category, cls.startCooldown, cls.color));
@@ -487,7 +506,13 @@ function learnPerk(state, perkId) {
   applyPerk(p, perk.grants, chainColorFor(p.className, perk.chain));
   p.takenPerks.push(perkId);
   // Necromancy: the familiar joins at once; the General upgrade re-forges any living one.
-  if (p.generalForm) for (const a of next.allies || []) if (a.familiar) a.kind = 'general';
+  if (p.generalForm) {
+    for (const a of next.allies || []) {
+      if (!a.familiar) continue;
+      a.kind = 'general';
+      if (!a.maxHp) { a.maxHp = GENERAL_HP; a.hp = GENERAL_HP; } // re-forged: it gains its wounds pool
+    }
+  }
   if (p.familiar && !hasLivingFamiliar(next)) spawnFamiliar(next);
   next.viewSize = p.vision;
   next.pendingLevelUp = false;
@@ -654,6 +679,37 @@ function turretCoverage(state, kind, x, y) {
   return getPieceThreats(probe, { ...state, enemies: [probe] }).length;
 }
 
+// Would a turret (a solid, impassable machine) at (x,y) PLUG a hallway — sever the walkable ground
+// around it? Treating the turret's tile as blocked, the open tiles of its 3x3 ring must all stay
+// mutually reachable in a single king step (chebyshev 1); if they split into 2+ groups the turret
+// would wall a corridor/doorway shut. (The king may squeeze diagonally, so a turret in a mere
+// CORNER blocks nothing.) Purely a terrain check — transient units aren't part of the hallway.
+function turretBlocksHallway(state, x, y) {
+  const ring = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
+  const open = ring.map(([dx, dy]) => ({ x: x + dx, y: y + dy })).filter((t) => isStandable(terrainAt(state, t.x, t.y)));
+  if (open.length < 2) return false; // a dead-end / lone opening — nothing passes THROUGH it
+  const seen = new Set();
+  let groups = 0;
+  for (const start of open) {
+    const sk = `${start.x},${start.y}`;
+    if (seen.has(sk)) continue;
+    groups += 1;
+    const stack = [start];
+    seen.add(sk);
+    while (stack.length) {
+      const c = stack.pop();
+      for (const o of open) {
+        const ok = `${o.x},${o.y}`;
+        if (!seen.has(ok) && Math.max(Math.abs(o.x - c.x), Math.abs(o.y - c.y)) === 1) {
+          seen.add(ok);
+          stack.push(o);
+        }
+      }
+    }
+  }
+  return groups > 1; // more than one group → the turret would plug the passage between them
+}
+
 // Could a summoning circle of `kind` at (x,y) conjure a minion onto an adjacent tile
 // from which that minion could move (terrain-wise)? (Don't place circles that would
 // only ever spawn stuck pieces.)
@@ -665,6 +721,59 @@ function circleCanSpawnMobile(state, kind, x, y) {
     if (isStandable(terrainAt(state, nx, ny)) && kindCanMove(state, kind, nx, ny)) return true;
   }
   return false;
+}
+
+// Does the ground on one side of a doorway open into a REAL space rather than a one-tile nook? A
+// bounded flood of open floor out from (sx,sy) that never crosses the door tile itself, stopping the
+// moment `min` is reached — so it stays cheap even beside a huge room.
+function areaOpensUp(at, sx, sy, doorKey, min) {
+  const seen = new Set([doorKey]);
+  const stack = [[sx, sy]];
+  let count = 0;
+  while (stack.length && count < min) {
+    const [cx, cy] = stack.pop();
+    const k = `${cx},${cy}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (at(cx, cy) !== 'normal') continue;
+    count += 1;
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) stack.push([cx + dx, cy + dy]);
+  }
+  return count >= min;
+}
+
+// A SENSIBLE place to hang a door: a WALL tile that frames a genuine 1-wide doorway — open floor on
+// two opposite sides (the passage) and flanking WALL on the other two that EXTENDS past the gap (so
+// it's a real barrier you pass THROUGH, not a stub you stroll around) — AND a real space on BOTH
+// sides, so it never opens onto a dead-end nook or solid rock. `at(x,y)` → terrain type.
+function isDoorwaySpot(at, x, y) {
+  if (at(x, y) !== 'wall') return false;
+  const wall = (dx, dy) => at(x + dx, y + dy) === 'wall';
+  const floor = (dx, dy) => at(x + dx, y + dy) === 'normal';
+  const key = `${x},${y}`;
+  const MIN_AREA = 6; // a door must JOIN two rooms — never lead nowhere
+  // Passage N-S through an E-W wall that extends two tiles each way, opening into space both ways.
+  const vertical = floor(0, -1) && floor(0, 1) && wall(1, 0) && wall(-1, 0) && wall(2, 0) && wall(-2, 0)
+    && areaOpensUp(at, x, y - 1, key, MIN_AREA) && areaOpensUp(at, x, y + 1, key, MIN_AREA);
+  // Passage E-W through a N-S wall, likewise.
+  const horizontal = floor(-1, 0) && floor(1, 0) && wall(0, -1) && wall(0, 1) && wall(0, -2) && wall(0, 2)
+    && areaOpensUp(at, x - 1, y, key, MIN_AREA) && areaOpensUp(at, x + 1, y, key, MIN_AREA);
+  return vertical || horizontal;
+}
+
+// Doors are hung against the RAW terrain, but the boss chamber's ring (and other later structure)
+// is laid down afterwards and can strand one against fresh rock — a door that leads nowhere. Re-test
+// every door against the FINAL map and revert the duds to the solid wall they were carved from.
+// Runs before the reachability carve, so reverting can never seal the king in.
+function pruneUselessDoors(state) {
+  const at = (x, y) => terrainAt(state, x, y);
+  for (const key in state.terrain) {
+    const t = state.terrain[key];
+    if (t !== 'door' && t !== 'dooropen' && t !== 'doorajar') continue;
+    const [x, y] = key.split(',').map(Number);
+    state.terrain[key] = 'wall'; // judge it as the wall it was cut from...
+    if (isDoorwaySpot(at, x, y)) state.terrain[key] = t; // ...a real doorway: put the door back
+  }
 }
 
 // Build the floor's terrain: a solid wall border enclosing everything, then rooms,
@@ -763,6 +872,59 @@ function generateTerrain(floor, player) {
   // DEVILGRASS thickets from floor 5 — tall enough to block sight but not passage; withers to
   // floor when scorched and is flattened by a rolling boulder.
   if (floor >= 5) blob('devilgrass', 2 + Math.floor(floor / 3), 5);
+
+  const atT = (x, y) => terrain[`${x},${y}`] || 'normal';
+  // SHUT DOORS: hang a handful in genuine doorways (1-wide gaps a wall already frames) — walkable,
+  // but sight-/fire-blocking until pushed open. A few more the deeper he goes.
+  const doorSpots = [];
+  for (const key in terrain) {
+    if (terrain[key] !== 'wall') continue;
+    const [dx, dy] = key.split(',').map(Number);
+    if (dx < 2 || dx >= WORLD_SIZE - 2 || dy < 2 || dy >= WORLD_SIZE - 2) continue;
+    if (nearStart(dx, dy)) continue;
+    if (isDoorwaySpot(atT, dx, dy)) doorSpots.push([dx, dy]);
+  }
+  for (let i = doorSpots.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [doorSpots[i], doorSpots[j]] = [doorSpots[j], doorSpots[i]]; }
+  const wantDoors = Math.min(doorSpots.length, 3 + Math.floor(floor / 2));
+  for (let i = 0; i < wantDoors; i += 1) terrain[`${doorSpots[i][0]},${doorSpots[i][1]}`] = 'door';
+
+  // PILLARS: colonnades of LONE wall tiles (each ringed by floor) dropped into OPEN areas — cover to
+  // fight around, so a big empty room turns perilous. Two parallel rows preferred; a lone tile never
+  // blocks passage (you step around it).
+  const loneSpot = (x, y) => {
+    if (x < 2 || x >= WORLD_SIZE - 2 || y < 2 || y >= WORLD_SIZE - 2) return false;
+    if (nearStart(x, y)) return false;
+    for (let ddx = -1; ddx <= 1; ddx += 1) for (let ddy = -1; ddy <= 1; ddy += 1) {
+      if (atT(x + ddx, y + ddy) !== 'normal') return false; // the tile AND all 8 neighbours must be open floor
+    }
+    return true;
+  };
+  const colonnade = () => {
+    const horiz = Math.random() < 0.5;
+    const len = 3 + randomInt(3); // 3-5 pillars per row
+    const rows = Math.random() < 0.7 ? 2 : 1; // usually a PAIR of parallel rows
+    // Hunt for a start where enough of the pattern lands in open ground before committing, so a
+    // colonnade reads as a real row rather than a stray block.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const sx = 3 + randomInt(Math.max(1, WORLD_SIZE - 8));
+      const sy = 3 + randomInt(Math.max(1, WORLD_SIZE - 8));
+      const spots = [];
+      for (let r = 0; r < rows; r += 1) {
+        for (let i = 0; i < len; i += 1) {
+          const x = sx + (horiz ? i * 2 : r * 3); // pillars 2 apart along a row, rows 3 apart
+          const y = sy + (horiz ? r * 3 : i * 2);
+          if (loneSpot(x, y)) spots.push([x, y]);
+        }
+      }
+      if (spots.length >= Math.min(3, rows * len)) { // a decent stretch fits — lay it
+        for (const [x, y] of spots) terrain[`${x},${y}`] = 'wall';
+        return;
+      }
+    }
+  };
+  const formations = 2 + randomInt(2); // 2-3 colonnade attempts (open floors get more; cramped ones fewer)
+  for (let i = 0; i < formations; i += 1) colonnade();
+
   return terrain;
 }
 
@@ -799,7 +961,7 @@ function generateFloor(floor, carryPlayer, score) {
     lastAction: 'start',
     spawnInterval: Math.max(3, 9 - floor),
     turnsSinceSpawn: 0,
-    dreadTurns: dreadTurnsFor(player), // turns until the dread clock maxes (halved on Nightmare)
+    dreadTurns: dreadTurnsFor(), // turns until the dread clock maxes (the same at every difficulty)
   };
 
   const occupied = new Set([`${player.x},${player.y}`]);
@@ -871,6 +1033,21 @@ function generateFloor(floor, carryPlayer, score) {
     }
   }
   delete state.terrain[`${doorX},${doorY}`];
+  // A door or two set into the ring, away from the open doorway — SHUT (so the fight stays sealed
+  // from sight until he pushes through), but they give the king more than one way IN/OUT of the
+  // chamber. Only on a solid WALL ring (a lava/water moat has no doors).
+  if (ringType === 'wall') {
+    // Only where it's a GENUINE doorway — the court within on one side and real open ground on the
+    // other. A ring tile backed by solid rock would be a door that leads nowhere.
+    const atS = (x, y) => terrainAt(state, x, y);
+    const doorSpots = [[3, 0], [-3, 0], [0, 3], [0, -3]]
+      .map(([dx, dy]) => ({ x: ax + dx, y: ay + dy }))
+      .filter((t) => t.x > 1 && t.x < WORLD_SIZE - 2 && t.y > 1 && t.y < WORLD_SIZE - 2
+        && chebyshev(t.x, t.y, doorX, doorY) > 1 && isDoorwaySpot(atS, t.x, t.y));
+    for (let i = doorSpots.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [doorSpots[i], doorSpots[j]] = [doorSpots[j], doorSpots[i]]; }
+    const nDoors = Math.min(doorSpots.length, 1 + randomInt(2)); // 1-2 chamber doors
+    for (let i = 0; i < nDoors; i += 1) state.terrain[`${doorSpots[i].x},${doorSpots[i].y}`] = 'door';
+  }
 
   // The KEY / Orb at the chamber's heart — the boss stands on it and guards it. A wanderer
   // scattered earlier may have landed on the anchor before it was reserved; clear it so the
@@ -929,7 +1106,7 @@ function generateFloor(floor, carryPlayer, score) {
   if (floor >= 3) {
     for (let i = 0; i < initCount(5 + Math.floor(floor / 2)); i += 1) {
       const kind = randomEnemyKind(floor);
-      const spot = place((x, y) => nearChamber(x, y) && turretCoverage(state, kind, x, y) >= 4);
+      const spot = place((x, y) => nearChamber(x, y) && turretCoverage(state, kind, x, y) >= 4 && !turretBlocksHallway(state, x, y));
       if (spot) state.enemies.push(makeTurret(state, kind, spot.x, spot.y));
     }
   }
@@ -946,6 +1123,8 @@ function generateFloor(floor, carryPlayer, score) {
       }
     }
   }
+
+  pruneUselessDoors(state); // drop any door later structure stranded — BEFORE the carve re-links things
 
   // Guarantee the king can reach the stair: if walls/lava seal the doorway off, carve
   // to it — then make sure NO walkable pocket anywhere is fully walled off.
@@ -982,7 +1161,8 @@ function generateFloor(floor, carryPlayer, score) {
       chebyshev(x, y, player.x, player.y) >= 2 &&
       (e.turret || e.summonCircle || kindCanMove(state, e.kind, x, y));
     const hidden = e.turret
-      ? findFreeTile(occupied, (x, y) => canGo(x, y) && turretCoverage(state, e.kind, x, y) >= 4) || findFreeTile(occupied, canGo)
+      ? findFreeTile(occupied, (x, y) => canGo(x, y) && turretCoverage(state, e.kind, x, y) >= 4 && !turretBlocksHallway(state, x, y))
+        || findFreeTile(occupied, (x, y) => canGo(x, y) && !turretBlocksHallway(state, x, y))
       : findFreeTile(occupied, canGo);
     if (hidden) {
       occupied.delete(`${e.x},${e.y}`);
@@ -1000,22 +1180,48 @@ function generateFloor(floor, carryPlayer, score) {
   // The Necromancer's familiar rejoins him on each fresh floor (undead do not follow down).
   if (player.familiar) spawnFamiliar(state);
 
+  scatterTorches(state, floor); // bracket wall-torches, thicker the deeper he goes
   updateDiscovery(state);
   return state;
 }
 
-// Difficulty (chosen after the class): EASY doubles starting HP; HARD is the baseline; NIGHTMARE
-// is baseline HP but the hostile "dread" clock ticks twice as fast (see dreadTurnsFor / maybeSpawnEnemy).
+// Wall-torch density climbs with depth: a rare flicker on the first floors, a hall of fire by the
+// finale (floor 8 ≈ half the interior walls lit). A torch sears any non-lava-immune creature that
+// PHASES into that wall, just like lava.
+function torchChance(floor) {
+  return Math.min(0.55, 0.08 + 0.06 * ((floor || 1) - 1));
+}
+// Sprinkle torches onto INTERIOR walls (never the stone border) at the floor's density.
+function scatterTorches(state, floor) {
+  state.torches = state.torches || {};
+  const chance = torchChance(floor);
+  for (const key in state.terrain) {
+    if (state.terrain[key] !== 'wall') continue;
+    const [x, y] = key.split(',').map(Number);
+    if (x <= 0 || y <= 0 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) continue; // skip the rampart
+    if (Math.random() < chance) state.torches[key] = true;
+  }
+}
+
+// Difficulty (chosen after the class) is now ONE simple dial: starting HP. Nothing else changes —
+// the dread clock, spawns and foes are identical at every setting, so a Nightmare run is the same
+// dungeon met with a thinner skin. See DIFFICULTY_HP for the per-class table.
+function startingHpFor(classKey, difficulty) {
+  const table = DIFFICULTY_HP[difficulty] || DIFFICULTY_HP.hard;
+  return table[classKey] || table.warrior;
+}
 function createInitialState(classKey, difficulty) {
-  const player = createPlayer(classKey || 'warrior');
-  player.difficulty = difficulty || 'hard';
-  if (player.difficulty === 'easy') { player.maxHp *= 2; player.hp = player.maxHp; }
+  const cls = classKey || 'warrior';
+  const player = createPlayer(cls);
+  player.difficulty = DIFFICULTY_HP[difficulty] ? difficulty : 'hard';
+  player.maxHp = startingHpFor(cls, player.difficulty);
+  player.hp = player.maxHp;
   return generateFloor(1, player, 0);
 }
-// How many turns until the dread meter maxes (danger events reach their fastest cadence). Halved
-// on Nightmare so the floor turns hostile twice as quickly.
-function dreadTurnsFor(player) {
-  return (player && player.difficulty === 'nightmare') ? Math.round(MAX_TURNS_SCARY / 2) : MAX_TURNS_SCARY;
+// How many turns until the dread meter maxes (danger events reach their fastest cadence). The same
+// at every difficulty now — only starting HP differs.
+function dreadTurnsFor() {
+  return MAX_TURNS_SCARY;
 }
 
 // Descending the stair: fully heal and refresh cards, then build the next floor. The
@@ -1025,6 +1231,11 @@ function nextFloor(state) {
   const healed = { ...state.player, hp: state.player.maxHp };
   healed.cards = (healed.cards || []).map((c) => ({ ...c, remaining: 0 }));
   healed.extraLifeUsed = false;
+  // Badge ledger: he just took a WHOLE floor start-to-stair. Bank it if he did it unbloodied, then
+  // wipe the slate for the floor below. maxFloorTurns is banked in passTurn as the floor runs.
+  if (!healed.hitThisFloor) healed.clearedFloorUnhit = true;
+  healed.hitThisFloor = false;
+  healed.maxFloorTurns = Math.max(healed.maxFloorTurns || 0, state.turn);
   const next = generateFloor(state.floor + 1, healed, state.score);
   next.pendingLevelUp = false;
   next.message = 'You descend the stair to the next floor.';
@@ -1095,9 +1306,21 @@ function addAsh(state, x, y) {
   state.ashes.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, ...remainsJitter() });
 }
 // Rubble: the scattered rocks a crushed / blasted boulder (or a collapsed wall) leaves behind.
+// Each pile gets a random `seed` (the view draws a unique, rotated scatter from it) and flings a
+// couple of stray chunks onto neighbouring tiles — so debris spreads and piles OVERLAP, the same
+// way blood spatter throws satellites (see addSpatter).
 function addRubble(state, x, y) {
   if (!Array.isArray(state.rubble)) state.rubble = [];
-  state.rubble.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, ...remainsJitter() });
+  state.rubble.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, seed: randomInt(1000) });
+  const extras = 1 + randomInt(2); // 1-2 satellite chunks flung to adjacent tiles
+  const dirs = [...ORTHO, ...DIAG];
+  for (let i = 0; i < extras; i += 1) {
+    const [dx, dy] = dirs[randomInt(dirs.length)];
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
+    state.rubble.push({ x: nx, y: ny, life: CORPSE_LIFE, max: CORPSE_LIFE, seed: randomInt(1000), satellite: true });
+  }
 }
 // Scrap: the twisted rusty wreckage a DESTROYED turret leaves — a distinct (metallic) remains,
 // coloured apart from grey wall/boulder rubble.
@@ -1159,16 +1382,30 @@ function passTurn(state) {
   // negates it). He CAN cross lava now — it just costs blood.
   if (terrainAt(state, p.x, p.y) === 'lava' && !p.terrainImmune) {
     p.hp -= 1;
-    p.wasHit = true;
+    p.wasHit = true; p.hitThisFloor = true;
     addSpatter(state, p.x, p.y);
     if (state.message) state.message += ' The lava sears the king!';
     else state.message = 'The lava sears the king!';
+    checkDeath(state);
+  }
+  // A wall-torch sears the phasing king for 1 HP each turn he ends EMBEDDED in it — the same price
+  // lava exacts (Winged Boots / terrainImmune negates it). Only the Phase perk can put him there.
+  if (hasTorch(state, p.x, p.y) && !p.terrainImmune) {
+    p.hp -= 1;
+    p.wasHit = true; p.hitThisFloor = true;
+    addSpatter(state, p.x, p.y);
+    if (state.message) state.message += ' The wall-torch sears the king!';
+    else state.message = 'The wall-torch sears the king!';
     checkDeath(state);
   }
   p.warded = false;
   p.firstHitUsedThisTurn = false;
   p.freeMoveUsed = false; // Charge grants only ONE free kill-move per turn
   p.blinkedThisTurn = false;
+  // Badge ledger: the longest he has ever lingered on ONE floor, and whether he ever waded.
+  p.maxFloorTurns = Math.max(p.maxFloorTurns || 0, state.turn);
+  if (terrainAt(state, p.x, p.y) === 'water') p.touchedWater = true;
+  tickDoors(state); // vacated doors drift shut: open → ajar → shut, one step per turn
   // NB: p.attacked is NOT cleared here — it must survive into the enemy phase so a foe
   // can tell the Silent king struck this turn (it is reset at the start of each action).
 }
@@ -1188,7 +1425,37 @@ function revealSeen(state) {
 }
 
 // Reveal newly-seen ground and remember the exit once explored.
+// A SHUT ('door') or half-closing ('doorajar') door any creature now stands on swings fully OPEN
+// ('dooropen') — you push through it the way you'd walk into a wall if walls let you. While open it
+// no longer blocks sight or fire. (Doors are always walkable; only their SIGHT-blocking flips.)
+function openDoorsUnderUnits(state) {
+  const open = (x, y) => {
+    const t = terrainAt(state, x, y);
+    if (t === 'door' || t === 'doorajar') state.terrain[`${x},${y}`] = 'dooropen';
+    return t === 'door'; // it was SHUT and we just pushed it open
+  };
+  if (state.player && open(state.player.x, state.player.y)) state.player.openedDoor = true; // badge ledger
+  for (const e of state.enemies || []) open(e.x, e.y);
+  for (const a of state.allies || []) open(a.x, a.y);
+}
+
+// Once per turn, an UNoccupied door drifts back shut over two turns: fully open → ajar (starting to
+// close) → shut. Any creature standing on it holds it fully open (and the ajar/shut steps reset).
+function tickDoors(state) {
+  const occupied = (x, y) => (state.player && state.player.x === x && state.player.y === y)
+    || (state.enemies || []).some((e) => e.x === x && e.y === y)
+    || (state.allies || []).some((a) => a.x === x && a.y === y);
+  for (const key in state.terrain) {
+    const t = state.terrain[key];
+    if (t !== 'dooropen' && t !== 'doorajar') continue;
+    const [x, y] = key.split(',').map(Number);
+    if (occupied(x, y)) { state.terrain[key] = 'dooropen'; continue; } // held open while someone's in it
+    state.terrain[key] = t === 'dooropen' ? 'doorajar' : 'door'; // open → ajar this turn → shut next
+  }
+}
+
 function updateDiscovery(state) {
+  openDoorsUnderUnits(state); // a unit standing on a shut door has pushed it open
   revealSeen(state);
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) state.exit.discovered = true;
   // Once the king lays eyes on the key it is remembered through the fog (like the stair).
@@ -1255,6 +1522,7 @@ function canPushBoulder(state, bx, by, dx, dy) {
 // hazard (both tiles become open floor); onto open ground it simply rolls one tile. The
 // king follows into the vacated tile.
 function pushBoulder(state, bx, by, dx, dy) {
+  state.player.pushedBoulder = true; // badge ledger: the king put his shoulder to a rock
   const tx = bx + dx;
   const ty = by + dy;
   const t = terrainAt(state, tx, ty);
@@ -1273,6 +1541,7 @@ function pushBoulder(state, bx, by, dx, dy) {
 // and FILLS that hazard (consumed). The king always follows one tile, into the boulder's old
 // square. Returns true if the boulder actually moved.
 function pushBoulderFar(state, bx, by, dx, dy, dist) {
+  state.player.pushedBoulder = true; // badge ledger
   let cx = bx;
   let cy = by;
   let moved = false;
@@ -1321,6 +1590,7 @@ function crushBoulderUnder(state, unit) {
 function smashWall(state, x, y) {
   if (terrainAt(state, x, y) !== 'wall') return;
   delete state.terrain[`${x},${y}`];
+  if (state.torches) delete state.torches[`${x},${y}`]; // its torch falls with the wall
   addRubble(state, x, y);
 }
 
@@ -1352,7 +1622,7 @@ function clearDevilgrass(state, x, y) {
 // by the bolt path and Blast so a Blast tile behaves exactly like a tile on the bolt's own path.
 function scorchTileTerrain(next, x, y) {
   const t = terrainAt(next, x, y);
-  if (t === 'ice') meltIce(next, x, y);
+  if (t === 'ice') { if (meltIce(next, x, y)) next.player.brokeIce = true; } // badge ledger
   else if (t === 'devilgrass') clearDevilgrass(next, x, y);
   else if (t === 'boulder') smashBoulder(next, x, y);
 }
@@ -1383,7 +1653,7 @@ function applyArrival(next, x, y, embedded) {
   // The target sits EMBEDDED in cover (a phasing foe in a wall/ice) with a clear path between.
   // The king strikes THROUGH but cannot stand there — he holds his ground and deals the blow.
   if (embedded) {
-    pl.attacked = true;
+    pl.attacked = true; pl.usedNormalAttack = true; // badge ledger: struck without a card
     const occ = next.enemies.find((e) => e.x === x && e.y === y);
     let realKill = false;
     if (occ && occ.boss) { if (damageBoss(next, occ, 1) === 'slain') { pl.killedEnemy = true; realKill = true; } }
@@ -1422,13 +1692,13 @@ function applyArrival(next, x, y, embedded) {
 
   // Leapt onto a boulder? He crushes it to rubble as he lands. Onto an ice slab? It shatters.
   smashBoulder(next, x, y);
-  smashIce(next, x, y);
+  if (smashIce(next, x, y)) next.player.brokeIce = true; // badge ledger
 
   // A boss soaks HP (it has a bar). The KILLING blow strides onto its tile (grabbing any guarded
   // key); a survived hit lands the king BESIDE it (nearest his origin) rather than freezing him.
   const bossHere = next.enemies.find((e) => e.x === x && e.y === y && e.boss);
   if (bossHere) {
-    pl.attacked = true;
+    pl.attacked = true; pl.usedNormalAttack = true; // badge ledger: struck without a card
     const result = damageBoss(next, bossHere, 1);
     if (result === 'slain') {
       pl.killedEnemy = true;
@@ -1454,7 +1724,7 @@ function applyArrival(next, x, y, embedded) {
   // chips it down; it grants no boon and no free move (a structure, not a "kill").
   const turretHere = next.enemies.find((e) => e.x === x && e.y === y && e.turret);
   if (turretHere) {
-    pl.attacked = true;
+    pl.attacked = true; pl.usedNormalAttack = true; // badge ledger: struck without a card
     if (damageTurret(next, turretHere, 1) === 'slain') {
       pl.x = x; pl.y = y; // the king steps onto the wreckage of the turret he just destroyed
       collectKeyIfHere(next);
@@ -1497,7 +1767,7 @@ function applyArrival(next, x, y, embedded) {
   if (enemy) {
     realKill = isKillablePiece(enemy); // a circle is destroyed, but not an on-kill trigger
     resolveKill(next, enemy);
-    pl.attacked = true;
+    pl.attacked = true; pl.usedNormalAttack = true; // badge ledger: struck without a card
     next.message = enemy.summonCircle ? 'The king shatters a summoning circle!' : `The king defeats a ${enemy.kind}.`;
     next.lastAction = 'combat';
   }
@@ -1546,6 +1816,7 @@ function resolveKill(state, enemy, opts) {
   if (enemy.summonCircle) {
     if (!Array.isArray(state.scars)) state.scars = [];
     state.scars.push({ x: enemy.x, y: enemy.y, kind: 'circle' });
+    state.player.circlesDispelled = (state.player.circlesDispelled || 0) + 1; // badge ledger
   } else if (bySpell) {
     addAsh(state, enemy.x, enemy.y);
   } else {
@@ -1759,6 +2030,7 @@ function useCard(state, cardIndex, x, y) {
     next.lastAction = 'blocked';
     return next;
   }
+  if (!isAbilityCard) p.usedCard = true; // badge ledger: he drew a WEAPON (Animal Form/Reload/Swap don't count)
 
   // Promotion: a FREE action (no turn spent) that turns the king into an invincible
   // warhorse for a few turns — he leaps like a knight, takes no damage, and can play no
@@ -1846,7 +2118,7 @@ function useCard(state, cardIndex, x, y) {
     const isLeap = Boolean(move.viaJump) && isJumperKind(card.kind);
     // A leap card that lands on a boulder crushes it to rubble (the king ends up there);
     // landing on an ice slab shatters it.
-    if (isLeap) { smashBoulder(next, x, y); smashIce(next, x, y); }
+    if (isLeap) { smashBoulder(next, x, y); if (smashIce(next, x, y)) p.brokeIce = true; } // badge ledger
     if (mainTarget && (mainTarget.boss || mainTarget.turret)) {
       // A boss or turret soaks HP. The KILLING blow lets the king stride onto its now-empty tile
       // (grabbing any key it guarded); a survived hit lands him beside it (a leap first tries to
@@ -1926,7 +2198,7 @@ function useCard(state, cardIndex, x, y) {
       cy += dy;
       if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
       const bt = terrainAt(next, cx, cy);
-      if (bt === 'ice') { meltIce(next, cx, cy); impactTiles.push({ x: cx, y: cy }); scored = true; break; } // fire thaws the slab to water and is spent
+      if (bt === 'ice') { if (meltIce(next, cx, cy)) p.brokeIce = true; impactTiles.push({ x: cx, y: cy }); scored = true; break; } // fire thaws the slab to water and is spent
       if (bt === 'devilgrass') clearDevilgrass(next, cx, cy); // fire scorches the thicket away, then rages on
       if ((bt === 'wall' || bt === 'boulder') && !p.seeThroughWalls) {
         if (bt === 'boulder') { smashBoulder(next, cx, cy); impactTiles.push({ x: cx, y: cy }); scored = true; } // the bolt blasts it to rubble
@@ -2057,8 +2329,9 @@ function useCard(state, cardIndex, x, y) {
     // passTurn entirely, so they need no flag.
     if (!free) card.justFired = true;
   }
-  // Keen Edge (meleeRefund): a card that scored a kill recharges one turn faster.
-  if (category === 'melee' && realKill && p.meleeRefund) card.remaining = Math.max(0, card.remaining - 1);
+  // Keen Edge (meleeRefund): a card that scored a kill recharges far faster — its remaining
+  // cooldown is CUT BY HALF (rounded down), not merely shaved by one.
+  if (category === 'melee' && realKill && p.meleeRefund) card.remaining -= Math.floor(card.remaining / 2);
   if (!scored && !next.message) next.message = 'The card strikes.';
   if (free) {
     next.enemyTurn = false;
@@ -2182,12 +2455,33 @@ function spawnAllyNear(state, kind, x, y, props) {
   return null;
 }
 
-// Summon (or resummon) the familiar beside the king — a berolina pawn, or a General once
+// The king's summons are one-hit wisps — EXCEPT the General (Necromancy T3), a proper lieutenant
+// carrying a mini-boss's pool of wounds, which is what makes the upgrade worth its tier.
+function allyProps(kind, extra) {
+  const props = { ...(extra || {}) };
+  if (kind === 'general') { props.hp = GENERAL_HP; props.maxHp = GENERAL_HP; }
+  return props;
+}
+
+// Wound an ALLY by `amount`. A wisp dies to the first blow; the General soaks its HP pool first.
+// Returns true if it FELL (the caller lays down the blood/corpse either way it likes).
+function damageAlly(state, ally, amount) {
+  if (!ally) return false;
+  if (ally.maxHp) {
+    ally.hp = (ally.hp || 0) - (amount || 1);
+    if (ally.hp > 0) return false; // it holds the line
+  }
+  state.allies = (state.allies || []).filter((a) => a.id !== ally.id);
+  return true;
+}
+
+// Summon (or resummon) the familiar beside the king — a skeletal MANN (a non-royal king: one
+// step any direction, so it can actually keep up through doors and corners), or a General once
 // upgraded. No-op if one already lives.
 function spawnFamiliar(state) {
   if (!state.player.familiar || hasLivingFamiliar(state)) return null;
-  const kind = state.player.generalForm ? 'general' : 'berolina';
-  return spawnAllyNear(state, kind, state.player.x, state.player.y, { familiar: true });
+  const kind = state.player.generalForm ? 'general' : 'mann';
+  return spawnAllyNear(state, kind, state.player.x, state.player.y, allyProps(kind, { familiar: true }));
 }
 
 // The familiar returns once the coast is clear (no foe in sight).
@@ -2381,7 +2675,8 @@ function isStationary(enemy) {
 // takes its lava wound in bossMove. Ordinary pieces carry no HP pool, so one hit removes them
 // (burned to ash). Called once per turn from beginEnemyPhase.
 function tickLavaDamage(state) {
-  const burns = (u) => terrainAt(state, u.x, u.y) === 'lava' && !isDemonKind(u.kind);
+  // Lava OR a wall-torch a creature is embedded in (only a phaser can be) burns any non-demon.
+  const burns = (u) => (terrainAt(state, u.x, u.y) === 'lava' || hasTorch(state, u.x, u.y)) && !isDemonKind(u.kind);
   const doomedFoes = state.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle && burns(e));
   for (const e of doomedFoes) addAsh(state, e.x, e.y);
   if (doomedFoes.length) state.enemies = state.enemies.filter((e) => !doomedFoes.includes(e));
@@ -2398,6 +2693,7 @@ function beginEnemyPhase(state) {
   recordSeenEnemies(next);
   charmBeasts(next); // Wild Empathy: beasts in view bow and join the king's side before the foes act
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
+  tickTurrets(next); // every turret re-scans: no target in its lane → it idles and drops its lock
 
   // Slumber (Sorcerer): non-boss, non-structure foes adjacent to the king are lulled to
   // sleep and skip their turn; any no longer adjacent wake back up.
@@ -2493,15 +2789,24 @@ function beginEnemyPhase(state) {
     }
   }
 
-  // Summoned units persist only while they are actively hostile movers.
+  // A conjured minion is sustained by whatever CONJURED it: it is dispelled when that circle (or
+  // summoner-boss) is destroyed — which is the real payoff for breaking the circle.
+  //
+  // It is NOT dispelled merely for ceasing to be a "hostile mover", as it once was. That deleted
+  // summons the moment ANYTHING pacified them — the king's own Hex warped one into a ferz and it
+  // vanished on the spot instead (flatly contradicting the perk's text), and Slumber, Wild Empathy
+  // and Silent all did the same. It also made summons blink out whenever he simply broke line of
+  // sight, since an unaware foe is never a mover.
   const before = next.enemies.length;
-  next.enemies = next.enemies.filter((e) => !(e.summoned && !moverIds.includes(e.id)));
+  const liveIds = new Set(next.enemies.map((e) => e.id));
+  next.enemies = next.enemies.filter((e) => !(e.summoned && e.summonedBy && !liveIds.has(e.summonedBy)));
   if (next.enemies.length !== before) moverIds = moverIds.filter((id) => next.enemies.some((e) => e.id === id));
 
   for (let i = moverIds.length - 1; i > 0; i -= 1) {
     const j = randomInt(i + 1);
     [moverIds[i], moverIds[j]] = [moverIds[j], moverIds[i]];
   }
+  openDoorsUnderUnits(next); // any foe that wandered/pursued onto a shut door pushes it open
   return { state: next, moverIds };
 }
 
@@ -2579,7 +2884,7 @@ function fireTurretBlast(state, turret, line) {
     const mit = rollMitigation(state.player);
     if (mit) { state.message = mitigationMessage(mit, 'fire turret'); state.lastAction = 'enemy'; return state; }
     state.player.hp -= 1;
-    state.player.wasHit = true;
+    state.player.wasHit = true; state.player.hitThisFloor = true;
     addSpatter(state, state.player.x, state.player.y);
     state.message = 'A fire turret engulfs the king in spellfire!';
     state.lastAction = 'hit';
@@ -2592,11 +2897,39 @@ function fireTurretBlast(state, turret, line) {
   return state;
 }
 
+// Does this turret have the king in its firing lane RIGHT NOW — respecting cover, blockers and (for
+// a FIRE turret) its piercing gout? The single source of truth for a turret's lock, shared by the
+// per-turn scan and the turret's own action so the two can never disagree.
+function turretTargetsKing(state, turret) {
+  if (turret.fire) return Boolean(fireTurretLineToKing(state, turret));
+  return getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
+}
+
+// Turrets are machines that SCAN every turn — whether or not they get an action this phase. (They
+// only act while the king is close enough to be "aware" of them, so without this a turret that
+// locked on, then watched him walk out of sight, would keep its lock indefinitely and shoot him the
+// instant he rounded the corner back in — the bug this fixes.) With no target in the lane, or a
+// camouflaged king out of reach, it goes IDLE: shown dozing, and it FORGETS the lock — so entering
+// its lane always costs it a fresh targeting turn first.
+function tickTurrets(state) {
+  for (const turret of state.enemies || []) {
+    if (!turret.turret) continue;
+    const blind = Boolean(state.player.camouflage)
+      && chebyshev(turret.x, turret.y, state.player.x, state.player.y) > 1;
+    if (blind || !turretTargetsKing(state, turret)) {
+      turret.dozing = true;
+      turret.aiming = false;
+      turret.recovering = false;
+      continue;
+    }
+    turret.dozing = false;
+  }
+}
+
 function fireTurret(state, turret) {
   const label = turret.fire ? 'fire turret' : `${turret.kind} turret`;
   const fireLine = turret.fire ? fireTurretLineToKing(state, turret) : null;
-  const hitsKing = turret.fire ? Boolean(fireLine)
-    : getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
+  const hitsKing = turretTargetsKing(state, turret);
 
   // Camouflage (Gloom Stalker): a camouflaged king is INVISIBLE to any turret MORE than one tile
   // away — it simply dozes (a sleep "z") and never fires, however he moves. Step ADJACENT (within
@@ -2636,7 +2969,9 @@ function fireTurret(state, turret) {
   }
   // Fire turret: loose a piercing gout of spellfire down the line (then recover next turn).
   if (turret.fire) return fireTurretBlast(state, turret, fireLine);
-  // Locked on and STILL in the line — it fires (and keeps firing each turn he stands in it).
+  // Locked on and STILL in the line — it SHOOTS, and the recoil costs it the lock: it must spend
+  // another turn re-targeting before it can fire again, so it never chains shots turn after turn.
+  turret.aiming = false;
   if (tryReflect(state, turret)) return state;
   state.lastShot = { fromX: turret.x, fromY: turret.y, toX: state.player.x, toY: state.player.y, role: 'turret' };
   const mit = rollMitigation(state.player);
@@ -2646,7 +2981,7 @@ function fireTurret(state, turret) {
     return state;
   }
   state.player.hp -= 1;
-  state.player.wasHit = true;
+  state.player.wasHit = true; state.player.hitThisFloor = true;
   addSpatter(state, state.player.x, state.player.y);
   state.message = `A ${turret.kind} turret blasts the king!`;
   state.lastAction = 'hit';
@@ -2675,6 +3010,7 @@ function summonAdjacent(state, origin, kind) {
     if (!kindCanMove(state, minionKind, x, y)) continue; // never conjure a stuck minion
     const minion = createEnemy(minionKind, x, y);
     minion.summoned = true;
+    minion.summonedBy = origin.id; // the circle / summoner-boss whose magic sustains it
     minion.awake = true;
     state.enemies.push(minion);
     return true;
@@ -2694,9 +3030,9 @@ function summonCircleTurn(state, circle) {
     state.lastAction = 'enemy';
     return state;
   }
-  // Conjure only every THIRD turn (was every other) — a slower drip of reinforcements.
+  // Conjure only every FOURTH turn — a slow drip of reinforcements with a longer, readable wind-up.
   circle.summonTick = (circle.summonTick || 0) + 1;
-  if (circle.summonTick % 3 === 0 && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, circle, circle.kind)) {
+  if (circle.summonTick % 4 === 0 && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, circle, circle.kind)) {
     state.message = 'A summoning circle conjures a minion!';
     state.lastAction = 'enemy';
     return state;
@@ -2727,7 +3063,7 @@ function bossHit(state, boss, hitMsg) {
   const mit = rollMitigation(state.player);
   if (!mit) {
     state.player.hp -= bossDamage(boss);
-    state.player.wasHit = true;
+    state.player.wasHit = true; state.player.hitThisFloor = true;
     bossLeech(boss); // a Leech guardian mends a wound as it draws blood
     addSpatter(state, state.player.x, state.player.y, Math.sign(state.player.x - boss.x), Math.sign(state.player.y - boss.y));
     state.message = hitMsg;
@@ -2759,7 +3095,7 @@ function resolveShoveInto(state, tx, ty, moverId, moverIsKing) {
     const mit = rollMitigation(state.player);
     if (!mit) {
       state.player.hp -= 1;
-      state.player.wasHit = true;
+      state.player.wasHit = true; state.player.hitThisFloor = true;
       addSpatter(state, tx, ty);
       checkDeath(state);
       if (!state.gameOver) blinkToSafety(state);
@@ -2784,6 +3120,7 @@ function resolveShoveInto(state, tx, ty, moverId, moverIsKing) {
       state.enemies = state.enemies.filter((e) => e.id !== foe.id);
       if (!Array.isArray(state.scars)) state.scars = [];
       state.scars.push({ x: tx, y: ty, kind: 'circle' });
+      state.player.circlesDispelled = (state.player.circlesDispelled || 0) + 1; // badge ledger
       return true;
     }
     if (moverIsKing) {
@@ -2857,7 +3194,7 @@ function knockbackBoulder(state, bx, by, dx, dy) {
     if (keyTileAt(state, nx, ny)) { rest(); return; } // never bury the floor key
     if (nx === state.player.x && ny === state.player.y) { // rolls into the king
       state.player.hp -= 1;
-      state.player.wasHit = true;
+      state.player.wasHit = true; state.player.hitThisFloor = true;
       state.lastAction = 'hit';
       state.message = 'A rolling boulder slams into the king!';
       checkDeath(state);
@@ -2956,7 +3293,7 @@ function knockbackKing(state, enemy) {
   const mit = rollMitigation(king);
   if (!mit) {
     king.hp -= enemy.boss ? bossDamage(enemy) : 1;
-    king.wasHit = true;
+    king.wasHit = true; king.hitThisFloor = true;
     bloody(enemy, BLOOD_STRIKE); // an ordinary jumper is flecked (a boss shows HP wounds)
     if (enemy.boss) bossLeech(enemy); // a Leech guardian mends as it lands the shove
     addSpatter(state, king.x, king.y, pdx, pdy); // blood carries in the shove direction
@@ -3035,8 +3372,13 @@ function meleeMove(state, enemy) {
   const allyHit = moves.find((m) => allyAt(state, m.x, m.y));
   if (allyHit) {
     const a = allyAt(state, allyHit.x, allyHit.y);
-    state.allies = state.allies.filter((al) => al.id !== a.id);
     addSpatter(state, allyHit.x, allyHit.y);
+    // A General soaks the blow and holds its ground; a wisp falls and the foe takes its tile.
+    if (!damageAlly(state, a, 1)) {
+      state.message = `A ${enemy.kind} hammers your ${a.kind} (${a.hp}/${a.maxHp}).`;
+      state.lastAction = 'enemy';
+      return state;
+    }
     enemy.x = allyHit.x;
     enemy.y = allyHit.y;
     state.message = `A ${enemy.kind} cuts down your ${a.kind}!`;
@@ -3064,7 +3406,7 @@ function strikeKing(state, enemy) {
   const mit = rollMitigation(state.player);
   if (!mit) {
     state.player.hp -= 1;
-    state.player.wasHit = true;
+    state.player.wasHit = true; state.player.hitThisFloor = true;
     bloody(enemy, BLOOD_STRIKE); // the striker is flecked (the king shows HP wounds)
     addSpatter(state, state.player.x, state.player.y, Math.sign(state.player.x - enemy.x), Math.sign(state.player.y - enemy.y));
     state.message = `A ${enemy.kind} strikes the king!`;
@@ -3153,7 +3495,7 @@ function bossRangedAttack(state, boss) {
   const mit = rollMitigation(king);
   if (!mit) {
     king.hp -= 1;
-    king.wasHit = true;
+    king.wasHit = true; king.hitThisFloor = true;
     bossLeech(boss); // a Leech guardian mends a wound as its bolt bites
     addSpatter(state, king.x, king.y, dx, dy); // blood sprays along the bolt's path
     state.message = pierce
@@ -3176,6 +3518,11 @@ function bossMove(state, boss) {
   // lava it stands on — 1 wound at the start of its turn, so the king can lure or knock a
   // vanilla-type boss into a lava field to whittle it down. Demon-floor guardians are immune.
   if (!boss.lavaImmune && terrainAt(state, boss.x, boss.y) === 'lava') {
+    if (damageBoss(state, boss, 1) === 'slain') { state.lastAction = 'combat'; return state; }
+  }
+  // Likewise a non-immune Phasing guardian embedded in a wall-torch sears — so its own wall-hiding
+  // can be turned against it near a torch (it normally routes around them — see pieceTerrainOpts).
+  if (!boss.lavaImmune && hasTorch(state, boss.x, boss.y)) {
     if (damageBoss(state, boss, 1) === 'slain') { state.lastAction = 'combat'; return state; }
   }
   // Regenerating: it knits one wound shut every fourth turn (ticked whether it acts or recovers).
@@ -3273,10 +3620,13 @@ function moveEnemy(state, enemyId) {
   next.player.deflected = false; // set true only if THIS enemy's blow is deflected
   const enemy = next.enemies.find((piece) => piece.id === enemyId);
   if (!enemy) return next;
-  if (enemy.boss) return bossMove(next, enemy);
-  if (enemy.turret) return fireTurret(next, enemy);
-  if (enemy.summonCircle) return summonCircleTurn(next, enemy);
-  return meleeMove(next, enemy);
+  let result;
+  if (enemy.boss) result = bossMove(next, enemy);
+  else if (enemy.turret) result = fireTurret(next, enemy);
+  else if (enemy.summonCircle) result = summonCircleTurn(next, enemy);
+  else result = meleeMove(next, enemy);
+  openDoorsUnderUnits(result); // the foe may have stepped onto (and thus opened) a shut door
+  return result;
 }
 
 /* ------------------------------ danger events ----------------------------- */
@@ -3464,6 +3814,7 @@ function spawnAmbientWanderer(next) {
 // drawn smaller — that grants NO boon when slain (see defeatBoss). Used by the finale's rush and
 // by the "a mini-boss rises" danger event. Lava-immune only if it's a demon-kind piece.
 function makeMiniBoss(next, kind, x, y) {
+  next.player.miniBossesSpawned = (next.player.miniBossesSpawned || 0) + 1; // badge ledger
   const b = createEnemy(kind, x, y);
   b.boss = true;
   b.mini = true; // smaller, lower-HP, no-boon variant
@@ -3528,7 +3879,8 @@ function dropTurrets(next) {
   const drop = (pred) => {
     const kind = randomEnemyKind(next.floor);
     const tile = findFreeTile(occupied, (x, y) => pred(x, y) && isStandable(terrainAt(next, x, y))
-      && !keyTileAt(next, x, y) && !allyAt(next, x, y) && turretCoverage(next, kind, x, y) >= 4);
+      && !keyTileAt(next, x, y) && !allyAt(next, x, y) && turretCoverage(next, kind, x, y) >= 4
+      && !turretBlocksHallway(next, x, y));
     if (!tile) return false;
     occupied.add(tile.key);
     next.enemies.push(makeTurret(next, kind, tile.x, tile.y));
@@ -3559,7 +3911,11 @@ function wallsToLava(next) {
   const walls = interiorWallsVisibleFirst(next);
   if (!walls.length) return 'The walls groan, but hold.';
   const n = Math.max(1, Math.round(walls.length * 0.2));
-  for (let i = 0; i < n && i < walls.length; i += 1) next.terrain[`${walls[i][0]},${walls[i][1]}`] = 'lava';
+  for (let i = 0; i < n && i < walls.length; i += 1) {
+    const key = `${walls[i][0]},${walls[i][1]}`;
+    next.terrain[key] = 'lava';
+    if (next.torches) delete next.torches[key]; // the wall (and its torch) is gone — now open lava
+  }
   return 'Walls slump into rivers of lava!';
 }
 

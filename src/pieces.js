@@ -43,6 +43,7 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
       slide([...ORTHO, ...DIAG], Infinity);
       break;
     case 'king':
+    case 'mann': // a MANN is a non-royal king: one step any direction
       slide([...ORTHO, ...DIAG], 1);
       break;
     case 'knight':
@@ -135,7 +136,10 @@ function getPieceMoves(piece, state) {
 function pieceTerrainOpts(piece) {
   const opts = { lavaOk: true };
   if (piece.bossPerk === 'flying') { opts.flying = true; opts.terrainImmune = true; }
-  if (piece.bossPerk === 'phasing') { opts.phaseWalls = true; }
+  if (piece.bossPerk === 'phasing') {
+    opts.phaseWalls = true;
+    if (!piece.lavaImmune) opts.torchAverse = true; // a non-immune phaser routes around burning wall-torches
+  }
   return opts;
 }
 
@@ -441,6 +445,7 @@ function getPieceLabel(kind) {
     bishop: '♝',
     knight: '♞',
     queen: '♛',
+    mann: '♚', // a mann wears the king silhouette (drawn bone-white / skeletal)
     berolina: 'B', // berolina pawn
     ferz: '♗', // a ferz (1-step diagonal mover) — the Hexer's confused-foe form
     general: '♔', // the Necromancer's upgraded familiar (king + knight)
