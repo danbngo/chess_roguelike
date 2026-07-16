@@ -97,11 +97,11 @@ function unitInSight(state, x, y) {
   return inLineOfSight(state, x, y);
 }
 
-// Whether the foe at (ex,ey) can see the KING. Walls ALWAYS block here: Sixth Sense is
-// one-way, so a foe on the far side of a wall stays oblivious even while the Ranger sees
-// (and shoots) it through the wall.
+// Whether the foe at (ex,ey) can see the KING. It uses the AWARENESS window (his two-way footprint),
+// NOT his full display sight — so a foe out in the one-way Oracle band can't perceive him. Walls
+// always block here too: the Ranger's extended/see-through sight is one-way.
 function enemyAwareOfKing(state, ex, ey, seeWalls) {
-  return isWithinBounds(getVisibleBounds(state), ex, ey) && hasLineOfSight(state, state.player.x, state.player.y, ex, ey, Boolean(seeWalls));
+  return isWithinBounds(getAwarenessBounds(state), ex, ey) && hasLineOfSight(state, state.player.x, state.player.y, ex, ey, Boolean(seeWalls));
 }
 
 // The set of tiles the king can currently see (for rendering brightness).

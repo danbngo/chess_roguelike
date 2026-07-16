@@ -195,25 +195,25 @@ const CLASSES = {
     category: 'ranged', // every Ranger card fires from afar (blocked by cover)
     start: 'rook', // the Ranger opens with an orthogonal longbow
     startCooldown: 5, // the rook's own cooldown (cooldowns are per-UNIT, not per-class)
-    hp: 4,
-    chains: { Druid: '#16a34a', Deadeye: '#14b8a6', 'Gloom Stalker': '#6366f1', Fletcher: '#a3e635' },
+    hp: 5, // sturdier than a glass cannon — foes now close in, so a ranged hunter needs a buffer
+    chains: { Druid: '#16a34a', Oracle: '#14b8a6', 'Gloom Stalker': '#6366f1', Marksman: '#a3e635' },
     perks: [
       // 🌲 Druid — the survivalist: master the terrain, then ride to war.
       { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Fairy Wings', desc: 'You flit over water, lava, and pits — walking, carding, or leaping onto and across them freely, with no slow, no burn, and no falling', grants: { terrainImmune: true } },
-      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Wild Empathy', desc: 'Beasts of the wild — enemy and mini-boss knights and amazons (never a floor boss) — refuse to attack you until you strike one; a befriended beast shows a ♥, and you can gently DISPLACE it by stepping onto its tile (swapping places), just like your own allies', grants: { beastFriend: true } },
-      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Animal Form', desc: 'Gain an Animal Form card (cooldown 9): become an INVINCIBLE warhorse for 3 turns — leap like a knight, take no damage, play no cards', grants: { gainCard: 'promotion', gainCooldown: 9 } },
-      // 🎯 Deadeye — foresight, sight, and reach.
-      { id: 'r_eagle', chain: 'Deadeye', tier: 1, name: 'Premonition', desc: 'You perceive everything within your sight radius at all times — walls, boulders, and devilgrass no longer hide foes from your eyes (though they still block your shots and steps)', grants: { trueSight: true } },
-      { id: 'r_eyes2', chain: 'Deadeye', tier: 2, requires: 'r_eagle', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
-      { id: 'r_reach', chain: 'Deadeye', tier: 3, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Wild Empathy', desc: 'Beasts of the wild — enemy and mini-boss knights and amazons (never a floor boss) — never attack you, and the moment you SEE one it bows and JOINS your side, fighting as your ally (until you strike it, which breaks the bond)', grants: { beastFriend: true } },
+      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Animal Form', desc: 'Gain an Animal Form card (cooldown 9): become an INVINCIBLE beast — an AMAZON (slides like a queen AND leaps like a knight) — for 3 turns, taking no damage and playing no cards', grants: { gainCard: 'promotion', gainCooldown: 9 } },
+      // 🎯 Oracle — the seer: know the floor, then see (and shoot) beyond your foes' sight.
+      { id: 'r_eagle', chain: 'Oracle', tier: 1, name: 'Premonition', desc: 'Cover no longer blinds you: within your sight radius you SEE and SHOOT straight through walls, boulders, and devilgrass. It is ONE-WAY — a foe with a wall between you can’t strike back, but it DOES wake and start closing in on you', grants: { seeThroughWalls: true } },
+      { id: 'r_eyes2', chain: 'Oracle', tier: 2, requires: 'r_eagle', name: 'Hawk Eyes', desc: '+1 sight radius AND +1 card reach. This extra sight is ONE-WAY — foes out in the new band can’t see or strike you back (though they’ll start closing in)', grants: { visionOneWay: 2, cardReach: 1 } },
+      { id: 'r_reach', chain: 'Oracle', tier: 3, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 sight radius AND +1 card reach (again) — the extra sight is likewise one-way, so you pick foes off from outside their reach', grants: { visionOneWay: 2, cardReach: 1 } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
       { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
-      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets sit dormant (a sleep “z”), blind to you — until you strike one, which wakes it to hunt you for the rest of the floor', grants: { camouflage: true } },
+      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets are BLIND to you (a sleep “z”) and never fire — a turret only wakes if you STRIKE it, and even then it dozes off again the moment you slip out of its firing line. Summoning circles likewise never conjure while you’re hidden', grants: { camouflage: true } },
       { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes more than one tile away never notice you (until you strike); any within one tile — even one that blunders into you — detects you normally', grants: { stealth: true } },
-      // 🏹 Fletcher — the quartermaster: reload, then a big bow, then kickback.
-      { id: 'r_reload', chain: 'Fletcher', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
-      { id: 'r_longbow', chain: 'Fletcher', tier: 2, requires: 'r_reload', name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
-      { id: 'r_recoil', chain: 'Fletcher', tier: 3, requires: 'r_longbow', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile if the ground behind it is clear', grants: { recoil: true } },
+      // 🏹 Marksman — the sharpshooter: kickback, a big bow, then exploding shots.
+      { id: 'r_recoil', chain: 'Marksman', tier: 1, name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there) AND shoves every adjacent foe back one tile where the ground behind it is clear', grants: { recoil: true } },
+      { id: 'r_longbow', chain: 'Marksman', tier: 2, requires: 'r_recoil', name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
+      { id: 'r_shrapnel', chain: 'Marksman', tier: 3, requires: 'r_longbow', name: 'Shrapnel', desc: 'Every weapon card you fire SHATTERS on impact — striking every foe adjacent to the tile you hit, as well as the target', grants: { shrapnel: true } },
     ],
   },
   sorcerer: {
@@ -223,7 +223,7 @@ const CLASSES = {
     category: 'spell', // every Sorcerer card is a bolt that pierces the whole path
     start: 'bishop', // the Sorcerer opens with a diagonal bolt
     startCooldown: 3, // the bishop's own cooldown (cooldowns are per-UNIT, not per-class)
-    hp: 3,
+    hp: 4, // was 3 — a fragile caster still, but with a little more cushion now that foes close in
     // Four subclass chains, each a full 3-tier build (Necromancy is the ally-summoning line).
     chains: { Translocations: '#22d3ee', Necromancy: '#65a30d', Hexes: '#e879f9', Conjuration: '#8b5cf6' },
     perks: [

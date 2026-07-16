@@ -3,11 +3,25 @@
 // The square sight window centered on the king, sized by his current vision
 // (upgradable), clamped to stay inside the world. `viewSize` is a legacy
 // fallback for saves made before vision became a player stat.
+// The DISPLAY sight window: how far the king SEES (his full vision, one-way Oracle sight included).
 function getVisibleBounds(state) {
   const p = state.player;
   // Phase (Sorcerer): while embedded in something OPAQUE (a wall or boulder) the king can
   // barely see out (3x3 window). Clear ice does not blind him.
   const size = (p.phase && blocksSight(terrainAt(state, p.x, p.y))) ? 3 : (p.vision || state.viewSize);
+  return boundsOfSize(state, size);
+}
+
+// The AWARENESS window: how far FOES can see the king back — his display sight MINUS any one-way
+// Oracle band (Hawk Eyes / Power Draw). Foes out in that extended band can't see or target him.
+function getAwarenessBounds(state) {
+  const p = state.player;
+  const display = (p.phase && blocksSight(terrainAt(state, p.x, p.y))) ? 3 : (p.vision || state.viewSize);
+  const size = Math.max(3, display - (p.visionOneWay || 0));
+  return boundsOfSize(state, size);
+}
+
+function boundsOfSize(state, size) {
   const half = Math.floor(size / 2);
   return {
     x: clamp(state.player.x - half, 0, state.worldSize - size),

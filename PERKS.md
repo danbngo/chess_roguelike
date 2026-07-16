@@ -1,161 +1,172 @@
-# Perks — themed subclass chains (brainstorm proposal)
+# Perks — themed subclass chains
 
-Each floor, on **slaying the boss**, you pick 1 of 2 offered perks. Perks form **tiered
-chains** (T1 → T2 → T3): a tier only appears once the tier below it is taken. Think of
-each chain as a **D&D-style subclass** — commit down one and you become that archetype.
+Each floor, on **slaying the guardian**, you pick 1 of 2 offered perks. Perks form **tiered
+chains** (T1 → T2 → T3): a tier only appears once the tier below it is taken. Think of each
+chain as a **D&D-style subclass** — commit down one and you become that archetype.
 
-This draft only **re-themes and re-slots** perks; the underlying effects are the current
-live ones (rebalance the numbers/effects next). **Only the Warrior was actually juggled**
-(its defence was spread across 3 chains); Ranger & Sorcerer chains were already coherent —
-Sorcerer's four even line up with the D&D wizard schools.
+This document mirrors the **live** perks in `src/constants.js` (`CLASSES[...].perks`). If the two
+ever disagree, the code wins.
 
-Effect keys: `maxHp`, `vision` (+2 = +1 sight radius), `moveRange` (now a forced full
-slide), `cardReach`, `gainCard:<piece>` (+ optional `gainCooldown:<n>` override), and
-flags: `firstHitEachTurn`, `reflect`, `meleeRefund`, `meleeCleave`, `meleeLeech`,
-`meleePierce`, `leapShock`, `meleeFlourish`, `freeKillMove`, `extraLife`, `revealFloor`,
-`terrainImmune`, `seeThroughWalls`, `noChase`, `camouflage`, `recoil`, `stealth`,
-`rangedRapid`, `spellHaste`, `freeSpell`, `spellDazzle`, `spellSurprise`.
+Effect keys used below (the `grant` column):
+- Stat bumps: `maxHp`, `vision` (+2 = +1 sight radius, two-way), `visionOneWay` (+2 = +1 radius the
+  king sees but foes can't see back), `cardReach` (+1 card range).
+- Cards: `gainCard:<piece>` (+ optional `gainCooldown:<n>`).
+- Flags (simply switched on): `firstHitEachTurn`, `meleeRefund`, `meleeCleave`, `meleeLeech`,
+  `meleePierce`, `leapShock`, `meleeFlourish`, `freeKillMove`, `terrainImmune`, `seeAllFoes`,
+  `beastFriend`, `noChase`, `camouflage`, `stealth`, `recoil`, `shrapnel`, `blink`, `phase`,
+  `hexDemote`, `spellSurprise`, `sleepAura`, `spellBlast`, `doubleCast`, `familiar`, `necromancy`,
+  `generalForm`.
+
+_(Note: the old `seeThroughWalls` / `revealFloor` / `trueSight` flags are GONE — no perk grants them any more.)_
 
 ---
 
-## WARRIOR — the Fighter  (melee · start: knight · 5 HP)  ✅ IMPLEMENTED
-_A sturdy frontline fighter who lunges in and trades blows._
-The starting knight card has base cooldown 3 (unchanged; the class default).
+## WARRIOR — the Fighter  (melee · start: **knight**, cooldown 3 · **5 HP**)
+_A sturdy frontline fighter who lunges in and trades blows._ The starting knight LEAPS in an L
+onto a foe (or empty ground), clearing anything between.
 
-### ⛨ Sentinel — "Hold the line; fall to no one."
-An immovable bastion who simply refuses to die.
+### ⛨ Sentinel — "Hold the line; fall to no one." (chain colour #3b82f6)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `w_hp1` | Hardy | +1 max HP | `maxHp:1` |
 | 2 | `w_hp2` | Ironhide | +2 max HP | `maxHp:2` |
 | 3 | `w_bulwark` | Parry | the first hit each turn is negated | `firstHitEachTurn` |
 
-### ⚔ Reaver — "Carve a red road through the ranks."
-A bloodletter who feeds on the crowd he cuts down.
+### ⚔ Reaver — "Carve a red road through the ranks." (#b91c1c)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `w_edge` | Keen Edge | a card that scores a kill recharges 1 turn faster | `meleeRefund` |
 | 2 | `w_cleave` | Cleave | when you fell a foe, one adjacent foe dies too | `meleeCleave` |
-| 3 | `w_leech` | Vampiric Edge | heal 1 HP when a single strike fells **two** foes at once (its partner is Cleave) | `meleeLeech` |
+| 3 | `w_leech` | Vampiric Edge | any turn you fell a foe, heal 1 HP | `meleeLeech` |
 
-### 🐎 Cavalier — "Charge and trample through the ranks."
-A relentless charger who kills on the move and crushes on landing.
+### 🐎 Cavalier — "Charge and trample through the ranks." (#f59e0b)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `w_fleet` | Double-Step | gain a double-step card: dash up to 2 tiles in any direction (capturing at the end), cooldown 3 | `gainCard:doublestep, gainCooldown:3` |
+| 1 | `w_fleet` | Double-Step | gain a double-step card: dash up to 2 tiles any direction (capturing at the end), cd 3 | `gainCard:doublestep, gainCooldown:3` |
 | 2 | `w_pierce` | Pierce | a kill by moving also strikes the foe directly behind it | `meleePierce` |
-| 3 | `w_trample` | Trample | landing a knight leap HURLS every adjacent foe back a tile (collision rules apply — see Knockback) | `leapShock` |
+| 3 | `w_trample` | Trample | landing a knight leap HURLS every adjacent foe back a tile (Knockback rules), not a hit-in-place | `leapShock` |
 
-### 🛡 Duellist — the flashy fencer.
-A show-off who fights with tempo and a signature dash.
+### 🛡 Duellist — the flashy fencer. (#ec4899)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `w_enpassant` | En Passant | gain an en-passant card (cd 3): step 1 tile in any direction (capturing a foe there) AND strike one foe "in passing" — a piece that was beside your starting tile (marked ✕ while aiming) | `gainCard:enpassant` |
+| 1 | `w_enpassant` | En Passant | gain an en-passant card: step 1 tile (capturing there) AND strike one foe you pass (adjacent to your start) | `gainCard:enpassant` |
 | 2 | `w_flourish` | Flourish | after a kill, foes beside you are caught off guard (surprised) | `meleeFlourish` |
-| 3 | `w_rush` | Charge | the FIRST move that kills each turn costs no turn (further kill-moves that turn cost a turn as usual) | `freeKillMove` |
+| 3 | `w_rush` | Charge | the FIRST move that kills each turn costs no turn (further kill-moves that turn cost a turn) | `freeKillMove` |
 
 ---
 
-## RANGER — the Hunter  (ranged · start: rook, cooldown 5 · 4 HP)  ✅ IMPLEMENTED
-_A hunter who fells foes from across the room._
+## RANGER — the Hunter  (ranged · start: **rook**, cooldown 5 · **5 HP**)
+_A hunter who fells foes from across the room._ Ranged cards fire a single shot to the first foe,
+blocked by cover / the first body. (HP was raised 4 → 5 once foes began closing in to melee.)
 
-### 🌲 Druid — "Weather any storm the wild throws at you."
-The survivalist who masters the terrain, then becomes the beast.
+### 🌲 Druid — the survivalist who masters the wild, then becomes the beast. (#16a34a)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_wade` | Winged Boots | water no longer slows your moves or blocks your cards, AND lava no longer burns you | `terrainImmune` |
-| 2 | `r_xray` | Sixth Sense | your vision and ranged/spell shots pass through walls — you spot and pick off foes behind cover while they stay blind to you (ONE-WAY); you still can't reach them in melee | `seeThroughWalls` |
-| 3 | `r_promo` | Promotion | gain a promotion card (free to cast, cooldown 9): for 3 turns become an INVINCIBLE warhorse — leap like a knight (and step a tile), take 0 damage, use no weapon cards | `gainCard:promotion`, `gainCooldown:9` |
+| 1 | `r_wade` | **Fairy Wings** | flit over water, lava, AND pits — walk, card, or leap onto/across them freely: no slow, no burn, no falling | `terrainImmune` |
+| 2 | `r_xray` | **Wild Empathy** | enemy & mini-boss **knights and amazons** (never a floor boss) never attack you — and the instant you SEE one it bows and JOINS your side, fighting as your ally (striking one breaks the bond) | `beastFriend` |
+| 3 | `r_promo` | **Animal Form** | gain an Animal Form card (cd 9): become an INVINCIBLE **amazon-beast** (slides like a queen AND leaps like a knight) for 3 turns — take 0 damage, play no cards | `gainCard:promotion, gainCooldown:9` |
 
-### 🎯 Deadeye — "One shot. Then another, before they blink."
-Reach, sight, and foreknowledge.
+### 🎯 Oracle — the seer: see through cover, then one-way sight-and-reach, twice. (#14b8a6)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_eyes2` | Hawk Eyes | +1 sight radius | `vision:2` |
-| 2 | `r_reach` | Power Draw | +1 card reach | `cardReach:1` |
-| 3 | `r_eagle` | Premonition | continually see the ENTIRE floor — terrain, stair, key, and every enemy (out of sight, faded); PLUS +1 sight radius and +1 card reach | `revealFloor`, `vision:2`, `cardReach:1` |
+| 1 | `r_eagle` | **Premonition** | within your sight radius you SEE and SHOOT straight through walls, boulders, and devilgrass — cover no longer blinds you. ONE-WAY: a foe with a wall between you can't strike back (but it wakes and starts closing in) | `seeThroughWalls` |
+| 2 | `r_eyes2` | Hawk Eyes | +1 sight radius AND +1 card reach — the extra sight is **ONE-WAY** | `visionOneWay:2, cardReach:1` |
+| 3 | `r_reach` | Power Draw | +1 sight radius AND +1 card reach again — the extra sight is likewise one-way | `visionOneWay:2, cardReach:1` |
 
-### 🌑 Gloom Stalker — "Seen only when it's already too late."
-The ghost: unchased, ignored by structures, unnoticed.
+_Premonition grants **`seeThroughWalls`** (see + shoot through cover within radius). Hawk Eyes & Power Draw grant **`visionOneWay`** — sight that extends the king's DISPLAY window but not his awareness "footprint" (`getVisibleBounds` vs `getAwarenessBounds`). Foes seen through cover, OR out in the extended band, can't see/strike him — they only start **closing in** (they pursue, but can't attack until they get a clear, in-range line). Both safe zones are drawn with a cyan wash so the "safe to shoot" tiles are obvious. (The bot has effective wallhack, so it can't leverage any of this — expect Oracle to score low on the bot but play strong for a human.)_
+
+### 🌑 Gloom Stalker — the ghost: unchased, ignored, unnoticed. (#6366f1)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_ghost` | Ghost | foes stop chasing once you leave their sight | `noChase` |
-| 2 | `r_camo` | Camouflage | turrets and summoning circles ignore you | `camouflage` |
-| 3 | `r_stealth` | Silent | unaware foes MORE than one tile away never notice you (they roam showing "?"); any within one tile detects you normally (surprised on first sight). Attacking gives you away to all visible foes | `stealth` |
+| 1 | `r_ghost` | Ghost | foes stop chasing the instant you break their sight | `noChase` |
+| 2 | `r_camo` | Camouflage | **turrets** are BLIND to you (a sleep "z") and never fire; a turret only wakes if you STRIKE it, and it dozes off again the moment you leave its firing line. **Summoning circles** likewise never conjure while you're hidden (step on one to dispel it) | `camouflage` |
+| 3 | `r_stealth` | Silent | unaware foes MORE than one tile away never notice you (they roam showing "?"); any within one tile detects you normally. Attacking gives you away | `stealth` |
 
-### 🏹 Fletcher — "A bow for every range, and the feet to use them."
-The quartermaster: a big bow first, then reload, then kickback.
+### 🏹 Marksman — the sharpshooter: kickback, a big bow, then exploding shots. (#a3e635)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_longbow` | Ballista | gain a queen card (cooldown 9) — a devastating volley in any direction | `gainCard:queen`, `gainCooldown:9` |
-| 2 | `r_reload` | Reload | gain a reload card: spend a turn to recharge all your OTHER cards (cooldown 3) | `gainCard:reload` |
-| 3 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile where the ground behind it is clear (structures don't budge) | `recoil` |
+| 1 | `r_recoil` | Recoil | firing a weapon card kicks you one tile back from the target (striking a foe there) AND shoves every adjacent foe back one tile where the ground behind it is clear | `recoil` |
+| 2 | `r_longbow` | Ballista | gain a queen card (cd 9) — a devastating volley in any direction | `gainCard:queen, gainCooldown:9` |
+| 3 | `r_shrapnel` | Shrapnel | every weapon card you fire SHATTERS on impact — striking every foe adjacent to the tile you hit, on top of the target | `shrapnel` |
 
-_Ranger changes: starter is now a ROOK (cd 5, swapped with the Sorcerer's old rook); Fletcher grants the QUEEN at T1 (cd 9) then Reload at T2. DROPPED the old HP chain (r_hp1/2, r_bulwark), Quick Draw (r_rapid), Keen Eyes (r_eyes1), Shortbow (r_bow), and Fleet (r_fleet)._
+_The old **Fletcher** chain (Reload → Ballista → Recoil) became **Marksman** (Recoil → Ballista → Shrapnel). **Reload was dropped**; Recoil moved to T1 (back to its knockback behaviour); new T3 **Shrapnel** is an on-impact splash._
 
 ---
 
-## SORCERER — the Wizard  (spell · start: bishop, cooldown 3 · 3 HP)  ✅ IMPLEMENTED
-_A fragile caster whose bolts pierce straight through the ranks — his mighty cards make up for his low HP._
-The starting bishop (cd 3, swapped with the Ranger's old bishop) pierces every tile en route to (and including) the target, diagonally.
+## SORCERER — the Wizard  (spell · start: **bishop**, cooldown 3 · **4 HP**)
+_A fragile caster whose bolts PIERCE the whole path._ The bishop scorches every tile along its
+diagonal, hitting every unit on the line. (HP was raised 3 → 4 once foes began closing in.)
 
-### 🔮 Translocations — cyan — the blink-mage: dodge, phase, displace.
+### 🔮 Translocations — the blink-mage: dodge, phase, displace. (#22d3ee)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
 | 1 | `s_blink` | Blink | when a foe hits you, blink to a random safe tile in sight (if any) | `blink` |
-| 2 | `s_phase` | Phase | move onto wall tiles; while embedded your sight shrinks to 1 | `phase` |
-| 3 | `s_swap` | Displacement | gain a swap card: trade places with any unit in sight (cooldown 3); arriving knocks every other adjacent foe back a tile | `gainCard:swap`, `gainCooldown:3` |
+| 2 | `s_phase` | Phase | move onto **wall AND ice** tiles; while embedded in opaque cover (a wall or boulder) your sight shrinks | `phase` |
+| 3 | `s_swap` | Displacement | gain a swap card (cd 3): trade places with any unit in sight; arriving knocks every OTHER adjacent foe back a tile | `gainCard:swap, gainCooldown:3` |
 
-### 💫 Hexes — fuchsia — the curse-weaver: demote, dazzle, lull.
+### 💫 Hexes — the curse-weaver: demote, dazzle, lull. (#e879f9)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_hex` | Hex | at the start of each turn, one adjacent foe is warped into a confused (startled) pawn — pawns and bosses are immune | `hexDemote` |
+| 1 | `s_hex` | Hex | at the start of each turn, one adjacent foe is warped into a confused **ferz** (a feeble 1-step diagonal mover); bosses & structures are immune | `hexDemote` |
 | 2 | `s_cata` | Cataclysm | every visible foe is surprised when you cast a spell | `spellSurprise` |
-| 3 | `s_slumber` | Slumber | non-boss foes adjacent to you fall asleep (blue "z" icon); with Hex (T1), a hexed pawn drops straight to sleep instead of merely confused | `sleepAura` |
+| 3 | `s_slumber` | Slumber | non-boss foes adjacent to you fall asleep (blue "z"); with Hex, a hexed foe drops straight to sleep | `sleepAura` |
 
-### 🌀 Conjuration — violet — the artillery-mage: reach, a phantom steed, a double cast.
+_Hex now warps foes into a **ferz** (not a "pawn" as the old draft said)._
+
+### 🌀 Conjuration — the artillery-mage: a blast, a phantom steed, a double cast. (#8b5cf6)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_amp` | Amplify | +1 card reach | `cardReach:1` |
-| 2 | `s_staff` | Phantom Steed | gain a horse card: a spectral steed tramples an L-shaped path (aimed via spell targeting at a knight's-move tile), scorching every foe along it — it does NOT move the king (cooldown 4) | `gainCard:horse`, `gainCooldown:4` |
-| 3 | `s_barrage` | Double Cast | after firing a spell, if a targetable foe remains you may aim + fire once more before your turn ends (cancelling the aim ends the turn) | `doubleCast` |
+| 1 | `s_amp` | **Blast** | every spell also detonates on 3 RANDOM tiles beside your target — collateral fire (each tile scorched exactly like a bolt-path tile) | `spellBlast` |
+| 2 | `s_staff` | Phantom Steed | gain a horse card (cd 4): a spectral steed tramples an L-shaped path (aimed via spell targeting), scorching every foe along it — it does NOT move you | `gainCard:horse, gainCooldown:4` |
+| 3 | `s_barrage` | Double Cast | after firing a spell, if a targetable foe remains you may aim + fire once more before your turn ends | `doubleCast` |
 
-### 🔥 Necromancy — necro-green — the summoner: a familiar, then undead, then a General.  ✅ IMPLEMENTED
+_T1 was formerly **Amplify** (+1 card reach); it is now **Blast** (AoE) — the reach bonus is gone from this chain._
+
+### 🔥 Necromancy — the summoner: a familiar, then undead, then a General. (#65a30d)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_familiar` | Familiar | summon a berolina ally that follows you, auto-attacks foes, swaps places when you step onto it, and respawns each floor / when no foe is in sight (your AOE dispels it) | `familiar` |
-| 2 | `s_undead` | Grave Bond | a foe you slay rises as an undead ally — one at a time; when it dies the next kill replaces it. Undead don't follow you downstairs | `necromancy` |
-| 3 | `s_general` | General | your familiar is upgraded to a General — a king that can also leap like a knight | `generalForm` |
+| 1 | `s_familiar` | Familiar | summon a berolina ally that follows you, auto-fights foes, swaps places when you step onto it, and respawns each floor / when no foe is in sight | `familiar` |
+| 2 | `s_undead` | Grave Bond | a foe you slay rises as an undead ally — one at a time (the next kill replaces it); undead don't follow you downstairs | `necromancy` |
+| 3 | `s_general` | Undead General | your familiar upgrades to a General — a king that can also leap like a knight | `generalForm` |
 
-_Allies are green tokens with a ♥ mark; enemies (and bosses) will strike them down but always prefer the king when they can reach both._
+_Allies are green tokens with a ♥; enemies will cut them down but always prefer the king when they can reach both._
 
-## KNOCKBACK — one consistent collision rule  ✅ IMPLEMENTED
+---
+
+## COMBAT NOTE — ranged sliders close in
+
+Every enemy (and non-ranged guardian) that can reach the king by SLIDING — rook/bishop/queen —
+now **slides up to the tile beside him and then strikes**, rather than sniping from across the
+room. Only **Volley/Sorcerer guardians** (below) and **turrets** attack from range.
+
+## KNOCKBACK — one consistent collision rule
 
 Every knockback source shares the same behaviour (`resolveShoveInto` / `knockbackEnemy` /
-`knockbackKing` in `game.js`). When a shoved piece is driven into a tile that already holds
-a unit, it **slams** into it:
-- an **ordinary piece or ally** is crushed (destroyed), and the shover takes its tile;
-- an **HP-bearing piece** (boss, turret, or the king) withstands it — it takes 1 damage and
-  the shover **stops short**, merely bumping it;
-- a **wall / lava / board edge** (or a surviving occupant) halts the shove in place.
+`knockbackKing` in `game.js`). When a shoved piece is driven into an occupied tile it **slams**:
+- an **ordinary piece or ally** is crushed (destroyed) and the shover takes its tile;
+- an **HP-bearing piece** (boss, turret, or the king) withstands it — takes 1 damage and the
+  shover **stops short**;
+- a **wall / ice / boulder / lava / board edge** (or a surviving occupant) halts the shove.
 
-A foe the **king** is driven into counts as the king's kill (boon / Necromancy). Sources:
-jumper captures & the **Bulwark** boss perk (shove the king), and **Recoil**, **Trample**,
-and **Displacement** (shove adjacent foes).
+A foe the **king** is driven into counts as his kill (boon / Necromancy). Sources: jumper captures,
+the **Bulwark** boss perk, **Recoil**, **Trample**, **Displacement**, and a rolling **boulder**.
 
-## BOSS PERKS — one rolled per floor guardian  ✅ IMPLEMENTED
+## BOSS PERKS — one rolled per floor guardian (12 possible)
 
-Every floor boss rolls **one** perk at creation (see `BOSS_PERKS` in `constants.js`,
+Every floor boss (and mini-boss) rolls **one** perk at creation (`BOSS_PERKS` in `constants.js`;
 `createBoss` / `bossMove` / `damageBoss` in `game.js`). Shown in the Examine panel.
 
 | id | name | effect |
 |---|---|---|
-| `summoner` | Summoner | every third turn it conjures a minion of its **own** kind instead of acting |
-| `blinker` | Blinkborn | flickers to a random tile a few squares off after each wound (never into melee) |
-| `brutal` | Brutal | its blows (melee, knockback) deal **2** damage instead of 1 |
-| `ranged` | Volley | when the king stands on an open orthogonal/diagonal line, it looses a bolt (1 dmg) instead of closing; a body or wall in the lane stops the shot |
-| `sorcerer` | Sorcerer | like Volley but the bolt **pierces** every unit on the path — wounding the king and cutting down any ally/minion in the way (walls still stop it) |
-| `knockback` | Bulwark | its capturing blow shoves the king backward (like a jumper) every time |
-| `shapeshifter` | Shifting | after each wound it morphs into a **random lesser** form (never ranked above its original kind) |
+| `summoner` | Summoner | conjures a minion of its own kind every third turn instead of acting |
+| `blinker` | Blinkborn | flickers away to a random tile a few squares off after each wound (never into melee) |
+| `brutal` | Brutal | its blows land twice as hard (2 damage) |
+| `ranged` | Volley | looses a bolt (1 dmg) down an open orthogonal/diagonal line instead of closing; a body or wall stops the shot |
+| `sorcerer` | Sorcerer | like Volley but the bolt PIERCES every unit on the path (walls still stop it) |
+| `knockback` | Bulwark | its capturing blow hammers the king backward (like a jumper) every time |
+| `shapeshifter` | Shifting | morphs into a random LESSER form after each wound |
 | `tough` | Hardened | +3 max HP |
-| `leech` | Leech | heals 1 HP each time it wounds the king (a landed blow — melee, shove, or bolt; never past max) |
+| `leech` | Leech | heals 1 HP each time it wounds the king |
+| `flying` | Winged | soars over pits, water, and lava unharmed |
+| `phasing` | Phantom | sees and drifts through walls and boulders |
+| `regen` | Regenerating | knits one wound shut every fourth turn |

@@ -135,7 +135,7 @@ const TUTORIALS = {
     text:
       'You CAN cross lava, but it sears you for 1 HP each turn you end standing on it — ' +
       'so dash across, never linger. Enemies wade it freely (it shields them). It does ' +
-      'not block sight. (Winged Boots makes you immune to the burning.)',
+      'not block sight. (Fairy Wings makes you immune to the burning.)',
   },
   'terrain-pit': {
     title: 'Pits',

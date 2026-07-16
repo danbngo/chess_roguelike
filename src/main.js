@@ -150,7 +150,7 @@
     const p = gameState.player;
     floorLabel.textContent = `Floor ${toRoman(gameState.floor)} · ${playerTitle(p)}`; // subclass name once committed
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
-    turnLabel.textContent = `Turn ${gameState.turn}${p.promotion > 0 ? ` · ♞ Warhorse ${p.promotion}` : ''}`;
+    turnLabel.textContent = `Turn ${gameState.turn}${p.promotion > 0 ? ` · ♛ Beast Form ${p.promotion}` : ''}`;
     renderHearts(p.hp, p.maxHp);
     renderLevelBadges(p.level || 1);
     logMessage(gameState.message);

@@ -1889,12 +1889,16 @@ const Renderer = (function () {
       miniCtx.fill();
     };
     const r = Math.max(1.4, cell * 0.42);
-    const seesAllMini = Boolean(state.player.revealFloor);
+    const seesAllMini = Boolean(state.player.seeAllFoes);
     for (const e of state.enemies || []) {
       if (visible.has(`${e.x},${e.y}`)) blip(e.x, e.y, '#ef4444', r);
-      else if (seesAllMini && (explored[`${e.x},${e.y}`])) blip(e.x, e.y, '#7f1d1d', r); // Premonition: dim red
+      else if (seesAllMini) blip(e.x, e.y, '#7f1d1d', r); // Premonition radar: every foe, dim red, straight through fog
     }
     for (const a of state.allies || []) blip(a.x, a.y, '#34d399', r); // allies — green
+    // The floor key: shown once spotted, OR through the fog with Premonition (a gold blip).
+    if (state.key && !state.key.collected && (visible.has(`${state.key.x},${state.key.y}`) || explored[`${state.key.x},${state.key.y}`] || seesAllMini)) {
+      blip(state.key.x, state.key.y, '#fde047', r);
+    }
     blip(state.player.x, state.player.y, '#22c55e', r + 0.7);
 
     // A faint frame marking the slice of the level currently on screen.
@@ -1926,6 +1930,13 @@ const Renderer = (function () {
 
     const world = state.worldSize;
     const bounds = getVisibleBounds(state);
+    const awareBounds = getAwarenessBounds(state); // his TWO-WAY footprint (foes here can strike back)
+    const oneWayActive = Boolean(state.player.visionOneWay); // Oracle extended (one-way) sight in play
+    const seeThrough = Boolean(state.player.seeThroughWalls); // Premonition: see/shoot through cover (one-way)
+    // A lit tile is a SAFE one-way firing zone if it lies out in the extended Oracle band, or if the
+    // king only sees it THROUGH cover (his normal line to it is blocked) — a foe there can't hit back.
+    const oneWaySafe = (x, y) => (oneWayActive && !isWithinBounds(awareBounds, x, y))
+      || (seeThrough && !hasLineOfSight(state, state.player.x, state.player.y, x, y, false));
     const threatened = getThreatenedTiles(state);
     const visible = computeVisibleTiles(state);
     const lit = (x, y) => visible.has(`${x},${y}`);
@@ -2008,6 +2019,11 @@ const Renderer = (function () {
           // Out of the king's line of sight: dim it and hide what lurks there.
           ctx.fillStyle = 'rgba(2, 6, 23, 0.64)';
           ctx.fillRect(px, py, tileSize, tileSize);
+        } else if (oneWaySafe(x, y)) {
+          // A SAFE one-way firing zone (Oracle extended band, or a tile seen only through cover):
+          // the king can shoot here but foes here can't hit him back. A cyan wash marks it apart.
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.13)';
+          ctx.fillRect(px, py, tileSize, tileSize);
         }
       }
     }
@@ -2064,7 +2080,8 @@ const Renderer = (function () {
     // The floor key / Orb of Victory: shown when in sight, or faded once discovered (persists in fog).
     if (state.key && !state.key.collected) {
       const seen = lit(state.key.x, state.key.y);
-      if (seen || state.key.discovered) {
+      // Premonition (seeAllFoes) reveals the key straight through the fog (drawn faded).
+      if (seen || state.key.discovered || state.player.seeAllFoes) {
         if (state.key.orb) drawOrb(state.key.x, state.key.y, !seen);
         else drawKey(state.key.x, state.key.y, !seen);
       }
@@ -2105,11 +2122,11 @@ const Renderer = (function () {
 
     // Visible enemies, with those currently mid-move (e.g. a knight in the middle
     // of a leap) drawn last so they ride visibly over the pieces they pass over.
-    // Premonition (revealFloor): ALL enemies on the (fully-revealed) floor are shown —
-    // the out-of-sight ones faded, so the player has full battlefield awareness even
-    // though he can still only target within his normal sight.
-    const seesAll = Boolean(state.player.revealFloor);
-    const shown = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY) || (seesAll && isExplored(enemy.targetX, enemy.targetY)));
+    // Premonition (seeAllFoes): EVERY enemy on the floor is shown as a radar blip, straight
+    // through the fog — the out-of-sight ones faded, so the player has full foe awareness even
+    // though he can still only target within his sight.
+    const seesAll = Boolean(state.player.seeAllFoes);
+    const shown = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY) || seesAll);
     const isMoving = (enemy) => Math.abs(enemy.x - enemy.targetX) + Math.abs(enemy.y - enemy.targetY) > 0.05;
     const ordered = [...shown.filter((enemy) => !isMoving(enemy)), ...shown.filter(isMoving)];
     // A unit's gore lives on the live state object (render objects only track position), so
@@ -2171,7 +2188,7 @@ const Renderer = (function () {
           ? (CLASSES[highestClass(state.player)] || {}).color
           : null;
     // While Promoted the king shows as an amazon (he moves and fights as one).
-    const playerGlyph = state.player.promotion > 0 ? 'knight' : 'king'; // an invincible warhorse while promoted
+    const playerGlyph = state.player.promotion > 0 ? 'amazon' : 'king'; // an invincible amazon while in Animal Form
     drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor, blood: woundBlood(state.player) });
     if (state.player.warded) {
       drawWardMark(playerRender.x, playerRender.y);

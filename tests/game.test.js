@@ -603,8 +603,10 @@ test('a missile (ranged/spell) does NOT dispel a summoning circle — only stepp
 
 test('classes start with different HP (Warrior sturdiest, Sorcerer frailest)', () => {
   assert.equal(createPlayer('warrior').maxHp, 5);
-  assert.equal(createPlayer('ranger').maxHp, 4);
-  assert.equal(createPlayer('sorcerer').maxHp, 3);
+  assert.equal(createPlayer('ranger').maxHp, 5); // buffed 4->5 (foes now close in, so a ranged hunter needs a buffer)
+  assert.equal(createPlayer('sorcerer').maxHp, 4); // buffed 3->4
+  // Warrior is still no frailer than the others; Sorcerer no sturdier.
+  assert.ok(createPlayer('warrior').maxHp >= createPlayer('sorcerer').maxHp);
 });
 
 test('the king CAN cross lava now, but it sears him 1 HP per turn (Winged Boots negates it)', () => {
@@ -747,22 +749,17 @@ test('Winged Boots lets the king step over a pit', () => {
   assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 11, y: 10 }, 'the king stands over the pit');
 });
 
-test('Wild Empathy: a wild knight/amazon won\'t attack until struck; the king can displace it', () => {
+test('Wild Empathy: a wild knight/amazon in sight JOINS the king as an ally (never attacks)', () => {
   const s = rangerWith('r_wade', 'r_xray'); // Druid: r_xray is now Wild Empathy (beastFriend)
   assert.equal(s.player.beastFriend, true);
   s.terrain = {};
   s.player.x = 10; s.player.y = 10; s.player.hp = 4; s.player.maxHp = 4;
-  const beast = makeEnemy({ kind: 'knight', x: 11, y: 12, awake: true }); // a knight a jump away
+  const beast = makeEnemy({ kind: 'amazon', x: 11, y: 12, awake: true }); // a wild amazon in view
   s.enemies = [beast];
-  // On the enemy phase it roams instead of pouncing — no damage to the king.
   const after = beginEnemyPhase(s).state;
-  assert.equal(after.player.hp, 4, 'the befriended knight does not attack');
-  // The king DISPLACES it by stepping onto its tile — they swap, no blow struck.
-  let s2 = structuredClone(s);
-  s2.enemies = [makeEnemy({ kind: 'knight', x: 11, y: 10, awake: true })]; // adjacent (east)
-  const disp = movePlayerTo(s2, 11, 10);
-  assert.deepEqual({ x: disp.player.x, y: disp.player.y }, { x: 11, y: 10 }, 'the king takes its tile');
-  assert.ok(disp.enemies.some((e) => e.x === 10 && e.y === 10 && e.kind === 'knight'), 'and the beast is displaced to his old tile');
+  assert.equal(after.player.hp, 4, 'the wild beast never strikes the king');
+  assert.ok(!after.enemies.some((e) => e.id === beast.id), 'it leaves the enemy ranks');
+  assert.ok((after.allies || []).some((a) => a.kind === 'amazon'), 'and joins his side as an amazon ally');
 });
 
 test('Phase lets the king move through a boulder just like a wall', () => {
@@ -1262,28 +1259,28 @@ test('Wild Empathy: a floor BOSS is never tamed, and striking a beast provokes i
   assert.equal(isBefriendedBeast(s, mini), false, 'once struck it is no longer friendly');
 });
 
-test('Promotion: a free cast that becomes an INVINCIBLE warhorse and locks cards', () => {
+test('Animal Form: a free cast that becomes an INVINCIBLE amazon-beast and locks cards', () => {
   const s = rangerWith('r_wade', 'r_xray', 'r_promo');
   const bi = s.player.cards.findIndex((c) => c.kind === 'promotion');
-  assert.equal(s.player.cards[bi].cooldown, 9, 'the promotion card has a long cooldown');
-  const horse = useCard(s, bi, s.player.x, s.player.y);
-  assert.equal(horse.player.promotion, 3);
-  assert.equal(horse.enemyTurn, false, 'casting it costs no turn');
-  const moves = getPlayerMoves(horse);
-  assert.ok(moves.some((m) => m.viaJump), 'the warhorse can knight-leap');
-  assert.ok(moves.some((m) => !m.viaJump), 'and still step a single tile');
-  assert.ok(!moves.some((m) => Math.abs(m.x - horse.player.x) + Math.abs(m.y - horse.player.y) > 3), 'but no long queen-slides');
-  assert.equal(useCard(horse, 0, 12, 12).lastAction, 'blocked', 'no weapons while promoted');
-  // Invincible: an enemy blow deals no damage during the horse form.
-  horse.player.x = 10; horse.player.y = 10;
-  horse.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true })];
-  const hp0 = horse.player.hp;
-  const r = beginEnemyPhase(horse);
+  assert.equal(s.player.cards[bi].cooldown, 9, 'the Animal Form card has a long cooldown');
+  const beast = useCard(s, bi, s.player.x, s.player.y);
+  assert.equal(beast.player.promotion, 3);
+  assert.equal(beast.enemyTurn, false, 'casting it costs no turn');
+  const moves = getPlayerMoves(beast);
+  assert.ok(moves.some((m) => m.viaJump), 'the amazon-beast can knight-leap');
+  assert.ok(moves.some((m) => Math.abs(m.x - beast.player.x) + Math.abs(m.y - beast.player.y) > 3), 'AND slides far like a queen');
+  assert.equal(useCard(beast, 0, 12, 12).lastAction, 'blocked', 'no weapons while transformed');
+  // Invincible: an enemy blow deals no damage during Animal Form.
+  beast.player.x = 10; beast.player.y = 10;
+  beast.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true })];
+  const hp0 = beast.player.hp;
+  const r = beginEnemyPhase(beast);
   let st = r.state;
   for (const id of r.moverIds) st = moveEnemy(st, id);
-  assert.equal(st.player.hp, hp0, 'the warhorse takes no damage');
+  assert.equal(st.player.hp, hp0, 'the invincible beast takes no damage');
   // The timer counts down each turn the king acts.
-  const after = movePlayerTo(horse, moves.find((m) => !m.viaJump).x, moves.find((m) => !m.viaJump).y);
+  const step = getPlayerMoves(beast).find((m) => !m.viaJump);
+  const after = movePlayerTo(beast, step.x, step.y);
   assert.equal(after.player.promotion, 2, 'the timer counts down each turn');
 });
 
@@ -1324,41 +1321,80 @@ test('Vampiric Edge heals only when a strike fells two foes at once (Cleave supp
   assert.equal(one.player.hp, 3, 'a lone kill does not heal');
 });
 
-test('Reload readies every other card; Ballista grants a queen (cd9); Recoil kicks back', () => {
-  const s = rangerWith('r_reload', 'r_longbow');
+test('Marksman: Recoil (T1) kicks back + knocks adjacent foes away; Ballista (T2) grants a queen (cd9)', () => {
+  const s = rangerWith('r_recoil', 'r_longbow'); // T1 Recoil, T2 Ballista
   const queen = s.player.cards.find((c) => c.kind === 'queen');
   assert.equal(queen.cooldown, 9, 'the Ballista queen keeps the queen’s own cooldown (9)');
-  const rook = s.player.cards.find((c) => c.kind === 'rook'); // the Ranger's starting rook
+  const rook = s.player.cards.find((c) => c.kind === 'rook');
   assert.equal(rook.cooldown, 5, 'the starting rook is cooldown 5');
-  rook.remaining = 3; queen.remaining = 8;
-  const ri = s.player.cards.findIndex((c) => c.kind === 'reload');
-  const reloaded = useCard(s, ri, s.player.x, s.player.y);
-  assert.equal(reloaded.player.cards.find((c) => c.kind === 'rook').remaining, 0, 'the rook is ready again');
-  assert.equal(reloaded.player.cards.find((c) => c.kind === 'queen').remaining, 0, 'the queen is ready again');
-  assert.equal(reloaded.enemyTurn, true, 'reload spends the turn');
-
-  const rec = rangerWith('r_reload', 'r_longbow', 'r_recoil');
-  rec.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10 })];
+  // Recoil: shoot east; the archer kicks one tile WEST and shoves adjacent foes away (not kills).
+  const rec = rangerWith('r_recoil');
+  rec.terrain = {};
+  rec.player.x = 10; rec.player.y = 10;
+  rec.enemies = [
+    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }), // the shot target (E)
+    makeEnemy({ kind: 'pawn', x: 8, y: 11, awake: true }),  // adjacent to the recoil landing (9,10), open behind
+  ];
   const rookIdx = rec.player.cards.findIndex((c) => c.kind === 'rook');
-  const shot = useCard(rec, rookIdx, 12, 10); // rook shot east; recoil west to (9,10)
-  assert.deepEqual({ x: shot.player.x, y: shot.player.y }, { x: 9, y: 10 });
-  assert.equal(shot.enemies.length, 0);
+  const shot = useCard(rec, rookIdx, 12, 10);
+  assert.deepEqual({ x: shot.player.x, y: shot.player.y }, { x: 9, y: 10 }, 'the archer recoils west');
+  assert.ok(!shot.enemies.some((e) => e.x === 12 && e.y === 10), 'the shot target falls');
+  assert.ok(shot.enemies.some((e) => e.x === 7 && e.y === 12), 'the adjacent foe is SHOVED back a tile (alive, not cut down)');
 });
 
-test('Deadeye chain: Premonition (T1 true-sight) → Hawk Eyes (+sight) → Power Draw (+reach)', () => {
+test('Oracle chain: Premonition (see/shoot through cover, one-way) → Hawk Eyes / Power Draw', () => {
   const base = createInitialState('ranger').player;
-  // Premonition is now T1 and grants true-sight (see through cover within radius, no shooting).
+  // Premonition: see AND shoot through cover within sight (seeThroughWalls) — one-way.
   const p1 = rangerWith('r_eagle');
-  assert.equal(p1.player.trueSight, true, 'Premonition grants true-sight');
-  assert.ok(!p1.player.seeThroughWalls, 'but NOT shooting through cover');
-  // Premonition lets the king SEE a foe behind a wall (visibility only).
-  p1.player.x = 10; p1.player.y = 10;
-  p1.terrain = { '11,10': 'wall' };
-  assert.equal(inLineOfSight(p1, 12, 10), true, 'sight passes over the wall');
-  // Full chain adds +1 sight radius (Hawk Eyes) and +1 card reach (Power Draw).
+  assert.equal(p1.player.seeThroughWalls, true, 'Premonition grants see/shoot through cover');
+  p1.player.x = 10; p1.player.y = 10; p1.terrain = { '11,10': 'wall' };
+  assert.equal(inLineOfSight(p1, 12, 10), true, 'his sight passes through the wall');
+  p1.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true })]; // a foe behind the wall
+  const rookIdx = p1.player.cards.findIndex((c) => c.kind === 'rook');
+  assert.ok(getCardMoves(p1, p1.player.cards[rookIdx]).some((m) => m.x === 12 && m.y === 10), 'and he can SHOOT it through the wall');
+  // ...but ONE-WAY: the walled-off foe can't see the king back.
+  assert.equal(enemyAwareOfKing(p1, 12, 10), false, 'the foe behind the wall cannot see the king');
+  // Hawk Eyes AND Power Draw EACH grant +1 sight radius (ONE-WAY) and +1 card reach.
   const s = rangerWith('r_eagle', 'r_eyes2', 'r_reach');
-  assert.equal(s.player.vision, base.vision + 2, 'one +1-radius sight bump');
-  assert.equal(s.player.cardReach, 1, 'one +1 card-reach bump');
+  assert.equal(s.player.vision, base.vision + 4, 'two +1-radius sight bumps');
+  assert.equal(s.player.cardReach, 2, 'two +1 card-reach bumps');
+  assert.equal(s.player.visionOneWay, 4, 'the extra sight is tracked as one-way');
+  // ONE-WAY: a foe out at the edge of the extended sight is SEEN but can't see the king back.
+  s.terrain = {}; s.player.x = 10; s.player.y = 10;
+  const farX = 10 + Math.floor(s.player.vision / 2); // edge of the extended display window
+  assert.equal(inLineOfSight(s, farX, 10), true, 'the king SEES the far foe (extended sight)');
+  assert.equal(enemyAwareOfKing(s, farX, 10), false, 'but the far foe cannot see the king back');
+});
+
+test('Premonition: a foe seen/shot through a wall wakes and CHASES, but can\'t hit you through it', () => {
+  const s = rangerWith('r_eagle'); // Premonition only (see/shoot through cover, one-way)
+  s.terrain = { '11,10': 'wall' };
+  s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5; s.player.className = 'ranger';
+  const rook = makeEnemy({ kind: 'rook', x: 13, y: 10, awake: true }); // behind the wall on the king's rank
+  s.enemies = [rook];
+  assert.equal(inLineOfSight(s, 13, 10), true, 'the king sees it through the wall');
+  assert.equal(enemyAwareOfKing(s, 13, 10), false, 'it cannot see the king back (a wall is between)');
+  const before = Math.abs(rook.x - 10);
+  const phase = beginEnemyPhase(s);
+  const r = phase.state.enemies.find((e) => e.kind === 'rook');
+  assert.equal(phase.state.player.hp, 5, 'it cannot strike the king through the wall');
+  assert.ok(Math.abs(r.x - 10) < before || r.y !== 10, 'but it wakes and closes in (chasing around the wall)');
+});
+
+test('Oracle one-way band: a far foe CHASES the king but cannot strike him from out there', () => {
+  const s = rangerWith('r_eagle', 'r_eyes2', 'r_reach'); // full Oracle: +4 sight (one-way)
+  s.terrain = {};
+  s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5; s.player.className = 'ranger';
+  const farX = 10 + Math.floor(s.player.vision / 2); // edge of the extended (one-way) sight, on the king's rank
+  const rook = makeEnemy({ kind: 'rook', x: farX, y: 10, awake: true });
+  s.enemies = [rook];
+  assert.equal(inLineOfSight(s, farX, 10), true, 'the king sees the far rook');
+  assert.equal(enemyAwareOfKing(s, farX, 10), false, 'the far rook cannot see the king back');
+  const before = Math.abs(rook.x - 10);
+  const phase = beginEnemyPhase(s);
+  const r = phase.state.enemies.find((e) => e.kind === 'rook');
+  assert.equal(phase.state.player.hp, 5, 'it deals no damage from the one-way band');
+  assert.ok(Math.abs(r.x - 10) < before, 'but it CLOSES IN toward the king (chases)');
 });
 
 test('the king can strike a phasing boss EMBEDDED in an adjacent wall, without moving onto it', () => {
@@ -1385,20 +1421,24 @@ test('a wall BETWEEN blocks striking an embedded foe', () => {
   assert.ok(!moves.some((m) => m.x === 12 && m.y === 10), 'the boss two walls deep is unreachable');
 });
 
-test('Recoil also shoves adjacent foes back a tile (blocked ones hold)', () => {
-  const s = rangerWith('r_reload', 'r_longbow', 'r_recoil');
-  s.terrain = { '7,10': 'wall' }; // a wall directly behind one adjacent foe
+test('Shrapnel (Marksman T3): a weapon shot shatters, striking every foe adjacent to the tile hit', () => {
+  const s = rangerWith('r_recoil', 'r_longbow', 'r_shrapnel');
+  assert.equal(s.player.shrapnel, true, 'Shrapnel is granted at T3');
+  s.terrain = {};
+  s.player.x = 10; s.player.y = 10;
   s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true }), // the shot target (E, on the rook line)
-    makeEnemy({ kind: 'pawn', x: 9, y: 9, awake: true }), // adjacent to the king's landing (9,10), open behind
-    makeEnemy({ kind: 'pawn', x: 8, y: 10, awake: true }), // adjacent, but a wall sits behind it (7,10)
+    makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true }), // the shot target (E on the rook line)
+    makeEnemy({ kind: 'pawn', x: 13, y: 9, awake: true }),  // adjacent to the target
+    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }), // adjacent to the target
+    makeEnemy({ kind: 'pawn', x: 9, y: 9, awake: true }),   // adjacent to the KING, not the target
   ];
   const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
   const r = useCard(s, idx, 13, 10);
-  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 9, y: 10 }, 'the archer recoils W');
-  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 10), 'the target falls');
-  assert.ok(r.enemies.some((e) => e.x === 9 && e.y === 8), 'the open-backed foe is shoved back a tile');
-  assert.ok(r.enemies.some((e) => e.x === 8 && e.y === 10), 'the wall-backed foe holds its ground');
+  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 10), 'the shot target falls');
+  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 9), 'a foe adjacent to the target is shredded');
+  assert.ok(!r.enemies.some((e) => e.x === 12 && e.y === 11), 'another target-adjacent foe is shredded');
+  // A foe adjacent only to the KING (far from the impact) is not shredded — Recoil merely shoves it clear.
+  assert.ok(r.enemies.some((e) => e.x === 9 && e.y === 8), 'a foe by the king (far from impact) survives, just shoved back');
 });
 
 test('Camouflage: turrets hold fire and circles conjure nothing', () => {
@@ -1464,13 +1504,13 @@ test('Blast: a spell also detonates on tiles beside its target', () => {
   assert.ok(blast.enemies.length < plain.enemies.length, 'Blast fells extra foes around the aimed tile');
 });
 
-test('Camouflage: a turret dozes (sleep) until you strike it, then it hunts', () => {
+test('Camouflage: turrets sleep, wake only when struck, and doze off again when you leave their line', () => {
   const s = rangerWith('r_ghost', 'r_camo');
   assert.equal(s.player.camouflage, true);
   s.terrain = {};
   s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5;
   s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, turret: true, hp: 3, maxHp: 3, awake: true })];
-  // On its file, but camouflaged — it dozes and never fires.
+  // On its file, but camouflaged — it dozes and never fires (mere sight doesn't wake it).
   const dozed = moveEnemy(s, s.enemies[0].id);
   assert.equal(dozed.player.hp, 5, 'the camouflaged king is safe from the dozing turret');
   assert.equal(dozed.enemies[0].dozing, true, 'it is shown dormant');
@@ -1479,12 +1519,18 @@ test('Camouflage: a turret dozes (sleep) until you strike it, then it hunts', ()
   s2.player.x = 10; s2.player.y = 9;
   s2 = movePlayerTo(s2, 10, 8);
   const t = s2.enemies.find((e) => e.turret);
-  assert.equal(t.provoked, true, 'striking wakes it for good');
+  assert.equal(t.provoked, true, 'striking wakes it');
   // Back on its file, the provoked turret locks on and fires despite camouflage.
   s2.player.x = 10; s2.player.y = 10;
   let n = moveEnemy(s2, t.id); // locks on
   n = moveEnemy(n, n.enemies.find((e) => e.turret).id); // fires
-  assert.ok(n.player.hp < 5, 'the provoked turret now blasts the king');
+  assert.ok(n.player.hp < 5, 'the provoked turret blasts the king while he stays in its line');
+  // Now slip OFF its line — it loses him, forgets, and dozes off again.
+  n.player.x = 13; n.player.y = 13; // off the turret's rank (8) and file (10)
+  const slept = moveEnemy(n, n.enemies.find((e) => e.turret).id);
+  const t2 = slept.enemies.find((e) => e.turret);
+  assert.equal(t2.dozing, true, 'off its line the turret dozes off again');
+  assert.equal(Boolean(t2.provoked), false, 'and forgets it was ever provoked');
 });
 
 test('Double Cast: a spell with a foe still in range fires once more before the turn ends', () => {
@@ -1599,12 +1645,14 @@ test('Hex converts one adjacent foe per turn into a ferz (boss/ferz immune, pawn
   assert.equal(woke.player.hp, hp0, 'a sleeping foe never strikes');
 });
 
-test('Fletcher opens with Reload (T1); the queen is T2', () => {
-  const s = rangerWith('r_reload'); // tier 1 alone
-  assert.ok(s.player.cards.some((c) => c.kind === 'reload'), 'reload is the first Fletcher grant');
+test('Marksman opens with Recoil (T1); the queen (Ballista) is T2; Shrapnel is T3', () => {
+  const s = rangerWith('r_recoil'); // tier 1 alone
+  assert.equal(s.player.recoil, true, 'Recoil is the first Marksman grant');
   assert.ok(!s.player.cards.some((c) => c.kind === 'queen'), 'the queen is NOT granted at tier 1');
-  const s2 = rangerWith('r_reload', 'r_longbow'); // tier 1 then tier 2
-  assert.ok(s2.player.cards.some((c) => c.kind === 'queen'), 'the queen arrives at tier 2');
+  const s2 = rangerWith('r_recoil', 'r_longbow'); // tier 1 then tier 2
+  assert.ok(s2.player.cards.some((c) => c.kind === 'queen'), 'the Ballista queen arrives at tier 2');
+  const s3 = rangerWith('r_recoil', 'r_longbow', 'r_shrapnel'); // full chain
+  assert.equal(s3.player.shrapnel, true, 'Shrapnel caps the chain at tier 3');
 });
 
 test('a walled-in king is wrenched to a tile that can reach the key and stair', () => {

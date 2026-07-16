@@ -63,13 +63,32 @@ function bossDefeated(state) {
   return !state.enemies.some((e) => e.boss && !e.mini && !e.rush);
 }
 
-// Wild Empathy (Druid): enemy / mini-boss KNIGHTS and AMAZONS (never a true floor boss) are
-// wild beasts that won't attack the king until he strikes one (which sets `provokedBeast`).
+// Wild Empathy (Druid): enemy / mini-boss KNIGHTS and AMAZONS (never a true floor boss) are wild
+// beasts. Out of sight they stay neutral (they never attack the king); the moment he SEES one it
+// bows and JOINS him as an ally (see charmBeasts). Striking one (setting `provokedBeast`) breaks
+// the bond and it turns hostile.
 function isBefriendedBeast(state, e) {
   if (!e || !state.player.beastFriend) return false;
   if (e.provokedBeast) return false; // he struck it — the truce is off
+  if (e.turret || e.summonCircle) return false;
   if (e.boss && !e.mini && !e.rush) return false; // a floor guardian is never tamed
   return e.kind === 'knight' || e.kind === 'amazon';
+}
+
+// Any befriended beast the king can currently SEE leaves the enemy ranks and fights at his side.
+// (Called each enemy phase; converted beasts act in the following ally phase.)
+function charmBeasts(state) {
+  if (!state.player.beastFriend) return;
+  const joining = state.enemies.filter((e) => isBefriendedBeast(state, e) && unitInSight(state, e.x, e.y));
+  if (!joining.length) return;
+  if (!Array.isArray(state.allies)) state.allies = [];
+  for (const e of joining) {
+    state.enemies = state.enemies.filter((x) => x.id !== e.id);
+    state.allies.push({ id: e.id, kind: e.kind, x: e.x, y: e.y, charmed: true });
+  }
+  state.message = joining.length === 1
+    ? `A wild ${joining[0].kind} bows to you and joins your side!`
+    : `${joining.length} wild beasts bow to you and join your side!`;
 }
 
 // The uncollected floor key sits on this tile — enemies and structures may never enter
@@ -361,7 +380,7 @@ const PERK_FLAGS = [
   'revealFloor', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
   'meleeRefund', 'meleePierce', 'leapShock', 'meleeFlourish',
-  'terrainImmune', 'seeThroughWalls', 'trueSight', 'beastFriend', 'noChase', 'camouflage', 'recoil',
+  'terrainImmune', 'seeThroughWalls', 'trueSight', 'seeAllFoes', 'beastFriend', 'noChase', 'camouflage', 'recoil', 'shrapnel',
   'blink', 'phase', 'hexDemote', 'sleepAura', 'doubleCast', 'spellBlast',
   'familiar', 'necromancy', 'generalForm',
 ];
@@ -382,7 +401,13 @@ function applyPerk(player, grants, cardColor) {
     player.maxHp += grants.maxHp;
     player.hp += grants.maxHp;
   }
-  if (grants.vision) player.vision += grants.vision;
+  if (grants.vision) player.vision += grants.vision; // a normal (two-way) sight bump
+  if (grants.visionOneWay) {
+    // Oracle: extends the king's SIGHT window but not his footprint — foes out in the new band
+    // can't see him back (see enemyAwareOfKing / getAwarenessBounds).
+    player.vision += grants.visionOneWay;
+    player.visionOneWay = (player.visionOneWay || 0) + grants.visionOneWay;
+  }
   if (grants.moveRange) player.moveRange += grants.moveRange;
   if (grants.cardReach) player.cardReach = (player.cardReach || 0) + grants.cardReach;
   if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className), grants.gainCooldown, cardColor));
@@ -404,6 +429,7 @@ function createPlayer(classKey) {
     className: CLASSES[classKey] ? classKey : 'warrior',
     moveRange: 1,
     vision: STARTING_VISION,
+    visionOneWay: 0, // how much of `vision` is one-way Oracle sight (foes there can't see the king back)
     cardReach: 0,
     promotion: 0, // turns remaining as an amazon (Ranger's Promotion); 0 = normal
     cards: [],
@@ -963,14 +989,7 @@ function generateFloor(floor, carryPlayer, score) {
   }
   state.enemies = state.enemies.filter((e) => !e.hideFailed);
 
-  // Ranger Eagle Eye: the whole floor is mapped from the outset.
-  if (player.revealFloor) {
-    for (let ry = 0; ry < WORLD_SIZE; ry += 1) {
-      for (let rx = 0; rx < WORLD_SIZE; rx += 1) state.explored[`${rx},${ry}`] = true;
-    }
-    if (state.exit) state.exit.discovered = true;
-    if (state.key) state.key.discovered = true;
-  }
+  // (The old Premonition full-floor reveal is gone — it's now a foe-radar; see seeAllFoes.)
 
   // The Necromancer's familiar rejoins him on each fresh floor (undead do not follow down).
   if (player.familiar) spawnFamiliar(state);
@@ -1187,15 +1206,11 @@ function getPlayerMoves(state) {
     moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture), push: Boolean(tile.push), embedded: Boolean(tile.embedded) });
   };
   if (p.promotion > 0) {
-    // Promotion (Druid): the king becomes an invincible WARHORSE — it leaps like a knight
-    // (and can still step a single tile) for a few turns, taking no damage and playing no
-    // cards. Click/target any reachable tile.
+    // Animal Form (Druid): the king becomes an invincible AMAZON — it slides like a queen AND
+    // leaps like a knight for a few turns, taking no damage and playing no cards. Click/target
+    // any reachable tile. (An amazon's queen-slides already include a single step in any direction.)
     const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
-    for (const t of generateMoves('knight', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
-    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-      const stops = slideStops(state, p.x, p.y, dx, dy, 1, enemyAt, isEnemy, opts);
-      if (stops.length) add(stops[0]); // a single step, so keyboard movement still works
-    }
+    for (const t of generateMoves('amazon', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
     return moves;
   }
   const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
@@ -1746,7 +1761,7 @@ function useCard(state, cardIndex, x, y) {
   if (card.kind === 'promotion') {
     p.promotion = PROMOTION_TURNS;
     card.remaining = card.cooldown;
-    next.message = 'The Ranger mounts up — an invincible warhorse storms the board!';
+    next.message = 'The Ranger takes Animal Form — an invincible amazon-beast storms the board!';
     next.enemyTurn = false;
     next.lastAction = 'card-free';
     updateDiscovery(next);
@@ -1957,8 +1972,9 @@ function useCard(state, cardIndex, x, y) {
     }
   }
 
-  // Recoil (Fletcher): a ranged/spell shot kicks the archer one tile back, away from the
-  // target — landing on (and capturing) a foe there if one blocks the step.
+  // Recoil (Marksman): a ranged/spell shot kicks the archer one tile back, away from the
+  // target — landing on (and capturing) a foe there if one blocks the step — then a shockwave
+  // SHOVES every adjacent foe back one tile (colliding with whatever's behind it).
   if (p.recoil && category !== 'melee' && !next.gameOver && !next.won) {
     const rdx = Math.sign(p.x - x);
     const rdy = Math.sign(p.y - y);
@@ -1982,6 +1998,22 @@ function useCard(state, cardIndex, x, y) {
     // Shockwave: shove every MOBILE foe (and loose boulder) now adjacent to the king back one
     // tile (away from him), colliding with whatever's behind it. Fixed structures don't budge.
     shoveAdjacentAway(next, p.x, p.y, null);
+  }
+
+  // Shrapnel (Marksman T3): a ranged/spell shot SHATTERS on impact — striking every foe adjacent
+  // to the tile it hit, on top of the target itself.
+  if (p.shrapnel && category !== 'melee' && !next.gameOver && !next.won) {
+    const frags = [];
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      if (next.gameOver || next.won) break;
+      const fx = x + dx;
+      const fy = y + dy;
+      if (fx < 0 || fx >= WORLD_SIZE || fy < 0 || fy >= WORLD_SIZE) continue;
+      frags.push({ x: fx, y: fy });
+      const felled = attackTile(next, fx, fy);
+      if (felled) { scored = true; if (isKillablePiece(felled)) realKill = true; }
+    }
+    if (next.lastShot) next.lastShot.tiles = [...(next.lastShot.tiles || []), { x, y }, ...frags]; // a burst at impact
   }
 
   // A melee reposition / En-Passant dash / Recoil can carry the king onto the key.
@@ -2354,6 +2386,7 @@ function beginEnemyPhase(state) {
   const p = next.player;
   const stealthed = Boolean(p.stealth) && !p.attacked;
   recordSeenEnemies(next);
+  charmBeasts(next); // Wild Empathy: beasts in view bow and join the king's side before the foes act
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
 
   // Slumber (Sorcerer): non-boss, non-structure foes adjacent to the king are lulled to
@@ -2416,6 +2449,13 @@ function beginEnemyPhase(state) {
             enemy.lastSeen = { x: p.x, y: p.y };
             enemy.lastSeenTtl = PURSUIT_TTL;
           }
+        } else if (inLineOfSight(next, enemy.x, enemy.y) && !p.noChase) {
+          // ONE-WAY ORACLE BAND: the king SEES this foe (and can pick it off) but it's beyond his
+          // two-way footprint, so it can't see him back. It still SENSES him closing and gives
+          // CHASE — it just can't strike from out there. (Ghost's noChase suppresses even this.)
+          enemy.lastSeen = { x: p.x, y: p.y };
+          enemy.lastSeenTtl = PURSUIT_TTL;
+          if (!pursueLastSeen(next, enemy)) wanderEnemy(next, enemy, false);
         } else {
           // Ghost (noChase): the king shakes pursuers the instant he breaks sight, so a
           // foe that has lost him wanders instead of hunting his last-seen tile.
@@ -2550,18 +2590,26 @@ function fireTurretBlast(state, turret, line) {
 }
 
 function fireTurret(state, turret) {
-  // Camouflage (Gloom Stalker): a turret can't pick out the camouflaged king — it sits DORMANT
-  // (a sleep "z") and never fires. But the spell breaks the instant he attacks it: once provoked,
-  // that turret hunts him for the rest of the floor.
-  if (state.player.camouflage && !turret.provoked) {
-    turret.aiming = false;
-    turret.dozing = true;
-    state.message = `A ${turret.kind} turret sits dormant, blind to the camouflaged king.`;
-    state.lastAction = 'enemy';
-    return state;
+  const label = turret.fire ? 'fire turret' : `${turret.kind} turret`;
+  const fireLine = turret.fire ? fireTurretLineToKing(state, turret) : null;
+  const hitsKing = turret.fire ? Boolean(fireLine)
+    : getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
+
+  // Camouflage (Gloom Stalker): a camouflaged king is INVISIBLE to turrets. A turret only ever fires
+  // if he has PROVOKED it (struck it) AND is still in its line; the instant he slips out of its
+  // sight it FORGETS him and sleeps again. Mere sight never rouses it — only a blow does.
+  if (state.player.camouflage) {
+    if (!hitsKing) turret.provoked = false; // out of its line → it dozes off and forgets him
+    if (!turret.provoked) {
+      turret.aiming = false;
+      turret.recovering = false;
+      turret.dozing = true;
+      state.message = `A ${label} sleeps, blind to the camouflaged king.`;
+      state.lastAction = 'enemy';
+      return state;
+    }
   }
   turret.dozing = false;
-  const label = turret.fire ? 'fire turret' : `${turret.kind} turret`;
   // FIRE turret's 3-beat cycle: after it fires it spends a turn RECOVERING (venting) before it
   // can lock on again. (A normal turret only aims then fires.)
   if (turret.fire && turret.recovering) {
@@ -2571,9 +2619,6 @@ function fireTurret(state, turret) {
     state.lastAction = 'enemy';
     return state;
   }
-  const fireLine = turret.fire ? fireTurretLineToKing(state, turret) : null;
-  const hitsKing = turret.fire ? Boolean(fireLine)
-    : getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
   if (!hitsKing) {
     turret.aiming = false; // the king left its line — it must re-acquire before it can fire
     state.message = `A ${label} sweeps for a target.`;
