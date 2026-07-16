@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -21,7 +21,7 @@ const {
   fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
   advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, getPieceThreats, maybeSpawnEnemy,
   ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast,
-  hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway,
+  hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -157,7 +157,7 @@ test('a boss recovers (skips a turn) after it acts — every-other-turn cadence'
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
   const boss = createBoss(3, 9, 8); // rook, adjacent to the king
-  boss.bossPerk = 'tough'; // no on-hit reaction, deterministic
+  boss.bossPerk = 'tough'; boss.bossPerks = ['tough']; // no on-hit reaction, deterministic
   boss.dormant = false; boss.spokeLine = true;
   s.enemies = [boss];
   s.player.x = 8; s.player.y = 8; s.player.hp = 5; s.player.maxHp = 5; s.player.className = 'warrior';
@@ -187,11 +187,37 @@ test('a turret alternates TARGET → FIRE → TARGET: it can never shoot two tur
   assert.ok(t4.player.hp < t3.player.hp, 'and fires again the turn after that — one shot every OTHER turn');
 });
 
+test('demon guardians bear TWO perks and the final one THREE — never two that cancel out', () => {
+  const groups = { ranged: 'attack', sorcerer: 'attack', shapeshifter: 'reaction', blinker: 'reaction' };
+  for (let i = 0; i < 60; i += 1) {
+    for (const floor of [1, 4, 5, 7, 8]) {
+      const b = createBoss(floor, 9, 8);
+      const want = floor === 8 ? 3 : (floor >= 5 ? 2 : 1);
+      assert.equal(b.bossPerks.length, want, `floor ${floor} guardian wears ${want} perk(s)`);
+      assert.ok(b.bossPerks.includes(b.bossPerk), 'the primary is one of them');
+      assert.equal(new Set(b.bossPerks).size, b.bossPerks.length, 'no perk is rolled twice');
+      // Never two from one exclusive group — the second could never fire.
+      const seen = b.bossPerks.map((p) => groups[p]).filter(Boolean);
+      assert.equal(new Set(seen).size, seen.length, `no two clashing perks (${b.bossPerks.join(', ')})`);
+      assert.equal(b.finalBoss, floor === 8, 'only the floor-8 guardian is the finale');
+    }
+  }
+  // Every perk still actually fires when carried in a SECOND slot, not just the first.
+  const b = createBoss(5, 9, 8);
+  b.bossPerks = ['flying', 'brutal'];
+  b.bossPerk = 'flying';
+  assert.equal(bossDamage(b), 2, 'Brutal in the second slot still doubles its blow');
+  // The final guardian is a far bigger pool than the floor below it.
+  const balrog = createBoss(8, 9, 8);
+  const prior = createBoss(7, 9, 8);
+  assert.ok(balrog.maxHp >= 14 && balrog.maxHp > prior.maxHp + 4, `the Balrog looms (${balrog.maxHp} vs ${prior.maxHp})`);
+});
+
 test('a Regenerating boss knits one wound shut every fourth turn', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
   const boss = createBoss(3, 15, 15); boss.dormant = false; boss.spokeLine = true;
-  boss.bossPerk = 'regen'; boss.maxHp = 6; boss.hp = 3;
+  boss.bossPerk = 'regen'; boss.bossPerks = ['regen']; boss.maxHp = 6; boss.hp = 3;
   s.enemies = [boss];
   s.player.x = 3; s.player.y = 3; // far away so it just lumbers/recovers
   let n = s;
@@ -328,7 +354,7 @@ test('a foe shoved into a pit plunges to its death; a boss clambers back out for
   b.player.x = 10; b.player.y = 8;
   b.terrain = { '14,9': 'pit' };
   const boss = createBoss(3, 13, 9); boss.dormant = false; boss.spokeLine = true; boss.hp = 4; boss.maxHp = 4;
-  boss.bossPerk = 'brutal'; // a perk with no on-hit reaction (Blinkborn/Shifting would move/morph)
+  boss.bossPerk = 'brutal'; boss.bossPerks = ['brutal']; // a perk with no on-hit reaction (Blinkborn/Shifting would move/morph)
   b.enemies = [boss];
   const rb = useCard(b, bi, 12, 9);
   const bb = rb.enemies.find((e) => e.boss);
@@ -427,7 +453,7 @@ test('a guardian roars its line AND acts the same turn (no free telegraph once i
   s.terrain = {}; s.enemies = [];
   const boss = createBoss(3, 12, 10);
   boss.kind = 'rook'; boss.originalKind = 'rook'; // a slider two tiles east — clear LOS, NOT adjacent
-  boss.bossPerk = 'leech'; // a plain 1-damage strike, no ranged/summon/knockback side-effects
+  boss.bossPerk = 'leech'; boss.bossPerks = ['leech']; // a plain 1-damage strike, no ranged/summon/knockback side-effects
   s.enemies = [boss];
   s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5; s.player.className = 'warrior';
   const n = moveEnemy(s, boss.id);
@@ -476,7 +502,7 @@ test('a Leech boss mends a wound each time it wounds the king', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
   const boss = createBoss(3, 9, 8); // rook
-  boss.bossPerk = 'leech';
+  boss.bossPerk = 'leech'; boss.bossPerks = ['leech'];
   boss.dormant = false; boss.spokeLine = true;
   boss.maxHp = 4; boss.hp = 2; // wounded, with room to heal
   s.enemies = [boss];
@@ -507,7 +533,7 @@ test('a Brutal boss strikes the king for two', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
   const boss = createBoss(3, 9, 8); // rook
-  boss.bossPerk = 'brutal';
+  boss.bossPerk = 'brutal'; boss.bossPerks = ['brutal'];
   boss.dormant = false; boss.spokeLine = true;
   s.enemies = [boss];
   s.player.x = 8; s.player.y = 8; s.player.hp = 6; s.player.maxHp = 6;
@@ -521,7 +547,7 @@ test('a Shifting boss morphs into a no-higher form when wounded', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
   const boss = createBoss(3, 9, 8); // rook (rank 3)
-  boss.bossPerk = 'shapeshifter';
+  boss.bossPerk = 'shapeshifter'; boss.bossPerks = ['shapeshifter'];
   boss.originalKind = 'rook';
   boss.kind = 'rook';
   boss.maxHp = 5; boss.hp = 5;
@@ -538,7 +564,7 @@ test('a Volley boss shoots down an open line instead of closing', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
   const boss = createBoss(3, 12, 8); // rook, four tiles east on the same row
-  boss.bossPerk = 'ranged';
+  boss.bossPerk = 'ranged'; boss.bossPerks = ['ranged'];
   boss.dormant = false; boss.spokeLine = true;
   s.enemies = [boss];
   s.player.x = 8; s.player.y = 8; s.player.hp = 5; s.player.maxHp = 5;
@@ -557,7 +583,7 @@ test('a ranged boss only shoots along its own movement lines (a bishop won’t f
   const s1 = createInitialState('warrior');
   s1.terrain = {}; s1.enemies = [];
   const b1 = createBoss(2, 12, 8); // the floor-2 boss is a bishop
-  b1.bossPerk = 'ranged'; b1.dormant = false; b1.spokeLine = true;
+  b1.bossPerk = 'ranged'; b1.bossPerks = ['ranged']; b1.dormant = false; b1.spokeLine = true;
   s1.enemies = [b1];
   s1.player.x = 8; s1.player.y = 8; s1.player.hp = 5; s1.player.maxHp = 5;
   s1.player.className = 'warrior';
@@ -568,7 +594,7 @@ test('a ranged boss only shoots along its own movement lines (a bishop won’t f
   const s2 = createInitialState('warrior');
   s2.terrain = {}; s2.enemies = [];
   const b2 = createBoss(2, 12, 8);
-  b2.bossPerk = 'ranged'; b2.dormant = false; b2.spokeLine = true;
+  b2.bossPerk = 'ranged'; b2.bossPerks = ['ranged']; b2.dormant = false; b2.spokeLine = true;
   s2.enemies = [b2];
   s2.player.x = 8; s2.player.y = 4; // (8,4): four tiles up-left of the boss — a diagonal
   s2.player.hp = 5; s2.player.maxHp = 5; s2.player.className = 'warrior';
@@ -701,7 +727,7 @@ test('a non-immune Phasing boss sears in a wall-torch, and shuns torch-walls in 
   s.torches = { '9,8': true };
   const boss = createBoss(3, 9, 8); // vanilla-era, not lava-immune
   boss.kind = 'rook'; boss.originalKind = 'rook';
-  boss.bossPerk = 'phasing'; boss.dormant = false; boss.spokeLine = true; boss.recovering = false; boss.lavaImmune = false;
+  boss.bossPerk = 'phasing'; boss.bossPerks = ['phasing']; boss.dormant = false; boss.spokeLine = true; boss.recovering = false; boss.lavaImmune = false;
   boss.hp = 4; boss.maxHp = 4;
   s.enemies = [boss];
   s.player.x = 13; s.player.y = 13;
@@ -713,7 +739,7 @@ test('a non-immune Phasing boss sears in a wall-torch, and shuns torch-walls in 
   p.player.x = 5; p.player.y = 8;
   const b2 = createBoss(3, 9, 8);
   b2.kind = 'rook'; b2.originalKind = 'rook';
-  b2.bossPerk = 'phasing'; b2.dormant = false; b2.spokeLine = true; b2.recovering = false; b2.lavaImmune = false;
+  b2.bossPerk = 'phasing'; b2.bossPerks = ['phasing']; b2.dormant = false; b2.spokeLine = true; b2.recovering = false; b2.lavaImmune = false;
   p.enemies = [b2];
   p.terrain = { '8,8': 'wall' }; p.torches = {};
   assert.ok(getPieceMoves(b2, p).some((m) => m.x === 8 && m.y === 8), 'it phases into a plain wall on its line');
@@ -1018,7 +1044,7 @@ test('a boss bolt shatters a boulder in its path to the king', () => {
   s.terrain = {}; s.enemies = [];
   // A ranged (Volley) rook boss firing east at the king, a boulder standing between them.
   const boss = createBoss(3, 10, 10); // rook
-  boss.bossPerk = 'ranged';
+  boss.bossPerk = 'ranged'; boss.bossPerks = ['ranged'];
   boss.dormant = false; boss.spokeLine = true;
   boss.recovering = false;
   s.enemies = [boss];
@@ -1303,7 +1329,7 @@ test('a foe shoved into a boss merely bumps it — the foe holds, the boss is wo
   const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
   const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
   const boss = createBoss(3, 10, 11); // rook boss, two tiles W of the landing
-  boss.bossPerk = 'brutal'; // a perk with no on-hit reaction, for a deterministic test
+  boss.bossPerk = 'brutal'; boss.bossPerks = ['brutal']; // a perk with no on-hit reaction, for a deterministic test
   boss.dormant = false; boss.spokeLine = true;
   boss.maxHp = 4;
   boss.hp = 4;
@@ -1705,7 +1731,7 @@ test('the king can strike a phasing boss EMBEDDED in an adjacent wall, without m
   const s = createInitialState('warrior');
   s.terrain = { '11,10': 'wall' };
   const boss = createBoss(3, 11, 10); boss.dormant = false; boss.spokeLine = true;
-  boss.bossPerk = 'phasing'; boss.maxHp = 2; boss.hp = 2;
+  boss.bossPerk = 'phasing'; boss.bossPerks = ['phasing']; boss.maxHp = 2; boss.hp = 2;
   s.enemies = [boss];
   s.player.x = 10; s.player.y = 10;
   const r = movePlayerTo(s, 11, 10); // step toward the embedded boss
@@ -1718,7 +1744,7 @@ test('a wall BETWEEN blocks striking an embedded foe', () => {
   const s = createInitialState('warrior');
   s.terrain = { '11,10': 'wall', '12,10': 'wall' };
   const boss = createBoss(3, 12, 10); boss.dormant = false; boss.spokeLine = true;
-  boss.bossPerk = 'phasing'; boss.maxHp = 2; boss.hp = 2;
+  boss.bossPerk = 'phasing'; boss.bossPerks = ['phasing']; boss.maxHp = 2; boss.hp = 2;
   s.enemies = [boss];
   s.player.x = 10; s.player.y = 10;
   const moves = getPlayerMoves(s);

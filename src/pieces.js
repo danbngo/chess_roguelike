@@ -135,8 +135,8 @@ function getPieceMoves(piece, state) {
 // Flying boss trait crosses pits/water/lava freely and Phasing moves through walls/boulders.
 function pieceTerrainOpts(piece) {
   const opts = { lavaOk: true };
-  if (piece.bossPerk === 'flying') { opts.flying = true; opts.terrainImmune = true; }
-  if (piece.bossPerk === 'phasing') {
+  if (bossHas(piece, 'flying')) { opts.flying = true; opts.terrainImmune = true; }
+  if (bossHas(piece, 'phasing')) {
     opts.phaseWalls = true;
     if (!piece.lavaImmune) opts.torchAverse = true; // a non-immune phaser routes around burning wall-torches
   }

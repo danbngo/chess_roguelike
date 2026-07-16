@@ -64,7 +64,7 @@ const LEVELS = [
   { name: 'The Whispering Crypt', recipe: { wall: 7 }, boss: { name: 'the Lich', kind: 'archbishop', hp: 5 } },
   { name: 'The Hedge Maze', recipe: { wall: 8 }, boss: { name: 'the Minotaur', kind: 'chancellor', hp: 6 } },
   { name: 'The Lake of Fire', recipe: { lava: 8, wall: 2 }, boss: { name: 'the Bone Dragon', kind: 'amazon', hp: 6 } },
-  { name: 'The Demon Castle', recipe: { wall: 6, lava: 3 }, boss: { name: 'the Balrog', kind: 'amazon', hp: 8 } },
+  { name: 'The Demon Castle', recipe: { wall: 6, lava: 3 }, boss: { name: 'the Balrog', kind: 'amazon', hp: 14 } }, // the FINALE: a huge pool + three perks (see createBoss)
 ];
 
 function levelForFloor(floor) {

@@ -8,6 +8,7 @@ const Renderer = (function () {
   let miniCanvas = null; // the dedicated bottom-right minimap canvas (screen-fixed)
   let miniCtx = null;
   let miniGeom = null; // last-drawn minimap geometry {cell, ox, oy, world} — maps a minimap pixel to a tile
+  let demonRealm = false; // floor >= DEMON_FLOOR: the ground turns to dark RED MARBLE
 
   let playerRender = { x: 0, y: 0, targetX: 0, targetY: 0 };
   let enemyRenders = [];
@@ -207,8 +208,8 @@ const Renderer = (function () {
 
   // Pop a boss's short battle-cry as a speech bubble above its tile — appears on its scream turn
   // and fades on its own over SHOUT_TIME (so it never outlasts that first hostile turn).
-  function shout(x, y, text) {
-    shouts.push({ x, y, text: String(text || ''), t: 0 });
+  function shout(x, y, text, demon) {
+    shouts.push({ x, y, text: String(text || ''), t: 0, demon: Boolean(demon) });
   }
 
   // A boulder the king shoved but couldn't budge: nudge its rock toward the shove; it eases right
@@ -283,6 +284,7 @@ const Renderer = (function () {
       boss: Boolean(enemy.boss),
       turret: Boolean(enemy.turret),
       rush: Boolean(enemy.rush),
+      finalBoss: Boolean(enemy.finalBoss),
       mini: Boolean(enemy.mini),
       bossPerk: enemy.bossPerk || null,
       hp: enemy.hp,
@@ -335,7 +337,8 @@ const Renderer = (function () {
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.summoned = Boolean(enemy.summoned); // conjured — drawn violet, like an ally is drawn green
       render.boss = Boolean(enemy.boss);
-      render.rush = Boolean(enemy.rush); // a finale rush-boss (drawn ashen, not royal)
+      render.rush = Boolean(enemy.rush);
+      render.finalBoss = Boolean(enemy.finalBoss); // the last guardian: its own black-and-fire livery // a finale rush-boss (drawn ashen, not royal)
       render.mini = Boolean(enemy.mini); // a MINI-boss: smaller token, less HP, no boon
       render.fire = Boolean(enemy.fire); // a FIRE turret (reddish, piercing spellfire)
       render.bossPerk = enemy.bossPerk || null;
@@ -514,7 +517,7 @@ const Renderer = (function () {
     const role = o.role || 'normal';
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
-    const radius = tileSize * (role === 'boss' ? (o.mini ? 0.36 : 0.46) : 0.4); // mini-bosses are visibly smaller
+    const radius = tileSize * (role === 'boss' ? (o.mini ? 0.36 : (o.finalBoss ? 0.52 : 0.46)) : 0.4); // minis smaller; the FINAL guardian looms larger
 
     ctx.save();
     // Spent (recharging) casters are faded.
@@ -544,6 +547,12 @@ const Renderer = (function () {
         fill = '#161a15'; // charred ash
         stroke = '#7f9e6b'; // sickly moss-green
         glyph = '#c7d6b5';
+      } else if (o.finalBoss) {
+        // The LAST guardian is a thing apart: pitch black shot through with furnace red, never the
+        // ordinary royal gold — you should know what you're looking at the instant it wakes.
+        fill = '#120204'; // void black
+        stroke = '#ff3b1f'; // furnace red
+        glyph = '#ff9d6b';
       } else {
         fill = '#1a0f1f'; // deep royal
         stroke = '#e0b341'; // gold
@@ -587,7 +596,8 @@ const Renderer = (function () {
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, radius + tileSize * 0.12, 0, Math.PI * 2);
-      ctx.strokeStyle = (o.rush || o.mini) ? 'rgba(127, 158, 107, 0.85)' : 'rgba(224, 179, 65, 0.85)';
+      ctx.strokeStyle = (o.rush || o.mini) ? 'rgba(127, 158, 107, 0.85)'
+        : (o.finalBoss ? 'rgba(255, 59, 31, 0.9)' : 'rgba(224, 179, 65, 0.85)'); // the last guardian burns instead of gleaming
       ctx.lineWidth = 3;
       ctx.stroke();
       ctx.restore();
@@ -970,6 +980,10 @@ const Renderer = (function () {
       ctx.translate(cx, by + h * scale);
       ctx.scale(scale, scale);
       ctx.translate(-cx, -(by + h * scale));
+      // A DEMON snarls from a BLACK bubble in hellish red; a mortal guardian gets the pale one.
+      const body = s.demon ? '#0b0406' : '#fef2f2';
+      const edge = s.demon ? '#ef4444' : '#b91c1c';
+      const ink = s.demon ? '#ff5f5f' : '#7f1d1d';
       // bubble body
       const r = h * 0.4;
       ctx.beginPath();
@@ -979,9 +993,9 @@ const Renderer = (function () {
       ctx.arcTo(bx, by + h, bx, by, r);
       ctx.arcTo(bx, by, bx + w, by, r);
       ctx.closePath();
-      ctx.fillStyle = '#fef2f2';
+      ctx.fillStyle = body;
       ctx.fill();
-      ctx.strokeStyle = '#b91c1c';
+      ctx.strokeStyle = edge;
       ctx.lineWidth = 2;
       ctx.stroke();
       // tail pointing down to the boss
@@ -990,12 +1004,12 @@ const Renderer = (function () {
       ctx.lineTo(cx, by + h + tileSize * 0.16);
       ctx.lineTo(cx + tileSize * 0.08, by + h - 1);
       ctx.closePath();
-      ctx.fillStyle = '#fef2f2';
+      ctx.fillStyle = body;
       ctx.fill();
-      ctx.strokeStyle = '#b91c1c';
+      ctx.strokeStyle = edge;
       ctx.stroke();
       // text
-      ctx.fillStyle = '#7f1d1d';
+      ctx.fillStyle = ink;
       ctx.fillText(s.text, cx, by + h / 2);
       ctx.restore();
     }
@@ -1640,7 +1654,10 @@ const Renderer = (function () {
         // An OPEN / half-closing doorway: the sepia floor of the threshold (a leaf/frame is drawn over it).
         return isDark ? '#71481d' : '#e8c589';
       default:
-        // boulder + normal both sit on sepia ground (the boulder rock is drawn over it).
+        // boulder + normal both sit on ground (the boulder rock is drawn over it). In the DEMON
+        // REALM (floor 5+) that ground is dark RED MARBLE instead of the upper floors' warm sepia —
+        // and since a pit lays this same floor before sinking its shaft, pit rims turn to marble too.
+        if (demonRealm) return isDark ? '#4a1216' : '#8f2f2c'; // dark red marble
         return isDark ? '#71481d' : '#e8c589'; // warm SEPIA ground (so fogged floor never reads as wall)
     }
   }
@@ -1690,8 +1707,10 @@ const Renderer = (function () {
         const cx = px + tileSize / 2;
         const cy = py + tileSize / 2;
         const hole = tileSize * 0.36;
-        // Floor grit on the ground AROUND the shaft (same speckle as plain floor).
-        ctx.fillStyle = isDark ? 'rgba(0, 0, 0, 0.13)' : 'rgba(120, 80, 40, 0.16)';
+        // Speckle on the ground AROUND the shaft, matching whatever floor it is cut into.
+        ctx.fillStyle = demonRealm
+          ? (isDark ? 'rgba(255, 225, 220, 0.12)' : 'rgba(255, 225, 220, 0.16)') // marble flecks
+          : (isDark ? 'rgba(0, 0, 0, 0.13)' : 'rgba(120, 80, 40, 0.16)');
         for (let i = 0; i < 4; i += 1) {
           const gx = px + tileSize * (0.12 + tileHash(x * 4 + i, y) * 0.76);
           const gy = py + tileSize * (0.12 + tileHash(x, y * 4 + i) * 0.76);
@@ -1710,7 +1729,7 @@ const Renderer = (function () {
         ctx.arc(cx, cy, hole, 0, Math.PI * 2);
         ctx.fill();
         // A soft shadow where ground meets hole, and a lit near lip so it reads as depth.
-        ctx.strokeStyle = 'rgba(60, 38, 16, 0.5)';
+        ctx.strokeStyle = demonRealm ? 'rgba(40, 8, 10, 0.6)' : 'rgba(60, 38, 16, 0.5)'; // the rim's shadow follows the floor
         ctx.lineWidth = Math.max(1.5, tileSize * 0.05);
         ctx.beginPath();
         ctx.arc(cx, cy, hole, 0, Math.PI * 2);
@@ -1865,6 +1884,21 @@ const Renderer = (function () {
         break;
       }
       default: {
+        // The DEMON REALM's floor is polished red MARBLE — pale veins threading the slab instead of
+        // the upper floors' loose grit.
+        if (demonRealm) {
+          ctx.strokeStyle = isDark ? 'rgba(230, 180, 180, 0.16)' : 'rgba(255, 225, 220, 0.22)';
+          ctx.lineWidth = Math.max(1, tileSize * 0.028);
+          for (let i = 0; i < 2; i += 1) {
+            const vy = py + tileSize * (0.24 + 0.42 * tileHash(x * 3 + i, y * 5));
+            const sway = (tileHash(x + i, y * 2) - 0.5) * tileSize * 0.5;
+            ctx.beginPath();
+            ctx.moveTo(px, vy);
+            ctx.quadraticCurveTo(px + tileSize * 0.5, vy + sway, px + tileSize, vy + sway * 0.3);
+            ctx.stroke();
+          }
+          break;
+        }
         // Open ground: scattered grit specks.
         ctx.fillStyle = isDark ? 'rgba(0, 0, 0, 0.13)' : 'rgba(120, 80, 40, 0.16)';
         for (let i = 0; i < 4; i += 1) {
@@ -2158,6 +2192,7 @@ const Renderer = (function () {
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    demonRealm = (state.floor || 1) >= DEMON_FLOOR; // the demon realm is floored in red marble
     const world = state.worldSize;
     const bounds = getVisibleBounds(state);
     const awareBounds = getAwarenessBounds(state); // his TWO-WAY footprint (foes here can strike back)

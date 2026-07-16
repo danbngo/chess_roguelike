@@ -151,10 +151,27 @@ Every knockback source shares the same behaviour (`resolveShoveInto` / `knockbac
 A foe the **king** is driven into counts as his kill (boon / Necromancy). Sources: jumper captures,
 the **Bulwark** boss perk, **Recoil**, **Trample**, **Displacement**, and a rolling **boulder**.
 
-## BOSS PERKS — one rolled per floor guardian (12 possible)
+## BOSS PERKS — rolled per floor guardian (12 possible)
 
-Every floor boss (and mini-boss) rolls **one** perk at creation (`BOSS_PERKS` in `constants.js`;
-`createBoss` / `bossMove` / `damageBoss` in `game.js`). Shown in the Examine panel.
+Guardians roll their perks at creation (`BOSS_PERKS` in `constants.js`; `rollBossPerks` /
+`createBoss` / `bossMove` / `damageBoss` in `game.js`). All of them are shown in the Examine panel.
+
+**How many** scales with depth — the demon realm's guardians are doubly cursed:
+
+| floor | perks |
+|---|---|
+| 1-4 (mortal) | **1** |
+| 5-7 (demon realm) | **2** |
+| 8 (the Balrog) | **3** — and its own black-and-fire livery, 14 base HP, and far worse threats |
+| any mini-boss | **1** (it stays lesser, and never gets Hardened's +3) |
+
+Never two perks from the same **exclusive group**, since only one of a group can ever fire and the
+second would be a dead slot (`BOSS_PERK_GROUPS`):
+
+- **attack** — `ranged` (Volley) vs `sorcerer`: each REPLACES its attack; it can only shoot one way.
+- **reaction** — `shapeshifter` vs `blinker`: both trigger on being wounded, and `applyBossHitReaction` takes only the first.
+
+Test a perk with `bossHas(boss, 'x')` — **never** `boss.bossPerk === 'x'`, which sees only the primary.
 
 | id | name | effect |
 |---|---|---|

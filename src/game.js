@@ -131,6 +131,36 @@ function bossKindForFloor(floor) {
   return level ? level.boss.kind : 'queen';
 }
 
+// Does this guardian bear `perk`? Guardians can carry SEVERAL now (see rollBossPerks), so never
+// test `boss.bossPerk === x` directly. Falls back to the single `bossPerk` for older saves.
+function bossHas(boss, perk) {
+  if (!boss) return false;
+  if (boss.bossPerk === perk) return true; // the primary (and the only field an older save carries)
+  return Array.isArray(boss.bossPerks) && boss.bossPerks.includes(perk);
+}
+
+// Perks that would step on each other if one guardian rolled two from the same group — only one of
+// a group can ever fire, so pairing them would silently waste a slot:
+//   attack   — Volley and Sorcerer each REPLACE its attack; it can only shoot one way.
+//   reaction — Shifting and Blinkborn both trigger on being wounded (applyBossHitReaction picks one).
+const BOSS_PERK_GROUPS = { ranged: 'attack', sorcerer: 'attack', shapeshifter: 'reaction', blinker: 'reaction' };
+
+// Roll `count` DISTINCT perks, never two from the same exclusive group.
+function rollBossPerks(count) {
+  const pool = BOSS_PERKS.slice();
+  for (let i = pool.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  const picked = [];
+  const groups = new Set();
+  for (const perk of pool) {
+    if (picked.length >= count) break;
+    const group = BOSS_PERK_GROUPS[perk];
+    if (group && groups.has(group)) continue; // it would be a dead slot beside the one already taken
+    if (group) groups.add(group);
+    picked.push(perk);
+  }
+  return picked;
+}
+
 // Build the floor's boss at (x, y): a high-mobility piece with a HP pool.
 function createBoss(floor, x, y) {
   const spec = (levelForFloor(floor) || { boss: { name: 'the Guardian', kind: 'queen', hp: 4 } }).boss;
@@ -139,8 +169,13 @@ function createBoss(floor, x, y) {
   boss.bossName = spec.name;
   boss.maxHp = spec.hp || 4;
   boss.originalKind = spec.kind; // a Shifting boss never grows stronger than this
-  boss.bossPerk = BOSS_PERKS[randomInt(BOSS_PERKS.length)];
-  if (boss.bossPerk === 'tough') boss.maxHp += 3; // Hardened: three extra wounds
+  // The DEMON REALM's guardians are doubly cursed — two perks each. The FINAL guardian wears three
+  // and is a thing apart (see finalBoss: its own black-and-fire livery and worse threats).
+  boss.finalBoss = isFinalFloor(floor);
+  const perkCount = boss.finalBoss ? 3 : (floor >= DEMON_FLOOR ? 2 : 1);
+  boss.bossPerks = rollBossPerks(perkCount);
+  boss.bossPerk = boss.bossPerks[0]; // the PRIMARY — drives its crown and one-line summary
+  if (bossHas(boss, 'tough')) boss.maxHp += 3; // Hardened: three extra wounds
   boss.hp = boss.maxHp;
   boss.dormant = true; // holds the stair/portal until it spies the king or is struck
   // Demon-floor guardians (the fairy/demon pieces from floor 5) shrug off lava; earlier
@@ -151,26 +186,26 @@ function createBoss(floor, x, y) {
 
 // A boss's blow strength — Brutal guardians hit twice as hard.
 function bossDamage(boss) {
-  return boss && boss.bossPerk === 'brutal' ? 2 : 1;
+  return boss && bossHas(boss, 'brutal') ? 2 : 1;
 }
 
 // Leech guardians knit a wound shut each time they draw the king's blood (capped at max
 // HP). Call this only when a boss's blow ACTUALLY lands (not when it's warded/deflected).
 function bossLeech(boss) {
-  if (boss && boss.bossPerk === 'leech' && boss.hp < boss.maxHp) boss.hp += 1;
+  if (boss && bossHas(boss, 'leech') && boss.hp < boss.maxHp) boss.hp += 1;
 }
 
 // A wounded boss's reaction: Shifting bosses morph to a lesser form; Blinkborn
 // bosses flicker away. Called from damageBoss on any non-fatal hit.
 function applyBossHitReaction(state, boss) {
-  if (boss.bossPerk === 'shapeshifter') {
+  if (bossHas(boss, 'shapeshifter')) {
     const origRank = PIECE_RANK.indexOf(boss.originalKind || boss.kind);
     const pool = PIECE_RANK.filter((k, i) => i <= origRank && k !== boss.kind);
     if (pool.length) {
       boss.kind = pool[randomInt(pool.length)];
       state.message += ` It shifts into a ${boss.kind}!`;
     }
-  } else if (boss.bossPerk === 'blinker') {
+  } else if (bossHas(boss, 'blinker')) {
     if (bossBlink(state, boss)) state.message += ' It blinks away!';
   }
 }
@@ -234,7 +269,14 @@ function bossHostileLine(boss) {
     `${name} roars, "Come no further — meet your end here!"`,
     `${name} growls, "This is where your journey ends."`,
   ];
-  const pool = isDemonBoss(boss) ? demon : mortal;
+  const finale = [
+    `${name} unfolds to its full height, and the castle SHUDDERS: "I am the last door, little king — and it opens onto NOTHING."`,
+    `${name} drags its burning gaze across you: "Eight floors of corpses behind you. You built that road for ME."`,
+    `${name} laughs, and the sound cracks the stone: "Your realm ends where I stand. Come and be UNMADE."`,
+    `${name} whispers, and it is worse than the roar: "I have eaten kings. I remember none of them."`,
+    `${name} spreads its wings across the whole hall: "There is no floor beneath this one. Only my hunger."`,
+  ];
+  const pool = boss.finalBoss ? finale : (isDemonBoss(boss) ? demon : mortal);
   return pool[randomInt(pool.length)];
 }
 
@@ -243,7 +285,8 @@ function bossHostileLine(boss) {
 function bossShoutLine(boss) {
   const demon = ['Die!', 'Bleed!', 'Kneel!', 'Perish!', 'Suffer!', 'Feed me!'];
   const mortal = ['Halt!', 'No further!', 'Turn back!', 'Face me!', 'Come, then!', 'Your end!'];
-  const pool = isDemonBoss(boss) ? demon : mortal;
+  const finale = ['BE UNMADE!', 'I AM THE LAST!', 'NOTHING FOLLOWS!', 'YOUR REALM DIES!', 'KNEEL AND END!'];
+  const pool = boss.finalBoss ? finale : (isDemonBoss(boss) ? demon : mortal);
   return pool[randomInt(pool.length)];
 }
 
@@ -2732,7 +2775,7 @@ function beginEnemyPhase(state) {
     // tile detects him and attacks (handled by the aware branch below). The lone EXCEPTION: a foe
     // he STRUCK that survived (`provoked`) is enraged and hunts him regardless of distance.
     const hiddenFromThis = stealthed && !enemy.provoked && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
-    const sensesWalls = enemy.bossPerk === 'phasing'; // a Phasing boss sees the king through walls/boulders
+    const sensesWalls = bossHas(enemy, 'phasing'); // a Phasing boss sees the king through walls/boulders
     if (hiddenFromThis || !enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
       enemy.awake = false;
       enemy.surprised = false;
@@ -3437,7 +3480,7 @@ function bossRangedAttack(state, boss) {
   const dy = Math.sign(ddy);
   // The king must sit on a ray the boss's piece can actually slide along.
   if (!cardSlideDirs(boss.kind).some(([sx, sy]) => sx === dx && sy === dy)) return false;
-  const pierce = boss.bossPerk === 'sorcerer';
+  const pierce = bossHas(boss, 'sorcerer');
   const path = [];
   const shattered = []; // boulders the bolt smashes through on its way to the king
   let x = boss.x + dx;
@@ -3526,7 +3569,7 @@ function bossMove(state, boss) {
     if (damageBoss(state, boss, 1) === 'slain') { state.lastAction = 'combat'; return state; }
   }
   // Regenerating: it knits one wound shut every fourth turn (ticked whether it acts or recovers).
-  if (boss.bossPerk === 'regen') {
+  if (bossHas(boss, 'regen')) {
     boss.regenTick = (boss.regenTick || 0) + 1;
     if (boss.regenTick % 4 === 0 && boss.hp < boss.maxHp) boss.hp += 1;
   }
@@ -3543,7 +3586,7 @@ function bossMove(state, boss) {
   // view) or is struck (hp < maxHp) — then it rouses for good. Seeing him is the trigger now,
   // not merely stepping adjacent, so a guardian on the far side of the room stirs on sight.
   if (boss.dormant) {
-    if (boss.hp < boss.maxHp || enemyAwareOfKing(state, boss.x, boss.y, boss.bossPerk === 'phasing')) {
+    if (boss.hp < boss.maxHp || enemyAwareOfKing(state, boss.x, boss.y, bossHas(boss, 'phasing'))) {
       boss.dormant = false;
     } else {
       const guarded = state.key && state.key.orb ? 'Orb' : 'key';
@@ -3558,11 +3601,12 @@ function bossMove(state, boss) {
   if (!boss.spokeLine) {
     boss.spokeLine = true;
     state.bossLine = bossHostileLine(boss);
-    state.bossShout = { x: boss.x, y: boss.y, text: bossShoutLine(boss) }; // a one-turn speech bubble
+    // A one-turn speech bubble. `demon` flips it to black-and-red in the view.
+    state.bossShout = { x: boss.x, y: boss.y, text: bossShoutLine(boss), demon: isDemonBoss(boss) };
   }
   boss.recovering = true; // whatever the boss does below, it must recover next turn
   // Summoner: every third turn it conjures a minion of its own kind instead of acting.
-  if (boss.bossPerk === 'summoner') {
+  if (bossHas(boss, 'summoner')) {
     boss.perkTick = (boss.perkTick || 0) + 1;
     if (boss.perkTick % 3 === 0) {
       const made = summonAdjacent(state, boss, boss.kind);
@@ -3574,13 +3618,13 @@ function bossMove(state, boss) {
     }
   }
   // Volley / Sorcerer: loose a bolt down an open line rather than closing to melee.
-  if ((boss.bossPerk === 'ranged' || boss.bossPerk === 'sorcerer') && bossRangedAttack(state, boss)) {
+  if ((bossHas(boss, 'ranged') || bossHas(boss, 'sorcerer')) && bossRangedAttack(state, boss)) {
     return state;
   }
   const moves = getPieceMoves(boss, state);
   const canCapture = moves.some((m) => m.x === king.x && m.y === king.y);
   if (canCapture) {
-    if (isJumperKind(boss.kind) || boss.bossPerk === 'knockback') return knockbackKing(state, boss);
+    if (isJumperKind(boss.kind) || bossHas(boss, 'knockback')) return knockbackKing(state, boss);
     // A non-ranged slider guardian slides up beside the king before it strikes (Volley/Sorcerer
     // guardians fired from afar above and never reach here).
     if (terrainAt(state, king.x, king.y) !== 'wall' && terrainAt(state, king.x, king.y) !== 'ice') closeInBeforeStrike(state, boss);
@@ -3821,7 +3865,8 @@ function makeMiniBoss(next, kind, x, y) {
   b.bossName = `a rogue ${kind}`;
   b.originalKind = kind;
   b.maxHp = 2 + Math.floor(next.floor / 3); // clearly fewer wounds than a floor guardian
-  b.bossPerk = BOSS_PERKS[randomInt(BOSS_PERKS.length)]; // NB: a mini never gets the Hardened +3 — it stays lesser
+  b.bossPerks = rollBossPerks(1); // a mini stays lesser: ONE perk, and never the Hardened +3
+  b.bossPerk = b.bossPerks[0];
   b.hp = b.maxHp;
   b.lavaImmune = isDemonKind(kind);
   b.dormant = false;

@@ -518,7 +518,8 @@
         } else if (enemy.summonCircle) {
           tag = ' (summoning circle — spawns foes; step on it to destroy)';
         } else if (enemy.boss) {
-          const perk = enemy.bossPerk ? `; ${enemy.bossPerk}` : '';
+          const perks = (enemy.bossPerks && enemy.bossPerks.length ? enemy.bossPerks : [enemy.bossPerk]).filter(Boolean);
+          const perk = perks.length ? `; ${perks.join(', ')}` : '';
           tag = ` (${enemy.mini ? 'mini-boss' : 'boss'} — HP ${enemy.hp}/${enemy.maxHp}${perk})`;
         } else {
           tag = enemy.asleep ? ' (asleep)' : enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
@@ -1566,7 +1567,7 @@
       // A boss's first-sighting ROAR is logged separately so it doesn't cost the boss its action.
       if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
       // ...and pops a short speech bubble over its head for a beat (only on this scream turn).
-      if (gameState.bossShout) { Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text); gameState.bossShout = null; }
+      if (gameState.bossShout) { Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text, gameState.bossShout.demon); gameState.bossShout = null; }
       if (gameState.lastShot) {
         const s = gameState.lastShot;
         Renderer.rangedShot(s.fromX, s.fromY, s.toX, s.toY, s.role, s.tiles);
