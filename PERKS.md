@@ -13,7 +13,7 @@ Effect keys used below (the `grant` column):
 - Cards: `gainCard:<piece>` (+ optional `gainCooldown:<n>`).
 - Flags (simply switched on): `firstHitEachTurn`, `meleeRefund`, `meleeCleave`, `meleeLeech`,
   `meleePierce`, `leapShock`, `meleeFlourish`, `freeKillMove`, `terrainImmune`, `seeAllFoes`,
-  `beastFriend`, `noChase`, `camouflage`, `stealth`, `recoil`, `shrapnel`, `blink`, `phase`,
+  `beastFriend`, `elusive`, `camouflage`, `stealth`, `recoil`, `shrapnel`, `blink`, `phase`,
   `hexDemote`, `spellSurprise`, `sleepAura`, `spellBlast`, `doubleCast`, `familiar`, `necromancy`,
   `generalForm`.
 
@@ -75,10 +75,13 @@ blocked by cover / the first body. (HP was raised 4 → 5 once foes began closin
 
 _Premonition grants **`seeThroughWalls`** (see + shoot through cover within radius). Hawk Eyes & Power Draw grant **`visionOneWay`** — sight that extends the king's DISPLAY window but not his awareness "footprint" (`getVisibleBounds` vs `getAwarenessBounds`). Foes seen through cover, OR out in the extended band, can't see/strike him — they only start **closing in** (they pursue, but can't attack until they get a clear, in-range line). Both safe zones are drawn with a cyan wash so the "safe to shoot" tiles are obvious. (The bot has effective wallhack, so it can't leverage any of this — expect Oracle to score low on the bot but play strong for a human.)_
 
-### 🌑 Gloom Stalker — the ghost: unchased, ignored, unnoticed. (#6366f1)
+### 🌑 Gloom Stalker — the ghost: hard to fix on, ignored, unnoticed. (#6366f1)
+_Ghost was `noChase` (foes gave up the instant you broke sight). It read as stealth but PUNISHED
+good play: a foe could never be drawn off its pack, so you could never isolate one. It now slows the
+CATCHING of your eye rather than ending the chase._
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `r_ghost` | Ghost | foes stop chasing the instant you break their sight | `noChase` |
+| 1 | `r_ghost` | Ghost | a foe more than one tile away has only a **50% chance each turn** to notice you at all — so you can draw one off a pack and fight it alone. Adjacent it always sees you; one you have STRUCK is enraged regardless; and a foe that already has you keeps you (it never breaks pursuit) | `elusive` |
 | 2 | `r_camo` | Camouflage | **turrets** and **summoning circles** more than one tile away are BLIND to you — turrets doze (a sleep "z") and never fire, circles conjure nothing. Step ADJACENT (within one tile) and they wake and work as normal (purely distance now — no strike-to-provoke or line tracking) | `camouflage` |
 | 3 | `r_stealth` | Silent | foes never notice or attack you unless you are ADJACENT (within one tile) — even one already hunting loses you, and even firing a weapon won't give you away. A wandering foe can still blunder onto your tile, striking you by accident | `stealth` |
 
@@ -139,6 +142,59 @@ Every enemy (and non-ranged guardian) that can reach the king by SLIDING — roo
 now **slides up to the tile beside him and then strikes**, rather than sniping from across the
 room. Only **Volley/Sorcerer guardians** (below) and **turrets** attack from range.
 
+## FLOOR GENERATION — order matters
+
+The board is **25x25**. Generation runs in this order (`generateTerrain`, then `generateFloor`), and
+the order is load-bearing:
+
+1. **Border wall.**
+2. **SET-PIECES** — a storeroom, fountain, garden, or island pond, 3-5 per floor, drawn at random.
+   Each reserves its footprint **plus a one-tile margin** in `reserved`; every later pass refuses to
+   write there. They go FIRST because they need clear ground: laid last, a 7x7 clear box existed on
+   only 2% of floors and a 9x9 on none, so a storeroom essentially never appeared.
+3. **Noise** — recipe blobs, wall runs, rooms, pits, boulders, ice, grass. All flow around `reserved`.
+4. **Doors**, then **pillar colonnades**. Both skip `reserved` — a set-piece owns its own doors, and a
+   colonnade must not march through a storeroom's court.
+5. **Chambers** (`buildChamber`) — the real guarded one at the floor's fixed anchor, plus **0-2
+   decoys** (~45% of floors get one). Same shape, same doors, no key and no guardian: the real
+   chamber sits at a FIXED anchor, so a walled court on the horizon used to be proof of where the
+   key was.
+
+**A storeroom must be odd and >= 5 on a side, with its door at the exact wall MIDPOINT.**
+`pruneUselessDoors` re-judges every door with `isDoorwaySpot`, which demands the door's wall run two
+tiles either side AND >= 6 tiles of open space on both sides. A 3x3 or 4x4 box (interior 1 or 4
+tiles) fails, its door reverts to rock, and the "storeroom" becomes a solid block of stone.
+
+**Turrets and summoning circles scatter over the WHOLE floor**, weighted by zone (`structureSpot`):
+25% roll for the chamber court, 30% its environs, 45% loose ground, each falling back outward. They
+used to sit only in the chamber's ring, which advertised the key — find the guns, find the door. The
+court is still by far the most defended ground (~155 structures per 1000 tiles against ~11 out on the
+floor) because it is tiny; it just no longer draws a map to itself.
+
+## TERRAIN — what stops you, what burns you
+
+**Water and LAVA are both "slow" terrain** (`isSlowTerrain` in `terrain.js`): you wade **one tile**
+of either per move and must stop there — no sliding clean across a channel — and you can't ready a
+weapon while standing in one. Lava used to stop nobody, so a rook slid over a fire river as if it
+were floor. Projectiles are exempt: a bolt still flies over both (`slideStops`' `projectile`).
+
+**Fire burns whatever ENDS its turn in it** — lava, or a wall-torch a phaser has slipped into:
+the king takes 1 HP (`passTurn`), a guardian takes 1 (`bossMove`), and ordinary foes and allies
+carry no HP pool, so they are simply burned to ash (`tickLavaDamage`).
+
+**Nothing walks into fire it cannot survive.** `isLavaSafe(unit)` is the single predicate: demon-kind
+pieces, a Winged guardian, and anything flagged `lavaImmune`. `tickLavaDamage` burns exactly what it
+calls unsafe and `pieceTerrainOpts` keeps exactly that out of the fire — so a chasing mortal routes
+around lava instead of immolating itself to reach the king. Pits need no such rule: `standableFor`
+already bars everything but a flier.
+
+## SUMMONS — a conjured foe is just a monster
+
+What a summoning circle conjures is a **normal monster**. It is NOT dispelled when its circle dies:
+stepping on one rune used to wipe out its whole brood for free, which was far too cheap. `summoned` /
+`summonedBy` are still recorded — they drive the violet tint and the conjuring puff — but no longer
+kill it. The old dispel sits commented out in `beginEnemyPhase` in case it is ever wanted back.
+
 ## KNOCKBACK — one consistent collision rule
 
 Every knockback source shares the same behaviour (`resolveShoveInto` / `knockbackEnemy` /
@@ -151,6 +207,24 @@ Every knockback source shares the same behaviour (`resolveShoveInto` / `knockbac
 A foe the **king** is driven into counts as his kill (boon / Necromancy). Sources: jumper captures,
 the **Bulwark** boss perk, **Recoil**, **Trample**, **Displacement**, and a rolling **boulder**.
 
+## GUARDIANS — no unique monsters, ever
+
+A floor guardian has **no unique powers**. It is only ever:
+
+- **a piece kind**, ROLLED from a sliding window over its tier (`bossPoolForFloor`) — floors 1-4 draw
+  from `knight, bishop, rook, queen`, floors 5-8 from `nightrider, archbishop, chancellor, amazon`.
+  The window advances with depth, so a floor-1 guardian is never a queen and a floor-4 one is never a
+  knight, but each pool stays plural — a floor is a different fight each run.
+- **plus rolled `BOSS_PERKS`** (below). That's the whole of it.
+
+So the player only ever has twelve boss abilities to learn, and nothing is hand-authored per floor.
+Only its **HP** is authored (`LEVELS[].boss.hp` — 3/4/4/5/5/6/8/14), because that IS the
+floor-to-floor difficulty ramp.
+
+Its **name** is derived, not written: an epithet from its primary perk over a noun hashed from kind +
+traits (`bossNameFor`, `BOSS_NOUNS`, `BOSS_EPITHETS`) — "the Brutal Warlord", "the Winged Devourer".
+The same monster always earns the same name; floor 8 alone can field 72 of them.
+
 ## BOSS PERKS — rolled per floor guardian (12 possible)
 
 Guardians roll their perks at creation (`BOSS_PERKS` in `constants.js`; `rollBossPerks` /
@@ -162,7 +236,7 @@ Guardians roll their perks at creation (`BOSS_PERKS` in `constants.js`; `rollBos
 |---|---|
 | 1-4 (mortal) | **1** |
 | 5-7 (demon realm) | **2** |
-| 8 (the Balrog) | **3** — and its own black-and-fire livery, 14 base HP, and far worse threats |
+| 8 (the finale) | **3** — and its own black-and-fire livery, 14 base HP, and far worse threats |
 | any mini-boss | **1** (it stays lesser, and never gets Hardened's +3) |
 
 Never two perks from the same **exclusive group**, since only one of a group can ever fire and the

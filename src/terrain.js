@@ -46,9 +46,13 @@ function standableFor(type, opts) {
   return true; // water & normal are walkable
 }
 
-// Slow terrain the king only crosses one tile of per move (and can't cast from).
+// Slow terrain: a mover wades ONE tile of it per move and must stop there — no sliding clean
+// across a channel — and can't ready a weapon while standing in it. LAVA counts: it used to stop
+// nobody, so a rook could slide straight over a fire river as if it were floor. It now costs you
+// the same way water does, on top of searing whatever ends its turn in it. (Projectiles are exempt
+// — a bolt still flies over both; see slideStops' `projectile`.)
 function isSlowTerrain(type) {
-  return type === 'water';
+  return type === 'water' || type === 'lava';
 }
 
 // Context-free standability (used for placement / spawns): a plain walker who avoids
@@ -217,6 +221,50 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
       continue;
     }
     targets.push({ x, y, viaJump: true, capture: capHere });
+  }
+  return targets;
+}
+
+// A RIDER that repeats one leap: it keeps taking the SAME hop outward — leaping clean over whatever
+// lies between each pair of legs — until something halts the ride. Every square along the way is a
+// landing square, so an occupied or unlandable one stops it THERE (a body halts the ride whether it
+// can be captured or not). Landing rules per leg match jumpTargets, but the SHOULDER rule applies to
+// the launch only: the first leg is exactly a knight's leap (walls still cage it taking off), and
+// once airborne nothing halts it bar a landing it cannot make. Checking shoulders every leg instead
+// compounds absurdly — a four-leg ride would need eight clear shoulders, and measured on real floors
+// the piece collapsed below a plain knight.
+function riderLeapTargets(state, fromX, fromY, steps, unitAt, isTarget, opts) {
+  const phaseWalls = Boolean(opts && opts.phaseWalls);
+  const flying = Boolean(opts && opts.flying);
+  const torchAverse = Boolean(opts && opts.torchAverse);
+  const targets = [];
+  for (const [dx, dy] of steps) {
+    let px = fromX;
+    let py = fromY;
+    for (let leg = 0; leg < WORLD_SIZE; leg += 1) {
+      if (leg === 0 && !phaseWalls && terrainAt(state, px + Math.sign(dx), py) === 'wall') break;
+      if (leg === 0 && !phaseWalls && terrainAt(state, px, py + Math.sign(dy)) === 'wall') break;
+      const x = px + dx;
+      const y = py + dy;
+      if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) break;
+      const terrain = terrainAt(state, x, y);
+      if ((terrain === 'lava' || terrain === 'pit') && !flying) break;
+      const unit = unitAt(x, y);
+      const capHere = Boolean(unit) && isTarget(x, y);
+      if (torchAverse && terrain === 'wall' && hasTorch(state, x, y)) break;
+      if (terrain === 'wall') {
+        if (!(phaseWalls && capHere)) break;
+      } else if (terrain === 'ice' && capHere && !phaseWalls) {
+        break;
+      }
+      if (unit) {
+        if (capHere) targets.push({ x, y, viaJump: true, capture: true });
+        break; // a body — friend or foe — halts the ride here
+      }
+      targets.push({ x, y, viaJump: true, capture: false });
+      px = x;
+      py = y;
+    }
   }
   return targets;
 }

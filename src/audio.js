@@ -165,7 +165,10 @@ const GameAudio = (function () {
   // The in-play score HURRIES in gears as the floor's dread climbs — the same tune, wound tighter —
   // so the urgency of getting off the floor is audible. Beat multipliers (lower = faster), one per
   // fifth of the dread meter. Only the exploring/tense loop hurries; screen themes keep their tempo.
-  const HURRY = [1, 0.88, 0.76, 0.65, 0.55];
+  // Tempo gears, one per step of the dread cycle. Gear 0 is the GRACE — no hurry at all — and the
+  // five below it are the five climbing steps, so every dread step has its own audibly faster
+  // tempo. Length must stay DREAD_RAMP_STEPS + 1.
+  const HURRY = [1, 0.9, 0.8, 0.71, 0.63, 0.55];
   const TRACKS = {
     // Exploring: a calm, wandering minor loop (Am–F–G–Em).
     explore: {
@@ -193,12 +196,23 @@ const GameAudio = (function () {
       prog: [[261.63, 329.63, 392.0], [196.0, 246.94, 293.66], [220.0, 261.63, 329.63], [174.61, 220.0, 261.63]],
       type: 'sine', gain: 0.06, bass: 0.06,
     },
-    // Death: a slow lament sinking step by step (Am–G–F–E), each chord opening with a sighing
-    // glide down — mournful rather than merely quiet.
+    // Death: a full LAMENT on a descending ground bass — A-G-F-E-D-C-B falling step by step, then
+    // the dominant E turning it back to the top to begin again. Eight chords, not four: it used to
+    // be the title's own progression an octave down, which is exactly why it rang hollow. A bell
+    // tolls over each chord and the high voice sighs down across it.
     death: {
       beat: 0.66,
-      prog: [[220.0, 261.63, 329.63], [196.0, 246.94, 293.66], [174.61, 220.0, 261.63], [164.81, 207.65, 246.94]],
-      type: 'sine', gain: 0.06, bass: 0.08, sigh: true, octave: 1, // sunk an octave — low and mournful
+      prog: [
+        [220.0, 261.63, 329.63], // Am  — the fall begins
+        [196.0, 246.94, 293.66], // G
+        [174.61, 220.0, 261.63], // F
+        [164.81, 207.65, 246.94], // E
+        [146.83, 174.61, 220.0], // Dm
+        [130.81, 164.81, 196.0], // C
+        [123.47, 146.83, 174.61], // Bdim — the darkest step
+        [164.81, 207.65, 246.94], // E   — the dominant, pulling it round again
+      ],
+      type: 'sine', gain: 0.06, bass: 0.08, sigh: true, toll: true, octave: 1, // sunk an octave — low and mournful
     },
   };
 
@@ -229,6 +243,11 @@ const GameAudio = (function () {
         // A high voice slides mournfully down over the chord — the sound of the run ending.
         tone(chord[2] * 2, when, t.beat * 3.2, { type: 'sine', gain: 0.04, bus: musicBus, slideTo: chord[0] * 2, attack: 0.25 });
       }
+      if (t.toll) {
+        // A bell struck over each chord and left to ring on into the next — sounded on the THIRD so
+        // it colours the harmony rather than merely doubling the root the arp is already playing.
+        tone(chord[1] * 2, when, t.beat * ARP.length * 1.3, { type: 'sine', gain: 0.03, bus: musicBus, attack: 0.004 });
+      }
     }
     if (t.throb) {
       tone(chord[0] / 2, when, t.beat * 0.5, { type: 'sawtooth', gain: 0.045, bus: musicBus });
@@ -258,11 +277,15 @@ const GameAudio = (function () {
     tense = Boolean(on);
   }
 
-  // How far the floor's dread meter has climbed (0..1). QUANTISED into HURRY's gears, so the score
-  // steps up audibly as the floor turns against the king rather than drifting imperceptibly.
+  // How far the floor's dread meter has CLIMBED (0..1 — already 0 through the opening grace; see
+  // dreadFraction). Quantised into HURRY's gears so the score steps up audibly rather than drifting
+  // imperceptibly. Gear 0 is reserved for the grace itself: the instant dread starts at all the
+  // tempo ticks up, so the first stepup is the player's cue that the floor has turned.
   function setDanger(frac) {
     const f = Math.max(0, Math.min(1, Number(frac) || 0));
-    dangerStep = Math.min(HURRY.length - 1, Math.floor(f * HURRY.length));
+    // Dread hasn't started (the grace) — hold the calm tempo. The moment it starts at all, the
+    // score steps up: that first gear change IS the cue that the floor has turned on the king.
+    dangerStep = f <= 0 ? 0 : Math.min(HURRY.length - 1, 1 + Math.floor(f * (HURRY.length - 1)));
   }
 
   function startMusic() {

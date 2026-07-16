@@ -1,9 +1,12 @@
 // Shared configuration. Loaded first; every other script reads from these.
 
-const WORLD_SIZE = 20; // The full board is WORLD_SIZE x WORLD_SIZE tiles (walled border).
+// 25x25 — 1.25x the old 20x20 board. The extra ground pays for the scattered set-pieces (storage
+// rooms, fountains, gardens, ponds) and for turrets/circles no longer huddling round the chamber,
+// so the OPEN floor a player actually walks stays about what it was.
+const WORLD_SIZE = 25; // The full board is WORLD_SIZE x WORLD_SIZE tiles (walled border).
 const STARTING_VISION = 7; // The king starts seeing a 7x7 window (odd, so centered).
 const VISION_STEP = 2; // Each +1 sight perk widens the window by 2 (7 -> 9 -> 11...).
-const PLAYER_START = { x: 10, y: 10 };
+const PLAYER_START = { x: 12, y: 12 }; // the board's centre
 const STARTING_HP = 5; // Default; each class overrides it (see CLASSES[].hp).
 // DIFFICULTY is one simple dial: starting HP, per class. Nothing else changes between settings —
 // the dread clock, the spawns and the foes are identical, so Nightmare is the same dungeon met with
@@ -13,8 +16,17 @@ const DIFFICULTY_HP = {
   hard: { warrior: 9, ranger: 7, sorcerer: 5 },
   nightmare: { warrior: 5, ranger: 4, sorcerer: 3 },
 };
-const MAX_TURNS_SCARY = 200; // Lingering this many turns on a floor maxes the dread meter / tension music (a slow ramp).
-const SPAWN_RAMP_TURNS = 200; // Turns over which the SPAWN rate ramps to its ceiling — 2x slower than the dread meter, so methodical play isn't punished as harshly.
+// The DREAD CYCLE runs EIGHT steps — an 8x8 board's worth. The first three are a GRACE: the floor
+// holds still, no danger event fires, and the score keeps its calm tempo. Dread then climbs across
+// the remaining five, which are exactly the five HURRY tempo gears in audio.js. A step keeps the
+// duration it always had (40 turns), so the grace is ADDED time — not the same ramp squeezed
+// steeper. Net: a floor is quiet for 120 turns, then turns against the king over the next 200.
+const DREAD_STEP_TURNS = 40;
+const DREAD_GRACE_STEPS = 3; // the quiet opening — nothing stirs
+const DREAD_RAMP_STEPS = 5; // must match HURRY.length in audio.js
+const DREAD_TOTAL_STEPS = DREAD_GRACE_STEPS + DREAD_RAMP_STEPS; // 8 — the chess theme
+const DREAD_GRACE_TURNS = DREAD_STEP_TURNS * DREAD_GRACE_STEPS; // 120
+const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 320 — dread maxes here
 const SPATTER_LIFE = 48; // Turns a blood spatter lingers before fading away (long — the floor gets messy).
 const CORPSE_LIFE = 72; // Turns a corpse / ash / rubble / scrap / ice-shards linger before fully fading.
 const BOSS_CORPSE_LIFE = 160; // A slain boss leaves remains that linger far longer than a common corpse.
@@ -38,7 +50,20 @@ const BOSS_RUSH_MIN = 10;
 const BOSS_RUSH_MAX = 20;
 const BOSS_RUSH_CAP = 1;
 const STANDARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'queen'];
-const DEMON_KINDS = ['berolina', 'archbishop', 'chancellor', 'amazon'];
+const DEMON_KINDS = ['berolina', 'archbishop', 'chancellor', 'nightrider', 'amazon'];
+// When each kind joins the roster. A kind NEVER leaves it once unlocked, and the spawn pick is
+// UNIFORM across everything unlocked — so a floor is always an even mix and the low-tier pieces keep
+// showing up to the end (pawn/king 50/50 → +knight 33/33/33 → +bishop/rook 20% each → +queen ~17%
+// each). Nothing ever becomes "all queens".
+//
+// The DEMON tier restarts that curve at DEMON_FLOOR with its own five kinds, widening 2→3→4→5 over
+// floors 5–8. Two unlock together on floor 5 for the same reason: one kind alone would make the
+// whole floor a single repeated enemy.
+//
+// Demon order is MEASURED, not theoretical — average legal moves on real generated floors, weakest
+// first: berolina ~1.9, nightrider ~4, archbishop ~5.8, chancellor ~6.8, amazon ~10.9. The nightrider
+// reads as a monster on an open board but this dungeon is cramped, and its rides die on the first
+// wall, so it lands near the bottom. Re-measure before reordering; don't trust reputations here.
 const ENEMY_UNLOCKS = [
   { kind: 'pawn', floor: 1 },
   { kind: 'king', floor: 1 },
@@ -47,24 +72,26 @@ const ENEMY_UNLOCKS = [
   { kind: 'rook', floor: 3 },
   { kind: 'queen', floor: 4 },
   { kind: 'berolina', floor: 5 },
+  { kind: 'nightrider', floor: 5 },
   { kind: 'archbishop', floor: 6 },
   { kind: 'chancellor', floor: 7 },
   { kind: 'amazon', floor: 8 },
 ];
 
-// The eight authored floors. Each: a themed name, a terrain `recipe` (blob/segment
-// seed counts for the ONLY three terrain types — wall, water, lava), and a UNIQUE
-// boss (a high-mobility piece with HP, guarded by an authored backup cohort). The
-// exit + boss chamber sit at a fixed anchor; wanderers and potions scatter.
+// The eight authored floors. Each: a themed name, a terrain `recipe` (blob/segment seed counts for
+// the ONLY three terrain types — wall, water, lava), and its guardian's HP. The guardian's KIND and
+// NAME are NOT authored — they are rolled and derived per run (see createBoss / bossPoolForFloor /
+// bossNameFor). Only `hp` stays fixed, because it is the floor-to-floor difficulty ramp. The exit +
+// boss chamber sit at a fixed anchor; wanderers and potions scatter.
 const LEVELS = [
-  { name: 'The Battlefield', recipe: { wall: 3 }, boss: { name: 'the Warlord', kind: 'knight', hp: 3 } },
-  { name: 'The Old Forest', recipe: { wall: 2, water: 2 }, boss: { name: 'the Centaur', kind: 'bishop', hp: 4 } },
-  { name: 'The Sunken Ruins', recipe: { wall: 6 }, boss: { name: 'the Stone Golem', kind: 'rook', hp: 4 } },
-  { name: 'The Drowned Lake', recipe: { water: 8 }, boss: { name: 'the Leviathan', kind: 'queen', hp: 5 } },
-  { name: 'The Whispering Crypt', recipe: { wall: 7 }, boss: { name: 'the Lich', kind: 'archbishop', hp: 5 } },
-  { name: 'The Hedge Maze', recipe: { wall: 8 }, boss: { name: 'the Minotaur', kind: 'chancellor', hp: 6 } },
-  { name: 'The Lake of Fire', recipe: { lava: 8, wall: 2 }, boss: { name: 'the Bone Dragon', kind: 'amazon', hp: 6 } },
-  { name: 'The Demon Castle', recipe: { wall: 6, lava: 3 }, boss: { name: 'the Balrog', kind: 'amazon', hp: 14 } }, // the FINALE: a huge pool + three perks (see createBoss)
+  { name: 'The Battlefield', recipe: { wall: 3 }, boss: { hp: 3 } },
+  { name: 'The Old Forest', recipe: { wall: 2, water: 2 }, boss: { hp: 4 } },
+  { name: 'The Sunken Ruins', recipe: { wall: 6 }, boss: { hp: 4 } },
+  { name: 'The Drowned Lake', recipe: { water: 8 }, boss: { hp: 5 } },
+  { name: 'The Whispering Crypt', recipe: { wall: 7 }, boss: { hp: 5 } },
+  { name: 'The Hedge Maze', recipe: { wall: 8 }, boss: { hp: 6 } },
+  { name: 'The Lake of Fire', recipe: { lava: 8, wall: 2 }, boss: { hp: 8 } },
+  { name: 'The Demon Castle', recipe: { wall: 6, lava: 3 }, boss: { hp: 14 } }, // the FINALE: a huge pool + three perks (see createBoss)
 ];
 
 function levelForFloor(floor) {
@@ -81,14 +108,14 @@ function floorName(floor) {
 // Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of
 // the king's central start and spread around the board's edges.
 const CHAMBER_ANCHORS = [
-  { x: 16, y: 16 },
-  { x: 3, y: 3 },
-  { x: 16, y: 3 },
-  { x: 3, y: 16 },
-  { x: 16, y: 10 },
-  { x: 3, y: 10 },
-  { x: 10, y: 16 },
-  { x: 10, y: 3 },
+  { x: 20, y: 20 },
+  { x: 4, y: 4 },
+  { x: 20, y: 4 },
+  { x: 4, y: 20 },
+  { x: 20, y: 12 },
+  { x: 4, y: 12 },
+  { x: 12, y: 20 },
+  { x: 12, y: 4 },
 ];
 function chamberAnchorForFloor(floor) {
   return CHAMBER_ANCHORS[((floor - 1) % FINAL_FLOOR + FINAL_FLOOR) % FINAL_FLOOR];
@@ -133,8 +160,32 @@ const BOSS_PERK_LABELS = {
   phasing: 'Phantom — sees and drifts through walls and boulders',
   regen: 'Regenerating — knits a wound shut every fourth turn',
 };
+// A guardian has NO unique powers — it is simply a piece kind plus rolled BOSS_PERKS, so the player
+// only ever has to learn those twelve. Its KIND is rolled too, from a sliding window over its tier
+// (see bossPoolForFloor), so a floor plays differently each run while still escalating. Its NAME is
+// derived from kind + traits: an epithet from its primary perk over a noun hashed from the roll, so
+// the same monster always earns the same name without any of it being hand-authored per floor.
+// Ordered weakest→strongest within each tier.
+const BOSS_TIER_MORTAL = ['knight', 'bishop', 'rook', 'queen'];
+const BOSS_TIER_DEMON = ['nightrider', 'archbishop', 'chancellor', 'amazon'];
+const BOSS_NOUNS = {
+  knight: ['Warlord', 'Charger', 'Destrier'],
+  bishop: ['Centaur', 'Inquisitor', 'Zealot'],
+  rook: ['Stone Golem', 'Bastion', 'Juggernaut'],
+  queen: ['Leviathan', 'Tyrant', 'Usurper'],
+  nightrider: ['Bone Dragon', 'Wyrm', 'Hunter'],
+  archbishop: ['Lich', 'Hierophant', 'Cardinal'],
+  chancellor: ['Minotaur', 'Marshal', 'Warden'],
+  amazon: ['Balrog', 'Archdemon', 'Devourer'],
+};
+// The epithet a guardian earns from its PRIMARY perk — so its name telegraphs its worst trait.
+const BOSS_EPITHETS = {
+  summoner: 'Teeming', blinker: 'Flickering', brutal: 'Brutal', ranged: 'Cruel',
+  sorcerer: 'Burning', knockback: 'Hammering', shapeshifter: 'Shifting', tough: 'Hardened',
+  leech: 'Thirsting', flying: 'Winged', phasing: 'Phantom', regen: 'Undying',
+};
 // Ordered weakest→strongest; a Shifting boss never becomes a form ranked above its origin.
-const PIECE_RANK = ['pawn', 'knight', 'bishop', 'rook', 'berolina', 'archbishop', 'chancellor', 'queen', 'amazon'];
+const PIECE_RANK = ['pawn', 'knight', 'bishop', 'rook', 'berolina', 'nightrider', 'archbishop', 'chancellor', 'queen', 'amazon'];
 
 function isCardKind(kind) {
   return CARD_KINDS.includes(kind);
@@ -216,7 +267,10 @@ const CLASSES = {
       { id: 'r_eyes2', chain: 'Oracle', tier: 2, requires: 'r_eagle', name: 'Hawk Eyes', desc: '+1 sight radius AND +1 card reach. This extra sight is ONE-WAY — foes out in the new band can’t see or strike you back (though they’ll start closing in)', grants: { visionOneWay: 2, cardReach: 1 } },
       { id: 'r_reach', chain: 'Oracle', tier: 3, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 sight radius AND +1 card reach (again) — the extra sight is likewise one-way, so you pick foes off from outside their reach', grants: { visionOneWay: 2, cardReach: 1 } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
-      { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
+      // Ghost used to grant `noChase` (foes gave up the moment you broke sight). That read as
+      // stealth but PUNISHED good play: it made a foe impossible to draw off its pack, so you could
+      // never isolate one. It now slows the CATCHING of your eye instead of ending the chase.
+      { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes are slow to fix on you: one more than a tile away has only a 50% chance each turn to notice you at all — so you can draw a single foe off a pack and fight it alone. Adjacent, it always sees you, and one you have struck is enraged regardless', grants: { elusive: true } },
       { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles more than one tile away are BLIND to you — turrets doze (a sleep “z”) and never fire, circles conjure nothing. Step adjacent (within one tile) and they wake and work as normal', grants: { camouflage: true } },
       { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Foes never notice or attack you unless you are adjacent (within one tile) — even firing a weapon won’t give you away. A wandering foe can still blunder onto your tile, striking you by accident', grants: { stealth: true } },
       // 🏹 Marksman — the sharpshooter: kickback, a big bow, then exploding shots.

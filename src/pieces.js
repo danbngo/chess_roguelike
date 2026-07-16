@@ -51,6 +51,14 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
         moves.push(target);
       }
       break;
+    case 'nightrider':
+      // A knight that KEEPS GOING: it repeats its leap outward in a line until a body or a wall
+      // halts it. Long reach along eight knight-bearings — but no adjacent attack at all, so the
+      // one place it cannot touch you is right beside it.
+      for (const target of riderLeapTargets(state, fromX, fromY, KNIGHT_STEPS, unitAt, isTarget, opts)) {
+        moves.push(target);
+      }
+      break;
     case 'archbishop':
       // Bishop + knight.
       slide(DIAG, Infinity);
@@ -134,11 +142,14 @@ function getPieceMoves(piece, state) {
 // Terrain opts for an enemy's move/threat generation — normally "wade lava", but the
 // Flying boss trait crosses pits/water/lava freely and Phasing moves through walls/boulders.
 function pieceTerrainOpts(piece) {
-  const opts = { lavaOk: true };
+  // Only a piece that SURVIVES fire will walk into it. Anything else routes around lava rather than
+  // immolating itself to reach the king (isLavaSafe is the same predicate tickLavaDamage burns by).
+  // Pits need no rule here: standableFor already bars everything but a flier.
+  const opts = { lavaOk: isLavaSafe(piece) };
   if (bossHas(piece, 'flying')) { opts.flying = true; opts.terrainImmune = true; }
   if (bossHas(piece, 'phasing')) {
     opts.phaseWalls = true;
-    if (!piece.lavaImmune) opts.torchAverse = true; // a non-immune phaser routes around burning wall-torches
+    if (!isLavaSafe(piece)) opts.torchAverse = true; // a non-immune phaser routes around burning wall-torches
   }
   return opts;
 }
@@ -447,6 +458,7 @@ function getPieceLabel(kind) {
     queen: '♛',
     mann: '♚', // a mann wears the king silhouette (drawn bone-white / skeletal)
     berolina: 'B', // berolina pawn
+    nightrider: 'N', // a knight's leap, repeated outward in a line
     ferz: '♗', // a ferz (1-step diagonal mover) — the Hexer's confused-foe form
     general: '♔', // the Necromancer's upgraded familiar (king + knight)
     archbishop: 'A', // bishop + knight

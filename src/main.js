@@ -99,8 +99,9 @@
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
   let animTimer = 0;
-  let pendingAction = null; // null | 'floor' | 'shot' (resolve after the projectile lands)
+  let pendingAction = null; // null | 'floor' | 'shot' | 'enemyshot' (resolve after the projectile lands)
   let pendingShot = null; // the player state to resolve once a ranged/spell projectile lands
+  let pendingEnemyShot = null; // { state, hpBefore } — an ENEMY's volley in flight; its blow lands with it
   const PLAYER_MOVE_TIME = 0.16;
   const ENEMY_MOVE_TIME = 0.16;
   const SHOT_LEAD_TIME = 0.19; // arrow/bolt flies for this long before its hit resolves
@@ -478,7 +479,8 @@
     pit: 'Pit — a bottomless hole: nothing can cross it, but shots (yours OR a turret’s/boss’s) fly right over',
     boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it. Knocked, it ROLLS until it hits something',
     ice: 'Ice — a see-through slab: impassable, but you can look past it. Fire/spells MELT it to water; a leap onto it (or a foe slammed into it) SHATTERS it',
-    devilgrass: 'Devilgrass — blocks sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
+    devilgrass: 'Tall grass — blocks sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
+    devilgrass_demon: 'Devilgrass — dry, dead husks that still block sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
     door: 'Door (shut) — blocks sight & fire, but you can walk/leap right onto it; doing so pushes it OPEN',
     dooropen: 'Doorway (open) — a clear, walkable threshold; blocks nothing. Left empty, it starts swinging shut',
     doorajar: 'Door (swinging shut) — still passable and clear, but it will close fully next turn unless something is in it',
@@ -489,6 +491,10 @@
     const t = terrainAt(gameState, tx, ty);
     if (t === 'wall' && (tx === 0 || ty === 0 || tx === WORLD_SIZE - 1 || ty === WORLD_SIZE - 1)) {
       return 'Stone — the impassable rock edge of the level';
+    }
+    // Same terrain, different realm: living grass up top, dry devilgrass husks below.
+    if (t === 'devilgrass' && gameState && (gameState.floor || 1) >= DEMON_FLOOR) {
+      return TERRAIN_NAMES.devilgrass_demon;
     }
     return TERRAIN_NAMES[t] || t;
   }
@@ -574,6 +580,7 @@
     bishop: 'Slides any distance diagonally.',
     rook: 'Slides any distance orthogonally.',
     queen: 'Slides any distance in any direction.',
+    nightrider: 'Repeats a knight’s leap outward in a line — bounding across the floor until a body or a wall halts it. Cannot touch what stands beside it.',
     archbishop: 'Moves as a bishop or a knight.',
     chancellor: 'Moves as a rook or a knight.',
     amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
@@ -986,14 +993,7 @@
     const rank = (a) => (store[a.id] ? 3 - ['bronze', 'silver', 'gold'].indexOf(store[a.id]) : 9);
     for (const a of all.slice().sort((x, y) => rank(x) - rank(y))) {
       const tier = store[a.id];
-      const el = document.createElement('div');
-      el.className = `ach-badge ${tier ? 'badge-new' : 'badge-locked'}`;
-      el.style.color = tier ? (ACH_TIER_COLOR[tier] || '#cbd5e1') : '#64748b';
-      el.innerHTML =
-        `<span class="badge-name">${tier ? '' : '🔒 '}${a.name}</span>` +
-        `<span class="badge-tier">${tier ? ACH_TIER_LABEL[tier] : 'Locked'}</span>` +
-        `<span class="badge-desc">${a.desc}</span>`;
-      shelf.append(el);
+      shelf.append(badgeChip(a, tier, '', tier ? 'badge-won' : 'badge-locked'));
     }
     trophyBody.append(shelf);
   }
@@ -1275,6 +1275,22 @@
 
   // Bank the run's badges and show them on the run-end screen. Freshly-won / upgraded plaques glow;
   // ones already in the case sit muted so the shelf still reads as a record of the run.
+  // One badge chip: a struck medallion in the badge's own metal beside its name. `tier` null means
+  // still locked. Shared by the run summary and the trophy room so the two can never drift apart.
+  function badgeChip(a, tier, note, extraClass) {
+    const el = document.createElement('div');
+    el.className = `ach-badge ${extraClass}`;
+    el.style.color = tier ? (ACH_TIER_COLOR[tier] || '#cbd5e1') : '#64748b';
+    el.innerHTML =
+      `<span class="badge-medal" aria-hidden="true">${tier ? '★' : '🔒'}</span>`
+      + '<span class="badge-text">'
+      + `<span class="badge-name">${a.name}</span>`
+      + `<span class="badge-tier">${tier ? ACH_TIER_LABEL[tier] || tier : 'Locked'}${note || ''}</span>`
+      + `<span class="badge-desc">${a.desc}</span>`
+      + '</span>';
+    return el;
+  }
+
   function renderBadges(container, won) {
     if (!container) {
       return;
@@ -1298,14 +1314,8 @@
       : 'No new badges this run.';
     container.append(head);
     for (const a of [...fresh, ...held]) {
-      const el = document.createElement('div');
-      el.className = `ach-badge ${a.fresh || a.upgraded ? 'badge-new' : 'badge-old'}`;
-      el.style.color = ACH_TIER_COLOR[a.tier] || '#cbd5e1';
-      el.innerHTML =
-        `<span class="badge-name">${a.name}</span>` +
-        `<span class="badge-tier">${ACH_TIER_LABEL[a.tier] || a.tier}${a.upgraded ? ' — upgraded!' : a.fresh ? ' — new!' : ''}</span>` +
-        `<span class="badge-desc">${a.desc}</span>`;
-      container.append(el);
+      const note = a.upgraded ? ' — upgraded!' : a.fresh ? ' — new!' : '';
+      container.append(badgeChip(a, a.tier, note, a.fresh || a.upgraded ? 'badge-new' : 'badge-old'));
     }
   }
 
@@ -1556,6 +1566,37 @@
     scanVisibleTips(phase.state);
   }
 
+  // Everything that happens once an enemy's move has actually LANDED: apply it and react to the
+  // blow. Split out so a projectile can defer all of it until its arrow arrives. Returns true if
+  // the queue must stop here (the king died).
+  function landEnemyMove(next, hpBefore) {
+    applyState(next, true);
+    // A boss's first-sighting ROAR is logged separately so it doesn't cost the boss its action.
+    if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
+    // ...and pops a short speech bubble over its head for a beat (only on this scream turn).
+    if (gameState.bossShout) { Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text, gameState.bossShout.demon); gameState.bossShout = null; }
+    if (gameState.player.hp < hpBefore) {
+      Renderer.effect(gameState.gameOver ? 'death' : 'hit');
+      GameAudio.play(gameState.gameOver ? 'death' : 'hit');
+      flashHealth();
+      if (!gameState.gameOver) {
+        queueTip('hp');
+      }
+    } else if (gameState.player.deflected) {
+      // A blow landed but was warded/parried away — flash a blue block.
+      Renderer.effect('deflect');
+      GameAudio.play('deflect');
+    }
+    if (gameState.gameOver) {
+      enemyQueue = [];
+      // Let the death flash/shake play for a beat before the overlay drops.
+      pendingAction = 'gameover';
+      animTimer = ENEMY_MOVE_TIME * 2.5;
+      return true;
+    }
+    return false;
+  }
+
   function advanceEnemyQueue() {
     while (enemyQueue.length) {
       const id = enemyQueue.shift();
@@ -1563,35 +1604,21 @@
         continue; // Piece vanished (e.g. captured) before its turn.
       }
       const hpBefore = gameState.player.hp;
-      applyState(moveEnemy(gameState, id), true);
-      // A boss's first-sighting ROAR is logged separately so it doesn't cost the boss its action.
-      if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
-      // ...and pops a short speech bubble over its head for a beat (only on this scream turn).
-      if (gameState.bossShout) { Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text, gameState.bossShout.demon); gameState.bossShout = null; }
-      if (gameState.lastShot) {
-        const s = gameState.lastShot;
-        Renderer.rangedShot(s.fromX, s.fromY, s.toX, s.toY, s.role, s.tiles);
-        if (s.role === 'fireball') GameAudio.play('cast');
-      }
-      if (gameState.player.hp < hpBefore) {
-        Renderer.effect(gameState.gameOver ? 'death' : 'hit');
-        GameAudio.play(gameState.gameOver ? 'death' : 'hit');
-        flashHealth();
-        if (!gameState.gameOver) {
-          queueTip('hp');
-        }
-      } else if (gameState.player.deflected) {
-        // A blow landed but was warded/parried away — flash a blue block.
-        Renderer.effect('deflect');
-        GameAudio.play('deflect');
-      }
-      if (gameState.gameOver) {
-        enemyQueue = [];
-        // Let the death flash/shake play for a beat before the overlay drops.
-        pendingAction = 'gameover';
-        animTimer = ENEMY_MOVE_TIME * 2.5;
+      const next = moveEnemy(gameState, id);
+      // A projectile must FLY before it lands. Hold the whole outcome — the wound, the flash, the
+      // death — until the arrow arrives, exactly as the king's own shots do (see pendingShot).
+      // Resolving now instead would register the blow a beat BEFORE the bolt visibly got there.
+      const shot = next.lastShot;
+      if (shot && (shot.role === 'arrow' || shot.role === 'bolt' || shot.role === 'fireball')) {
+        Renderer.rangedShot(shot.fromX, shot.fromY, shot.toX, shot.toY, shot.role, shot.tiles);
+        GameAudio.play(shot.role === 'fireball' ? 'cast' : 'attack');
+        next.lastShot = null;
+        pendingEnemyShot = { state: next, hpBefore };
+        pendingAction = 'enemyshot';
+        animTimer = SHOT_LEAD_TIME;
         return;
       }
+      if (landEnemyMove(next, hpBefore)) return;
       animTimer = ENEMY_MOVE_TIME;
       return;
     }
@@ -1698,6 +1725,14 @@
           const s = pendingShot;
           pendingShot = null;
           if (s) resolveCommitted(s);
+        } else if (pendingAction === 'enemyshot') {
+          // The foe's arrow just arrived — NOW its blow lands, and the queue moves on.
+          pendingAction = null;
+          const s = pendingEnemyShot;
+          pendingEnemyShot = null;
+          if (s && !landEnemyMove(s.state, s.hpBefore)) {
+            animTimer = ENEMY_MOVE_TIME;
+          }
         } else if (pendingAction === 'floor') {
           pendingAction = null;
           goNextFloor();
@@ -1739,10 +1774,11 @@
     // The exploring score HURRIES a gear at a time as the floor's dread climbs (so the pressure to
     // get off the floor is audible), and darkens to the tense progression past the danger line.
     const dread = Boolean(gameState) && screen === 'playing'
-      ? Math.min(1, gameState.turn / (gameState.dreadTurns || MAX_TURNS_SCARY))
+      ? dreadFraction(gameState.turn, gameState.dreadTurns)
       : 0;
     GameAudio.setDanger(dread);
-    const inDanger = Boolean(gameState) && screen === 'playing' && gameState.turn >= Math.floor((gameState.dreadTurns || MAX_TURNS_SCARY) * 0.6);
+    // Past the 60% mark of the CLIMB (not of the whole cycle — the grace isn't dread).
+    const inDanger = Boolean(gameState) && screen === 'playing' && dread >= 0.6;
     GameAudio.setTension(inDanger);
 
     Renderer.update(delta);

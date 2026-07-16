@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, dreadFraction, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, chamberAnchorForFloor, playerReachable };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -22,6 +22,9 @@ const {
   advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, getPieceThreats, maybeSpawnEnemy,
   ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast,
   hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks,
+  runAllyPhase, scorchGround,
+  randomEnemyKind: rollEnemy, randomTurretKind: rollTurret,
+  dreadFraction, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, chamberAnchorForFloor, playerReachable,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -37,8 +40,10 @@ function makeEnemy(extra) {
 
 test('createInitialState starts the king at the center and spawns enemies', () => {
   const state = createInitialState('warrior');
-  assert.equal(state.player.x, 10);
-  assert.equal(state.player.y, 10);
+  // Derived, not hardcoded — the board has been resized once already and these went stale.
+  assert.equal(state.player.x, PLAYER_START.x);
+  assert.equal(state.player.y, PLAYER_START.y);
+  assert.equal(state.player.x, Math.floor(WORLD_SIZE / 2), 'and PLAYER_START really is the centre');
   assert.ok(state.enemies.length >= 3);
 });
 
@@ -60,13 +65,13 @@ test('visible bounds are a centered 7x7 window', () => {
   const bounds = getVisibleBounds(createInitialState('warrior'));
   assert.equal(bounds.width, 7);
   assert.equal(bounds.height, 7);
-  assert.equal(bounds.x, 7);
-  assert.equal(bounds.y, 7);
+  assert.equal(bounds.x, PLAYER_START.x - 3, 'centred on the king');
+  assert.equal(bounds.y, PLAYER_START.y - 3);
 });
 
 test('a fresh floor reveals fog around the king but not the far corners', () => {
   const state = createInitialState('warrior');
-  assert.ok(state.explored['10,10']);
+  assert.ok(state.explored[`${PLAYER_START.x},${PLAYER_START.y}`]);
   assert.ok(!state.explored['0,0']);
 });
 
@@ -156,7 +161,8 @@ test('turrets are destructible (HP, struck in place); circles and plain pieces d
 test('a boss recovers (skips a turn) after it acts — every-other-turn cadence', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
-  const boss = createBoss(3, 9, 8); // rook, adjacent to the king
+  const boss = createBoss(3, 9, 8); // adjacent to the king
+  boss.kind = 'rook'; boss.originalKind = 'rook'; // kinds are ROLLED — a bishop couldn't strike along this rank
   boss.bossPerk = 'tough'; boss.bossPerks = ['tough']; // no on-hit reaction, deterministic
   boss.dormant = false; boss.spokeLine = true;
   s.enemies = [boss];
@@ -187,6 +193,80 @@ test('a turret alternates TARGET → FIRE → TARGET: it can never shoot two tur
   assert.ok(t4.player.hp < t3.player.hp, 'and fires again the turn after that — one shot every OTHER turn');
 });
 
+test('in the demon realm only STRUCTURES may be mortal — living foes and guardians are natives', () => {
+  const demonKinds = ['berolina', 'archbishop', 'chancellor', 'nightrider', 'amazon'];
+  const isMortal = (k) => !demonKinds.includes(k);
+  const mobile = new Set(); const boss = new Set(); const turret = new Set(); const circle = new Set();
+  for (let i = 0; i < 40; i += 1) {
+    for (const floor of [6, 8]) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      for (const e of s.enemies) {
+        if (e.boss) boss.add(e.kind);
+        else if (e.turret) turret.add(e.kind);
+        else if (e.summonCircle) circle.add(e.kind);
+        else mobile.add(e.kind);
+      }
+    }
+  }
+  assert.ok(mobile.size && turret.size && circle.size, 'the sample produced foes, turrets and circles');
+  // Anything that LIVES down here is a native.
+  assert.ok(![...mobile].some(isMortal), `every LIVING foe is a native (saw ${[...mobile].join(', ')})`);
+  assert.ok(![...boss].some(isMortal), `the guardian is a native (saw ${[...boss].join(', ')})`);
+  // A TURRET is a fixed mortal gun — a leaping/off-axis demon makes no sense as a firing lane, so
+  // demon turrets are never built, on ANY floor.
+  assert.ok(![...turret].some((k) => !isMortal(k)), `turrets are ALWAYS mortal (saw ${[...turret].join(', ')})`);
+  // A CIRCLE is a rune: it may bind either.
+  assert.ok([...circle].some(isMortal), `circles still bind mortal kinds (saw ${[...circle].join(', ')})`);
+  assert.ok([...circle].some((k) => !isMortal(k)), 'and demon kinds too');
+});
+
+test('spawns stay an EVEN mix of every unlocked kind — a floor never skews to one piece', () => {
+  // A kind never leaves the roster once unlocked, and the pick is uniform across it: pawn/king 50/50
+  // → +knight 33% each → +bishop/rook 20% each → +queen ~17% each. Low tiers keep showing up.
+  const share = (pick, floor, n) => {
+    const c = {};
+    for (let i = 0; i < n; i += 1) { const k = pick(floor); c[k] = (c[k] || 0) + 1; }
+    return c;
+  };
+  const evenly = (pick, floor, expected, label) => {
+    const N = 4000;
+    const c = share(pick, floor, N);
+    const kinds = Object.keys(c);
+    assert.equal(kinds.length, expected, `${label} floor ${floor}: ${expected} kinds in the mix (saw ${kinds.join(', ')})`);
+    const ideal = N / expected;
+    for (const k of kinds) {
+      // Generous band — this guards against SKEW (one kind dominating), not exact RNG.
+      assert.ok(c[k] > ideal * 0.6 && c[k] < ideal * 1.4, `${label} floor ${floor}: ${k} is an even share (${(100 * c[k] / N).toFixed(0)}%)`);
+    }
+  };
+  // Mortal curve — turrets draw this on EVERY floor, so a deep floor is never "all queens".
+  evenly(rollTurret, 1, 2, 'turret');
+  evenly(rollTurret, 2, 3, 'turret');
+  evenly(rollTurret, 4, 6, 'turret');
+  evenly(rollTurret, 8, 6, 'turret'); // still the full even mix at the very bottom
+  // Living foes follow the same curve, then the demon tier restarts it.
+  evenly(rollEnemy, 1, 2, 'enemy');
+  evenly(rollEnemy, 3, 5, 'enemy');
+  evenly(rollEnemy, 4, 6, 'enemy');
+  evenly(rollEnemy, 5, 2, 'enemy'); // TWO demons open the tier — one alone made floor 5 a single repeated foe
+  evenly(rollEnemy, 6, 3, 'enemy');
+  evenly(rollEnemy, 7, 4, 'enemy');
+  evenly(rollEnemy, 8, 5, 'enemy');
+});
+
+test('grass grows on every floor — the demon realm only withers its look', () => {
+  const hasGrass = (floor) => {
+    let n = 0;
+    for (let i = 0; i < 12; i += 1) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      if (Object.values(s.terrain).includes('devilgrass')) n += 1;
+    }
+    return n;
+  };
+  assert.ok(hasGrass(1) >= 8, 'floor 1 has grass');
+  assert.ok(hasGrass(6) >= 8, 'so does the demon realm (it is the same terrain, only recoloured)');
+});
+
 test('demon guardians bear TWO perks and the final one THREE — never two that cancel out', () => {
   const groups = { ranged: 'attack', sorcerer: 'attack', shapeshifter: 'reaction', blinker: 'reaction' };
   for (let i = 0; i < 60; i += 1) {
@@ -210,7 +290,11 @@ test('demon guardians bear TWO perks and the final one THREE — never two that 
   // The final guardian is a far bigger pool than the floor below it.
   const balrog = createBoss(8, 9, 8);
   const prior = createBoss(7, 9, 8);
-  assert.ok(balrog.maxHp >= 14 && balrog.maxHp > prior.maxHp + 4, `the Balrog looms (${balrog.maxHp} vs ${prior.maxHp})`);
+  // Compare the AUTHORED pools: a rolled Hardened (+3) on either side would otherwise muddy this,
+  // and did — it made a raw maxHp comparison fail roughly one run in eight.
+  const base = (b) => b.maxHp - (bossHas(b, 'tough') ? 3 : 0);
+  assert.ok(balrog.maxHp >= 14, `the Balrog carries the finale's pool (${balrog.maxHp})`);
+  assert.ok(base(balrog) > base(prior) + 4, `and it looms far over the floor below (${base(balrog)} vs ${base(prior)})`);
 });
 
 test('a Regenerating boss knits one wound shut every fourth turn', () => {
@@ -392,7 +476,7 @@ test('a mini-boss (danger event) rises, grants no boon, and is smaller-HP', () =
   let mini = null;
   for (let i = 0; i < 80 && !mini; i += 1) {
     let t = structuredClone(s);
-    t.turn = 40; t.turnsSinceSpawn = 99;
+    t.turn = 160; t.turnsSinceSpawn = 99;
     t = maybeSpawnEnemy(t);
     mini = t.enemies.find((e) => e.boss && e.mini);
     if (mini) s = t;
@@ -444,7 +528,7 @@ test('the move-stair danger event is gone — the exit never relocates, even aft
   s.key = { x: 3, y: 3, collected: true }; // even AFTER the key, the old relocate event must not fire
   s.player.seenTerrain = ['water', 'lava', 'pit', 'boulder']; s.player.seenTurret = true;
   const kinds = new Set();
-  for (let i = 0; i < 120; i += 1) { let t = structuredClone(s); t.turn = 60; t.turnsSinceSpawn = 99; t = maybeSpawnEnemy(t); if (t.dangerEvent) kinds.add(t.dangerEvent.kind); }
+  for (let i = 0; i < 120; i += 1) { let t = structuredClone(s); t.turn = 160; t.turnsSinceSpawn = 99; t = maybeSpawnEnemy(t); if (t.dangerEvent) kinds.add(t.dangerEvent.kind); }
   assert.ok(!kinds.has('moveStair'), 'moveStair never fires anymore');
 });
 
@@ -501,7 +585,8 @@ test('every boss rolls one of the twelve boss perks', () => {
 test('a Leech boss mends a wound each time it wounds the king', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
-  const boss = createBoss(3, 9, 8); // rook
+  const boss = createBoss(3, 9, 8);
+  boss.kind = 'rook'; boss.originalKind = 'rook'; // guardian kinds are ROLLED — pin it so the blow is a rook's
   boss.bossPerk = 'leech'; boss.bossPerks = ['leech'];
   boss.dormant = false; boss.spokeLine = true;
   boss.maxHp = 4; boss.hp = 2; // wounded, with room to heal
@@ -532,7 +617,8 @@ test('a Hardened boss bears three extra wounds', () => {
 test('a Brutal boss strikes the king for two', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
-  const boss = createBoss(3, 9, 8); // rook
+  const boss = createBoss(3, 9, 8);
+  boss.kind = 'rook'; boss.originalKind = 'rook'; // kinds are ROLLED — a bishop couldn't strike along this rank
   boss.bossPerk = 'brutal'; boss.bossPerks = ['brutal'];
   boss.dormant = false; boss.spokeLine = true;
   s.enemies = [boss];
@@ -563,7 +649,8 @@ test('a Shifting boss morphs into a no-higher form when wounded', () => {
 test('a Volley boss shoots down an open line instead of closing', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
-  const boss = createBoss(3, 12, 8); // rook, four tiles east on the same row
+  const boss = createBoss(3, 12, 8); // four tiles east on the same row
+  boss.kind = 'rook'; boss.originalKind = 'rook'; // pinned: this test needs a piece that fires along a rank
   boss.bossPerk = 'ranged'; boss.bossPerks = ['ranged'];
   boss.dormant = false; boss.spokeLine = true;
   s.enemies = [boss];
@@ -582,7 +669,8 @@ test('a ranged boss only shoots along its own movement lines (a bishop won’t f
   // must NOT fire; it just advances instead.
   const s1 = createInitialState('warrior');
   s1.terrain = {}; s1.enemies = [];
-  const b1 = createBoss(2, 12, 8); // the floor-2 boss is a bishop
+  const b1 = createBoss(2, 12, 8);
+  b1.kind = 'bishop'; b1.originalKind = 'bishop'; // guardian kinds are ROLLED now — pin it to test a bishop's lines
   b1.bossPerk = 'ranged'; b1.bossPerks = ['ranged']; b1.dormant = false; b1.spokeLine = true;
   s1.enemies = [b1];
   s1.player.x = 8; s1.player.y = 8; s1.player.hp = 5; s1.player.maxHp = 5;
@@ -594,6 +682,7 @@ test('a ranged boss only shoots along its own movement lines (a bishop won’t f
   const s2 = createInitialState('warrior');
   s2.terrain = {}; s2.enemies = [];
   const b2 = createBoss(2, 12, 8);
+  b2.kind = 'bishop'; b2.originalKind = 'bishop';
   b2.bossPerk = 'ranged'; b2.bossPerks = ['ranged']; b2.dormant = false; b2.spokeLine = true;
   s2.enemies = [b2];
   s2.player.x = 8; s2.player.y = 4; // (8,4): four tiles up-left of the boss — a diagonal
@@ -870,6 +959,272 @@ test('a compound piece leaps over a pit even though its slide cannot cross it', 
   assert.ok(moves.some((m) => m.viaJump && m.x === 12 && m.y === 11), 'but the knight-leap clears it');
 });
 
+test('turrets and circles SCATTER — they no longer draw a map to the key', () => {
+  // They used to be laid only in the chamber's ring: find the guns, find the door. They now spread
+  // over the whole floor, weighted so the court is still much the most defended ground.
+  let court = 0; let near = 0; let far = 0;
+  for (let i = 0; i < 60; i += 1) {
+    const s = generateFloor(8, createPlayer('warrior'), 0);
+    const a = chamberAnchorForFloor(8);
+    for (const e of s.enemies) {
+      if (!e.turret && !e.summonCircle) continue;
+      const d = chebyshev(e.x, e.y, a.x, a.y);
+      if (d <= 2) court += 1; else if (d <= 7) near += 1; else far += 1;
+    }
+  }
+  const total = court + near + far;
+  assert.ok(total > 100, `the sample produced structures (${total})`);
+  assert.ok(far / total > 0.15, `a real share sits well AWAY from the chamber (${(100 * far / total).toFixed(0)}%)`);
+  assert.ok(court / total > 0.1, `but the court is still stacked (${(100 * court / total).toFixed(0)}%)`);
+  // The court is ~24 tiles against several hundred out on the floor, so per-TILE it must still be
+  // far and away the most guarded ground — that is what keeps the key feeling defended.
+  const courtDensity = court / 24;
+  const farDensity = far / (WORLD_SIZE * WORLD_SIZE - 15 * 15);
+  assert.ok(courtDensity > farDensity * 4, `per tile the court is much the deadliest (${(courtDensity / farDensity).toFixed(1)}x)`);
+});
+
+test('a storeroom is a ROOM, never a sealed block of stone', () => {
+  // The trap: pruneUselessDoors re-judges every door with isDoorwaySpot, which needs the door's wall
+  // to run two tiles either side AND >= 6 tiles of space on both. A 3x3/4x4 box fails, its door
+  // reverts to rock, and the room becomes solid. Storerooms must be odd and >= 5 a side.
+  let rooms = 0; let unreachable = 0;
+  for (let i = 0; i < 60; i += 1) {
+    const s = generateFloor(4, createPlayer('warrior'), 0);
+    const at = (x, y) => terrainAt(s, x, y);
+    const walk = playerReachable(s, s.player.x, s.player.y);
+    for (let bx = 2; bx < WORLD_SIZE - 6; bx += 1) {
+      for (let by = 2; by < WORLD_SIZE - 6; by += 1) {
+        for (const size of [5, 7]) {
+          if (bx + size > WORLD_SIZE - 2 || by + size > WORLD_SIZE - 2) continue;
+          let doors = 0; let walls = 0; let ok = true;
+          for (let x = bx; x < bx + size && ok; x += 1) {
+            for (let y = by; y < by + size; y += 1) {
+              if (!(x === bx || x === bx + size - 1 || y === by || y === by + size - 1)) continue;
+              const t = at(x, y);
+              if (t === 'wall') walls += 1;
+              else if (t === 'door' || t === 'dooropen') doors += 1;
+              else { ok = false; break; }
+            }
+          }
+          if (!ok || walls + doors !== size * 4 - 4) continue;
+          // A closed box of wall. It MUST have a door, and its heart must be walkable.
+          assert.ok(doors >= 1, `a walled box at (${bx},${by}) has a way in`);
+          rooms += 1;
+          const ix = bx + (size - 1) / 2;
+          const iy = by + (size - 1) / 2;
+          if (!walk.has(`${ix},${iy}`)) unreachable += 1;
+        }
+      }
+    }
+  }
+  assert.ok(rooms > 0, `the sample produced storerooms (${rooms})`);
+  assert.equal(unreachable, 0, `every storeroom can be walked into (${unreachable} of ${rooms} sealed)`);
+});
+
+test('Ghost makes the king hard to FIX ON — half the turns beyond a tile, always when adjacent', () => {
+  // Ghost used to be noChase (foes gave up when you broke sight), which stopped you luring one foe
+  // off a pack. It now slows the NOTICE instead, so you can peel them off one at a time.
+  const noticeRate = (elusive, dist) => {
+    let n = 0;
+    const N = 600;
+    for (let i = 0; i < N; i += 1) {
+      const s = createInitialState('warrior');
+      s.floor = 3; s.allies = []; s.terrain = {};
+      s.player.x = 10; s.player.y = 10; s.player.elusive = elusive;
+      s.enemies = [makeEnemy({ kind: 'rook', x: 10 + dist, y: 10, awake: false, lastSeen: null, lastSeenTtl: 0 })];
+      if (beginEnemyPhase(s).state.enemies[0].awake) n += 1;
+    }
+    return n / N;
+  };
+  // Control: without the perk a foe in plain view notices EVERY time, at any distance.
+  assert.equal(noticeRate(false, 3), 1, 'control: a foe with a clear view always notices');
+  assert.equal(noticeRate(false, 1), 1, 'control: and certainly when adjacent');
+  // With Ghost: adjacent is still certain — it only ever slows the catching of its eye at range.
+  assert.equal(noticeRate(true, 1), 1, 'adjacent, Ghost hides nothing');
+  const far = noticeRate(true, 3);
+  assert.ok(far > 0.4 && far < 0.6, `beyond a tile it notices about half the turns (got ${(far * 100).toFixed(0)}%)`);
+});
+
+test('Ghost never breaks PURSUIT — a foe that already has the king keeps him', () => {
+  // The trap in slowing the notice: applied to a foe that had already seen him, it would quietly
+  // become the old noChase again. A live memory is exempt.
+  let kept = 0;
+  for (let i = 0; i < 200; i += 1) {
+    const s = createInitialState('warrior');
+    s.floor = 3; s.allies = []; s.terrain = {};
+    s.player.x = 10; s.player.y = 10; s.player.elusive = true;
+    s.enemies = [makeEnemy({ kind: 'rook', x: 13, y: 10, awake: false, lastSeen: { x: 10, y: 10 }, lastSeenTtl: 6 })];
+    if (beginEnemyPhase(s).state.enemies[0].awake) kept += 1;
+  }
+  assert.equal(kept, 200, 'a foe holding a live memory of the king notices him every time');
+});
+
+test('lava stops a slide exactly as water does — one tile, then you stop', () => {
+  const reach = (terr) => {
+    const s = createInitialState('warrior');
+    s.allies = []; s.player.x = 0; s.player.y = 0;
+    s.terrain = { '11,10': terr, '12,10': terr };
+    // lavaImmune so it is ALLOWED in — this is about the SLIDE stopping, not about avoidance.
+    const e = makeEnemy({ kind: 'rook', x: 10, y: 10, awake: true, lavaImmune: true });
+    s.enemies = [e];
+    const m = getPieceMoves(e, s);
+    return { one: m.some((t) => t.x === 11 && t.y === 10), two: m.some((t) => t.x === 12 && t.y === 10) };
+  };
+  for (const terr of ['water', 'lava']) {
+    const r = reach(terr);
+    assert.ok(r.one, `${terr}: it may wade the first tile`);
+    assert.ok(!r.two, `${terr}: but never slides clean across two`);
+  }
+  // Control: on dry ground the same rook slides straight through.
+  const dry = reach('normal');
+  assert.ok(dry.one && dry.two, 'control: open ground does not stop it');
+});
+
+test('a chasing foe will not immolate itself — it enters only fire it can survive', () => {
+  // A 1-wide walled corridor with a lava plug: the ONLY path to the king runs through the fire.
+  const run = (lavaImmune) => {
+    const s = createInitialState('warrior');
+    s.floor = 3; s.allies = []; s.terrain = {};
+    for (const y of [9, 11]) for (let x = 9; x <= 14; x += 1) s.terrain[`${x},${y}`] = 'wall';
+    s.terrain['11,10'] = 'lava';
+    s.player.x = 10; s.player.y = 10; s.player.hp = 9;
+    s.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, awake: true, lastSeen: { x: 10, y: 10 }, lastSeenTtl: 9, lavaImmune })];
+    const n = moveEnemy(s, s.enemies[0].id);
+    const e = n.enemies[0];
+    return e ? terrainAt(n, e.x, e.y) === 'lava' : false;
+  };
+  assert.equal(run(false), false, 'a mortal foe refuses the fire rather than burning to reach him');
+  assert.equal(run(true), true, 'control: one that SURVIVES fire still wades straight in');
+});
+
+test('the dread cycle opens with a GRACE: three quiet steps, then five climbing ones', () => {
+  const M = MAX_TURNS_SCARY;
+  assert.equal(M, 320, 'eight steps of 40 turns — an 8x8 board’s worth');
+  assert.equal(DREAD_GRACE_TURNS, 120, 'the first three steps are grace');
+  // Nothing stirs through the grace...
+  for (const t of [0, 40, 80, 119]) {
+    assert.ok(inDreadGrace(t, M), `turn ${t} is still grace`);
+    assert.equal(dreadFraction(t, M), 0, `turn ${t} carries no dread at all`);
+  }
+  // ...then dread climbs cleanly to full by the end of the cycle.
+  assert.ok(!inDreadGrace(120, M), 'grace lifts at turn 120');
+  assert.ok(dreadFraction(121, M) > 0, 'and dread starts the moment it does');
+  assert.equal(dreadFraction(220, M), 0.5, 'halfway through the CLIMB, not the cycle');
+  assert.equal(dreadFraction(320, M), 1, 'maxed at the end of the cycle');
+  assert.equal(dreadFraction(9999, M), 1, 'and never exceeds 1');
+});
+
+test('no danger event fires during the grace — the first hint waits for it to lift', () => {
+  const build = (turn) => {
+    let s = createInitialState('warrior');
+    s.floor = 3; // events only start from floor 2
+    s.turn = turn;
+    s.turnsSinceSpawn = 999; // the timer is long overdue — only the grace can hold it back
+    return maybeSpawnEnemy(s);
+  };
+  for (const turn of [0, 40, 80, 119]) {
+    let fired = false;
+    for (let i = 0; i < 40; i += 1) if (build(turn).dangerEvent) fired = true;
+    assert.ok(!fired, `turn ${turn}: the floor stays quiet through the grace`);
+  }
+  // The moment grace lifts, the overdue timer lets dread through.
+  let fired = false;
+  for (let i = 0; i < 40; i += 1) if (build(DREAD_GRACE_TURNS).dangerEvent) fired = true;
+  assert.ok(fired, 'and the first hint of dread lands as soon as it lifts');
+});
+
+test('a guardian is a ROLLED kind + rolled perks — never a hand-authored monster', () => {
+  // Its pool slides up its tier: a floor-1 guardian can never be a queen, a floor-4 one never a
+  // knight, and each pool stays plural so a floor is not the same fight every run.
+  assert.deepEqual(bossPoolForFloor(1), ['knight', 'bishop']);
+  assert.deepEqual(bossPoolForFloor(4), ['rook', 'queen']);
+  assert.deepEqual(bossPoolForFloor(5), ['nightrider', 'archbishop'], 'the demon tier restarts the window');
+  assert.deepEqual(bossPoolForFloor(8), ['chancellor', 'amazon']);
+  for (let f = 1; f <= 8; f += 1) assert.ok(bossPoolForFloor(f).length >= 2, `floor ${f} has a plural pool`);
+  // Rolling really does vary the kind, and never leaves the floor's pool.
+  for (const floor of [1, 4, 5, 8]) {
+    const seen = new Set();
+    for (let i = 0; i < 300; i += 1) seen.add(createBoss(floor, 5, 5).kind);
+    assert.deepEqual([...seen].sort(), [...bossPoolForFloor(floor)].sort(), `floor ${floor} rolls its whole pool and nothing else`);
+  }
+});
+
+test('a guardian’s name is derived from its kind + traits, and is stable for the same monster', () => {
+  // Same monster -> same name, every time. No per-floor authoring.
+  assert.equal(bossNameFor('rook', ['brutal']), bossNameFor('rook', ['brutal']));
+  // The epithet comes from the PRIMARY perk, so the name telegraphs its worst trait.
+  assert.match(bossNameFor('rook', ['brutal']), /^the Brutal /);
+  assert.match(bossNameFor('amazon', ['flying', 'leech']), /^the Winged /);
+  // Different traits on the same kind read as different monsters.
+  assert.notEqual(bossNameFor('queen', ['brutal']), bossNameFor('queen', ['leech']));
+  // Every kind a guardian can actually BE has nouns to draw on.
+  for (let f = 1; f <= 8; f += 1) {
+    for (const kind of bossPoolForFloor(f)) {
+      const name = bossNameFor(kind, ['brutal']);
+      assert.ok(/^the Brutal \w/.test(name), `${kind} yields a real name (got "${name}")`);
+    }
+  }
+});
+
+test('a nightrider repeats its knight leap outward, and cannot touch what stands beside it', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {};
+  s.player.x = 0; s.player.y = 0;
+  const nr = makeEnemy({ kind: 'nightrider', x: 10, y: 10 });
+  s.enemies = [nr];
+  const moves = getPieceMoves(nr, s);
+  const at = (x, y) => moves.some((m) => m.x === x && m.y === y);
+  // It rides the (1,2) bearing leg after leg, all the way to the board edge. Walked rather than
+  // hardcoded, so the board can be resized without silently gutting this.
+  let legs = 0;
+  for (let n = 1; n < WORLD_SIZE; n += 1) {
+    const x = 10 + n; const y = 10 + 2 * n;
+    if (x >= WORLD_SIZE || y >= WORLD_SIZE) { assert.ok(!at(x, y), 'and stops at the board edge'); break; }
+    assert.ok(at(x, y), `it rides leg ${n}, to (${x},${y})`);
+    legs += 1;
+  }
+  assert.ok(legs >= 4, `a real ride, not one hop (${legs} legs)`);
+  assert.ok(moves.length > 0 && moves.every((m) => m.viaJump), 'every landing is a leap');
+  // Its blind spot: the eight tiles around it. A nightrider has no adjacent attack at all.
+  for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [-1, -1], [-1, 0], [0, -1], [1, -1], [-1, 1]]) {
+    assert.ok(!at(10 + dx, 10 + dy), `it cannot reach the tile beside it (${dx},${dy})`);
+  }
+});
+
+test('a body halts a nightrider ride — it may take that body, but bounds no further', () => {
+  const s = createInitialState('warrior');
+  s.terrain = {};
+  s.player.x = 0; s.player.y = 0;
+  const nr = makeEnemy({ kind: 'nightrider', x: 10, y: 10 });
+  // Its own kin standing on the second leg blocks the bearing beyond.
+  s.enemies = [nr, makeEnemy({ kind: 'berolina', x: 12, y: 14 })];
+  const m1 = getPieceMoves(nr, s);
+  assert.ok(m1.some((m) => m.x === 11 && m.y === 12), 'the first leg is still open');
+  assert.ok(!m1.some((m) => m.x === 12 && m.y === 14), 'it cannot land on its own kin');
+  assert.ok(!m1.some((m) => m.x === 13 && m.y === 16), 'and the kin halts the ride behind it');
+  // The king on that same tile is takeable — but the ride still stops there.
+  s.enemies = [nr];
+  s.player.x = 12; s.player.y = 14;
+  const m2 = getPieceMoves(nr, s);
+  assert.ok(m2.some((m) => m.x === 12 && m.y === 14 && m.capture), 'it takes the king on the second leg');
+  assert.ok(!m2.some((m) => m.x === 13 && m.y === 16), 'but a body ends the ride');
+});
+
+test('walls cage a nightrider the way they cage a knight — shoulders block each leg', () => {
+  const s = createInitialState('warrior');
+  s.player.x = 0; s.player.y = 0;
+  const nr = makeEnemy({ kind: 'nightrider', x: 10, y: 10 });
+  s.enemies = [nr];
+  // A wall on the (1,2) leap's own shoulder kills that whole bearing at the first leg.
+  s.terrain = { '10,11': 'wall' };
+  assert.ok(!getPieceMoves(nr, s).some((m) => m.x === 11 && m.y === 12), 'a shoulder wall blocks the first leg');
+  // A wall on the SECOND leg's landing halts the ride there, leaving the first leg intact.
+  s.terrain = { '12,14': 'wall' };
+  const m = getPieceMoves(nr, s);
+  assert.ok(m.some((mv) => mv.x === 11 && mv.y === 12), 'the first leg still stands');
+  assert.ok(!m.some((mv) => mv.x === 13 && mv.y === 16), 'but it cannot ride on through a wall');
+});
+
 test('a crushed boulder (knight leap) leaves rubble', () => {
   const s = createInitialState('warrior');
   s.enemies = [];
@@ -1043,7 +1398,8 @@ test('a boss bolt shatters a boulder in its path to the king', () => {
   const s = createInitialState('warrior');
   s.terrain = {}; s.enemies = [];
   // A ranged (Volley) rook boss firing east at the king, a boulder standing between them.
-  const boss = createBoss(3, 10, 10); // rook
+  const boss = createBoss(3, 10, 10);
+  boss.kind = 'rook'; boss.originalKind = 'rook'; // pinned: this test is about a rook's east-firing lane
   boss.bossPerk = 'ranged'; boss.bossPerks = ['ranged'];
   boss.dormant = false; boss.spokeLine = true;
   boss.recovering = false;
@@ -1061,7 +1417,7 @@ test('danger events only unleash hazards the king has already met', () => {
   s.floor = 4;
   const kinds = new Set();
   for (let i = 0; i < 80; i += 1) {
-    s.turn = 60; s.turnsSinceSpawn = 99;
+    s.turn = 160; s.turnsSinceSpawn = 99;
     s.player.seenTerrain = []; s.player.seenTurret = false; // pretend he's encountered nothing
     s = maybeSpawnEnemy(s);
     if (s.dangerEvent) kinds.add(s.dangerEvent.kind);
@@ -1082,7 +1438,7 @@ test('a danger WAVE spawns at least one foe in the king’s view', () => {
   let saw = false;
   for (let i = 0; i < 80 && !saw; i += 1) {
     let s = structuredClone(base);
-    s.turn = 40; s.turnsSinceSpawn = 99; // force an event
+    s.turn = 160; s.turnsSinceSpawn = 99; // force an event
     s = maybeSpawnEnemy(s);
     if (s.dangerEvent && s.dangerEvent.kind === 'wave') {
       saw = true;
@@ -1104,7 +1460,7 @@ test('a terrain danger event erupts at least partly in the king’s view', () =>
   let sawPits = false;
   for (let i = 0; i < 80 && !sawPits; i += 1) {
     let s = structuredClone(base);
-    s.turn = 40; s.turnsSinceSpawn = 99;
+    s.turn = 160; s.turnsSinceSpawn = 99;
     s = maybeSpawnEnemy(s);
     if (s.dangerEvent && s.dangerEvent.kind === 'pits') {
       sawPits = true;
@@ -1119,18 +1475,18 @@ test('a terrain danger event erupts at least partly in the king’s view', () =>
 test('a danger event fires at the interval, carrying a kind + message, and keeps state coherent', () => {
   let s = createInitialState('warrior');
   s.floor = 3; // danger events only fire from floor 2 onward
-  s.turn = 40; s.turnsSinceSpawn = 99; // force an event this call
+  s.turn = 160; s.turnsSinceSpawn = 99; // force an event this call
   s = maybeSpawnEnemy(s);
   assert.ok(s.dangerEvent && s.dangerEvent.kind && s.dangerEvent.message, 'an event with a kind + message fired');
   // Repeated events across floors never throw and never lose the exit.
-  for (let i = 0; i < 60; i += 1) { s.floor = 1 + (i % 8); s.turn = 60; s.turnsSinceSpawn = 99; s = maybeSpawnEnemy(s); }
+  for (let i = 0; i < 60; i += 1) { s.floor = 1 + (i % 8); s.turn = 160; s.turnsSinceSpawn = 99; s = maybeSpawnEnemy(s); }
   assert.ok(s.exit, 'the exit survives repeated danger events');
 });
 
 test('floor 1 is a gentle on-ramp: no danger events or ambient spawns fire', () => {
   let s = createInitialState('warrior');
   s.floor = 1; s.enemies = [];
-  for (let i = 0; i < 60; i += 1) { s.turn = 60; s.turnsSinceSpawn = 99; s.ambientSpawnTimer = 99; s = maybeSpawnEnemy(s); }
+  for (let i = 0; i < 60; i += 1) { s.turn = 160; s.turnsSinceSpawn = 99; s.ambientSpawnTimer = 99; s = maybeSpawnEnemy(s); }
   assert.equal(s.dangerEvent, null, 'no hostile event ever fires on floor 1');
   assert.equal(s.enemies.length, 0, 'and no wanderers trickle in on floor 1');
 });
@@ -1568,8 +1924,12 @@ test('doors drift shut over two turns once vacated (held open while occupied; re
 });
 
 test('doors and pillars are generated (walkable sight-blocking doorways; lone pillars in the open)', () => {
+  // Sample size and thresholds are set from the MEASURED rates (doors ~97% of floors, pillars ~86%).
+  // This used to take 14 samples and demand doors on 12 of them — a bar sitting right at the true
+  // rate, so it failed by luck about 1 run in 100. 40 samples with the bar well below the rate puts
+  // that at ~5e-6: it now fails only if generation is genuinely broken.
   let doorFloors = 0; let pillarFloors = 0;
-  for (let i = 0; i < 14; i += 1) {
+  for (let i = 0; i < 40; i += 1) {
     const s = generateFloor(2, createPlayer('warrior'), 0);
     let doors = 0; let lonePillars = 0;
     for (const key in s.terrain) {
@@ -1588,8 +1948,8 @@ test('doors and pillars are generated (walkable sight-blocking doorways; lone pi
     if (doors > 0) doorFloors += 1;
     if (lonePillars > 0) pillarFloors += 1;
   }
-  assert.ok(doorFloors >= 12, `most floors have doors (${doorFloors}/14)`);
-  assert.ok(pillarFloors >= 8, `most floors sport pillars (${pillarFloors}/14)`);
+  assert.ok(doorFloors >= 30, `most floors have doors (${doorFloors}/40)`);
+  assert.ok(pillarFloors >= 20, `most floors sport pillars (${pillarFloors}/40)`);
 });
 
 test('no door ever leads nowhere: both sides open into a real space', () => {
@@ -1810,7 +2170,7 @@ test('Sorcerer cards carry cooldowns and subclass colours', () => {
   assert.equal(horse.color, '#8b5cf6', 'a granted card wears its subclass colour');
 });
 
-test('Hex warping a SUMMONED foe leaves a ferz — a summon lives as long as the circle that conjured it', () => {
+test('a summon is a NORMAL monster — it outlives its circle, and Hex leaves it a ferz', () => {
   const s = sorcererWith('s_hex');
   assert.equal(s.player.hexDemote, true);
   s.terrain = {};
@@ -1827,9 +2187,52 @@ test('Hex warping a SUMMONED foe leaves a ferz — a summon lives as long as the
   // The enemy phase (where the dispel lives) must NOT delete it for having gone non-hostile.
   const after = beginEnemyPhase(moved).state;
   assert.ok(after.enemies.some((e) => e.summoned && e.kind === 'ferz'), 'a pacified summon is NOT dispelled');
-  // But breaking its CIRCLE does dispel the brood — that's the payoff for popping the circle.
+  // Breaking its CIRCLE no longer dispels the brood. Wiping out a whole summoned pack by stepping
+  // on one rune was far too cheap — what a circle conjures is now simply a monster, and stays one.
   const orphaned = { ...after, enemies: after.enemies.filter((e) => !e.summonCircle) };
-  assert.ok(!beginEnemyPhase(orphaned).state.enemies.some((e) => e.summoned), 'destroying the circle dispels what it conjured');
+  assert.ok(
+    beginEnemyPhase(orphaned).state.enemies.some((e) => e.summoned),
+    'a summon OUTLIVES the circle that conjured it — it must be fought like anything else',
+  );
+});
+
+test('an ally must WEAR DOWN an HP-bearing foe — it cannot one-shot a guardian or a turret', () => {
+  const s = sorcererWith('s_familiar');
+  s.terrain = {};
+  s.player.x = 9; s.player.y = 10;
+  const boss = createBoss(8, 11, 10); // the Balrog: a deep pool
+  boss.dormant = false; boss.spokeLine = true;
+  s.enemies = [boss];
+  s.allies = [{ id: 'fam', kind: 'mann', x: 10, y: 10, familiar: true }];
+  const hp0 = boss.maxHp;
+  const after = runAllyPhase(s);
+  const b = after.enemies.find((e) => e.boss);
+  assert.ok(b, 'the guardian is NOT deleted outright by one familiar blow');
+  assert.equal(b.hp, hp0 - 1, 'it takes exactly one wound');
+  assert.deepEqual({ x: after.allies[0].x, y: after.allies[0].y }, { x: 10, y: 10 }, 'and the familiar holds its ground, not striding onto a live foe');
+  // A turret likewise soaks its pool rather than popping.
+  const t = sorcererWith('s_familiar');
+  t.terrain = {};
+  t.player.x = 9; t.player.y = 10;
+  t.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, turret: true, hp: 3, maxHp: 3, awake: true })];
+  t.allies = [{ id: 'fam', kind: 'mann', x: 10, y: 10, familiar: true }];
+  const turret = runAllyPhase(t).enemies.find((e) => e.turret);
+  assert.ok(turret && turret.hp === 2, 'a turret takes one wound, not instant death');
+});
+
+test('spellfire SCORCHES the bare stone it crosses and boils away any water', () => {
+  const s = sorcererWith();
+  s.player.x = 10; s.player.y = 10;
+  s.terrain = { '12,10': 'water' }; // floor, WATER, floor along the east line
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true })]; // a foe makes the line targetable
+  const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
+  const aim = getCardMoves(s, s.player.cards[idx]).find((m) => m.y === 10 && m.x > 10);
+  assert.ok(aim, 'the bolt has an east aim');
+  const r = useCard(s, idx, aim.x, aim.y);
+  const burnt = (x, y) => (r.scorches || []).some((sc) => sc.x === x && sc.y === y);
+  assert.ok(burnt(11, 10), 'plain stone the bolt washes over is left scorched');
+  assert.equal(terrainAt(r, 12, 10), 'normal', 'the water it crossed is boiled away to bare floor');
+  assert.ok(!burnt(12, 10), 'and that fresh floor is NOT scorched — the steam took the heat');
 });
 
 test('Blast: a foe that SURVIVES a spell is hurled one tile along the bolt path', () => {

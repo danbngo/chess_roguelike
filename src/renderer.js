@@ -465,10 +465,11 @@ const Renderer = (function () {
 
   // Demon (fairy) pieces are drawn as their NEAREST normal piece — so they read as a familiar
   // chess unit — then marked as demonic with devil horns (all of them) and bat wings (the
-  // knight-compound movers). berolina = a demonic pawn; archbishop/chancellor/amazon add the
-  // knight leap, hence the wings.
-  const DEMON_BASE_GLYPH = { berolina: '♟', archbishop: '♝', chancellor: '♜', amazon: '♛' };
-  const DEMON_WINGED = new Set(['archbishop', 'chancellor', 'amazon']); // the knight-leapers
+  // knight-compound movers). berolina = a demonic pawn; nightrider/archbishop/chancellor/amazon add
+  // the knight leap, hence the wings. A nightrider wears the knight's own glyph — it IS a knight,
+  // one that never stops leaping.
+  const DEMON_BASE_GLYPH = { berolina: '♟', nightrider: '♞', archbishop: '♝', chancellor: '♜', amazon: '♛' };
+  const DEMON_WINGED = new Set(['nightrider', 'archbishop', 'chancellor', 'amazon']); // the knight-leapers
   function isDemonKind(kind) { return Object.prototype.hasOwnProperty.call(DEMON_BASE_GLYPH, kind); }
   function pieceGlyph(kind) { return DEMON_BASE_GLYPH[kind] || getPieceLabel(kind); }
 
@@ -603,10 +604,34 @@ const Renderer = (function () {
       ctx.restore();
     }
 
-    // A demon (fairy) enemy/ally sprouts horns and wings behind its token (never the king).
-    if (!isPlayer && isDemonKind(kind)) drawDemonMarks(cx, cy, radius, kind);
+    // A demon (fairy) enemy/ally sprouts horns and wings behind its token (never the king) — but a
+    // summoning CIRCLE is a rune, not a creature, so it grows no horns however demonic its brood.
+    if (!isPlayer && role !== 'circle' && isDemonKind(kind)) drawDemonMarks(cx, cy, radius, kind);
 
-    if (isFerz) {
+    if (role === 'circle') {
+      // A SUMMONING CIRCLE is not a creature — it is a rune cut into the floor. Draw the same
+      // violet ring its scar leaves behind once broken, with the piece it will conjure STAMPED
+      // small and purple on the stone inside it. No filled token, so it never reads as a foe.
+      ctx.save();
+      ctx.globalAlpha = o.charged === false ? 0.5 : 1;
+      ctx.strokeStyle = '#a855f7';
+      ctx.lineWidth = Math.max(1.5, tileSize * 0.055);
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.34, 0, Math.PI * 2); // the ring (intact — the scar's is broken)
+      ctx.stroke();
+      ctx.globalAlpha *= 0.45;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.25, 0, Math.PI * 2); // a fainter inner ring
+      ctx.stroke();
+      ctx.globalAlpha = o.charged === false ? 0.5 : 1;
+      ctx.fillStyle = '#c084fc'; // the brood-to-be, stamped on the ground
+      ctx.font = `${tileSize * 0.38}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.02);
+      ctx.restore();
+    } else if (isFerz) {
       // A GUMDROP-shaped blob: a high domed top flaring to a wide, rounded base.
       const r = bodyRadius;
       const topY = cy - r * 1.05;
@@ -693,7 +718,8 @@ const Renderer = (function () {
         }
       } else {
         ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.9, 0.4 + b * 0.55);
-        ctx.fillStyle = '#a5121b'; // dark, fresh blood
+        // A demon's own wounds weep dark green ichor rather than blood.
+        ctx.fillStyle = (!isPlayer && isDemonKind(kind)) ? '#155e2b' : '#a5121b';
         const n = Math.max(1, Math.round(b * BLOOD_SPECKS.length));
         for (let i = 0; i < n; i += 1) {
           const [sx, sy, sr] = BLOOD_SPECKS[i];
@@ -1262,6 +1288,29 @@ const Renderer = (function () {
   // ones (out of view) are static and dimmed.
   // A permanent scar left on the ground: the ruin of a shattered summoning circle.
   // Drawn dim when only remembered, brighter while in sight.
+  // A SCORCH: soot burnt into bare stone where spellfire washed over it. A soft, irregular sooty
+  // blotch (never a clean disc) that fades away over its life, like rubble or scrap.
+  function drawScorch(sc, faded) {
+    const px = sc.x * tileSize;
+    const py = sc.y * tileSize;
+    const seed = sc.seed || 0;
+    const lifeFrac = sc.max ? Math.max(0, sc.life / sc.max) : 1;
+    const h = (a, b) => tileHash(sc.x * a + seed + b * 3, sc.y * b + seed + a * 2);
+    ctx.save();
+    ctx.globalAlpha = (faded ? 0.4 : 0.75) * Math.max(0.08, lifeFrac);
+    // Several overlapping charred lobes, darkest at the centre.
+    for (let i = 0; i < 6; i += 1) {
+      const ang = h(7, i + 1) * Math.PI * 2;
+      const dist = tileSize * 0.16 * h(3, i + 2);
+      const r = tileSize * (0.12 + 0.14 * h(5, i + 4));
+      ctx.fillStyle = `rgba(18, 14, 12, ${(0.28 + 0.22 * h(11, i)).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(px + tileSize * 0.5 + Math.cos(ang) * dist, py + tileSize * 0.5 + Math.sin(ang) * dist, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawScar(scar, faded) {
     const cx = scar.x * tileSize + tileSize / 2;
     const cy = scar.y * tileSize + tileSize / 2;
@@ -1368,7 +1417,8 @@ const Renderer = (function () {
     const seed = spatter.seed || 0; // per-spatter offset so stacked marks differ
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, spatter.life / spatter.max)) * 0.85;
-    ctx.fillStyle = '#c81e1e'; // vivid red
+    // A DEMON bleeds dark green ICHOR; mortals (and the king) bleed vivid red.
+    ctx.fillStyle = spatter.ichor ? '#1f6b2e' : '#c81e1e';
     if (isWall) {
       // On a wall, blood clings and runs DOWNWARD as a few streaks/smears.
       const streaks = 2 + (seed % 3); // 2-4 streaks
@@ -1646,7 +1696,10 @@ const Renderer = (function () {
       case 'ice':
         return isDark ? '#9ecfe4' : '#cdeefb'; // pale frozen slab — dark shade brightened toward the light (unlike murky water)
       case 'devilgrass':
-        return isDark ? '#1c3a1e' : '#2f5f33'; // dark, sickly thicket
+        // The same terrain everywhere — only the look changes. Living GRASS on the mortal floors;
+        // dry, ashen pink-grey husks once you are in the demon realm.
+        if (demonRealm) return isDark ? '#5b4048' : '#8d6b73';
+        return isDark ? '#1c3a1e' : '#2f5f33'; // deep living green
       case 'door':
         return isDark ? '#5a3a1c' : '#7a5024'; // a SHUT wooden door — warm timber
       case 'doorajar':
@@ -1810,8 +1863,11 @@ const Renderer = (function () {
         break;
       }
       case 'devilgrass': {
-        // Tall writhing fronds — clusters of upward slashes.
-        ctx.strokeStyle = isDark ? 'rgba(120,200,120,0.5)' : 'rgba(190,255,180,0.55)';
+        // Tall writhing fronds — clusters of upward slashes. Green and alive on the mortal floors;
+        // bleached to dry pink husks in the demon realm.
+        ctx.strokeStyle = demonRealm
+          ? (isDark ? 'rgba(215,175,185,0.5)' : 'rgba(240,215,220,0.6)')
+          : (isDark ? 'rgba(120,200,120,0.5)' : 'rgba(190,255,180,0.55)');
         ctx.lineWidth = 1.5;
         for (let i = 0; i < 6; i += 1) {
           const bx = px + tileSize * (0.12 + 0.14 * i);
@@ -2318,6 +2374,10 @@ const Renderer = (function () {
     ctx.lineWidth = 2;
     ctx.strokeRect(bounds.x * tileSize, bounds.y * tileSize, bounds.width * tileSize, bounds.height * tileSize);
 
+    // SCORCH marks first — soot burnt into the stone by spellfire, so blood and remains lie ON it.
+    for (const sc of state.scorches || []) {
+      if (isExplored(sc.x, sc.y)) drawScorch(sc, !lit(sc.x, sc.y));
+    }
     // Blood spatters on explored ground/walls, fading with each turn (walls show streaks).
     for (const spatter of state.spatters || []) {
       if (isExplored(spatter.x, spatter.y)) {
