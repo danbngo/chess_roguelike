@@ -126,11 +126,18 @@ const GameAudio = (function () {
       [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, t + i * 0.12, 0.24, { type: 'triangle', gain: 0.2 }));
       [523.25, 659.25, 783.99].forEach((f) => tone(f, t + 0.5, 0.75, { type: 'triangle', gain: 0.12 }));
     },
-    // A low, ominous swell — the floor turning against the king (a danger event).
+    // A slow, dull, ominous low swell — the floor turning against the king (a danger event). No
+    // percussive crack (that read as a "hit"); just a soft rising dread.
     doom(t) {
-      tone(88, t, 0.7, { type: 'sawtooth', gain: 0.16, slideTo: 52, attack: 0.04 });
-      tone(132, t + 0.04, 0.6, { type: 'triangle', gain: 0.09, slideTo: 66 });
-      noise(t, 0.3, 0.11);
+      tone(68, t, 1.2, { type: 'sine', gain: 0.17, slideTo: 46, attack: 0.28 });
+      tone(102, t + 0.05, 1.05, { type: 'sine', gain: 0.08, slideTo: 68, attack: 0.32 });
+      tone(137, t + 0.1, 0.9, { type: 'triangle', gain: 0.045, slideTo: 94, attack: 0.32 });
+    },
+    // A hollow SWOOSH / power-down — a summoning circle collapsing as the king steps onto it.
+    unsummon(t) {
+      tone(520, t, 0.5, { type: 'sine', gain: 0.13, slideTo: 90, attack: 0.02 });
+      tone(340, t + 0.02, 0.55, { type: 'triangle', gain: 0.07, slideTo: 70 });
+      noise(t, 0.28, 0.05);
     },
   };
 

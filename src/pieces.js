@@ -46,35 +46,35 @@ function generateMoves(kind, state, fromX, fromY, unitAt, isTarget, opts) {
       slide([...ORTHO, ...DIAG], 1);
       break;
     case 'knight':
-      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget, opts)) {
         moves.push(target);
       }
       break;
     case 'archbishop':
       // Bishop + knight.
       slide(DIAG, Infinity);
-      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget, opts)) {
         moves.push(target);
       }
       break;
     case 'chancellor':
       // Rook + knight.
       slide(ORTHO, Infinity);
-      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget, opts)) {
         moves.push(target);
       }
       break;
     case 'amazon':
       // Queen + knight.
       slide([...ORTHO, ...DIAG], Infinity);
-      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget, opts)) {
         moves.push(target);
       }
       break;
     case 'general':
       // The Necromancer's upgraded familiar: a king that may also leap like a knight.
       slide([...ORTHO, ...DIAG], 1);
-      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget)) {
+      for (const target of jumpTargets(state, fromX, fromY, unitAt, isTarget, opts)) {
         moves.push(target);
       }
       break;
@@ -196,8 +196,8 @@ function getCardMoves(state, card) {
   const inBounds = (x, y) => x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE;
   const targetable = (x, y) => isCapturable(state, enemyAt(x, y));
   const results = [];
-  const add = (x, y, viaJump, capture) => {
-    if (inLineOfSight(state, x, y)) results.push({ x, y, capture: Boolean(capture), viaJump: Boolean(viaJump) });
+  const add = (x, y, viaJump, capture, embedded) => {
+    if (inLineOfSight(state, x, y)) results.push({ x, y, capture: Boolean(capture), viaJump: Boolean(viaJump), embedded: Boolean(embedded) });
   };
 
   // Self-cast ability cards (Promotion, Reload) target the king's own tile — there is
@@ -262,7 +262,7 @@ function getCardMoves(state, card) {
         // Double Step is a full DASH — it MUST cover both tiles, so only a 2-tile destination
         // counts (a foe/wall one tile away simply blocks that direction; it can't stop short).
         if (kind === 'doublestep' && chebyshev(stop.x, stop.y, p.x, p.y) !== 2) continue;
-        add(stop.x, stop.y, false, stop.capture);
+        add(stop.x, stop.y, false, stop.capture, stop.embedded);
       }
       // Double Step charges a boulder: an adjacent boulder is a valid push target — the
       // running shove rolls it TWO tiles (resolved in useCard).
@@ -280,11 +280,15 @@ function getCardMoves(state, card) {
         const y = p.y + dy;
         if (!inBounds(x, y)) continue;
         const t = terrainAt(state, x, y);
-        if (t === 'wall' || t === 'pit') continue; // can't land in a wall or pit (a boulder here gets crushed on landing)
+        const phases = Boolean(p.phase);
+        const flies = Boolean(p.terrainImmune); // Fairy Wings: alight on lava/pits with no ill effect
+        if (t === 'wall' && !phases) continue; // can't land in a wall (unless phasing)
+        if (t === 'pit' && !phases && !flies) continue; // can't land in a pit (unless phasing/flying)
         if (enemyAt(x, y)) {
-          if (targetable(x, y)) add(x, y, true, true);
-        } else {
-          add(x, y, true, false); // leap to empty ground (crushing a boulder if one's there)
+          // A foe embedded in a wall/ice can't be POUNCED on unless the king also phases.
+          if (targetable(x, y) && (phases || (t !== 'wall' && t !== 'ice'))) add(x, y, true, true);
+        } else if (t !== 'wall' || phases) {
+          add(x, y, true, false); // leap to empty ground / ice (crushing a boulder, shattering ice)
         }
       }
     }
@@ -397,6 +401,23 @@ function getPieceThreats(piece, state, includeOccupied) {
   }
   if (piece.kind === 'berolina') {
     return adjacentThreats(piece, state, ORTHO, includeOccupied);
+  }
+  if (piece.turret && piece.fire) {
+    // A FIRE turret's spellfire PIERCES units — it threatens every tile along its piece's lines
+    // out to the first wall/boulder (crossing pits, water, lava, and any bodies in the way).
+    const tiles = [];
+    for (const [dx, dy] of cardSlideDirs(piece.kind)) {
+      let x = piece.x + dx;
+      let y = piece.y + dy;
+      while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
+        const t = terrainAt(state, x, y);
+        if (t === 'wall' || t === 'boulder') break;
+        tiles.push({ x, y });
+        x += dx;
+        y += dy;
+      }
+    }
+    return tiles;
   }
   const unitAt = enemyUnitAt(state, piece);
   // With `includeOccupied` every occupied square (king OR another enemy) counts as a target,

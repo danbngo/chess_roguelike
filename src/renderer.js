@@ -243,6 +243,15 @@ const Renderer = (function () {
       awake: Boolean(enemy.awake),
       charged: enemy.charged !== false,
       role: typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal',
+      // Carry combat identity so HP bars / boss styling show from the moment a floor loads
+      // (not only after the first enemy phase syncs them).
+      boss: Boolean(enemy.boss),
+      turret: Boolean(enemy.turret),
+      rush: Boolean(enemy.rush),
+      mini: Boolean(enemy.mini),
+      bossPerk: enemy.bossPerk || null,
+      hp: enemy.hp,
+      maxHp: enemy.maxHp,
     }));
     allyRenders = (state.allies || []).map((ally) => ({
       id: ally.id, x: ally.x, y: ally.y, targetX: ally.x, targetY: ally.y, kind: ally.kind,
@@ -270,10 +279,14 @@ const Renderer = (function () {
       let render = enemyRenders.find((item) => item.id === enemy.id);
       if (!render) {
         render = { id: enemy.id, x: enemy.x, y: enemy.y, targetX: enemy.x, targetY: enemy.y };
+        // A SUMMONED foe (from a boss or a summoning circle) materialises in a puff of purple
+        // smoke — distinguishing a conjuring from an ordinary off-screen spawn.
+        if (enemy.summoned) puffs.push({ x: enemy.x, y: enemy.y, t: 0, summon: true });
       }
       render.targetX = enemy.x;
       render.targetY = enemy.y;
       render.kind = enemy.kind;
+      render.summonTick = enemy.summonTick || 0; // summoning-circle wind-up (for the charge preview)
       render.surprised = Boolean(enemy.surprised);
       render.frustrated = Boolean(enemy.frustrated);
       render.awake = Boolean(enemy.awake);
@@ -282,6 +295,7 @@ const Renderer = (function () {
       render.boss = Boolean(enemy.boss);
       render.rush = Boolean(enemy.rush); // a finale rush-boss (drawn ashen, not royal)
       render.mini = Boolean(enemy.mini); // a MINI-boss: smaller token, less HP, no boon
+      render.fire = Boolean(enemy.fire); // a FIRE turret (reddish, piercing spellfire)
       render.bossPerk = enemy.bossPerk || null;
       render.hp = enemy.hp;
       render.maxHp = enemy.maxHp;
@@ -470,9 +484,15 @@ const Renderer = (function () {
     // The king's glyph flips to ink on light class colours (e.g. lime) so it stays legible.
     let glyph = isPlayer ? contrastInk(fill) : '#17171d';
     if (role === 'turret') {
-      fill = '#2c2f3a'; // dark steel
-      stroke = '#e0894b'; // warm danger ring
-      glyph = '#f1c9a0';
+      if (o.fire) {
+        fill = '#3a1512'; // charred red — a FIRE turret
+        stroke = '#ef4444'; // hot red danger ring
+        glyph = '#ffc4b0';
+      } else {
+        fill = '#34353c'; // cool GREY steel (grayer than before)
+        stroke = '#9a9da6'; // muted steel ring
+        glyph = '#d4d6dc';
+      }
     } else if (role === 'boss') {
       if (o.rush || o.mini) {
         // A MINI-boss (finale rush OR a risen mini-boss): ashen grey-green, not royal gold, so it
@@ -495,6 +515,12 @@ const Renderer = (function () {
       glyph = '#bbf7d0';
     }
 
+    // A FERZ (what the Hexer's curse warps a foe into) is a harmless, dazed little blob — drawn
+    // small and goofy in pale pink so it never reads as a real threat.
+    const isFerz = !isPlayer && kind === 'ferz' && role === 'normal';
+    const bodyRadius = isFerz ? radius * 0.66 : radius;
+    if (isFerz) { fill = '#f4d3e7'; stroke = '#cf93c4'; }
+
     // Boss aura: a soft outer ring — gold for a true guardian, sickly green for a rush boss.
     if (role === 'boss') {
       ctx.save();
@@ -510,35 +536,66 @@ const Renderer = (function () {
     if (!isPlayer && isDemonKind(kind)) drawDemonMarks(cx, cy, radius, kind);
 
     ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.arc(cx, cy, bodyRadius, 0, Math.PI * 2);
     ctx.fillStyle = fill;
     ctx.fill();
     ctx.lineWidth = role === 'boss' || (isPlayer && o.classColor) ? 3 : 2;
     ctx.strokeStyle = stroke;
     ctx.stroke();
 
-    ctx.fillStyle = glyph;
-    ctx.font = `${tileSize * 0.62}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.04);
+    if (isFerz) {
+      // Two wide googly eyes and a wobbly little smile — a dazed, comical blob.
+      const eo = bodyRadius * 0.34;
+      const ey = cy - bodyRadius * 0.12;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(cx - eo, ey, bodyRadius * 0.24, 0, Math.PI * 2); ctx.arc(cx + eo, ey, bodyRadius * 0.24, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#5b2f52';
+      ctx.beginPath(); ctx.arc(cx - eo + bodyRadius * 0.06, ey + bodyRadius * 0.04, bodyRadius * 0.1, 0, Math.PI * 2); ctx.arc(cx + eo - bodyRadius * 0.05, ey + bodyRadius * 0.05, bodyRadius * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#8a4a76';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(cx, cy + bodyRadius * 0.22, bodyRadius * 0.32, 0.18 * Math.PI, 0.82 * Math.PI); ctx.stroke();
+    } else {
+      ctx.fillStyle = glyph;
+      ctx.font = `${tileSize * 0.62}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.04);
+    }
 
-    // Fresh blood clinging to the piece from combat — specks over the token, more of them
-    // (and brighter) the bloodier it is. Clipped to the body so it never spills off.
+    // Damage marks over the token, worse the lower its HP — clipped to the body. A TURRET (a
+    // machine) shows spreading CRACKS instead of blood.
     if (o.blood > 0.06) {
       const b = Math.min(1, o.blood);
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.clip();
-      ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.9, 0.4 + b * 0.55);
-      ctx.fillStyle = '#a5121b'; // dark, fresh blood
-      const n = Math.max(1, Math.round(b * BLOOD_SPECKS.length));
-      for (let i = 0; i < n; i += 1) {
-        const [sx, sy, sr] = BLOOD_SPECKS[i];
-        ctx.beginPath();
-        ctx.arc(cx + sx * radius, cy + sy * radius, radius * sr, 0, Math.PI * 2);
-        ctx.fill();
+      if (role === 'turret') {
+        // Jagged fracture lines radiating from a couple of impact points.
+        ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.95, 0.5 + b * 0.5);
+        ctx.strokeStyle = 'rgba(15,15,20,0.85)';
+        ctx.lineWidth = Math.max(1, radius * 0.06);
+        const cracks = Math.max(1, Math.round(b * 4));
+        for (let i = 0; i < cracks; i += 1) {
+          const a0 = (i / 4) * Math.PI * 2 + 0.6;
+          const ox = Math.cos(a0) * radius * 0.2;
+          const oy = Math.sin(a0) * radius * 0.2;
+          ctx.beginPath();
+          ctx.moveTo(cx + ox, cy + oy);
+          ctx.lineTo(cx + Math.cos(a0) * radius * 0.9, cy + Math.sin(a0) * radius * 0.9);
+          ctx.lineTo(cx + Math.cos(a0 + 0.4) * radius * 0.75, cy + Math.sin(a0 + 0.4) * radius * 0.75);
+          ctx.stroke();
+        }
+      } else {
+        ctx.globalAlpha = (o.inactive ? 0.4 : 1) * Math.min(0.9, 0.4 + b * 0.55);
+        ctx.fillStyle = '#a5121b'; // dark, fresh blood
+        const n = Math.max(1, Math.round(b * BLOOD_SPECKS.length));
+        for (let i = 0; i < n; i += 1) {
+          const [sx, sy, sr] = BLOOD_SPECKS[i];
+          ctx.beginPath();
+          ctx.arc(cx + sx * radius, cy + sy * radius, radius * sr, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
       ctx.restore();
     }
@@ -652,6 +709,10 @@ const Renderer = (function () {
       drawStatusMark(tileX, tileY, '✖', '#fca5a5');
     } else if (mainState === 'recovering') {
       drawStatusMark(tileX, tileY, '⟳', '#67e8f9'); // cyan recharge glyph — winded / cooling down
+    } else if (mainState === 'befriended') {
+      drawStatusMark(tileX, tileY, '♥', '#f9a8d4'); // pink heart — a beast tamed by Wild Empathy
+    } else if (mainState === 'aiming') {
+      drawStatusMark(tileX, tileY, '◎', '#fca5a5'); // red target reticle — a turret locking on
     }
   }
 
@@ -752,6 +813,25 @@ const Renderer = (function () {
       ctx.fill();
       ctx.restore();
     }
+  }
+
+  // A summoning circle's minion-to-be: a translucent violet ghost of the piece kind that grows
+  // more solid (and rises) as the conjuring charges (progress 0..1). It POPS on the summon tick.
+  function drawSummonCharge(tileX, tileY, kind, progress) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2 - tileSize * 0.12 * progress;
+    ctx.save();
+    ctx.globalAlpha = 0.2 + 0.6 * progress; // faint at first, near-solid just before it appears
+    ctx.fillStyle = '#a855f7';
+    ctx.beginPath();
+    ctx.arc(cx, cy, tileSize * 0.22 * (0.5 + 0.5 * progress), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(233, 213, 255, 0.9)';
+    ctx.font = `${tileSize * 0.4}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.02);
+    ctx.restore();
   }
 
   // A small state glyph (surprise "!", frustration "✖", etc.) in the piece's
@@ -1301,6 +1381,38 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // Ice shards: the PALE-BLUE SPLINTERS a shattered ice slab leaves — angular frosted flakes,
+  // distinct from grey rubble and rust scrap.
+  function drawIceShards(s, faded) {
+    const cx = s.x * tileSize + tileSize * (0.5 + (s.ox || 0));
+    const cy = s.y * tileSize + tileSize * (0.56 + (s.oy || 0));
+    const lifeFrac = s.max ? Math.max(0, s.life / s.max) : 1;
+    ctx.save();
+    ctx.globalAlpha = (faded ? 0.4 : 0.85) * Math.max(0.12, lifeFrac);
+    const shards = [
+      { x: -0.15, y: 0.05, s: 0.19, a: 0.3 }, { x: 0.15, y: -0.03, s: 0.16, a: -0.8 },
+      { x: 0.03, y: 0.15, s: 0.14, a: 1.3 }, { x: -0.05, y: -0.12, s: 0.12, a: 2.0 },
+    ];
+    for (const sh of shards) {
+      ctx.save();
+      ctx.translate(cx + sh.x * tileSize, cy + sh.y * tileSize);
+      ctx.rotate(sh.a);
+      const r = sh.s * tileSize;
+      ctx.fillStyle = 'rgba(200,235,248,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.5, r * 0.4);
+      ctx.lineTo(0, -r * 0.55);
+      ctx.lineTo(r * 0.55, r * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,170,200,0.6)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   // Tile colors per terrain (two shades to keep the checkerboard feel). All kept
   // within a warm cream/tan/brown family — desaturated and fairly light — so the
   // green / red / orange move-and-threat tints overlay legibly on every tile.
@@ -1309,11 +1421,15 @@ const Renderer = (function () {
       case 'lava':
         return isDark ? '#7a1f10' : '#a6321a'; // molten rock
       case 'water':
-        return isDark ? '#1e4d6b' : '#2f6f97'; // deep water
+        return isDark ? '#1b5a5f' : '#2f8f8c'; // deep water — nudged TEAL/green so it reads apart from ice
       case 'wall':
         return isDark ? '#54535a' : '#6a696f'; // neutral grey stone (cool, desaturated)
       case 'pit':
         return isDark ? '#0b0b12' : '#15151d'; // a dark void
+      case 'ice':
+        return isDark ? '#9ecfe4' : '#cdeefb'; // pale frozen slab — dark shade brightened toward the light (unlike murky water)
+      case 'devilgrass':
+        return isDark ? '#1c3a1e' : '#2f5f33'; // dark, sickly thicket
       default:
         // boulder + normal both sit on sepia ground (the boulder rock is drawn over it).
         return isDark ? '#71481d' : '#e8c589'; // warm SEPIA ground (so fogged floor never reads as wall)
@@ -1400,6 +1516,62 @@ const Renderer = (function () {
         ctx.moveTo(cx - r * 0.4, cy - r * 0.25);
         ctx.lineTo(cx + r * 0.15, cy + r * 0.35);
         ctx.stroke();
+        break;
+      }
+      case 'ice': {
+        // A raised, rounded ICE CUBE: a translucent block inset from the tile, bevelled bright on
+        // the top-left and shaded on the bottom-right so it reads as a solid frozen block, never
+        // as flat ground.
+        const pad = tileSize * 0.07;
+        const r = tileSize * 0.22; // generously rounded corners — a cube, not a slab
+        const x0 = px + pad; const y0 = py + pad; const w = tileSize - pad * 2; const h = tileSize - pad * 2;
+        const roundRect = (rx, ry, rw, rh, rr) => {
+          ctx.beginPath();
+          ctx.moveTo(rx + rr, ry);
+          ctx.arcTo(rx + rw, ry, rx + rw, ry + rh, rr);
+          ctx.arcTo(rx + rw, ry + rh, rx, ry + rh, rr);
+          ctx.arcTo(rx, ry + rh, rx, ry, rr);
+          ctx.arcTo(rx, ry, rx + rw, ry, rr);
+          ctx.closePath();
+        };
+        const g = ctx.createLinearGradient(x0, y0, x0 + w, y0 + h);
+        g.addColorStop(0, 'rgba(236,249,255,0.9)');
+        g.addColorStop(0.55, 'rgba(158,207,228,0.6)');
+        g.addColorStop(1, 'rgba(96,156,188,0.72)');
+        ctx.fillStyle = g;
+        roundRect(x0, y0, w, h, r);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)'; // bright top-left bevel
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x0 + r, y0 + 1);
+        ctx.arcTo(x0 + 1, y0 + 1, x0 + 1, y0 + r, r);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(56,104,134,0.75)'; // shaded bottom-right edge
+        ctx.beginPath();
+        ctx.moveTo(x0 + w - 1, y0 + h - r);
+        ctx.arcTo(x0 + w - 1, y0 + h - 1, x0 + w - r, y0 + h - 1, r);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; // a crisp glint streak
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x0 + w * 0.28, y0 + h * 0.22);
+        ctx.lineTo(x0 + w * 0.52, y0 + h * 0.52);
+        ctx.stroke();
+        break;
+      }
+      case 'devilgrass': {
+        // Tall writhing fronds — clusters of upward slashes.
+        ctx.strokeStyle = isDark ? 'rgba(120,200,120,0.5)' : 'rgba(190,255,180,0.55)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 6; i += 1) {
+          const bx = px + tileSize * (0.12 + 0.14 * i);
+          const sway = (tileHash(x * 5 + i, y) - 0.5) * tileSize * 0.22;
+          ctx.beginPath();
+          ctx.moveTo(bx, py + tileSize * 0.9);
+          ctx.quadraticCurveTo(bx + sway, py + tileSize * 0.45, bx + sway * 1.4, py + tileSize * 0.12);
+          ctx.stroke();
+        }
         break;
       }
       case 'wall': {
@@ -1541,9 +1713,10 @@ const Renderer = (function () {
   // The board's centre is always left untouched (transparent), so nothing is ever hidden.
   function drawDangerVignette(state) {
     if (typeof MAX_TURNS_SCARY === 'undefined' || !state || state.gameOver || state.won) return;
-    const dread = (state.turn || 0) / MAX_TURNS_SCARY;
+    const scary = state.dreadTurns || MAX_TURNS_SCARY; // Nightmare halves this
+    const dread = (state.turn || 0) / scary;
     const intensity = Math.max(0, Math.min(1, (dread - 0.35) / 0.65)); // starts ~1/3 of the way in
-    const maxed = (state.turn || 0) >= MAX_TURNS_SCARY;
+    const maxed = (state.turn || 0) >= scary;
     if (intensity <= 0 && !maxed) return;
     const w = canvas.width;
     const h = canvas.height;
@@ -1739,8 +1912,11 @@ const Renderer = (function () {
           // GREEN — a safe tile the king can move to.
           tileOutline(px, py, '#22c55e', 1);
         } else if (threatCount > 0) {
-          // ORANGE — enemies cover this square but the king can't reach it.
-          tileOutline(px, py, '#f97316', threatCount);
+          // A covered square the king can't reach: ORANGE if it's open ground he simply can't get
+          // to, but GRAY if it's IMPASSABLE (a wall / ice / boulder he could never stand on anyway).
+          const passable = typeof standableFor === 'function'
+            && standableFor(type, { phaseWalls: Boolean(state.player.phase), flying: Boolean(state.player.terrainImmune) });
+          tileOutline(px, py, passable ? '#f97316' : '#9ca3af', threatCount);
         }
 
         if (!inView) {
@@ -1776,6 +1952,11 @@ const Renderer = (function () {
     for (const sc of state.scrap || []) {
       if (isExplored(sc.x, sc.y)) {
         drawScrap(sc, !lit(sc.x, sc.y));
+      }
+    }
+    for (const sh of state.iceShards || []) {
+      if (isExplored(sh.x, sh.y)) {
+        drawIceShards(sh, !lit(sh.x, sh.y));
       }
     }
     for (const corpse of state.corpses || []) {
@@ -1854,11 +2035,16 @@ const Renderer = (function () {
       const inSight = lit(enemy.targetX, enemy.targetY);
       // A spent summoning circle, or an enemy seen only through Premonition, is faded.
       const inactive = (role === 'circle' && !enemy.charged) || !inSight;
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
         drawBossTraitHat(enemy.x, enemy.y, enemy.bossPerk, enemy.rush || enemy.mini); // trait-specific crown (ashen for minis)
       } else if (role !== 'normal') {
         drawRoleHat(enemy.x, enemy.y, role);
+      }
+      // A charging summoning circle shows the minion-to-be gathering — a ghost of its own piece
+      // kind that grows more solid as the conjuring nears (fires on the 3rd tick).
+      if (role === 'circle' && inSight && (enemy.summonTick % 3) > 0) {
+        drawSummonCharge(enemy.x, enemy.y, enemy.kind, (enemy.summonTick % 3) / 3);
       }
       // A boss (and now a destructible turret) wears a HP bar so its multi-hit state reads.
       if ((enemy.boss || enemy.turret) && enemy.maxHp) {
@@ -1869,6 +2055,12 @@ const Renderer = (function () {
       const live = liveById.get(enemy.id);
       if (inSight && live && live.recovering && (enemy.boss || enemy.turret)) {
         drawStateIcon(enemy.x, enemy.y, 'recovering');
+      } else if (inSight && role === 'turret' && enemy.dozing) {
+        drawStateIcon(enemy.x, enemy.y, 'asleep'); // Camouflaged: the turret dozes, blind to the king
+      } else if (inSight && role === 'turret' && enemy.aiming) {
+        drawStateIcon(enemy.x, enemy.y, 'aiming'); // locking onto the king — the shot is coming
+      } else if (inSight && isBefriendedBeast(state, enemy)) {
+        drawStateIcon(enemy.x, enemy.y, 'befriended'); // Wild Empathy: a tamed beast (♥)
       } else if (inSight && role !== 'turret' && role !== 'circle') {
         const mainState = enemy.asleep ? 'asleep' : enemy.surprised ? 'surprised' : enemy.frustrated ? 'frustrated' : enemy.awake ? 'hostile' : 'unaware';
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);

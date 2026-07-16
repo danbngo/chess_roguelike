@@ -109,7 +109,7 @@ const TURRET_HP = 3; // turrets are destructible: a flat, non-scaling HP pool (<
 
 // Each floor guardian rolls ONE of these boss perks at creation, making every boss
 // fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
-const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing'];
+const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen'];
 const BOSS_PERK_LABELS = {
   summoner: 'Summoner — conjures its own kind every third turn',
   blinker: 'Blinkborn — flickers away after each wound',
@@ -122,6 +122,7 @@ const BOSS_PERK_LABELS = {
   leech: 'Leech — heals a wound each time it draws the king’s blood',
   flying: 'Winged — soars over pits, water, and lava unharmed',
   phasing: 'Phantom — sees and drifts through walls and boulders',
+  regen: 'Regenerating — knits a wound shut every fourth turn',
 };
 // Ordered weakest→strongest; a Shifting boss never becomes a form ranked above its origin.
 const PIECE_RANK = ['pawn', 'knight', 'bishop', 'rook', 'berolina', 'archbishop', 'chancellor', 'queen', 'amazon'];
@@ -180,11 +181,11 @@ const CLASSES = {
       // 🐎 Cavalier — the charger: kill on the move, trample on landing.
       { id: 'w_fleet', chain: 'Cavalier', tier: 1, name: 'Double-Step', desc: 'Gain a double-step card: dash up to 2 tiles in any direction (capturing at the end), cooldown 3', grants: { gainCard: 'doublestep', gainCooldown: 3 } },
       { id: 'w_pierce', chain: 'Cavalier', tier: 2, requires: 'w_fleet', name: 'Pierce', desc: 'A kill by moving also strikes the foe directly behind it', grants: { meleePierce: true } },
-      { id: 'w_trample', chain: 'Cavalier', tier: 3, requires: 'w_pierce', name: 'Trample', desc: 'Landing a knight leap strikes every adjacent foe', grants: { leapShock: true } },
+      { id: 'w_trample', chain: 'Cavalier', tier: 3, requires: 'w_pierce', name: 'Trample', desc: 'Landing a knight leap HURLS every adjacent foe back a tile (slamming it into whatever’s behind — see Knockback), rather than striking it in place', grants: { leapShock: true } },
       // 🛡 Duellist — the flashy fencer: a signature dash, free-tempo kills, a dazzling flourish.
       { id: 'w_enpassant', chain: 'Duellist', tier: 1, name: 'En Passant', desc: 'Gain an en-passant card: step 1 tile (capturing there) AND strike one foe you pass (adjacent to your start)', grants: { gainCard: 'enpassant' } },
       { id: 'w_flourish', chain: 'Duellist', tier: 2, requires: 'w_enpassant', name: 'Flourish', desc: 'After a kill, foes beside you are caught off guard', grants: { meleeFlourish: true } },
-      { id: 'w_rush', chain: 'Duellist', tier: 3, requires: 'w_flourish', name: 'Charge', desc: 'A move that kills costs no turn', grants: { freeKillMove: true } },
+      { id: 'w_rush', chain: 'Duellist', tier: 3, requires: 'w_flourish', name: 'Charge', desc: 'The FIRST move that kills each turn costs no turn (further kill-moves that turn cost a turn as usual)', grants: { freeKillMove: true } },
     ],
   },
   ranger: {
@@ -198,21 +199,21 @@ const CLASSES = {
     chains: { Druid: '#16a34a', Deadeye: '#14b8a6', 'Gloom Stalker': '#6366f1', Fletcher: '#a3e635' },
     perks: [
       // 🌲 Druid — the survivalist: master the terrain, then ride to war.
-      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Winged Boots', desc: 'Water no longer slows you or blocks your cards, and lava no longer burns you', grants: { terrainImmune: true } },
-      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Sixth Sense', desc: 'Your vision and your ranged/spell shots pass through walls — you spot and pick off foes behind cover, while they stay blind to you (you still can’t reach them in melee)', grants: { seeThroughWalls: true } },
-      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Promotion', desc: 'Gain a promotion card (cooldown 9): become an INVINCIBLE warhorse for 3 turns — leap like a knight, take no damage, play no cards', grants: { gainCard: 'promotion', gainCooldown: 9 } },
-      // 🎯 Deadeye — reach, sight, and foreknowledge.
-      { id: 'r_eyes2', chain: 'Deadeye', tier: 1, name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
-      { id: 'r_reach', chain: 'Deadeye', tier: 2, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
-      { id: 'r_eagle', chain: 'Deadeye', tier: 3, requires: 'r_reach', name: 'Premonition', desc: 'Fresh floors reveal fully the moment you arrive; +1 sight radius and +1 card reach', grants: { revealFloor: true, vision: 2, cardReach: 1 } },
+      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Fairy Wings', desc: 'You flit over water, lava, and pits — walking, carding, or leaping onto and across them freely, with no slow, no burn, and no falling', grants: { terrainImmune: true } },
+      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Wild Empathy', desc: 'Beasts of the wild — enemy and mini-boss knights and amazons (never a floor boss) — refuse to attack you until you strike one; a befriended beast shows a ♥, and you can gently DISPLACE it by stepping onto its tile (swapping places), just like your own allies', grants: { beastFriend: true } },
+      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Animal Form', desc: 'Gain an Animal Form card (cooldown 9): become an INVINCIBLE warhorse for 3 turns — leap like a knight, take no damage, play no cards', grants: { gainCard: 'promotion', gainCooldown: 9 } },
+      // 🎯 Deadeye — foresight, sight, and reach.
+      { id: 'r_eagle', chain: 'Deadeye', tier: 1, name: 'Premonition', desc: 'You perceive everything within your sight radius at all times — walls, boulders, and devilgrass no longer hide foes from your eyes (though they still block your shots and steps)', grants: { trueSight: true } },
+      { id: 'r_eyes2', chain: 'Deadeye', tier: 2, requires: 'r_eagle', name: 'Hawk Eyes', desc: '+1 sight radius', grants: { vision: 2 } },
+      { id: 'r_reach', chain: 'Deadeye', tier: 3, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 card reach', grants: { cardReach: 1 } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
       { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes stop chasing once you leave their sight', grants: { noChase: true } },
-      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles ignore you', grants: { camouflage: true } },
+      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets sit dormant (a sleep “z”), blind to you — until you strike one, which wakes it to hunt you for the rest of the floor', grants: { camouflage: true } },
       { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Unaware foes more than one tile away never notice you (until you strike); any within one tile — even one that blunders into you — detects you normally', grants: { stealth: true } },
-      // 🏹 Fletcher — the quartermaster: a big bow first, then reload, then kickback.
-      { id: 'r_longbow', chain: 'Fletcher', tier: 1, name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
-      { id: 'r_reload', chain: 'Fletcher', tier: 2, requires: 'r_longbow', name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
-      { id: 'r_recoil', chain: 'Fletcher', tier: 3, requires: 'r_reload', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile if the ground behind it is clear', grants: { recoil: true } },
+      // 🏹 Fletcher — the quartermaster: reload, then a big bow, then kickback.
+      { id: 'r_reload', chain: 'Fletcher', tier: 1, name: 'Reload', desc: 'Gain a reload card: spend a turn to recharge all your other cards', grants: { gainCard: 'reload' } },
+      { id: 'r_longbow', chain: 'Fletcher', tier: 2, requires: 'r_reload', name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
+      { id: 'r_recoil', chain: 'Fletcher', tier: 3, requires: 'r_longbow', name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there), AND shoves every adjacent foe back one tile if the ground behind it is clear', grants: { recoil: true } },
     ],
   },
   sorcerer: {
@@ -223,19 +224,19 @@ const CLASSES = {
     start: 'bishop', // the Sorcerer opens with a diagonal bolt
     startCooldown: 3, // the bishop's own cooldown (cooldowns are per-UNIT, not per-class)
     hp: 3,
-    // Necromancy (a fourth, ally-summoning chain) is colour-reserved but not yet built.
+    // Four subclass chains, each a full 3-tier build (Necromancy is the ally-summoning line).
     chains: { Translocations: '#22d3ee', Necromancy: '#65a30d', Hexes: '#e879f9', Conjuration: '#8b5cf6' },
     perks: [
       // 🔮 Translocations — the blink-mage: dodge, phase, and displace.
       { id: 's_blink', chain: 'Translocations', tier: 1, name: 'Blink', desc: 'When a foe hits you, blink to a random safe tile in sight (if any)', grants: { blink: true } },
-      { id: 's_phase', chain: 'Translocations', tier: 2, requires: 's_blink', name: 'Phase', desc: 'Move onto wall tiles; while embedded in a wall your sight shrinks to 1', grants: { phase: true } },
-      { id: 's_swap', chain: 'Translocations', tier: 3, requires: 's_phase', name: 'Displacement', desc: 'Gain a swap card: trade places with any unit in sight (cooldown 3)', grants: { gainCard: 'swap', gainCooldown: 3 } },
+      { id: 's_phase', chain: 'Translocations', tier: 2, requires: 's_blink', name: 'Phase', desc: 'Move onto wall AND ice tiles; while embedded in opaque cover (a wall or boulder) your sight shrinks', grants: { phase: true } },
+      { id: 's_swap', chain: 'Translocations', tier: 3, requires: 's_phase', name: 'Displacement', desc: 'Gain a swap card: trade places with any unit in sight (cooldown 3); arriving knocks every other adjacent foe back a tile', grants: { gainCard: 'swap', gainCooldown: 3 } },
       // 💫 Hexes — the curse-weaver: demote, dazzle, and lull.
-      { id: 's_hex', chain: 'Hexes', tier: 1, name: 'Hex', desc: 'Moving so a non-pawn foe stands one tile ahead demotes it to a pawn and startles it', grants: { hexDemote: true } },
+      { id: 's_hex', chain: 'Hexes', tier: 1, name: 'Hex', desc: 'At the start of each turn, one foe adjacent to you is warped into a confused ferz — a feeble one-step diagonal mover (bosses and structures are immune)', grants: { hexDemote: true } },
       { id: 's_cata', chain: 'Hexes', tier: 2, requires: 's_hex', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
       { id: 's_slumber', chain: 'Hexes', tier: 3, requires: 's_cata', name: 'Slumber', desc: 'Non-boss foes adjacent to you fall asleep', grants: { sleepAura: true } },
       // 🌀 Conjuration — the artillery-mage: reach, a queen, then a full barrage.
-      { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Amplify', desc: '+1 card reach', grants: { cardReach: 1 } },
+      { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Blast', desc: 'Every spell you cast also detonates on 3 random tiles next to your target — a burst of collateral fire', grants: { spellBlast: true } },
       { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Phantom Steed', desc: 'Gain a horse card: a spectral steed that tramples an L-shaped path, scorching every foe along it (cooldown 4)', grants: { gainCard: 'horse', gainCooldown: 4 } },
       { id: 's_barrage', chain: 'Conjuration', tier: 3, requires: 's_staff', name: 'Double Cast', desc: 'After firing a spell, if a targetable foe remains you may aim and fire once more before your turn ends', grants: { doubleCast: true } },
       // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.

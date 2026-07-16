@@ -5,11 +5,12 @@ const TUTORIALS = {
   welcome: {
     title: 'Long live the King',
     text:
-      'Move the king with WASD, the diagonals Q E Z X, the numpad, or by clicking ' +
-      'a highlighted tile. Pan with the arrow keys or the screen edges, and zoom ' +
-      'with the mouse wheel. You see only a short distance — unexplored ground is ' +
-      'shrouded in fog of war until you reach it. You begin beside the stair down — explore ' +
-      'to find the key that unlocks it.',
+      'Move the king with WASD, the diagonals Q E Z X, the numpad, or by clicking a highlighted ' +
+      'tile. Pan with the arrow keys or the screen edges, and zoom with the mouse wheel. You see ' +
+      'only a short distance — unexplored ground is fogged until you reach it. RED tiles are squares ' +
+      'a visible enemy could strike next turn, so never end your move on one. HOVER any tile or ' +
+      'piece to read exactly what it is and does. You begin beside the stair down — explore to find ' +
+      'the key that unlocks it.',
   },
   surprise: {
     title: 'Caught by surprise',
@@ -52,9 +53,17 @@ const TUTORIALS = {
   turret: {
     title: 'Turrets',
     text:
-      'A turret is a fixed emplacement that cannot be moved or destroyed. Each turn ' +
-      'it fires along its piece’s pattern (its red threat tiles), striking the king ' +
-      'if he stands in the line. Stay off the red and slip past.',
+      'A turret is a fixed emplacement that fires along its piece’s pattern (its red threat ' +
+      'tiles). When you step into its line it spends ONE turn locking on (“move!”) before it ' +
+      'can fire — so you always have a chance to slip clear. It has a small HP bar: strike it ' +
+      'to smash it (leaving scrap), or knock it into a pit. Stay off the red.',
+  },
+  miniBoss: {
+    title: 'Mini-bosses',
+    text:
+      'A mini-boss is a lesser guardian — an ashen, grey-green piece with a HP bar, smaller than ' +
+      'a floor boss. It rolls a boss trait and hunts you, but grants NO level-up boon when slain. ' +
+      'They claw in from hostile events (and swarm the finale), so cut them down or slip away.',
   },
   circle: {
     title: 'Summoning circles',

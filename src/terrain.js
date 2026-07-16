@@ -20,7 +20,9 @@ function terrainAt(state, x, y) {
 // Sight (and projectiles) are stopped by walls and boulders. Pits are open holes and lava/
 // water are low, so none of those block the look or a shot.
 function blocksSight(type) {
-  return type === 'wall' || type === 'boulder';
+  // Devilgrass grows tall enough to hide what's behind it. ICE is see-through — a frozen
+  // pane you can look past but not walk through.
+  return type === 'wall' || type === 'boulder' || type === 'devilgrass';
 }
 
 // Whether a mover may enter/stop on a tile. Walls and BOULDERS stop everyone (a phasing
@@ -29,7 +31,7 @@ function blocksSight(type) {
 // which the level generator relies on for a guaranteed safe path. Water is passable (slow).
 function standableFor(type, opts) {
   const o = opts || {};
-  if (type === 'wall' || type === 'boulder') return Boolean(o.phaseWalls); // only a phasing mover enters these
+  if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // walls, boulders & ice slabs stop everyone but a phasing mover
   if (type === 'pit') return Boolean(o.flying); // only a FLYING mover (Winged Boots / a flying boss) crosses a pit
   if (type === 'lava') return o.lavaOk !== false; // walkable unless a caller explicitly forbids it
   return true; // water & normal are walkable
@@ -77,11 +79,17 @@ function hasLineOfSight(state, x0, y0, x1, y1, seeWalls) {
   return true;
 }
 
-// A tile is in the KING's sight if it is inside his window and unobstructed. The Ranger's
-// Sixth Sense lets his OWN sight pass over walls (one-way — see enemyAwareOfKing).
+// Does the king's OWN sight pass over sight-blockers (walls/boulders/devilgrass)? Sixth Sense
+// grants it for both seeing AND shooting; Premonition (trueSight) grants it for SEEING ONLY
+// (his shots and steps still stop at cover). Both are one-way — see enemyAwareOfKing.
+function playerSeesThroughCover(state) {
+  const p = state.player || {};
+  return Boolean(p.seeThroughWalls || p.trueSight);
+}
+
+// A tile is in the KING's sight if it is inside his window and unobstructed.
 function inLineOfSight(state, x, y) {
-  const seeWalls = Boolean(state.player && state.player.seeThroughWalls);
-  return isWithinBounds(getVisibleBounds(state), x, y) && hasLineOfSight(state, state.player.x, state.player.y, x, y, seeWalls);
+  return isWithinBounds(getVisibleBounds(state), x, y) && hasLineOfSight(state, state.player.x, state.player.y, x, y, playerSeesThroughCover(state));
 }
 
 // A unit the KING can see (his vision — passes over walls with Sixth Sense).
@@ -99,7 +107,7 @@ function enemyAwareOfKing(state, ex, ey, seeWalls) {
 // The set of tiles the king can currently see (for rendering brightness).
 function computeVisibleTiles(state) {
   const bounds = getVisibleBounds(state);
-  const seeWalls = Boolean(state.player && state.player.seeThroughWalls);
+  const seeWalls = playerSeesThroughCover(state);
   const set = new Set();
   for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
     for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
@@ -132,15 +140,20 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
     const ny = y + dy;
     if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) break;
     const terrain = terrainAt(state, nx, ny);
-    if (projectile ? blocksSight(terrain) : !standableFor(terrain, o)) break;
+    const blocked = projectile ? blocksSight(terrain) : !standableFor(terrain, o);
+    if (projectile && blocked) break; // a bolt stops at opaque cover (wall/boulder) — never reaches a unit behind it
     if (unitAt(nx, ny)) {
       // Capturing the target costs a ground step; without the range to spend it,
-      // the target is out of reach this move (a 1-range king can't pounce two).
+      // the target is out of reach this move (a 1-range king can't pounce two). A capturable
+      // unit EMBEDDED in blocked terrain (a phasing foe in a wall/ice, or the phased king) can
+      // still be STRUCK when the path to it is clear — the striker falls short rather than moving
+      // onto the tile (`embedded` flags that for resolution).
       if (isTarget(nx, ny) && groundUsed < maxGround) {
-        stops.push({ x: nx, y: ny, capture: true });
+        stops.push({ x: nx, y: ny, capture: true, embedded: !projectile && blocked });
       }
       break;
     }
+    if (blocked) break; // empty non-standable terrain stops the slide
     if (!projectile && isSlowTerrain(terrain) && !immune && slowUsed >= 1) break; // one water tile / move
     if (groundUsed >= maxGround) break; // out of range
     groundUsed += 1;
@@ -155,7 +168,9 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
 // Knight-style leaps: land on the L tiles, never onto a wall, and never over a
 // wall (a wall on either orthogonal shoulder blocks the leap). Water underneath
 // is leapt clean over.
-function jumpTargets(state, fromX, fromY, unitAt, isTarget) {
+function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
+  const phaseWalls = Boolean(opts && opts.phaseWalls);
+  const flying = Boolean(opts && opts.flying); // Fairy Wings / a Flying boss — may alight on lava/pits
   const targets = [];
   for (const [dx, dy] of KNIGHT_STEPS) {
     const x = fromX + dx;
@@ -164,20 +179,29 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'lava' || terrain === 'pit') {
-      continue; // can't land on a wall, in lava, or in a bottomless pit (a boulder IS landable — a leaper crushes it)
-    }
-    if (terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall') {
-      continue; // Wall blocks the leap.
-    }
-    if (terrainAt(state, fromX, fromY + Math.sign(dy)) === 'wall') {
-      continue;
+    if ((terrain === 'lava' || terrain === 'pit') && !flying) {
+      continue; // never land in lava or a bottomless pit — unless flying (Fairy Wings)
     }
     const unit = unitAt(x, y);
     if (unit && !isTarget(x, y)) {
       continue; // Friendly piece in the way.
     }
-    targets.push({ x, y, viaJump: true, capture: Boolean(unit) });
+    const capHere = Boolean(unit); // a capturable foe on the landing tile (passed the filter above)
+    if (terrain === 'wall') {
+      // Can't land on a wall — UNLESS a phasing leaper is pouncing onto a foe embedded there.
+      if (!(phaseWalls && capHere)) continue;
+    } else if (terrain === 'ice') {
+      // Empty ice is a fine landing (the leap shatters it). But a foe EMBEDDED in ice may only
+      // be pounced on by a leaper that also phases.
+      if (capHere && !phaseWalls) continue;
+    }
+    if (!phaseWalls && terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall') {
+      continue; // Wall blocks the leap (a phasing leaper ignores the shoulder).
+    }
+    if (!phaseWalls && terrainAt(state, fromX, fromY + Math.sign(dy)) === 'wall') {
+      continue;
+    }
+    targets.push({ x, y, viaJump: true, capture: capHere });
   }
   return targets;
 }

@@ -148,8 +148,7 @@
       return;
     }
     const p = gameState.player;
-    const cls = CLASSES[highestClass(p)];
-    floorLabel.textContent = `Floor ${toRoman(gameState.floor)}${cls ? ' · ' + cls.name : ''}`;
+    floorLabel.textContent = `Floor ${toRoman(gameState.floor)} · ${playerTitle(p)}`; // subclass name once committed
     if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
     turnLabel.textContent = `Turn ${gameState.turn}${p.promotion > 0 ? ` · ♞ Warhorse ${p.promotion}` : ''}`;
     renderHearts(p.hp, p.maxHp);
@@ -157,7 +156,7 @@
     logMessage(gameState.message);
 
     // Dread rises as the king lingers.
-    turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / MAX_TURNS_SCARY));
+    turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / (gameState.dreadTurns || MAX_TURNS_SCARY)));
     renderCards();
   }
 
@@ -165,6 +164,30 @@
 
   let lastLogged = null;
   const LOG_MAX = 40; // keep plenty of history so LONG mode has something to scroll through
+
+  // Tint a log line by how the event reads on a good→bad scale, so the player can skim the log by
+  // colour: really-good (light blue), good (green), normal (near-white), scary (yellow),
+  // bad (red), really-bad (dark red), and unimportant flavour (dim grey).
+  function logSeverityColor(text) {
+    const t = text.toLowerCase();
+    if (/\byou win|victory|orb of victory|level up|a boon|new power|is slain|is defeated|guardian falls|slain!|claims? the (key|orb)|reaches the portal/.test(t)) return '#7dd3fc';
+    if (/you have fallen|the king falls|game over|hurled screaming|blasts the king|slams into the king|bowls the king aside|strikes the king|wounds the king|the king is struck/.test(t)) {
+      return '#b91c1c'; // really bad — the king is wounded or worse (dark red)
+    }
+    if (/roars?|awakens|turns hostile|locks onto the king|— move!|floods|lava wells|slump into|pits yawn|ceiling caves|caves in|erupts|killing frost|ice sheets|a wave of|mini-?boss|rogue \w+|claws in|converge|conjures a minion/.test(t)) {
+      return '#fde047'; // scary — a fresh threat looms (yellow)
+    }
+    if (/defeats? a|is destroyed|shatters?|is felled|tramples|you heal|heals? \d|recharge|picks? up|unlock|reload|the beast is|slips past the friendly/.test(t)) {
+      return '#4ade80'; // good — the king gains ground (green)
+    }
+    if (/strikes|blasts|shoves|knocks|clambers|cuts down|leaps upon|bowls|plunges|hurled|blindsides|charges/.test(t)) {
+      return '#f87171'; // bad — a foe lands a blow or lunges (red)
+    }
+    if (/repositions|slips past|pulses|gropes|will not budge|shove in vain|shudders|smoulders|damp chill|breath fogs|stirs?|shadows stir|nothing to/.test(t)) {
+      return '#6b7280'; // unimportant flavour (dim grey)
+    }
+    return '#e5e7eb'; // normal (near-white)
+  }
 
   // Append a message to the left-pane log (newest at the bottom), skipping exact
   // consecutive repeats.
@@ -176,6 +199,7 @@
     const line = document.createElement('div');
     line.className = 'log-line';
     line.textContent = text;
+    line.style.color = logSeverityColor(text);
     logEl.append(line);
     while (logEl.childElementCount > LOG_MAX) {
       logEl.removeChild(logEl.firstChild);
@@ -208,6 +232,8 @@
     lavaSpread: '#f97316', // orange — lava wells up
     wallsToLava: '#ea580c', // deep orange — walls melt to lava
     pits: '#7c3aed', // violet — the void opens
+    freeze: '#7dd3fc', // pale cyan — a killing frost sheets the floor with ice
+    devilgrass: '#4ade80', // sickly green — devilgrass chokes the floor
     caveIn: '#b45309', // brown — rubble crashes down
     bossRush: '#e0b341', // gold — a rogue guardian (finale)
     miniBoss: '#b91c1c', // crimson — a mini-boss rises
@@ -345,7 +371,7 @@
     switch (card.kind) {
       case 'promotion': return 'Self-cast: confirm on your own tile. Free action.';
       case 'reload': return 'Self-cast: confirm on your own tile — recharge every other card.';
-      case 'swap': return 'Target any unit in sight to trade places with it. No damage.';
+      case 'swap': return 'Target any unit in sight to trade places with it; arriving shoves other adjacent foes back a tile.';
       case 'enpassant': return 'Step 1 tile; also strikes one foe you pass (marked ✕).';
       case 'doublestep': return 'Dash the FULL 2 tiles in one direction (capturing at the end).';
       case 'horse': return 'A spectral steed tramples an L-shaped path to an aimed knight tile — you don’t move.';
@@ -397,20 +423,36 @@
     if (classCategory(state.player.className) !== 'spell') return null;
     const p = state.player;
     const seeWalls = Boolean(p.seeThroughWalls);
-    // A single piercing bolt: it ALWAYS travels its full range in the aimed direction,
-    // so preview every tile out to `reach` (stopped by a wall or the board edge).
-    const reach = cardReach(card.kind, p.cardReach || 0);
-    const dx = Math.sign(cursor.x - p.x);
-    const dy = Math.sign(cursor.y - p.y);
+    const inB = (x, y) => x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE;
     const tiles = [];
-    let cx = p.x;
-    let cy = p.y;
-    for (let i = 0; i < reach; i += 1) {
-      cx += dx;
-      cy += dy;
-      if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
-      if (terrainAt(state, cx, cy) === 'wall' && !seeWalls) break;
-      tiles.push({ x: cx, y: cy });
+    const push = (x, y) => { if (inB(x, y) && !tiles.some((t) => t.x === x && t.y === y)) tiles.push({ x, y }); };
+
+    if (card.kind === 'horse') {
+      // The phantom steed scorches the whole L-path to the aimed knight tile.
+      for (const t of knightLPath(p.x, p.y, cursor.x - p.x, cursor.y - p.y)) push(t.x, t.y);
+    } else {
+      // A piercing bolt ALWAYS travels its full range in the aimed direction — preview every tile
+      // it scorches, matching the real bolt: ice ends it (thaws), a wall/boulder stops it (unless
+      // Sixth Sense), devilgrass is burned through.
+      const reach = cardReach(card.kind, p.cardReach || 0);
+      const dx = Math.sign(cursor.x - p.x);
+      const dy = Math.sign(cursor.y - p.y);
+      let cx = p.x;
+      let cy = p.y;
+      for (let i = 0; i < reach; i += 1) {
+        cx += dx;
+        cy += dy;
+        if (!inB(cx, cy)) break;
+        const bt = terrainAt(state, cx, cy);
+        if (bt === 'ice') { push(cx, cy); break; }
+        if ((bt === 'wall' || bt === 'boulder') && !seeWalls) { if (bt === 'boulder') push(cx, cy); break; }
+        push(cx, cy);
+      }
+    }
+    // Blast (Conjuration): a spell also detonates on 3 RANDOM tiles beside the aimed target — show
+    // the whole ring as the possible collateral zone (the actual 3 are rolled on cast).
+    if (p.spellBlast) {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) push(cursor.x + dx, cursor.y + dy);
     }
     return tiles;
   }
@@ -423,7 +465,9 @@
     lava: 'Lava — crossable, but burns you 1 HP per turn you end on it (enemies wade free); clear to see through',
     water: 'Water — slow (cross one per move); no cards while wading',
     pit: 'Pit — a bottomless hole: nothing can cross it, but shots (yours OR a turret’s/boss’s) fly right over',
-    boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it',
+    boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it. Knocked, it ROLLS until it hits something',
+    ice: 'Ice — a see-through slab: impassable, but you can look past it. Fire/spells MELT it to water; a leap onto it (or a foe slammed into it) SHATTERS it',
+    devilgrass: 'Devilgrass — blocks sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
   };
 
   // The level's outer edge is solid STONE (impassable rock), distinct from interior brick walls.
@@ -454,7 +498,9 @@
       if (enemy) {
         let tag;
         if (enemy.turret) {
-          tag = ` (turret — fixed; fires its pattern; HP ${enemy.hp}/${enemy.maxHp})`;
+          tag = enemy.fire
+            ? ` (FIRE turret — piercing spellfire through units; 3-turn cycle; HP ${enemy.hp}/${enemy.maxHp})`
+            : ` (turret — fixed; fires its pattern; HP ${enemy.hp}/${enemy.maxHp})`;
         } else if (enemy.summonCircle) {
           tag = ' (summoning circle — spawns foes; step on it to destroy)';
         } else if (enemy.boss) {
@@ -516,6 +562,7 @@
     chancellor: 'Moves as a rook or a knight.',
     amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
     king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
+    ferz: 'Steps and captures one tile diagonally — a feeble, dazed piece (what a Hex warps a foe into).',
     enpassant: 'Step one tile in any direction (capturing a foe there), and strike one foe you pass — a piece that was beside your starting tile.',
     doublestep: 'Dash up to two tiles in any one direction, repositioning onto open ground or capturing a foe at the far tile. A nimble on-demand maneuver.',
     promotion: 'Become an INVINCIBLE warhorse for 3 turns: leap like a knight (and step a tile), take no damage, use no weapon cards. Free to cast, cooldown 9.',
@@ -525,7 +572,7 @@
 
   // One-line descriptions of each enemy role (for the examine pane).
   const ROLE_INFO = {
-    turret: 'Turret — fixed; fires its piece pattern. Destructible (3 HP), struck in place like a boss.',
+    turret: 'Turret — fixed; fires its piece pattern (1 turn to lock on, then fires). Destructible (3 HP), struck in place like a boss. FIRE turrets (reddish, floor 5+) loose piercing spellfire THROUGH units on a slower 3-turn cycle.',
     circle: 'Summoning circle — conjures foes while it sees you; step on it to destroy it.',
     boss: 'Boss — a high-mobility guardian with a HP bar.',
   };
@@ -657,6 +704,21 @@
     resolveCommitted(finishFollowup(gameState));
   }
 
+  // Save the current board as a downloadable PNG (F2). Canvas-only — the crisp board makes a clean
+  // store-page shot; capture the full window with your OS screenshot tool if you want the HUD too.
+  function saveScreenshot() {
+    try {
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/png');
+      link.download = `chess-dungeon-${gameState ? 'floor' + gameState.floor + '-' : ''}${Math.floor(performance.now())}.png`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (e) {
+      /* toDataURL can throw if the canvas is tainted; ignore */
+    }
+  }
+
   // Restart the HP counter's damage animation (re-add the class after a reflow).
   function flashHealth() {
     healthLabel.classList.remove('damage');
@@ -722,48 +784,17 @@
   }
 
   // Queue tips for whatever the king can currently see.
+  //
+  // DELIBERATELY SPARSE: we only auto-pop tips that teach the CORE LOOP and objective (surprise,
+  // danger squares, the guardian, the key→stair unlock, the finale). Per-TERRAIN and per-ENEMY-TYPE
+  // tips are NOT auto-shown — they read clearly enough in play, and every tile / unit already carries
+  // a full description in the hover EXAMINE panel (which acts as an always-available codex). The tip
+  // COPY is kept in tutorials.js so any of these can be re-enabled or surfaced elsewhere later.
   function scanVisibleTips(state) {
-    const visible = getVisibleEnemies(state);
-    if (visible.some((enemy) => enemy.surprised)) {
-      queueTip('surprise');
-    }
-    // Tips for individual (non-boss) piece types are disabled for now — ordinary pieces
-    // read clearly enough, and a little mystery around them is fine. (Left commented so
-    // they're easy to restore.)
-    // if (visible.some((enemy) => enemy.kind === 'knight')) {
-    //   queueTip('knight');
-    // }
-    // if (visible.some((enemy) => enemy.kind === 'king')) {
-    //   queueTip('enemyKing');
-    // }
-    if (visible.some((enemy) => enemy.turret)) {
-      queueTip('turret');
-    }
-    if (visible.some((enemy) => enemy.summonCircle)) {
-      queueTip('circle');
-    }
-    if (visible.some((enemy) => enemy.boss)) {
-      queueTip('boss');
-    }
-    // if (visible.some((enemy) => isJumperKind(enemy.kind) && enemy.awake)) {
-    //   queueTip('jumper');
-    // }
-    if (getThreatenedTiles(state).size > 0) {
-      queueTip('threat');
-    }
-    // First sighting of each terrain type pops an explanatory tip.
-    for (const key of computeVisibleTiles(state)) {
-      const [tx, ty] = key.split(',').map(Number);
-      const type = terrainAt(state, tx, ty);
-      if (TUTORIALS[`terrain-${type}`]) {
-        queueTip(`terrain-${type}`);
-      }
-    }
-    // Spotting the floor key, and the sealed stair, each get a one-time explainer so the
-    // "grab the key to unlock the stair" loop is never a mystery.
-    if (state.key && !state.key.collected && inLineOfSight(state, state.key.x, state.key.y)) {
-      queueTip(state.key.orb ? 'orb' : 'key');
-    }
+    // MINIMAL by design. Everything a player can read on a token or tile lives in the hover EXAMINE
+    // panel (an always-available codex), so the only auto-popups left teach the non-obvious OBJECTIVE:
+    // the key→stair unlock loop, and the finale's portal. (Per-terrain, per-enemy, surprise, and
+    // danger-square tips are OFF — their copy is retained in tutorials.js if ever wanted again.)
     if (state.exit && state.exit.locked && inLineOfSight(state, state.exit.x, state.exit.y)) {
       queueTip(state.exit.portal ? 'portalLocked' : 'stairLocked');
     }
@@ -962,7 +993,7 @@
       pick.textContent = 'Choose';
       pick.addEventListener('click', () => {
         hideClassPopover();
-        newGame(key);
+        openDifficultySelect(key);
       });
       row.addEventListener('mouseenter', (e) => showClassPopover(key, e));
       row.addEventListener('mousemove', (e) => showClassPopover(key, e));
@@ -972,9 +1003,36 @@
     }
   }
 
-  function newGame(classKey) {
+  // After the class, pick a difficulty for the run (reuses the class-select screen).
+  const DIFFICULTIES = [
+    { key: 'easy', name: 'Easy', color: '#4ade80', blurb: 'Twice the starting HP — a forgiving descent.' },
+    { key: 'hard', name: 'Hard', color: '#fbbf24', blurb: 'The standard trial — baseline HP.' },
+    { key: 'nightmare', name: 'Nightmare', color: '#ef4444', blurb: 'Baseline HP, and the floor turns hostile TWICE as fast.' },
+  ];
+  function openDifficultySelect(classKey) {
+    screen = 'class';
+    classScreen.classList.remove('hidden');
+    classList.innerHTML = '';
+    for (const diff of DIFFICULTIES) {
+      const row = document.createElement('li');
+      row.className = 'shop-item class-item';
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML =
+        `<span class="shop-name" style="color:${diff.color}">${diff.name}</span>` +
+        `<span class="shop-desc">${diff.blurb}</span>`;
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.textContent = 'Begin';
+      pick.addEventListener('click', () => newGame(classKey, diff.key));
+      row.append(info, pick);
+      classList.append(row);
+    }
+  }
+
+  function newGame(classKey, difficulty) {
     resetSeenTips(); // tutorial tips reset every run, so they play again on a fresh game
-    startGame(createInitialState(classKey || 'warrior'));
+    startGame(createInitialState(classKey || 'warrior', difficulty || 'hard'));
     saveGame(gameState);
     queueTip('welcome');
     scanVisibleTips(gameState);
@@ -1298,13 +1356,14 @@
     }
     if (nextState.lastAction === 'exit') {
       GameAudio.play('descend');
-      queueTip('exit');
       pendingAction = 'floor';
       animTimer = PLAYER_MOVE_TIME;
       return;
     }
-    // A strike either felled a piece (kill) or merely chipped it (attack).
-    if (felled > 0) GameAudio.play('kill');
+    // A strike either felled a piece (kill) or merely chipped it (attack) — but shattering a
+    // summoning circle by stepping on it is a hollow SWOOSH / power-down, not a combat hit.
+    if (nextState.message && nextState.message.indexOf('summoning circle') !== -1) GameAudio.play('unsummon');
+    else if (felled > 0) GameAudio.play('kill');
     else if (struck) GameAudio.play('attack');
     // Double Cast: the first bolt has landed — stay up and let the caster aim a second
     // shot at whatever still stands. (If nothing targetable remains, end the turn.)
@@ -1342,6 +1401,8 @@
       }
       const hpBefore = gameState.player.hp;
       applyState(moveEnemy(gameState, id), true);
+      // A boss's first-sighting ROAR is logged separately so it doesn't cost the boss its action.
+      if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
       if (gameState.lastShot) {
         const s = gameState.lastShot;
         Renderer.rangedShot(s.fromX, s.fromY, s.toX, s.toY, s.role, s.tiles);
@@ -1390,6 +1451,16 @@
       return;
     }
     const result = movePlayer(gameState, dx, dy);
+    if (result.lastAction === 'boulder-stuck') {
+      // A committed shove against an immovable boulder: it SPENDS the turn (enemy phase runs),
+      // but the king and rock still visibly strain and rebound.
+      const bx = gameState.player.x + dx;
+      const by = gameState.player.y + dy;
+      if (terrainAt(gameState, bx, by) === 'boulder') Renderer.bumpBoulder(bx, by, dx, dy);
+      Renderer.bump(dx, dy);
+      commitMove(result);
+      return;
+    }
     if (result.lastAction === 'blocked') {
       // Walked into a wall / impassable tile: a lean-and-bounce BUMP that spends no turn and,
       // crucially, does NOT reset the renderer — so the camera never snaps (the old bug).
@@ -1485,13 +1556,13 @@
 
     // At max danger the turn counter pulses amber<->red (a louder alarm than the
     // steady red of merely-high danger) — matched by the doubled spawn rate.
-    if (gameState && screen === 'playing' && gameState.turn >= MAX_TURNS_SCARY) {
+    if (gameState && screen === 'playing' && gameState.turn >= (gameState.dreadTurns || MAX_TURNS_SCARY)) {
       turnLabel.style.color = Math.floor(timestamp / 350) % 2 ? '#fde047' : '#ef4444';
     }
 
     // Swap in the tense score once the king has lingered into the high-spawn danger
     // zone (and back to the calm score whenever he's safe / not in a run).
-    const inDanger = Boolean(gameState) && screen === 'playing' && gameState.turn >= Math.floor(MAX_TURNS_SCARY * 0.6);
+    const inDanger = Boolean(gameState) && screen === 'playing' && gameState.turn >= Math.floor((gameState.dreadTurns || MAX_TURNS_SCARY) * 0.6);
     GameAudio.setTension(inDanger);
 
     Renderer.update(delta);
@@ -1506,6 +1577,13 @@
   /* ------------------------------- wiring -------------------------------- */
 
   document.addEventListener('keydown', (event) => {
+
+    // F2 saves a PNG of the board — handy for grabbing store-page screenshots. Works on any screen.
+    if (event.key === 'F2') {
+      event.preventDefault();
+      saveScreenshot();
+      return;
+    }
 
     // A tutorial tip is up: Enter / Space / Escape all dismiss it (like the "Got it" button).
     if (screen === 'tutorial') {
