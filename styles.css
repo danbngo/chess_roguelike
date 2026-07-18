@@ -233,6 +233,75 @@ button:disabled {
   cursor: help;
 }
 
+/* THE CLASS SELECT, in the vein of the title: a living board behind, a warm STONE panel in front —
+   not a dark web card floating in a void. The heavy overlay dim is lifted so the board shows. */
+#class-screen.overlay {
+  background: rgba(2, 6, 23, 0.32);
+  backdrop-filter: none;
+}
+#class-screen .overlay-card {
+  max-width: 560px;
+  width: 92%;
+  padding: 1.1rem 1.3rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(180, 150, 90, 0.5);
+  background:
+    linear-gradient(180deg, rgba(60, 48, 30, 0.4), rgba(2, 6, 23, 0) 60%),
+    rgba(14, 12, 10, 0.9);
+  box-shadow: 0 14px 44px rgba(2, 6, 23, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
+}
+#class-screen .overlay-title {
+  font-family: Georgia, "Times New Roman", serif;
+  color: #f1e5c8;
+  text-shadow: 0 2px 0 rgba(2, 6, 23, 0.6);
+}
+/* Each row: the class/difficulty EMBLEM on the left, then the name + blurb, then the pick button. */
+#class-screen .class-item {
+  gap: 0.9rem;
+  background: rgba(28, 24, 18, 0.85);
+  border: 1px solid rgba(150, 124, 74, 0.28);
+}
+#class-screen .class-item:hover {
+  border-color: rgba(200, 168, 100, 0.55);
+  background: rgba(38, 32, 22, 0.9);
+}
+.class-emblem {
+  flex: none;
+  width: 62px;
+  height: 62px;
+  image-rendering: auto;
+}
+#class-screen .shop-info { flex: 1 1 auto; }
+#class-screen .shop-name { font-size: 1.05rem; }
+
+/* THE TROPHY ROOM: a diegetic HALL (king on a dais before a wall of medallions, drawn on the canvas)
+   behind a translucent LEDGER pinned to the bottom — so the room reads above it, in the vein of the
+   title and class screens. The heavy overlay dim is lifted so the hall shows through. */
+#trophy-screen.overlay {
+  background: rgba(2, 6, 23, 0.22);
+  backdrop-filter: none;
+  align-items: end;       /* pin the ledger to the bottom; the hall + king own the top of the screen */
+  padding-bottom: 1rem;
+}
+#trophy-screen .overlay-card {
+  max-width: 780px;
+  width: 94%;
+  max-height: 54vh;
+  padding: 0.9rem 1.2rem;
+  border-radius: 14px;
+  border: 1px solid rgba(180, 150, 90, 0.5);
+  background: linear-gradient(180deg, rgba(48, 38, 22, 0.58), rgba(12, 10, 8, 0.84));
+  box-shadow: 0 14px 44px rgba(2, 6, 23, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
+  backdrop-filter: blur(2px);
+}
+#trophy-screen .overlay-title {
+  font-family: Georgia, "Times New Roman", serif;
+  color: #f1e5c8;
+  text-shadow: 0 2px 0 rgba(2, 6, 23, 0.6);
+  margin: 0;
+}
+#trophy-screen .character-body { max-height: 34vh; }
+
 /* Whole-level minimap, pinned to the viewport's bottom-right corner. */
 #minimap {
   position: fixed;
@@ -271,6 +340,10 @@ body.in-game #minimap:active {
 }
 
 /* Title screen: a clean fullscreen splash — board only, no panes or chrome. */
+body.on-title {
+  overflow: hidden; /* the full-viewport letterbox must not spawn scrollbars around itself */
+}
+
 body.on-title .shell {
   padding: 0;
 }
@@ -293,11 +366,18 @@ body.on-title .stage {
   max-width: none;
   width: 100vw;
   height: 100vh;
+  display: grid;
+  place-items: center;   /* centre the board in the viewport */
+  background: #020617;    /* black letterbox around it */
 }
 
-body.on-title canvas {
-  width: 100vw;
-  height: 100vh;
+/* The board canvas draws a SQUARE (640x640 internally). Show it at a square size that FITS the
+   viewport, centred, with black bars on the long edge — never stretched to the window's aspect ratio,
+   which smeared the whole board sideways on a wide screen. Scoped to #game ON PURPOSE: the class /
+   difficulty EMBLEMS are also <canvas>, and a bare `canvas` selector blew one up to fill the screen. */
+body.on-title canvas#game {
+  width: min(100vw, 100vh);
+  height: min(100vw, 100vh);
   border: none;
   border-radius: 0;
 }
@@ -489,6 +569,51 @@ body.in-game canvas {
   min-height: 3.2rem;
 }
 
+/* WHAT HE IS CARRYING. Sits under the cards and mirrors their layout, but deliberately smaller and
+   flatter: an inventory slot is a thing he HAS, not a button he can press, and it must never read
+   as another ability to spend. Empty for most of a floor, and collapses to nothing when it is. */
+.inv-bar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.15rem 0 0.6rem;
+}
+
+.inv-bar:empty {
+  display: none;
+}
+
+.inv-slot {
+  position: relative;
+  width: 2.3rem;
+  height: 2.3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  line-height: 1;
+  border-radius: 0.4rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.75);
+  cursor: default;
+}
+
+/* The floor key: gold, and lit from within — it is the thing the whole floor is about. */
+.inv-slot.key {
+  border-color: rgba(250, 204, 21, 0.85);
+  color: #fde047;
+  box-shadow: 0 0 0.5rem rgba(250, 204, 21, 0.35), inset 0 0 0.5rem rgba(250, 204, 21, 0.12);
+}
+
+/* The Orb of Victory: the last floor's key, and the run itself. Teal, to match how it is drawn on
+   the board, and lit harder than the key — nothing else he can be carrying matters this much. */
+.inv-slot.orb {
+  border-color: rgba(94, 234, 212, 0.9);
+  color: #5eead4;
+  box-shadow: 0 0 0.7rem rgba(94, 234, 212, 0.5), inset 0 0 0.6rem rgba(94, 234, 212, 0.18);
+}
+
 .card-bar:empty {
   display: none;
 }
@@ -551,6 +676,16 @@ body.in-game canvas {
   cursor: not-allowed;
 }
 
+/* CHARGED, but not playable from where he stands — wading, both hands busy keeping him upright.
+   Deliberately TRANSLUCENT rather than greyed: the card is ready and its subclass colour and glow
+   are the whole tell that it is ready, so they must still show through. Greying it out would read
+   as "recharging", which is a different thing entirely and would send him off waiting for a bar
+   that is already full. */
+.card-slot.unusable {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 /* Cooldown countdown badge in the corner of a recharging card. */
 .card-cooldown {
   position: absolute;
@@ -562,6 +697,38 @@ body.in-game canvas {
   color: #f8fafc;
   font-size: 1.1rem;
   font-weight: 700;
+}
+
+/* A card whose EFFECT is still RUNNING (Silence hushing the room, Animal Form held). A cyan halo that
+   outlives the cooldown dim, so "the spell is working" stays legible even while the same card
+   recharges. Placed after .cooldown so its opacity:1 wins when both classes are set. */
+@keyframes card-active-pulse {
+  0%, 100% { box-shadow: 0 0 6px #22d3ee, inset 0 0 4px rgba(34, 211, 238, 0.55); }
+  50% { box-shadow: 0 0 15px #22d3ee, inset 0 0 9px rgba(34, 211, 238, 0.85); }
+}
+.card-slot.active {
+  opacity: 1; /* the effect is LIVE — never dim it, even while the cooldown number counts down */
+  border-color: #67e8f9;
+  animation: card-active-pulse 1.2s ease-in-out infinite;
+}
+/* Turns-left pip for an active effect — TOP-right, cyan, deliberately apart from the cooldown number
+   (which fills the card centre) so the two read at once. */
+.card-active {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.18rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #06b6d4;
+  color: #04283a;
+  font-size: 0.72rem;
+  font-weight: 800;
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.9);
+  z-index: 2;
 }
 
 /* End-of-run summary (score + conducts) on the game-over screen. */
@@ -728,6 +895,33 @@ body.in-game canvas {
   0%, 100% { box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.4), 0 0 0 rgba(255, 255, 255, 0); }
   50% { box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.4), 0 0 10px rgba(255, 255, 255, 0.6); }
 }
+/* THE TROPHY MANTEL: the shelves the medals stand on. A stone plaque names each metal, and each
+   shelf sits on a carved ledge with a warm rule beneath it — so the case reads as a collection on
+   display rather than a flat list. */
+.trophy-tier {
+  margin: 0 0 10px;
+  padding: 4px 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(2, 6, 23, 0) 70%);
+  border-bottom: 2px solid rgba(120, 100, 60, 0.35);
+}
+.trophy-tier-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 3px 0 6px;
+  color: #cbb489;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  margin-bottom: 8px;
+}
+.trophy-tier-gold .trophy-tier-label { color: #f5c542; text-shadow: 0 0 8px rgba(245, 197, 66, 0.4); }
+.trophy-tier-silver .trophy-tier-label { color: #d7dde5; }
+.trophy-tier-bronze .trophy-tier-label { color: #d09a5c; }
+.trophy-tier-locked { opacity: 0.72; }
+.trophy-tier-locked .trophy-tier-label { color: #7c8aa0; }
+.trophy-shelf { margin: 0; max-height: none; }
+
 /* Already held before this run, and (in the trophy room) simply won: present, not shouting. */
 .ach-badge.badge-old { opacity: 0.55; }
 .ach-badge.badge-won { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); }

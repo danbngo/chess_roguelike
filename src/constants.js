@@ -18,16 +18,40 @@ const DIFFICULTY_HP = {
 };
 // The DREAD CYCLE runs EIGHT steps — an 8x8 board's worth. The first three are a GRACE: the floor
 // holds still, no danger event fires, and the score keeps its calm tempo. Dread then climbs across
-// the remaining five, which are exactly the five HURRY tempo gears in audio.js. A step keeps the
-// duration it always had (40 turns), so the grace is ADDED time — not the same ramp squeezed
-// steeper. Net: a floor is quiet for 120 turns, then turns against the king over the next 200.
-const DREAD_STEP_TURNS = 40;
+// the remaining five, which are exactly the five HURRY tempo gears in audio.js.
+//
+// A step is 20 turns: 60 of grace, then the floor turns on you across 100. It was 40, and that ramp
+// was so gradual it BOILED THE FROG — you never felt the moment it turned, you only slowly noticed.
+// Short steps mean a player moving at a decent clip is off the floor inside the grace and never
+// meets it at all, while one who dawdles gets urgency that ARRIVES rather than creeps.
+const DREAD_STEP_TURNS = 20;
 const DREAD_GRACE_STEPS = 3; // the quiet opening — nothing stirs
 const DREAD_RAMP_STEPS = 5; // must match HURRY.length in audio.js
 const DREAD_TOTAL_STEPS = DREAD_GRACE_STEPS + DREAD_RAMP_STEPS; // 8 — the chess theme
-const DREAD_GRACE_TURNS = DREAD_STEP_TURNS * DREAD_GRACE_STEPS; // 120
-const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 320 — dread maxes here
+const DREAD_GRACE_TURNS = DREAD_STEP_TURNS * DREAD_GRACE_STEPS; // 60
+const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 160 — dread maxes here (the 8th tick)
+// PAST max dread, a floor the king WILL NOT LEAVE turns lethal: five more OVERSTAY steps (ticks 9-13)
+// over which LAVA wells up and closes in (tickLavaEncroachment) and the swarm runs unbounded. It all
+// peaks at tick 13 — by then the molten floor and the horde together kill any build. See
+// overstayFraction. (Fairy Wings crosses the fire but not the horde; Waiting shrugs the horde but not
+// the fire; no class can hold both, so lingering is always fatal in the end.)
+const DREAD_OVERSTAY_STEPS = 5;
+const MAX_TURNS_LAVA = MAX_TURNS_SCARY + DREAD_STEP_TURNS * DREAD_OVERSTAY_STEPS; // 260 — the molten floor peaks here
+// Which HURRY gear a dread fraction sits in. Gear 0 is the GRACE; 1..DREAD_RAMP_STEPS are the
+// climbing steps.
+//
+// THE one definition, on purpose. audio.js sets the score's tempo from it and game.js fires a
+// hostile event on every change, so the gear you HEAR and the floor turning on you are the same
+// event — not two clocks drifting past each other. If these two ever computed the gear separately
+// they would disagree, and the music would go back to being a vague mood instead of a tell.
+function dreadGear(frac) {
+  const f = Math.max(0, Math.min(1, Number(frac) || 0));
+  return f <= 0 ? 0 : Math.min(DREAD_RAMP_STEPS, 1 + Math.floor(f * DREAD_RAMP_STEPS));
+}
 const SPATTER_LIFE = 48; // Turns a blood spatter lingers before fading away (long — the floor gets messy).
+const SUMMON_TURNS = 3; // turns a summoning circle winds up before it conjures. The renderer draws
+// the charge preview from this too — hardcoding it in both is how they silently desync.
+const TREE_HP = 3; // wounds a tree takes before it falls (see damageTree)
 const CORPSE_LIFE = 72; // Turns a corpse / ash / rubble / scrap / ice-shards linger before fully fading.
 const BOSS_CORPSE_LIFE = 160; // A slain boss leaves remains that linger far longer than a common corpse.
 // Blood that clings to a PIECE from combat (0..1 intensity, rendered as specks on its
@@ -36,8 +60,17 @@ const BOSS_CORPSE_LIFE = 160; // A slain boss leaves remains that linger far lon
 const BLOOD_HIT = 0.7; // splashed on a unit that IS struck
 const BLOOD_STRIKE = 0.28; // splashed on a unit that DEALS a blow
 const BLOOD_DRY = 0.6; // per-turn survival factor (lower = dries faster)
-const PURSUIT_TTL = 6; // Turns an enemy hunts toward the king's last-seen tile before losing the trail.
-const MAX_ENEMIES = 45; // Hard safety cap so over-time spawning can't run away.
+// How long a foe hunts the king's last-seen tile before the trail goes cold. A RANGE, rolled fresh
+// for each pursuit, so a player cannot learn one number and count it down: at a fixed 6 he knew
+// exactly how many turns to hold still behind a hedge. Now he has to actually guess.
+const PURSUIT_TTL_MIN = 5;
+const PURSUIT_TTL_MAX = 10;
+// Having reached the spot where it lost him, a hunter casts on this many tiles further along the way
+// he was heading — the "he must have gone round that corner" guess. One guess per pursuit.
+const PURSUIT_GUESS = 3;
+const MAX_ENEMIES = 90; // A PERFORMANCE ceiling only. The per-floor cap now RISES with overstay (spawns
+// are MEANT to run unbounded the longer he lingers — see the caps in maybeSpawnEnemy); this just stops
+// the enemy array from exploding past what the per-turn clone can carry.
 
 // --- Floors -----------------------------------------------------------------
 
@@ -83,15 +116,32 @@ const ENEMY_UNLOCKS = [
 // NAME are NOT authored — they are rolled and derived per run (see createBoss / bossPoolForFloor /
 // bossNameFor). Only `hp` stays fixed, because it is the floor-to-floor difficulty ramp. The exit +
 // boss chamber sit at a fixed anchor; wanderers and potions scatter.
+// A recipe now names the PLACE, not just "how much wall". Vocabulary: `wall` (straight runs —
+// hallway bones), `rooms` (walled rectangles with doorways), `tree` (solid, sight-blocking timber),
+// `grass` (sight-blocking but walkable), `water`, `lava`. Every value is a seed count, scaled by
+// board size and cycle.
+//
+// These were re-cut after MEASURING what each floor actually contained: every one came out 23-36%
+// stone wall and ~3% grass whatever its name said, because `rooms()` ran flat on all of them and
+// grass was a flat trickle. The Old Forest was a masonry maze with a pond; the Sunken Ruins had
+// LESS water than it; the Battlefield had more wall than the Drowned Lake. Now the name is the spec.
 const LEVELS = [
-  { name: 'The Battlefield', recipe: { wall: 3 }, boss: { hp: 3 } },
-  { name: 'The Old Forest', recipe: { wall: 2, water: 2 }, boss: { hp: 4 } },
-  { name: 'The Sunken Ruins', recipe: { wall: 6 }, boss: { hp: 4 } },
-  { name: 'The Drowned Lake', recipe: { water: 8 }, boss: { hp: 5 } },
-  { name: 'The Whispering Crypt', recipe: { wall: 7 }, boss: { hp: 5 } },
-  { name: 'The Hedge Maze', recipe: { wall: 8 }, boss: { hp: 6 } },
-  { name: 'The Lake of Fire', recipe: { lava: 8, wall: 2 }, boss: { hp: 8 } },
-  { name: 'The Demon Castle', recipe: { wall: 6, lava: 3 }, boss: { hp: 14 } }, // the FINALE: a huge pool + three perks (see createBoss)
+  // An open FIELD: room to manoeuvre, a little cover, no masonry to speak of.
+  { name: 'The Battlefield', recipe: { wall: 2, rooms: 1, grass: 3 }, boss: { hp: 3 } },
+  // A FOREST: timber and undergrowth, a stream through it, almost no stone.
+  { name: 'The Old Forest', recipe: { tree: 11, grass: 6, water: 2, wall: 1 }, boss: { hp: 4 } },
+  // RUINS, and SUNKEN ones: broken rooms half under water.
+  { name: 'The Sunken Ruins', recipe: { wall: 4, rooms: 4, water: 5, grass: 1 }, boss: { hp: 4 } },
+  // A LAKE: water is the floor, and what isn't water is shore.
+  { name: 'The Drowned Lake', recipe: { water: 10, wall: 1, rooms: 1, grass: 2 }, boss: { hp: 4 } },
+  // A CRYPT: stone chambers, dry, dead. No green at all.
+  { name: 'The Whispering Crypt', recipe: { wall: 5, rooms: 5 }, boss: { hp: 4 } },
+  // A HEDGE maze — hedges, not walls. Trees ARE the maze; they can be cut through at a price.
+  { name: 'The Hedge Maze', recipe: { tree: 17, grass: 4, wall: 1, rooms: 1 }, boss: { hp: 5 } },
+  // A LAKE OF FIRE: lava is the floor.
+  { name: 'The Lake of Fire', recipe: { lava: 10, wall: 2, rooms: 1 }, boss: { hp: 6 } },
+  // A CASTLE: halls and chambers, with fire running through them.
+  { name: 'The Demon Castle', recipe: { wall: 4, rooms: 5, lava: 3, grass: 1 }, boss: { hp: 7 } }, // the FINALE: three perks (see createBoss). Its HP is just the curve's next step — no bonus on top; the perks ARE its escalation
 ];
 
 function levelForFloor(floor) {
@@ -137,31 +187,51 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 // CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
 // classCategory(). There are no traits or ratings; card power comes from perks.
 const STEPPER_KINDS = ['king', 'pawn', 'knight', 'mann']; // reach 1; sliders reach 3
-const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'doublestep', 'promotion', 'reload', 'swap', 'horse'];
+const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'doublestep', 'promotion', 'reload', 'swap', 'horse', 'blink', 'fireball', 'silence', 'banish', 'confuse'];
 const CARD_COOLDOWN = 3;
 const PROMOTION_TURNS = 3; // how many turns the Ranger's Promotion (amazon form) lasts
+const SILENCE_TURNS = 3; // how many turns the Gloom Stalker's Silence holds the room asleep
 const TURRET_HP = 3; // turrets are destructible: a flat, non-scaling HP pool (< a boss's)
-const GENERAL_HP = 3; // the Necromancer's General (Necromancy T3): a lieutenant with a mini-boss's wounds
+// The Necromancer's Vampiress (Necromancy T3): a QUEEN with a mini-boss's wounds who FEEDS — every
+// foe she fells knits one of them shut again. Her pool is FIXED: she heals up to it, never past it.
+// (She used to raise her own cap with every kill, up to 9, so a queen left alive quietly became the
+// stoutest thing on the floor. The point of her is that she keeps herself alive.)
+const VAMPIRESS_HP = 3;
 
 // Each floor guardian rolls ONE of these boss perks at creation, making every boss
 // fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
-const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen'];
+const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen', 'lich', 'warper', 'guardian', 'mechanic', 'hotblooded', 'icygrasp', 'shadowstep', 'anchored', 'gardener', 'petowner', 'hasty', 'burrower'];
+// Traits keyed to a REALM: some only demon-kind guardians may roll, some only mortal ones.
+const DEMON_ONLY_PERKS = ['hotblooded', 'icygrasp', 'shadowstep'];
+const MORTAL_ONLY_PERKS = ['gardener'];
 const BOSS_PERK_LABELS = {
   summoner: 'Summoner — conjures its own kind every third turn',
   blinker: 'Blinkborn — flickers away after each wound',
   brutal: 'Brutal — its blows land twice as hard',
-  ranged: 'Volley — looses bolts down open lines instead of closing',
+  ranged: 'Volley — looses bolts down its own lines instead of closing',
   sorcerer: 'Sorcerer — hurls piercing bolts through everything in their path',
   knockback: 'Bulwark — hammers the king backward with every blow',
   shapeshifter: 'Shifting — takes a new, lesser form after each wound',
-  tough: 'Hardened — bears three extra wounds',
+  tough: 'Hardened — a third again as much life',
   leech: 'Leech — heals a wound each time it draws the king’s blood',
   flying: 'Winged — soars over pits, water, and lava unharmed',
   phasing: 'Phantom — sees and drifts through walls and boulders',
   regen: 'Regenerating — knits a wound shut every fourth turn',
+  lich: 'Lich — calls the fallen back up around it, one a turn, while the bodies are still fresh',
+  warper: 'Warper — from afar, wrenches places with the king when its own tile is far the deadlier one — shoving him into the crossfire',
+  guardian: 'Guardian — wards ONE foe beside it; that retainer turns aside the first blow and must be struck again (fire, pits and lava cut straight through the ward)',
+  mechanic: 'Mechanic — bolts together a fresh turret on nearby ground now and then',
+  hotblooded: 'Hot-Blooded — its own wounds boil a patch of nearby ground to lava',
+  icygrasp: 'Icy Grasp — sheets the ground beside the king with ice each time it strikes him',
+  shadowstep: 'Shadowstep — slips through the dark to a tile you cannot see, closing on you',
+  anchored: 'Anchored — nothing can shove, hurl or knock it back',
+  gardener: 'Gardener — the wild grows up around it: grass, timber and pools spread from its feet',
+  petowner: 'Beastmaster — keeps a ferz familiar beside it, conjuring a new one the moment the last is gone',
+  hasty: 'Hasty — moves a second time in a turn, so long as neither step draws blood',
+  burrower: 'Burrower — walks on the void unharmed, and tears open a fresh pit to lunge from',
 };
 // A guardian has NO unique powers — it is simply a piece kind plus rolled BOSS_PERKS, so the player
-// only ever has to learn those twelve. Its KIND is rolled too, from a sliding window over its tier
+// only ever has to learn that one list. Its KIND is rolled too, from a sliding window over its tier
 // (see bossPoolForFloor), so a floor plays differently each run while still escalating. Its NAME is
 // derived from kind + traits: an epithet from its primary perk over a noun hashed from the roll, so
 // the same monster always earns the same name without any of it being hand-authored per floor.
@@ -229,23 +299,25 @@ const CLASSES = {
     hp: 9, // the HARD baseline; the difficulty dial sets the real value (see DIFFICULTY_HP)
     // Each subclass chain has its own colour; the class colour is the starter card's.
     chains: { Sentinel: '#3b82f6', Reaver: '#b91c1c', Cavalier: '#f59e0b', Duellist: '#ec4899' },
+    // INNATE trait, granted at creation (never rolled): a quality-of-life boon shown on the sheet.
+    startPerk: { id: 'w_discipline', name: 'Discipline', short: 'Skip a turn (Space / “.” / numpad-5) to let foes come to you', desc: 'Hold your ground — press Space, “.” or numpad-5 to skip a turn and let foes come to you. A plainer boon than the others: the Warrior is strong enough already.', grants: { discipline: true } },
     perks: [
-      // ⛨ Sentinel — the immovable bastion: pile on HP, then shrug off the first blow.
-      { id: 'w_hp1', chain: 'Sentinel', tier: 1, name: 'Hardy', desc: '+1 max HP', grants: { maxHp: 1 } },
-      { id: 'w_hp2', chain: 'Sentinel', tier: 2, requires: 'w_hp1', name: 'Ironhide', desc: '+2 max HP', grants: { maxHp: 2 } },
-      { id: 'w_bulwark', chain: 'Sentinel', tier: 3, requires: 'w_hp2', name: 'Parry', desc: 'The first hit each turn is negated', grants: { firstHitEachTurn: true } },
+      // ⛨ Sentinel — the immovable bastion: wait out a blow untouched, guard the next, punish the rest.
+      { id: 'w_waiting', chain: 'Sentinel', tier: 1, name: 'Waiting', short: 'Skip a turn to shrug off all enemy attacks until your next turn', desc: 'Skip a turn (Discipline) and no enemy attack or collision can hurt you until your next turn — though knockback still shoves you. The GROUND still can: lava, torches, and a fall into a pit all burn as ever. A halo marks you while it holds.', grants: { waiting: true } },
+      { id: 'w_bulwark', chain: 'Sentinel', tier: 2, requires: 'w_waiting', name: 'Parry', short: 'End a turn without attacking to block the next hit', desc: 'End a turn without striking and you RAISE your guard (a shield shows over your token). The next blow that would land is turned aside, and the guard drops — whatever you did in between. Bank it, then take the fight to them', grants: { firstHitEachTurn: true } },
+      { id: 'w_reflect', chain: 'Sentinel', tier: 3, requires: 'w_bulwark', name: 'Reflect', short: 'A foe whose blow your Parry turns aside takes 1 damage', desc: 'Whenever your raised Parry guard turns a blow aside, the foe that struck it takes 1 damage in return — the guard bites back.', grants: { reflect: true } },
       // ⚔ Reaver — the bloodletter: kills fuel more kills.
-      { id: 'w_edge', chain: 'Reaver', tier: 1, name: 'Keen Edge', desc: "A card kill cuts that card's cooldown IN HALF (rounded down)", grants: { meleeRefund: true } },
-      { id: 'w_cleave', chain: 'Reaver', tier: 2, requires: 'w_edge', name: 'Cleave', desc: 'When you fell a foe, one adjacent foe dies too', grants: { meleeCleave: true } },
-      { id: 'w_leech', chain: 'Reaver', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', desc: 'Any turn you fell a foe, heal 1 HP', grants: { meleeLeech: true } },
+      { id: 'w_edge', chain: 'Reaver', tier: 1, name: 'Keen Edge', short: 'A card kill halves that card’s cooldown', desc: "A card kill cuts that card's cooldown IN HALF (rounded down)", grants: { meleeRefund: true } },
+      { id: 'w_cleave', chain: 'Reaver', tier: 2, requires: 'w_edge', name: 'Cleave', short: 'A kill also fells one adjacent foe (or tree/gate)', desc: 'When you fell a foe, one adjacent foe dies too — or, finding no second body, the sweep bites into an adjacent tree or gate', grants: { meleeCleave: true } },
+      { id: 'w_leech', chain: 'Reaver', tier: 3, requires: 'w_cleave', name: 'Vampiric Edge', short: 'Each foe you fell (incl. Cleave/Pierce) has a 1-in-3 chance to heal 1', desc: 'Every foe you fell — the direct kill AND anything Cleave or Pierce takes with it — has a 1-in-3 chance of mending 1 HP. Turrets are dead metal: there is nothing in them to drink.', grants: { meleeLeech: true } },
       // 🐎 Cavalier — the charger: kill on the move, trample on landing.
-      { id: 'w_fleet', chain: 'Cavalier', tier: 1, name: 'Double-Step', desc: 'Gain a double-step card: dash up to 2 tiles in any direction (capturing at the end), cooldown 3', grants: { gainCard: 'doublestep', gainCooldown: 3 } },
-      { id: 'w_pierce', chain: 'Cavalier', tier: 2, requires: 'w_fleet', name: 'Pierce', desc: 'A kill by moving also strikes the foe directly behind it', grants: { meleePierce: true } },
-      { id: 'w_trample', chain: 'Cavalier', tier: 3, requires: 'w_pierce', name: 'Trample', desc: 'Landing a knight leap HURLS every adjacent foe back a tile (slamming it into whatever’s behind — see Knockback), rather than striking it in place', grants: { leapShock: true } },
+      { id: 'w_fleet', chain: 'Cavalier', tier: 1, name: 'Double-Step', short: 'Card: charge two tiles, trampling anything that dies', desc: 'Gain a Double-Step card (cooldown 3): TWO steps in one direction, and either may be a blow. Anything that dies to the first is trampled and you carry on through it; anything that survives — a guardian, a turret — halts the charge and takes BOTH blows. A boulder in the way is charged instead (rolled two tiles), and timber takes two wounds', grants: { gainCard: 'doublestep', gainCooldown: 3 } },
+      { id: 'w_pierce', chain: 'Cavalier', tier: 2, requires: 'w_fleet', name: 'Pierce', short: 'A kill by moving drives the thrust through the TWO tiles behind the foe', desc: 'A kill by moving drives the thrust through the TWO tiles beyond it — striking foes there, or the timber/gate standing in them. On a knight LEAP, “behind” runs diagonally on from your target, away from where you sprang.', grants: { meleePierce: true } },
+      { id: 'w_trample', chain: 'Cavalier', tier: 3, requires: 'w_pierce', name: 'Thundering Charge', short: 'Landing a knight leap knocks back every foe in sight', desc: 'When you LAND a knight leap, the shock of it goes through the whole floor: every foe, turret and boulder you can SEE is hurled directly away from where you came down (Knockback rules — so anything with a pit, a wall or a lava river behind it takes what it gets)', grants: { leapShock: true } },
       // 🛡 Duellist — the flashy fencer: a signature dash, free-tempo kills, a dazzling flourish.
-      { id: 'w_enpassant', chain: 'Duellist', tier: 1, name: 'En Passant', desc: 'Gain an en-passant card: step 1 tile (capturing there) AND strike one foe you pass (adjacent to your start)', grants: { gainCard: 'enpassant' } },
-      { id: 'w_flourish', chain: 'Duellist', tier: 2, requires: 'w_enpassant', name: 'Flourish', desc: 'After a kill, foes beside you are caught off guard', grants: { meleeFlourish: true } },
-      { id: 'w_rush', chain: 'Duellist', tier: 3, requires: 'w_flourish', name: 'Charge', desc: 'The FIRST move that kills each turn costs no turn (further kill-moves that turn cost a turn as usual)', grants: { freeKillMove: true } },
+      { id: 'w_enpassant', chain: 'Duellist', tier: 1, name: 'En Passant', short: 'Card: step one tile and strike a foe you pass', desc: 'Gain an en-passant card: step 1 tile (capturing there) AND strike one foe you pass (adjacent to your start)', grants: { gainCard: 'enpassant' } },
+      { id: 'w_flourish', chain: 'Duellist', tier: 2, requires: 'w_enpassant', name: 'Flourish', short: 'After a kill, adjacent foes are caught off guard', desc: 'After a kill, foes beside you are caught off guard', grants: { meleeFlourish: true } },
+      { id: 'w_rush', chain: 'Duellist', tier: 3, requires: 'w_flourish', name: 'Blade Dance', short: 'Every move that kills is free — keep chaining kills', desc: 'EVERY move that kills costs no turn — chain kill after kill in a single turn for as long as you keep felling foes', grants: { freeKillMove: true } },
     ],
   },
   ranger: {
@@ -257,26 +329,32 @@ const CLASSES = {
     startCooldown: 3, // the bishop's own cooldown
     hp: 7, // the HARD baseline (see DIFFICULTY_HP) — sturdier than a glass cannon, frailer than the warrior
     chains: { Druid: '#16a34a', Oracle: '#14b8a6', 'Gloom Stalker': '#6366f1', Marksman: '#a3e635' },
+    // `vision` is the WINDOW size (odd, so centred) — a +1 RADIUS is +2 to it, exactly as Hawk Eyes
+    // grants even amounts to stay odd. A +1 here would make the window even and shove it off-centre.
+    startPerk: { id: 'r_senses', name: 'Sharpened Senses', short: '+1 sight radius and +1 card reach', desc: '+1 sight radius and +1 card reach — a hunter’s eye for lining up a bishop shot. Stacks with the Oracle’s Hawk Eyes.', grants: { vision: 2, cardReach: 1 } },
     perks: [
       // 🌲 Druid — the survivalist: master the terrain, then ride to war.
-      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Fairy Wings', desc: 'You flit over water, lava, and pits — walking, carding, or leaping onto and across them freely, with no slow, no burn, and no falling', grants: { terrainImmune: true } },
-      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Wild Empathy', desc: 'Beasts of the wild — enemy and mini-boss knights and amazons (never a floor boss) — never attack you, and the moment you SEE one it bows and JOINS your side, fighting as your ally (until you strike it, which breaks the bond)', grants: { beastFriend: true } },
-      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Animal Form', desc: 'Gain an Animal Form card (cooldown 9): become an INVINCIBLE beast — an AMAZON (slides like a queen AND leaps like a knight) — for 3 turns, taking no damage and playing no cards', grants: { gainCard: 'promotion', gainCooldown: 9 } },
+      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Fairy Wings', short: 'Cross water, lava and pits freely — no slow, burn or fall', desc: 'You flit over water, lava, and pits — walking, carding, or leaping onto and across them freely, with no slow, no burn, and no falling', grants: { terrainImmune: true } },
+      { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Wild Empathy', short: 'Wild horses (knights & nightriders) roam neutral — they ignore you', desc: 'Wild HORSES — enemy and mini-boss knights and nightriders (never a floor guardian, never an amazon) — turn NEUTRAL: they roam, take no interest in you, and nothing else on the board picks a fight with them. Strike one and the truce is off for good.', grants: { beastFriend: true } },
+      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Animal Form', short: 'Card: become an invincible unicorn for 3 turns; wild horses rally to you', desc: 'Gain an Animal Form card (cooldown 9): become an INVINCIBLE UNICORN (glides like a bishop AND rides like a nightrider) for 3 turns, taking no damage and playing no cards — and every wild horse on the board rallies to your side as an ally.', grants: { gainCard: 'promotion', gainCooldown: 9 } },
       // 🎯 Oracle — the seer: know the floor, then see (and shoot) beyond your foes' sight.
-      { id: 'r_eagle', chain: 'Oracle', tier: 1, name: 'Premonition', desc: 'Cover no longer blinds you: within your sight radius you SEE and SHOOT straight through walls, boulders, and devilgrass. It is ONE-WAY — a foe with a wall between you can’t strike back, but it DOES wake and start closing in on you', grants: { seeThroughWalls: true } },
-      { id: 'r_eyes2', chain: 'Oracle', tier: 2, requires: 'r_eagle', name: 'Hawk Eyes', desc: '+1 sight radius AND +1 card reach. This extra sight is ONE-WAY — foes out in the new band can’t see or strike you back (though they’ll start closing in)', grants: { visionOneWay: 2, cardReach: 1 } },
-      { id: 'r_reach', chain: 'Oracle', tier: 3, requires: 'r_eyes2', name: 'Power Draw', desc: '+1 sight radius AND +1 card reach (again) — the extra sight is likewise one-way, so you pick foes off from outside their reach', grants: { visionOneWay: 2, cardReach: 1 } },
+      { id: 'r_eagle', chain: 'Oracle', tier: 1, name: 'Premonition', short: 'See and shoot through cover within sight (one-way)', desc: 'Cover no longer blinds you: within your sight radius you SEE and SHOOT straight through walls, boulders, and devilgrass. It is ONE-WAY — a foe with a wall between you can’t strike back, but it DOES wake and start closing in on you', grants: { seeThroughWalls: true } },
+      { id: 'r_eyes2', chain: 'Oracle', tier: 2, requires: 'r_eagle', name: 'Hawk Eyes', short: '+2 sight radius and +2 card reach', desc: '+2 sight radius AND +2 card reach. The wider sight is TWO-WAY — foes out in the new band can see and strike you back, so the extra reach cuts both ways.', grants: { vision: 4, cardReach: 2 } },
+      { id: 'r_reach', chain: 'Oracle', tier: 3, requires: 'r_eyes2', name: 'Revelation', short: 'Arrive knowing the whole floor — key and stair marked', desc: 'The floor holds no secrets from you: the fog is torn away the instant you arrive, and you know where the key and the stair lie. You still only SEE (and shoot) what is within your sight — but you never again walk a floor not knowing where you are going', grants: { revealFloor: true } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
       // Ghost used to grant `noChase` (foes gave up the moment you broke sight). That read as
       // stealth but PUNISHED good play: it made a foe impossible to draw off its pack, so you could
       // never isolate one. It now slows the CATCHING of your eye instead of ending the chase.
-      { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', desc: 'Foes are slow to fix on you: one more than a tile away has only a 50% chance each turn to notice you at all — so you can draw a single foe off a pack and fight it alone. Adjacent, it always sees you, and one you have struck is enraged regardless', grants: { elusive: true } },
-      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', desc: 'Turrets and summoning circles more than one tile away are BLIND to you — turrets doze (a sleep “z”) and never fire, circles conjure nothing. Step adjacent (within one tile) and they wake and work as normal', grants: { camouflage: true } },
-      { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silent', desc: 'Foes never notice or attack you unless you are adjacent (within one tile) — even firing a weapon won’t give you away. A wandering foe can still blunder onto your tile, striking you by accident', grants: { stealth: true } },
+      { id: 'r_ghost', chain: 'Gloom Stalker', tier: 1, name: 'Ghost', short: 'Distant foes notice you only half the time', desc: 'Foes are slow to fix on you: one more than a tile away has only a 50% chance each turn to notice you at all — so you can draw a single foe off a pack and fight it alone. Adjacent, it always sees you, and one you have struck is enraged regardless', grants: { elusive: true } },
+      { id: 'r_camo', chain: 'Gloom Stalker', tier: 2, requires: 'r_ghost', name: 'Camouflage', short: 'Turrets and circles beyond 1 tile ignore you', desc: 'Turrets and summoning circles more than one tile away are BLIND to you — turrets doze (a sleep “z”) and never fire, circles conjure nothing. Step adjacent (within one tile) and they wake and work as normal', grants: { camouflage: true } },
+      // Silent (foes never noticed you at all beyond a tile) was a passive that simply switched the game
+      // off. Silence is the same fantasy as an ABILITY: a window you open deliberately, and close the
+      // moment you take a swing.
+      { id: 'r_stealth', chain: 'Gloom Stalker', tier: 3, requires: 'r_camo', name: 'Silence', short: 'Card: every foe you see sleeps for 3 turns', desc: 'Gain a Silence card (cooldown 9): every foe you can see drops into a dead sleep (a “z”) for 3 turns — walk through them, or walk away. It breaks the instant you strike anything', grants: { gainCard: 'silence', gainCooldown: 9 } },
       // 🏹 Marksman — the sharpshooter: kickback, a big bow, then exploding shots.
-      { id: 'r_recoil', chain: 'Marksman', tier: 1, name: 'Recoil', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there) AND shoves every adjacent foe back one tile where the ground behind it is clear', grants: { recoil: true } },
-      { id: 'r_longbow', chain: 'Marksman', tier: 2, requires: 'r_recoil', name: 'Ballista', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
-      { id: 'r_shrapnel', chain: 'Marksman', tier: 3, requires: 'r_longbow', name: 'Shrapnel', desc: 'Every weapon card you fire SHATTERS on impact — striking every foe adjacent to the tile you hit, as well as the target', grants: { shrapnel: true } },
+      { id: 'r_recoil', chain: 'Marksman', tier: 1, name: 'Recoil', short: 'Firing kicks you back a tile and shoves adjacent foes', desc: 'Firing a weapon card kicks you one tile back from the target (striking a foe there) AND shoves every adjacent foe back one tile where the ground behind it is clear', grants: { recoil: true } },
+      { id: 'r_longbow', chain: 'Marksman', tier: 2, requires: 'r_recoil', name: 'Ballista', short: 'Card: a queen-range volley in any direction', desc: 'Gain a queen card (cooldown 9) — a devastating volley in any direction', grants: { gainCard: 'queen', gainCooldown: 9 } },
+      { id: 'r_shrapnel', chain: 'Marksman', tier: 3, requires: 'r_longbow', name: 'Explosive Round', short: 'Your shots detonate, knocking foes back around the hit', desc: 'Every weapon card you fire DETONATES on impact — every foe around the tile you hit is HURLED a tile outward (slammed into whatever is behind it — see Knockback), on top of the target being struck', grants: { shrapnel: true } },
     ],
   },
   sorcerer: {
@@ -289,23 +367,35 @@ const CLASSES = {
     hp: 5, // the HARD baseline (see DIFFICULTY_HP) — the frailest of the three
     // Four subclass chains, each a full 3-tier build (Necromancy is the ally-summoning line).
     chains: { Translocations: '#22d3ee', Necromancy: '#65a30d', Hexes: '#e879f9', Conjuration: '#8b5cf6' },
+    startPerk: { id: 's_studious', name: 'Studious', short: 'Choose from 3 level-up perks instead of 2', desc: 'Choose from THREE perks at each level-up instead of two — an easier build to steer and customise.', grants: { studious: true } },
     perks: [
       // 🔮 Translocations — the blink-mage: dodge, phase, and displace.
-      { id: 's_blink', chain: 'Translocations', tier: 1, name: 'Blink', desc: 'When a foe hits you, blink to a random safe tile in sight (if any)', grants: { blink: true } },
-      { id: 's_phase', chain: 'Translocations', tier: 2, requires: 's_blink', name: 'Phase', desc: 'Move onto wall AND ice tiles; while embedded in opaque cover (a wall or boulder) your sight shrinks', grants: { phase: true } },
-      { id: 's_swap', chain: 'Translocations', tier: 3, requires: 's_phase', name: 'Displacement', desc: 'Gain a swap card: trade places with any unit in sight (cooldown 3); arriving knocks every other adjacent foe back a tile', grants: { gainCard: 'swap', gainCooldown: 3 } },
+      // Reordered: Displacement leads (it is the chain's escape AND its opener), Phase holds the
+      // middle, and Banish crowns it. The chain measured worst in the game — avg floor 3.5, 0% past
+      // floor 6 — for one reason: it was three utilities and NO way to remove anything. Banish is
+      // that way.
+      //
+      // BLINK is retired. Its card machinery is intact (see blinkToSafety / the 'blink' card kind)
+      // if it is ever wanted back, but with Displacement at T1 it was a second escape doing the
+      // first one's job, and the chain has only three slots.
+      // { id: 's_blink', chain: 'Translocations', tier: 1, name: 'Blink', desc: '...', grants: { gainCard: 'blink', gainCooldown: 6 } },
+      { id: 's_swap', chain: 'Translocations', tier: 1, name: 'Displacement', short: 'Card: swap places with any unit; shockwave where you land', desc: 'Gain a swap card: trade places with any unit in sight (cooldown 3). A SHOCKWAVE bursts where you ARRIVE — every other foe beside you is hurled back a tile (slamming into whatever is behind it). The unit you swapped with, and the tile you left, are spared.', grants: { gainCard: 'swap', gainCooldown: 3 } },
+      { id: 's_phase', chain: 'Translocations', tier: 2, requires: 's_swap', name: 'Phase', short: 'Walk onto walls and ice (sight shrinks while embedded)', desc: 'Move onto wall AND ice tiles; while embedded in opaque cover (a wall or boulder) your sight shrinks', grants: { phase: true } },
+      { id: 's_banish', chain: 'Translocations', tier: 3, requires: 's_phase', name: 'Banish', short: 'Card: erase any foe/turret/mini-boss you see (no reward)', desc: 'Gain a Banish card (cooldown 9): send ANY foe, turret or rogue mini-boss you can see clean out of the world — it is simply gone, leaving nothing but a puff of smoke. A floor guardian is anchored to its key and a summoning circle is a rune in the floor: neither can be shifted', grants: { gainCard: 'banish', gainCooldown: 9 } },
       // 💫 Hexes — the curse-weaver: demote, dazzle, and lull.
-      { id: 's_hex', chain: 'Hexes', tier: 1, name: 'Hex', desc: 'At the start of each turn, one foe adjacent to you is warped into a confused ferz — a feeble one-step diagonal mover (bosses and structures are immune)', grants: { hexDemote: true } },
-      { id: 's_cata', chain: 'Hexes', tier: 2, requires: 's_hex', name: 'Cataclysm', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
-      { id: 's_slumber', chain: 'Hexes', tier: 3, requires: 's_cata', name: 'Slumber', desc: 'Non-boss foes adjacent to you fall asleep', grants: { sleepAura: true } },
+      { id: 's_hex', chain: 'Hexes', tier: 1, name: 'Hex', short: 'Each turn, warp one adjacent foe into a feeble ferz', desc: 'At the start of each turn, one foe adjacent to you is warped into a confused ferz — a feeble one-step diagonal mover (bosses and structures are immune)', grants: { hexDemote: true } },
+      { id: 's_cata', chain: 'Hexes', tier: 2, requires: 's_hex', name: 'Cataclysm', short: 'Casting a spell startles every foe you can see', desc: 'Every visible enemy is surprised when you cast a spell', grants: { spellSurprise: true } },
+      { id: 's_confuse', chain: 'Hexes', tier: 3, requires: 's_cata', name: 'Mass Confusion', short: 'Card: every visible foe turns on its own side', desc: 'Gain a Mass Confusion card (cooldown 9): every foe you can see loses track of which side it is on. A confused piece either lashes out at whatever is nearest — its OWN kind included — or blunders off at random, an even chance of each. Nothing is immune: turrets, guardians and summoning circles all lose the thread. The fog lifts on its own about every other turn, and ANY blow snaps a piece straight out of it', grants: { gainCard: 'confuse', gainCooldown: 9 } },
       // 🌀 Conjuration — the artillery-mage: reach, a queen, then a full barrage.
-      { id: 's_amp', chain: 'Conjuration', tier: 1, name: 'Blast', desc: 'Any foe your spell strikes but does NOT kill (a boss, mini-boss, or turret) is HURLED one tile along the bolt’s path — a concussive shockwave', grants: { spellBlast: true } },
-      { id: 's_staff', chain: 'Conjuration', tier: 2, requires: 's_amp', name: 'Phantom Steed', desc: 'Gain a horse card: a spectral steed that tramples an L-shaped path, scorching every foe along it (cooldown 4)', grants: { gainCard: 'horse', gainCooldown: 4 } },
-      { id: 's_barrage', chain: 'Conjuration', tier: 3, requires: 's_staff', name: 'Double Cast', desc: 'After firing a spell, if a targetable foe remains you may aim and fire once more before your turn ends', grants: { doubleCast: true } },
+      // Reordered: the chain used to OPEN on Blast, which overlapped Marksman's shrapnel and gave
+      // the Conjurer nothing to conjure. It now leads with the steed and crowns with Fireball.
+      { id: 's_staff', chain: 'Conjuration', tier: 1, name: 'Spectral Steed', short: 'Card: a horse tramples an L-path, scorching all on it', desc: 'Gain a horse card: a spectral steed that tramples an L-shaped path, scorching every foe along it (cooldown 4)', grants: { gainCard: 'horse', gainCooldown: 4 } },
+      { id: 's_barrage', chain: 'Conjuration', tier: 2, requires: 's_staff', name: 'Double Cast', short: 'After a spell, fire a second if a target remains', desc: 'After firing a spell, if a targetable foe remains you may aim and fire once more before your turn ends', grants: { doubleCast: true } },
+      { id: 's_fireball', chain: 'Conjuration', tier: 3, requires: 's_barrage', name: 'Fireball', short: 'Card: a blast that scorches everything around the hit', desc: 'Gain a Fireball card (cooldown 7): hurl it along any queen line. It strikes your target AND washes spellfire over every tile around it — which will burn YOU and your allies if you stand too close', grants: { gainCard: 'fireball', gainCooldown: 7 } },
       // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.
-      { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', desc: 'Summon a skeletal MANN familiar (steps one tile any direction) that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
-      { id: 's_undead', chain: 'Necromancy', tier: 2, requires: 's_familiar', name: 'Grave Bond', desc: 'A foe you slay rises as an undead ally (one at a time; undead do not follow you downstairs)', grants: { necromancy: true } },
-      { id: 's_general', chain: 'Necromancy', tier: 3, requires: 's_undead', name: 'Undead General', desc: 'Your familiar becomes an Undead General — a king that can also leap like a knight', grants: { generalForm: true } },
+      { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', short: 'A skeletal ally follows and fights, respawning each floor', desc: 'Summon a skeletal MANN familiar (steps one tile any direction) that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
+      { id: 's_undead', chain: 'Necromancy', tier: 2, requires: 's_familiar', name: 'Grave Bond', short: 'A foe you kill rises as an undead ally (one at a time)', desc: 'A foe you slay rises as an undead ally (one at a time; undead do not follow you downstairs)', grants: { necromancy: true } },
+      { id: 's_general', chain: 'Necromancy', tier: 3, requires: 's_undead', name: 'Vampiress', short: 'Your familiar becomes a queen that heals on each kill', desc: 'Your familiar rises as a VAMPIRESS — a queen with 3 wounds who FEEDS: every foe she fells knits one of them shut again. She heals up to her pool, never past it — left alive and fed, she simply refuses to die', grants: { generalForm: true } },
     ],
   },
 };
@@ -320,17 +410,32 @@ function chainColorFor(className, chainName) {
   const cls = CLASSES[className];
   return (cls && cls.chains && cls.chains[chainName]) || (cls && cls.color) || '#888';
 }
-// The colour the king's own token wears: his base class colour, UPGRADED to a subclass
-// colour once he earns that chain's tier-3 capstone (the most recent capstone wins).
+// The subclass the king has COMMITTED to — the first chain he finishes, and his for the rest of the
+// run. Every chain is a strict T1 -> T2 -> T3 line (each perk requires the one below it), so holding
+// all THREE of a chain's perks is the same statement as holding its capstone; there is no need to
+// count. And `takenPerks` is in the order he took them, so "the first chain he finished" reads
+// straight off it — no extra bookkeeping to record, and it survives a save/load for free.
+//
+// Returns null until he finishes one: until then he is just his class.
+function committedChain(player) {
+  const cls = CLASSES[(player && player.className) || 'warrior'];
+  if (!cls) return null;
+  for (const id of (player && player.takenPerks) || []) {
+    const perk = (cls.perks || []).find((k) => k.id === id);
+    if (perk && perk.tier === 3) return perk.chain; // the first capstone he earned
+  }
+  return null;
+}
+
+// The colour the king's own token wears: his base class colour, upgraded to his committed
+// subclass's colour. Reads the SAME commitment his title does — the two used to disagree, since
+// this took the most recent capstone while the title took the biggest chain, so a king could be
+// captioned one subclass and coloured another.
 function playerDisplayColor(player) {
   const className = (player && player.className) || 'warrior';
   const cls = CLASSES[className] || CLASSES.warrior;
-  let color = cls.color;
-  for (const id of (player && player.takenPerks) || []) {
-    const perk = cls.perks.find((k) => k.id === id);
-    if (perk && perk.tier === 3) color = chainColorFor(className, perk.chain);
-  }
-  return color;
+  const chain = committedChain(player);
+  return chain ? chainColorFor(className, chain) : cls.color;
 }
 const LEVEL_PERK_CHOICES = 2; // perks offered per descent
 

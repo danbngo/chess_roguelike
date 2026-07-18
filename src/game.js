@@ -63,32 +63,48 @@ function bossDefeated(state) {
   return !state.enemies.some((e) => e.boss && !e.mini && !e.rush);
 }
 
-// Wild Empathy (Druid): enemy / mini-boss KNIGHTS and AMAZONS (never a true floor boss) are wild
-// beasts. Out of sight they stay neutral (they never attack the king); the moment he SEES one it
-// bows and JOINS him as an ally (see charmBeasts). Striking one (setting `provokedBeast`) breaks
-// the bond and it turns hostile.
-function isBefriendedBeast(state, e) {
+// Wild Empathy (Druid): enemy / mini-boss KNIGHTS, NIGHTRIDERS and AMAZONS (never a true floor
+// guardian) are wild beasts, and they are NEUTRAL to him. A neutral beast roams and takes no
+// interest in the king whatever — it never hunts him, never strikes him, and nothing else on the
+// board picks a fight with it either. It is simply not part of the war.
+//
+// It only JOINS him when he walks up and puts a hand on it (see charmBeasts). It used to bow the
+// instant he laid EYES on one, which handed a Druid a free amazon from clean across the room for
+// no more effort than turning a corner — the whole floor came over to his side while he stood
+// still. Making him walk to it costs him the turns, the ground and the exposure.
+//
+// Striking one (setting `provokedBeast`) breaks the truce for good and it turns hostile.
+function isNeutralBeast(state, e) {
   if (!e || !state.player.beastFriend) return false;
   if (e.provokedBeast) return false; // he struck it — the truce is off
   if (e.turret || e.summonCircle) return false;
   if (e.boss && !e.mini && !e.rush) return false; // a floor guardian is never tamed
-  return e.kind === 'knight' || e.kind === 'amazon';
+  // ONLY horses — the knight and the nightrider (a horse that never stops running). Amazons are no
+  // longer kin. Wild Empathy makes these roam harmlessly; it no longer turns them into allies.
+  return e.kind === 'knight' || e.kind === 'nightrider';
 }
 
-// Any befriended beast the king can currently SEE leaves the enemy ranks and fights at his side.
-// (Called each enemy phase; converted beasts act in the following ally phase.)
+// Wild Empathy no longer BEFRIENDS. It once let the king walk up to a neutral beast and take it as
+// an ally; that is gone — the perk now only makes horses roam harmlessly (isNeutralBeast), nothing
+// more. (Animal Form still rallies the horses to his side — see rallyHorses — but that is its own,
+// deliberate ultimate.) Kept as a no-op so its call site and the ally machinery need no surgery.
 function charmBeasts(state) {
-  if (!state.player.beastFriend) return;
-  const joining = state.enemies.filter((e) => isBefriendedBeast(state, e) && unitInSight(state, e.x, e.y));
-  if (!joining.length) return;
+  void state;
+}
+
+// ANIMAL FORM's herd-call: while the Ranger runs as a unicorn, every wild HORSE on the board — the
+// knights and nightriders, never a guardian, turret or rune — recognises kin and rallies to his
+// side. They become allies outright (reusing the ally machinery), so they fight the rest of the
+// floor with him. Returns how many came over.
+function rallyHorses(state) {
   if (!Array.isArray(state.allies)) state.allies = [];
-  for (const e of joining) {
+  const horses = state.enemies.filter((e) => (e.kind === 'knight' || e.kind === 'nightrider')
+    && !e.boss && !e.turret && !e.summonCircle);
+  for (const e of horses) {
     state.enemies = state.enemies.filter((x) => x.id !== e.id);
     state.allies.push({ id: e.id, kind: e.kind, x: e.x, y: e.y, charmed: true });
   }
-  state.message = joining.length === 1
-    ? `A wild ${joining[0].kind} bows to you and joins your side!`
-    : `${joining.length} wild beasts bow to you and join your side!`;
+  return horses.length;
 }
 
 // The uncollected floor key sits on this tile — enemies and structures may never enter
@@ -120,6 +136,21 @@ function enemyRosterForFloor(floor, includeMortal) {
 function randomEnemyKind(floor, includeMortal) {
   const pool = enemyRosterForFloor(floor, includeMortal);
   return pool[randomInt(pool.length)];
+}
+// Once a floor has gone MOLTEN (the overstay lava — see tickLavaEncroachment) HELL takes over: ordinary
+// monsters would just die in the spreading fire, so the natives change. `moltenActive` is true from
+// max dread on (and the floor "counts as hell" for dread purposes — see isHellNow). `spawnKindForFloor`
+// swaps a would-be mortal spawn for a DEMON kind (lava-immune leapers that wade the flood), ignoring the
+// usual per-floor unlocks — hell does not queue politely. On a real demon floor both are no-ops.
+function moltenActive(state) {
+  return overstayFraction(state.turn || 0) > 0;
+}
+function isHellNow(state) {
+  return (state.floor || 1) >= DEMON_FLOOR || moltenActive(state);
+}
+function spawnKindForFloor(state) {
+  if (moltenActive(state) && (state.floor || 1) < DEMON_FLOOR) return DEMON_KINDS[randomInt(DEMON_KINDS.length)];
+  return randomEnemyKind(state.floor);
 }
 // The piece a summoning CIRCLE is bound to — a rune may bind a mortal piece even in the demon
 // realm, unlike the realm's living natives.
@@ -155,11 +186,26 @@ function bossHas(boss, perk) {
 // a group can ever fire, so pairing them would silently waste a slot:
 //   attack   — Volley and Sorcerer each REPLACE its attack; it can only shoot one way.
 //   reaction — Shifting and Blinkborn both trigger on being wounded (applyBossHitReaction picks one).
-const BOSS_PERK_GROUPS = { ranged: 'attack', sorcerer: 'attack', shapeshifter: 'reaction', blinker: 'reaction' };
+const BOSS_PERK_GROUPS = {
+  ranged: 'attack', sorcerer: 'attack',
+  shapeshifter: 'reaction', blinker: 'reaction',
+  summoner: 'swarm', lich: 'swarm', mechanic: 'swarm', petowner: 'swarm', // only one thing that fills the board with units
+  warper: 'teleport', shadowstep: 'teleport', burrower: 'teleport', // only one on-turn displacement
+  hotblooded: 'terraform', icygrasp: 'terraform', gardener: 'terraform', // only one thing reshaping the floor
+};
 
 // Roll `count` DISTINCT perks, never two from the same exclusive group.
-function rollBossPerks(count) {
-  const pool = BOSS_PERKS.slice();
+// `kind` is optional only for old callers; pass it, because it is what keeps Volley and Sorcerer off
+// the melee pieces. A king or a pawn has no line to loose a bolt down — the trait was a dead slot on
+// them at best, and at worst (see bossRangedAttack) it made them shoot across the whole floor.
+function rollBossPerks(count, kind) {
+  const demon = kind && isDemonKind(kind);
+  const pool = BOSS_PERKS.slice()
+    .filter((perk) => !((perk === 'ranged' || perk === 'sorcerer') && kind && !hasFiringLine(kind)))
+    // Realm-locked traits: hellfire and shadow are the demon guardians' alone; the overgrowth is the
+    // mortal wild's. (When kind is unknown — an old caller — nothing is filtered, as before.)
+    .filter((perk) => !(kind && DEMON_ONLY_PERKS.includes(perk) && !demon))
+    .filter((perk) => !(kind && MORTAL_ONLY_PERKS.includes(perk) && demon));
   for (let i = pool.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [pool[i], pool[j]] = [pool[j], pool[i]]; }
   const picked = [];
   const groups = new Set();
@@ -211,10 +257,13 @@ function createBoss(floor, x, y) {
   // and is a thing apart (see finalBoss: its own black-and-fire livery and worse threats).
   boss.finalBoss = isFinalFloor(floor);
   const perkCount = boss.finalBoss ? 3 : (floor >= DEMON_FLOOR ? 2 : 1);
-  boss.bossPerks = rollBossPerks(perkCount);
+  boss.bossPerks = rollBossPerks(perkCount, kind);
   boss.bossPerk = boss.bossPerks[0]; // the PRIMARY — drives its crown, epithet and one-line summary
   boss.bossName = bossNameFor(kind, boss.bossPerks); // named for what it is, once its traits are known
-  if (bossHas(boss, 'tough')) boss.maxHp += 3; // Hardened: three extra wounds
+  // Hardened scales with the guardian rather than adding a flat +3. That flat bonus was written
+  // against a 14-HP finale (a ~20% bump); once the HP curve was halved it became +75% on a floor-4
+  // boss — the single biggest swing in the game, decided by one perk roll.
+  if (bossHas(boss, 'tough')) boss.maxHp = Math.ceil(boss.maxHp * 4 / 3); // Hardened: a third again, rounded up
   boss.hp = boss.maxHp;
   boss.dormant = true; // holds the stair/portal until it spies the king or is struck
   // Demon-floor guardians (the fairy/demon pieces from floor 5) shrug off lava; earlier
@@ -246,6 +295,11 @@ function applyBossHitReaction(state, boss) {
     }
   } else if (bossHas(boss, 'blinker')) {
     if (bossBlink(state, boss)) state.message += ' It blinks away!';
+  }
+  // HOT-BLOODED (demon): a wound boils a patch of nearby ground to lava — never the king's own tile.
+  // Independent of the reaction above (a boss can shift AND bleed fire), and gated on it being seen.
+  if (bossHas(boss, 'hotblooded') && bossSeenAndHunting(state, boss)) {
+    if (terraformNearby(state, boss.x, boss.y, 'lava')) { cue(state, 'hiss'); state.message += ' Its blood boils the ground to lava!'; }
   }
 }
 
@@ -279,13 +333,141 @@ function bossBlink(state, boss) {
   return true;
 }
 
+// The gate the "reshapes the floor / conjures things / wards its retinue" traits share: the guardian
+// must be genuinely IN the fight and ON screen — awake (not dormant/asleep), and in the king's sight.
+// A boss the player has never seen never quietly terraforms the floor or breeds turrets from off in
+// the dark; it has to be a threat he is actually watching.
+function bossSeenAndHunting(state, boss) {
+  if (!boss || boss.dormant || boss.asleep) return false;
+  if (typeof isConfused === 'function' && isConfused(boss)) return false; // a boss that has lost its wits wards nothing and reshapes nothing
+  if (!boss.awake && !boss.provoked && !(boss.lastSeen && boss.lastSeenTtl > 0)) return false;
+  return unitInSight(state, boss.x, boss.y);
+}
+
+// GUARDIAN aura: each enemy phase, a hostile, visible Guardian WARDS ONE foe beside it (parry) — that
+// single retainer turns aside the first killing blow and must be struck again. Just ONE at a time, not
+// the whole retinue: it shields its front rank, and it picks the adjacent foe NEAREST the king (the
+// one most in the fight), so the ward lands where it bites. Rebuilt from scratch each turn, so a foe
+// that walks out of reach (or whose guardian dies) loses it. Environmental deaths never route through
+// the ward (see resolveKill) — fire, pits and lava cut straight through, which is its counter-play.
+function tickGuardianWards(state) {
+  for (const e of state.enemies) if (e.warded === 'guardian') { e.parry = false; e.warded = null; }
+  const guardians = state.enemies.filter((b) => b.boss && bossHas(b, 'guardian') && bossSeenAndHunting(state, b));
+  if (!guardians.length) return;
+  const king = state.player;
+  for (const g of guardians) {
+    const beside = state.enemies
+      .filter((e) => !e.boss && !e.turret && !e.summonCircle && !e.parry && chebyshev(g.x, g.y, e.x, e.y) === 1)
+      .sort((a, b) => chebyshev(a.x, a.y, king.x, king.y) - chebyshev(b.x, b.y, king.x, king.y));
+    if (beside.length) { beside[0].parry = true; beside[0].warded = 'guardian'; }
+  }
+}
+
+// Convert ONE random non-wall tile adjacent to (cx,cy) to `type` — the shared primitive of the
+// terraform traits (Hot-Blooded's lava, Icy Grasp's ice, Gardener's wild). Never a wall, the king's
+// own tile, the key, the exit, a tile already that type, or a tile a unit stands on. Undoes itself if
+// the change would seal the king off from what he needs. Returns the converted {x,y}, or null.
+function terraformNearby(state, cx, cy, type, avoid) {
+  const spots = [];
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) continue;
+    const t = terrainAt(state, x, y);
+    if (t === 'wall' || t === type) continue;
+    if (x === state.player.x && y === state.player.y) continue;
+    if (keyTileAt(state, x, y)) continue;
+    if (state.exit && x === state.exit.x && y === state.exit.y) continue;
+    if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+    if (avoid && avoid(x, y)) continue;
+    spots.push({ x, y });
+  }
+  if (!spots.length) return null;
+  const dest = spots[randomInt(spots.length)];
+  const k = `${dest.x},${dest.y}`;
+  const was = Object.prototype.hasOwnProperty.call(state.terrain, k) ? state.terrain[k] : undefined;
+  state.terrain[k] = type;
+  if (typeof dangerReachOk === 'function' && !dangerReachOk(state)) { // never wall him off from key/stair
+    if (was === undefined) delete state.terrain[k]; else state.terrain[k] = was;
+    return null;
+  }
+  return dest;
+}
+
+// When a GUARDIAN's blow actually lands on the king, its on-hit traits fire. Icy Grasp sheets a tile
+// beside him with ice. Called from every path a boss can hurt him (melee, knockback, bolt).
+function bossOnHitKing(state, boss) {
+  if (!boss || !boss.boss) return;
+  if (bossHas(boss, 'icygrasp') && bossSeenAndHunting(state, boss)) {
+    if (terraformNearby(state, state.player.x, state.player.y, 'ice')) cue(state, 'freeze');
+  }
+}
+
 function bossTitle(boss) {
   const name = boss.bossName || `${boss.kind} guardian`;
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+// "a nightrider" / "an archbishop" — the indefinite article a word takes, for log lines. A turret
+// is named "turret" whatever piece it is built on, since that is what the player sees it as.
+function aWord(word) {
+  return `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word}`;
+}
+function capitalize(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+// The label a FALLEN foe wears in the log — a turret reads as a turret, everything else by its kind.
+function foeLabel(enemy) {
+  return enemy.turret ? 'turret' : enemy.kind;
+}
+
 // A demon-kind guardian (the fairy/demon pieces of the deeper floors) — its threats are nastier.
 // A demon (fairy) piece — immune to lava (see tickLavaDamage) and drawn with horns/wings.
+// BANISH (Translocations T3): what can be sent clean out of the world? Anything that IS a creature
+// and isn't holding the floor together. A summoning circle is a rune cut into the ground, not a
+// thing that can be moved; a floor GUARDIAN is anchored to the key it sits on, and banishing it
+// would hand the player the floor for one card. A rogue mini/rush boss is fair game.
+function isBanishable(e) {
+  if (!e) return false;
+  if (e.summonCircle) return false;
+  if (e.boss && !e.mini && !e.rush) return false;
+  return true;
+}
+
+// ---- SOUND CUES ---------------------------------------------------------------------------
+// The logic layer has no business knowing what anything SOUNDS like — but it is the only thing that
+// knows a boulder just started rolling, or that the king waded rather than leapt. So it NAMES the
+// events; the view drains the list and decides how they sound (see GameAudio.play in main.js).
+//
+// Deduped per action on purpose: one shove that bonks five foes is ONE bonk, not five stacked into
+// a clipped mess.
+function cue(state, name) {
+  if (!state) return;
+  if (!Array.isArray(state.cues)) state.cues = [];
+  if (!state.cues.includes(name)) state.cues.push(name);
+}
+
+// Queue a SMOKE PUFF at (x,y) for the view — a teleport leaves one where it vanished and where it
+// reappears. Drained in main.js's applyState (see Renderer.puff).
+function puffSmoke(state, x, y) {
+  if (!state) return;
+  if (!Array.isArray(state.puffs)) state.puffs = [];
+  state.puffs.push({ x, y });
+}
+
+// The sound of the ground the king is STANDING on. Only the tile he ends on ever sounds: a leap
+// passes clean OVER water without touching it, so nothing under the arc is cued — but a leap that
+// LANDS in water still splashes. Fairy Wings (terrainImmune) flits over all of it untouched.
+function cueStandingOn(state) {
+  const p = state.player;
+  if (p.terrainImmune) return;
+  const t = terrainAt(state, p.x, p.y);
+  if (t === 'water') cue(state, 'splash');
+  else if (t === 'lava') cue(state, 'hiss');
+  else if (t === 'devilgrass') cue(state, 'swish');
+  if (hasTorch(state, p.x, p.y)) cue(state, 'hiss'); // only a phaser can stand inside a burning wall
+}
+
 function isDemonKind(kind) {
   return DEMON_KINDS.includes(kind);
 }
@@ -341,6 +523,8 @@ function bossShoutLine(boss) {
 }
 
 // Deal `amount` damage to a boss. Returns 'slain' if it fell, else 'hurt'.
+// A boss perk's short name, for the log ("Brutal — its blows land twice as hard" -> "Brutal").
+
 function damageBoss(state, boss, amount) {
   boss.provokedBeast = true; // a struck beast (Wild Empathy) turns hostile for good
   boss.hp -= amount;
@@ -351,8 +535,9 @@ function damageBoss(state, boss, amount) {
     boss.provoked = true;
     boss.awake = true;
     boss.surprised = false;
-    boss.lastSeen = { x: state.player.x, y: state.player.y };
-    boss.lastSeenTtl = PURSUIT_TTL;
+    boss.asleep = false; // a blow wakes the one struck — even out of a Silence, which now holds only what he leaves be
+    boss.hushed = false;
+    rememberKing(state, boss);
     state.message = `The king strikes ${boss.bossName} (${boss.hp}/${boss.maxHp}).`;
     state.lastAction = 'combat';
     applyBossHitReaction(state, boss);
@@ -386,6 +571,7 @@ function makeTurret(state, kind, x, y) {
 
 function damageTurret(state, turret, amount) {
   turret.dozing = false; // a struck turret isn't rendered dozing (Camouflage re-sleeps it by distance)
+  turret.provoked = true; // it KNOWS he is out there now — the view shows it frustrated, not asleep
   turret.hp -= amount;
   if (turret.hp > 0) {
     state.message = `The ${turret.kind} turret sparks (${turret.hp}/${turret.maxHp}).`;
@@ -394,6 +580,7 @@ function damageTurret(state, turret, amount) {
   }
   state.enemies = state.enemies.filter((e) => e.id !== turret.id);
   state.player.turretsDestroyed = (state.player.turretsDestroyed || 0) + 1; // badge ledger
+  tallyKill(state, turret);
   addScrap(state, turret.x, turret.y); // a MACHINE leaves rusty wreckage — no blood, no corpse
   state.message = `The ${turret.kind} turret is destroyed!`;
   state.lastAction = 'combat';
@@ -405,15 +592,25 @@ function damageTurret(state, turret, amount) {
 // it). A conjured "rush" boss (the finale's converging guardians) is pure threat — no boon. The
 // run is NEVER won by a kill now; victory comes only from stepping into the portal with the Orb.
 function defeatBoss(state, boss) {
+  // Badge ledger: remember every TRAIT the felled guardian wore this run, for the "one of each" trophy.
+  if (boss && Array.isArray(boss.bossPerks)) {
+    if (!state.player.slainBossTraits) state.player.slainBossTraits = {};
+    for (const perk of boss.bossPerks) state.player.slainBossTraits[perk] = true;
+  }
   if (boss && (boss.mini || boss.rush)) {
     // A MINI-BOSS (finale rush OR the "a mini-boss rises" event) is pure threat — no boon.
     state.player.miniBossesSlain = (state.player.miniBossesSlain || 0) + 1;
+    tallyKill(state, boss);
+    if (state.player.promotion > 0) state.player.bossKilledAsBeast = true;
     state.message = `${bossTitle(boss)} is destroyed!`;
     state.lastAction = 'combat';
     return;
   }
   const p = state.player;
   p.bossesSlain = (p.bossesSlain || 0) + 1; // a floor GUARDIAN felled (badge ledger)
+  tallyKill(state, boss);
+  if (p.promotion > 0) p.bossKilledAsBeast = true; // felled it while running as the warhorse
+  if (isFinalFloor(state.floor) && boss.finalBoss) p.killedFinalBoss = true;
   p.level = (p.level || 1) + 1;
   state.pendingLevelUp = true;
   state.levelPerks = rollLevelPerks(p, LEVEL_PERK_CHOICES);
@@ -424,41 +621,112 @@ function defeatBoss(state, boss) {
 /* ------------------------------- the king --------------------------------- */
 
 // Resolve the king dropping to 0 HP: Undying revives once per floor at his start.
+// WHAT KILLED HIM. Tags rather than one label, because the interesting deaths overlap: a hexed ferz
+// swinging at him is a ferz AND confused AND an ordinary piece, and the badge case should be able to
+// ask about any of those without three near-identical fields.
+//
+// Set at the moment of the blow (nothing else knows who threw it — by the time hp hits 0 the
+// attacker is long out of scope), and read by checkDeath.
+function foeDeathTags(e) {
+  const tags = [];
+  if (!e) return ['something'];
+  if (e.confused) tags.push('confused');
+  if (e.turret) tags.push('turret');
+  else if (e.boss && (e.mini || e.rush)) tags.push('miniboss');
+  else if (e.boss) tags.push('boss');
+  if (e.kind) tags.push(e.kind);
+  return tags.length ? tags : ['something'];
+}
+function hurtBy(state, tags) {
+  state.player.lastHurtTags = Array.isArray(tags) ? tags : [tags];
+}
+
+// STALEMATE. It is his turn, and there is nothing in the world he can do: no legal move, no card he
+// can play. The dungeon does not offer a pass — the inability to simply WAIT is the shape of the
+// whole game — so a king who has sealed himself somewhere with nothing left to spend has lost. He
+// starves there.
+//
+// Note what counts as an out, because most of them are real: a chop or a boulder-shove is a move; a
+// self-cast Blink teleports him; Animal Form turns him into something that LEAPS; even Reload is an
+// out, because the card it recharges might be the knight card that carries him off the island. So
+// this only fires when every one of those has been exhausted — which is exactly when he is stuck.
+function isStalemate(state) {
+  if (state.gameOver || state.won || state.pendingLevelUp) return false;
+  if (getPlayerMoves(state).length > 0) return false;
+  for (const card of state.player.cards || []) {
+    if (cardBlockedReason(state, card)) continue; // spent, or the ground forbids it
+    if (getCardMoves(state, card).length > 0) return false; // he can still DO something
+  }
+  return true;
+}
+
+function checkStalemate(state) {
+  if (!isStalemate(state)) return false;
+  state.gameOver = true;
+  state.player.deathTags = ['stalemate'];
+  state.player.diedHoldingOrb = Boolean(state.key && state.key.orb && state.key.collected);
+  state.message = 'Nowhere to step, nothing left to spend. The king is stranded — and the dungeon does not wait.';
+  return true;
+}
+
 function checkDeath(state) {
   const p = state.player;
   if (p.hp > 0) return;
   if (p.extraLife && !p.extraLifeUsed) {
     p.extraLifeUsed = true;
     p.hp = 1;
-    p.x = PLAYER_START.x;
-    p.y = PLAYER_START.y;
+    p.x = (state.upstair && state.upstair.x != null) ? state.upstair.x : PLAYER_START.x;
+    p.y = (state.upstair && state.upstair.y != null) ? state.upstair.y : PLAYER_START.y;
     state.message = 'Undying — you rise again at your start!';
     state.lastAction = 'enemy';
     updateDiscovery(state);
     return;
   }
   state.gameOver = true;
+  // Bank what did it, and whether he was carrying the run home when it happened.
+  p.deathTags = p.lastHurtTags || ['something'];
+  p.diedHoldingOrb = Boolean(state.key && state.key.orb && state.key.collected);
   state.message = 'The king falls.';
 }
 
 // Resolve whether an incoming hit is shrugged off: a Bulwark ward (first hit each
 // turn), or a Parry ward from a strike last turn. Null means the hit lands. When a
 // hit IS deflected, `player.deflected` is flagged so the view can flash a block.
-function rollMitigation(player) {
+function rollMitigation(state, attacker) {
+  const player = state.player;
   let mit = null;
-  if (player.promotion > 0) {
-    mit = 'invuln'; // the promoted warhorse takes no damage for the duration
+  if (player.promotion > 0 || player.invuln) {
+    mit = 'invuln'; // the promoted warhorse, or a Sentinel WAITING out the turn, takes no damage
   } else if (player.warded) {
     mit = 'parry';
-  } else if (player.firstHitEachTurn && !player.firstHitUsedThisTurn) {
-    player.firstHitUsedThisTurn = true;
+  } else if (player.firstHitEachTurn && player.guardUp) {
+    // PARRY is a guard you RAISE and then SPEND. Ending a turn without striking raises it (see
+    // passTurn); the next blow that would land is turned aside and the guard drops, whatever else
+    // you did in between.
+    //
+    // Unconditional it negated a hit EVERY turn, for the whole run, while he attacked freely — a
+    // guard you never choose to hold is not a choice, and the bot measured it at a 70% win rate on
+    // its own. Requiring the immediately-previous turn to be blow-free went too far the other way:
+    // it made the perk worthless to anyone actually fighting. As a charge it is a real decision —
+    // spend a turn covering up, bank one hit — and it survives you taking the fight to them.
+    player.guardUp = false;
     mit = 'ward';
+    // REFLECT (Sentinel T3): the guard BITES BACK. A foe whose blow it turns aside takes 1 damage —
+    // a lesser piece dies to the point, a boss or turret soaks it. Never a boulder (no foe) or a rune.
+    if (player.reflect && attacker && !attacker.summonCircle) {
+      if (attacker.boss) damageBoss(state, attacker, 1);
+      else if (attacker.turret) damageTurret(state, attacker, 1);
+      else if (isCapturable(state, attacker)) resolveKill(state, attacker);
+    }
   }
   if (mit) player.deflected = true;
   return mit;
 }
 function mitigationMessage(mit, kind) {
-  if (mit === 'invuln') return `The warhorse charges through a ${kind}, unharmed!`;
+  // The FOE is the actor here, and the wording has to say so. "The warhorse charges through a rook"
+  // read as the KING doing something — so the log never once told the player he was being attacked,
+  // and the whole board looked like it had stopped fighting back.
+  if (mit === 'invuln') return `A ${kind} hurls itself at the warhorse and breaks against it!`;
   if (mit === 'parry') return `The king parries a ${kind}!`;
   if (mit === 'ward') return `A ward absorbs a ${kind}'s blow!`;
   return `The king shrugs off a ${kind}!`;
@@ -478,14 +746,55 @@ function pickSome(items, count) {
 
 // Perk grant flags that are simply switched on.
 const PERK_FLAGS = [
-  'reflect', 'firstHitEachTurn', 'freeKillMove', 'extraLife', 'stealth',
+  'reflect', 'firstHitEachTurn', 'freeKillMove', 'extraLife',
   'revealFloor', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
   'meleeRefund', 'meleePierce', 'leapShock', 'meleeFlourish',
   'terrainImmune', 'seeThroughWalls', 'trueSight', 'seeAllFoes', 'beastFriend', 'elusive', 'camouflage', 'recoil', 'shrapnel',
-  'blink', 'phase', 'hexDemote', 'sleepAura', 'doubleCast', 'spellBlast',
+  'phase', 'hexDemote', 'doubleCast',
   'familiar', 'necromancy', 'generalForm',
+  // Innate CLASS traits (granted at createPlayer, never rolled): the Warrior's hold-your-ground, the
+  // Sorcerer's wider level-up choice. (The Ranger's Sharpened Senses is a plain stat bump — no flag.)
+  'discipline', 'studious',
+  // Sentinel: Waiting turns a skipped turn into a turn of invincibility; Reflect makes a Parry bite back.
+  'waiting',
 ];
+
+// A SELF-CAST ability, as opposed to a weapon: it is aimed at the king's own tile and costs him no
+// swing. Kept as one list because two rules read it — wading forbids readying a WEAPON but never an
+// ability, and the view greys the buttons by the same reckoning.
+function isAbilityCard(card) {
+  const k = card && card.kind;
+  return k === 'promotion' || k === 'reload' || k === 'swap' || k === 'blink' || k === 'silence' || k === 'confuse';
+}
+
+// Why he cannot WIELD this card at all — what he currently IS, and the ground he stands on — or
+// null. Kept apart from the cooldown question because getCardMoves needs exactly this half: a
+// caller may legitimately ask what a spent card could reach, but nobody should ever be handed a
+// target for a card he physically cannot play.
+function cardUnusableReason(state, card) {
+  const p = state.player;
+  // ANIMAL FORM: he roams as the warhorse and wields nothing.
+  if (p.promotion > 0) return 'The warhorse needs no cards — strike by leaping.';
+  const under = terrainAt(state, p.x, p.y);
+  // Wading: both hands are busy keeping him upright. Winged Boots (terrainImmune) carry him over
+  // it, and a self-cast ability needs no hands at all.
+  if (isSlowTerrain(under) && !p.terrainImmune && !isAbilityCard(card)) {
+    return `You can't ready a weapon while wading through ${under}.`;
+  }
+  return null;
+}
+
+// Why this card cannot be played RIGHT NOW — the message to show — or null if it can.
+//
+// The view greys a button with this and useCard refuses with it, so the two can never drift into
+// disagreeing about what is playable. A button that looks live and then says "you can't do that" is
+// the same bug as one that looks dead and works.
+function cardBlockedReason(state, card) {
+  if (!card) return 'No such card.';
+  if (card.remaining > 0) return 'That card is still recharging.';
+  return cardUnusableReason(state, card);
+}
 
 // Build a card record. The category (from the owning class) sets the cooldown but
 // is NOT stored on the card — it is re-derived from the class wherever needed. `color`
@@ -537,8 +846,8 @@ function createPlayer(classKey) {
     cards: [],
     takenPerks: [], // perk ids taken (unique ones can't be offered again)
     warded: false,
-    firstHitUsedThisTurn: false,
-    freeMoveUsed: false, // Charge: at most one free kill-move per turn
+    guardUp: false, // Parry: a raised guard, banked until a blow spends it
+    invuln: false, // Waiting (Sentinel): invincible from a skipped turn until the next — cleared in settleTurn
     blinkedThisTurn: false, // Blink fires at most once per turn
     // Per-floor flags reset on descent:
     extraLifeUsed: false,
@@ -563,9 +872,33 @@ function createPlayer(classKey) {
     pushedBoulder: false,
     brokeIce: false, // shattered or melted an ice slab by his own hand
     touchedWater: false,
+    burnedByFire: false, // lava, a wall-torch, a burning tree, or enemy spellfire ever touched him
+    killedFinalBoss: false,
+    killsThisFloor: 0, // reset each descent; feeds maxKillsOnFloor
+    maxKillsOnFloor: 0,
+    minisThisFloor: 0,
+    maxMinisOnFloor: 0,
+    turretsThisFloor: 0,
+    maxTurretsOnFloor: 0,
+    killsThisTurn: 0, // reset each action; feeds maxKillsInTurn
+    maxKillsInTurn: 0,
+    killedWithBoulder: false, // a rolled rock did the killing
+    knockedIntoLava: false,
+    knockedIntoPit: false,
+    defenestrated: false, // knocked/warped onto the open stair and down to the next floor
+    pitDived: false, // escaped a corner by diving into a pit
+    slainBossTraits: {}, // every boss/mini trait felled THIS run (for the "one of each" trophy)
+    killedFoeWithFoe: false, // shoved one into another hard enough to end it
+    bossKilledAsBeast: false, // felled a guardian while in Animal Form
+    finishedFloorOnOneHeart: false,
+    maxCardsHeld: 0,
   };
   for (const flag of PERK_FLAGS) player[flag] = false;
   player.cards.push(makeCard(cls.start, cls.category, cls.startCooldown, cls.color));
+  // The class's INNATE trait (Discipline / Sharpened Senses / Studious): a quality-of-life boon every
+  // king of that class is born with. Applied like any perk, but never rolled and not added to
+  // takenPerks — the character sheet reads cls.startPerk directly (see renderCharacter).
+  if (cls.startPerk) applyPerk(player, cls.startPerk.grants, cls.color);
   return player;
 }
 
@@ -583,7 +916,11 @@ function perkAvailable(player, perk) {
 function rollLevelPerks(player, count) {
   const cls = CLASSES[player.className] || CLASSES.warrior;
   const eligible = cls.perks.filter((perk) => perkAvailable(player, perk));
-  return pickSome(eligible, count || LEVEL_PERK_CHOICES);
+  // STUDIOUS (the Sorcerer's innate trait) widens the choice: at least THREE perks on offer each
+  // descent instead of the usual two, so a mage can steer his build rather than take what he's given.
+  let n = count || LEVEL_PERK_CHOICES;
+  if (player.studious) n = Math.max(n, 3);
+  return pickSome(eligible, n);
 }
 
 // Learn a level-up perk (by id) from the king's class pool.
@@ -596,14 +933,14 @@ function learnPerk(state, perkId) {
     next.pendingLevelUp = false;
     return next;
   }
-  applyPerk(p, perk.grants, chainColorFor(p.className, perk.chain));
+  applyPerk(p, { ...perk.grants }, chainColorFor(p.className, perk.chain));
   p.takenPerks.push(perkId);
   // Necromancy: the familiar joins at once; the General upgrade re-forges any living one.
   if (p.generalForm) {
     for (const a of next.allies || []) {
       if (!a.familiar) continue;
-      a.kind = 'general';
-      if (!a.maxHp) { a.maxHp = GENERAL_HP; a.hp = GENERAL_HP; } // re-forged: it gains its wounds pool
+      a.kind = 'vampiress';
+      if (!a.maxHp) { a.maxHp = VAMPIRESS_HP; a.hp = VAMPIRESS_HP; } // risen anew: she gains her wounds pool
     }
   }
   if (p.familiar && !hasLivingFamiliar(next)) spawnFamiliar(next);
@@ -622,23 +959,14 @@ function highestClass(player) {
 
 // The king's DISPLAYED title: once he has COMMITTED to a subclass — its tier-3 capstone taken, or
 // 2+ of its perks — he is named for that chain (e.g. "Fletcher"); otherwise his base class name.
+// His TITLE: the subclass he has committed to. It used to flip at TWO perks in a chain, which is
+// why a king holding two Duellist perks was already calling himself a Duellist — with the third
+// still unbought and the other chains just as open to him. It now takes a FULL chain, and once
+// earned it is his for the rest of the run.
 function playerTitle(player) {
   const cls = CLASSES[player.className];
   if (!cls) return player.className || 'warrior';
-  const byChain = {};
-  for (const id of player.takenPerks || []) {
-    const perk = (cls.perks || []).find((k) => k.id === id);
-    if (!perk || !perk.chain) continue;
-    const info = byChain[perk.chain] || (byChain[perk.chain] = { count: 0, cap: false });
-    info.count += 1;
-    if (perk.tier === 3) info.cap = true;
-  }
-  let best = null;
-  for (const chain of Object.keys(byChain)) {
-    const info = byChain[chain];
-    if (!best || (info.cap && !best.info.cap) || (info.cap === best.info.cap && info.count > best.info.count)) best = { chain, info };
-  }
-  return best && (best.info.cap || best.info.count >= 2) ? best.chain : cls.name;
+  return committedChain(player) || cls.name;
 }
 
 /* ----------------------------- floor building ----------------------------- */
@@ -657,10 +985,16 @@ function findFreeTile(occupied, predicate, attempts) {
 
 // Tiles the KING can walk between (8-directional flood over floor/water — walls and
 // lava block him). Used to guarantee the exit is reachable.
+// CHOPPABLE tiles count as PASSABLE here, though standableFor rightly says otherwise. This asks
+// "can the king GET there", not "can he stand there this instant", and a tree or a gate never truly
+// seals anything: he walks into it and cuts it down, three swings, no resource spent. Counting them
+// as walls made every room behind a gate read as a sealed pocket, so connectWalledPockets punched a
+// fresh corridor through the wall beside it — which is precisely the way in the gate was there to be.
+// The gate ended up decorative, bypassed by a hole two tiles away.
 function playerReachable(state, sx, sy) {
   const seen = new Set();
   const walkable = (x, y) => x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE
-    && standableFor(terrainAt(state, x, y), { lavaOk: false });
+    && (isChoppable(terrainAt(state, x, y)) || standableFor(terrainAt(state, x, y), { lavaOk: false }));
   if (!walkable(sx, sy)) return seen;
   const stack = [[sx, sy]];
   seen.add(`${sx},${sy}`);
@@ -685,8 +1019,9 @@ function carveCorridor(state, x0, y0, x1, y1, wallsOnly) {
   let y = y0;
   const open = (cx, cy) => {
     if (cx <= 0 || cx >= WORLD_SIZE - 1 || cy <= 0 || cy >= WORLD_SIZE - 1) return;
+    if (state.fixedDoors && state.fixedDoors.has(`${cx},${cy}`)) return; // never carve out a deliberate gate (a gaol's bars)
     const t = terrainAt(state, cx, cy);
-    if (t === 'wall' || t === 'boulder' || t === 'pit' || t === 'ice' || (!wallsOnly && t === 'lava')) delete state.terrain[`${cx},${cy}`];
+    if (t === 'wall' || isChoppable(t) || t === 'boulder' || t === 'pit' || t === 'ice' || (!wallsOnly && t === 'lava')) delete state.terrain[`${cx},${cy}`];
   };
   while (x !== x1) { open(x, y); x += Math.sign(x1 - x); }
   while (y !== y1) { open(x, y); y += Math.sign(y1 - y); }
@@ -699,8 +1034,15 @@ function carveCorridor(state, x0, y0, x1, y1, wallsOnly) {
 // through walls (i.e. genuinely lava-isolated) — such a pocket is left alone.
 function carveWallPathTo(state, sx, sy, tx, ty) {
   const key = (x, y) => `${x},${y}`;
-  const passable = (x, y) => x > 0 && x < WORLD_SIZE - 1 && y > 0 && y < WORLD_SIZE - 1 && terrainAt(state, x, y) !== 'lava';
-  const breakable = (t) => t === 'wall' || t === 'boulder' || t === 'pit' || t === 'ice'; // barriers a carve can clear
+  const protectedGate = (x, y) => Boolean(state.fixedDoors && state.fixedDoors.has(`${x},${y}`));
+  const passable = (x, y) => x > 0 && x < WORLD_SIZE - 1 && y > 0 && y < WORLD_SIZE - 1
+    && terrainAt(state, x, y) !== 'lava'
+    && !protectedGate(x, y); // never route a carve THROUGH a deliberate gate (a gaol's bars, etc.)
+  const breakable = (t) => t === 'wall' || isChoppable(t) || t === 'boulder' || t === 'pit' || t === 'ice'; // barriers a carve can clear
+  // What a carve may clear is not what it should PREFER. Cutting a tree or a gate is far cheaper than
+  // quarrying stone, so a path that must cross one goes THROUGH it — otherwise the carve smashes the
+  // wall beside a gate to get around it, leaving the gate framing nothing.
+  const carveCost = (t) => (t === 'wall' || t === 'boulder' ? 2 : isChoppable(t) ? 1 : 0);
   const cost = new Map([[key(sx, sy), 0]]);
   const prev = new Map();
   const deque = [[sx, sy]];
@@ -712,11 +1054,11 @@ function carveWallPathTo(state, sx, sy, tx, ty) {
       const nx = x + dx;
       const ny = y + dy;
       if (!passable(nx, ny)) continue;
-      const nc = base + (breakable(terrainAt(state, nx, ny)) ? 1 : 0);
+      const nc = base + carveCost(terrainAt(state, nx, ny));
       if (!cost.has(key(nx, ny)) || nc < cost.get(key(nx, ny))) {
         cost.set(key(nx, ny), nc);
         prev.set(key(nx, ny), key(x, y));
-        if (nc === base) deque.unshift([nx, ny]);
+        if (nc === base) deque.unshift([nx, ny]); // free step — stays at the front (0-1-2 BFS)
         else deque.push([nx, ny]);
       }
     }
@@ -742,12 +1084,22 @@ function connectWalledPockets(state, sx, sy) {
       for (let x = 1; x < WORLD_SIZE - 1; x += 1) {
         const key = `${x},${y}`;
         if (reach.has(key) || tried.has(key)) continue;
+        // A GAOL CELL is sealed behind its gate ON PURPOSE — the prisoner inside is the whole point,
+        // and cutting the bars is the player's choice to make. Never carve it open here (that stripped
+        // the gate off ~1 cell in 5 and let the prisoner stroll out before he ever saw it).
+        if (state.enemies.some((e) => e.caged && e.x === x && e.y === y)) { tried.add(key); continue; }
         if (standableFor(terrainAt(state, x, y), { lavaOk: false })) pocket = { x, y };
       }
     }
     if (!pocket) break;
     for (const k of playerReachable(state, pocket.x, pocket.y)) tried.add(k); // whole pocket, once
-    carveWallPathTo(state, sx, sy, pocket.x, pocket.y);
+    if (!carveWallPathTo(state, sx, sy, pocket.x, pocket.y)) {
+      // LAVA-ISOLATED land: carveWallPathTo routes AROUND lava and gives up when no dry route exists,
+      // which left a patch of ground ringed by fire marooned — reachable only by wading (and burning)
+      // across. Lay a BRIDGE straight to it instead: carveCorridor turns the lava it crosses to floor,
+      // so every island of land has at least one DRY way on and off it.
+      carveCorridor(state, sx, sy, pocket.x, pocket.y);
+    }
   }
 }
 
@@ -819,6 +1171,13 @@ function circleCanSpawnMobile(state, kind, x, y) {
 // Does the ground on one side of a doorway open into a REAL space rather than a one-tile nook? A
 // bounded flood of open floor out from (sx,sy) that never crosses the door tile itself, stopping the
 // moment `min` is reached — so it stays cheap even beside a huge room.
+// Open FLOOR for doorway purposes: plain ground, and a GEYSER vent — a walkable tile (you cross it;
+// it merely scalds every third turn), so a doorway opening onto one still leads into real space. At
+// generation time no tile is a vent yet, so this is identical to "normal" then; it only matters when
+// isDoorwaySpot is re-run over a finished demon floor (a geyser is laid after doors are judged).
+function isOpenFloor(t) {
+  return t === 'normal' || t === 'geyser';
+}
 function areaOpensUp(at, sx, sy, doorKey, min) {
   const seen = new Set([doorKey]);
   const stack = [[sx, sy]];
@@ -828,7 +1187,7 @@ function areaOpensUp(at, sx, sy, doorKey, min) {
     const k = `${cx},${cy}`;
     if (seen.has(k)) continue;
     seen.add(k);
-    if (at(cx, cy) !== 'normal') continue;
+    if (!isOpenFloor(at(cx, cy))) continue;
     count += 1;
     for (const [dx, dy] of [...ORTHO, ...DIAG]) stack.push([cx + dx, cy + dy]);
   }
@@ -842,7 +1201,7 @@ function areaOpensUp(at, sx, sy, doorKey, min) {
 function isDoorwaySpot(at, x, y) {
   if (at(x, y) !== 'wall') return false;
   const wall = (dx, dy) => at(x + dx, y + dy) === 'wall';
-  const floor = (dx, dy) => at(x + dx, y + dy) === 'normal';
+  const floor = (dx, dy) => isOpenFloor(at(x + dx, y + dy));
   const key = `${x},${y}`;
   const MIN_AREA = 6; // a door must JOIN two rooms — never lead nowhere
   // Passage N-S through an E-W wall that extends two tiles each way, opening into space both ways.
@@ -858,21 +1217,102 @@ function isDoorwaySpot(at, x, y) {
 // is laid down afterwards and can strand one against fresh rock — a door that leads nowhere. Re-test
 // every door against the FINAL map and revert the duds to the solid wall they were carved from.
 // Runs before the reachability carve, so reverting can never seal the king in.
+// THE GATE'S PRECINCT: a small court cleared around a way into hell (or the portal home), with a
+// standing pillar at each corner. A gate like that is not a hole in the floorboards — something
+// built it, and it should read as a PLACE.
+//
+// The court is cleared FIRST, and that is the whole trick. Simply dropping pillars on whatever was
+// there placed almost none of them: floor 4 is the Drowned Lake and floor 7 the Lake of Fire, so the
+// corners were water and lava, and a pillar refuses to stand in either. Clearing the ground is also
+// what the precinct IS — you cannot have a court that is half underwater.
+//
+// It writes over nothing that matters: the key is never buried (a pillar on it would hide the very
+// thing he is hunting), and the four ORTHOGONALS are left open so the ring is a colonnade rather
+// than a cage. That last part is load-bearing — seal the gate and connectWalledPockets will smash a
+// corridor straight through the ring to reach it, leaving the columns looking like broken rubble.
+function buildGatePrecinct(state, cx, cy) {
+  const keyHere = (x, y) => state.key && !state.key.collected && state.key.x === x && state.key.y === y;
+  for (let dx = -2; dx <= 2; dx += 1) {
+    for (let dy = -2; dy <= 2; dy += 1) {
+      const x = cx + dx;
+      const y = cy + dy;
+      if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) continue;
+      delete state.terrain[`${x},${y}`]; // flagstones: no water, no lava, no timber, no rubble
+      if (state.treeHp) delete state.treeHp[`${x},${y}`];
+    }
+  }
+  for (const [dx, dy] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) continue;
+    if (keyHere(x, y)) continue;
+    state.terrain[`${x},${y}`] = 'wall';
+  }
+}
+
+// An ordinary (mortal-to-mortal) stair is a plain stair — but now and then it, too, sits in a small
+// evocative RING: a GROVE of timber, a CAIRN of boulders, a NOOK of ice, or a ring of PILLARS. It is
+// a 5x5 feature (the ring at chebyshev 2 around the stair), with the whole side FACING THE KING left
+// open so he can always walk straight in. Never over the stair tile, the key, the collapsed upstair,
+// or a piece already standing there. The reachability pass that follows guarantees a way in
+// regardless — this only has to read as a PLACE, the way the guarded chamber does.
+const STAIR_FEATURES = [
+  { kind: 'grove', terr: 'tree' },
+  { kind: 'cairn', terr: 'boulder' },
+  { kind: 'nook', terr: 'ice' },
+  { kind: 'pillars', terr: 'wall' },
+];
+function buildStairFeature(state, x, y, toward) {
+  const feat = STAIR_FEATURES[randomInt(STAIR_FEATURES.length)];
+  const gx = Math.sign(toward.x - x);
+  const gy = Math.sign(toward.y - y);
+  for (let dx = -2; dx <= 2; dx += 1) {
+    for (let dy = -2; dy <= 2; dy += 1) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== 2) continue; // the ring, at chebyshev 2 only
+      // Leave the king-facing face(s) OPEN — the mouth he walks in through.
+      if ((gx !== 0 && dx === 2 * gx) || (gy !== 0 && dy === 2 * gy)) continue;
+      const rx = x + dx;
+      const ry = y + dy;
+      if (rx < 1 || rx >= WORLD_SIZE - 1 || ry < 1 || ry >= WORLD_SIZE - 1) continue;
+      if (state.key && !state.key.collected && rx === state.key.x && ry === state.key.y) continue;
+      if (state.upstair && rx === state.upstair.x && ry === state.upstair.y) continue;
+      if (state.enemies.some((e) => e.x === rx && e.y === ry)) continue; // never wall a piece in
+      // A PILLAR ring is colonnade, not a cage — leave its corners open so it reads as columns, not a box.
+      if (feat.kind === 'pillars' && Math.abs(dx) === 2 && Math.abs(dy) === 2) continue;
+      state.terrain[`${rx},${ry}`] = feat.terr;
+      if (state.treeHp) delete state.treeHp[`${rx},${ry}`];
+    }
+  }
+}
+
 function pruneUselessDoors(state) {
   const at = (x, y) => terrainAt(state, x, y);
   for (const key in state.terrain) {
     const t = state.terrain[key];
-    if (t !== 'door' && t !== 'dooropen' && t !== 'doorajar') continue;
+    // GATES are vetted by the same rule and stranded by the same things (the chamber ring and other
+    // later structure land AFTER them), so they get re-judged here too. Miss them and a gate can end
+    // up barring a nonsense gap that leads nowhere — exactly what this pass exists to prevent.
+    if (t !== 'door' && t !== 'dooropen' && t !== 'doorajar' && t !== 'gate') continue;
+    if (state.fixedDoors && state.fixedDoors.has(key)) continue; // a hand-built structure's own door
     const [x, y] = key.split(',').map(Number);
     state.terrain[key] = 'wall'; // judge it as the wall it was cut from...
-    if (isDoorwaySpot(at, x, y)) state.terrain[key] = t; // ...a real doorway: put the door back
+    if (isDoorwaySpot(at, x, y)) state.terrain[key] = t; // ...a real doorway: put the door/gate back
   }
 }
 
 // Build the floor's terrain: a solid wall border enclosing everything, then rooms,
 // hallways and water/lava per the level recipe. The tiles around the king's start
 // stay clear.
-function generateTerrain(floor, player) {
+// `garrison` (optional) is how a structure asks for an OCCUPANT. Terrain is built here, but enemies
+// do not exist until generateFloor — so a cell wants a prisoner, an alcove wants a gun, and this is
+// where they say so. generateFloor honours the list once there is somebody to put in them.
+//
+// `keepDoors` (optional) is how a structure says "this door/gate is DELIBERATE, leave it alone".
+// pruneUselessDoors re-judges every door and gate with isDoorwaySpot, which demands >= 6 tiles of
+// open space on BOTH sides — a rule for doors that RANDOM structure stranded. A gaol cell has one
+// tile behind its bars by design, so every one of them was being reverted to solid wall and the
+// prisoner bricked in alive. A hand-built structure knows what it meant; the prune does not.
+function generateTerrain(floor, player, garrison, keepDoors) {
   const terrain = {};
   const nearStart = (x, y) => chebyshev(x, y, player.x, player.y) <= 2;
   // Tiles the SET-PIECES own. Everything generated afterwards flows around them: the noise passes
@@ -944,7 +1384,7 @@ function generateTerrain(floor, player) {
   const storeroom = () => {
     const w = 5 + 2 * randomInt(2); // 5 or 7
     const h = 5 + 2 * randomInt(2);
-    tryPlace(w, h, (bx, by) => {
+    return tryPlace(w, h, (bx, by) => {
       for (let x = bx; x < bx + w; x += 1) {
         for (let y = by; y < by + h; y += 1) {
           if (x === bx || x === bx + w - 1 || y === by || y === by + h - 1) terrain[`${x},${y}`] = 'wall';
@@ -965,7 +1405,7 @@ function generateTerrain(floor, player) {
   const garden = () => {
     const w = 4 + randomInt(3);
     const h = 3 + randomInt(3);
-    tryPlace(w, h, (bx, by) => {
+    return tryPlace(w, h, (bx, by) => {
       for (let x = bx; x < bx + w; x += 1) for (let y = by; y < by + h; y += 1) terrain[`${x},${y}`] = 'devilgrass';
       for (let i = 0; i < 1 + randomInt(2); i += 1) {
         terrain[`${bx + 1 + randomInt(Math.max(1, w - 2))},${by + 1 + randomInt(Math.max(1, h - 2))}`] = 'wall';
@@ -976,7 +1416,7 @@ function generateTerrain(floor, player) {
   // terrain — you wade one tile per move — so the island is a real commitment to reach.
   const pond = () => {
     const w = 5 + 2 * randomInt(2);
-    tryPlace(w, w, (bx, by) => {
+    return tryPlace(w, w, (bx, by) => {
       const c = (w - 1) / 2;
       for (let x = 0; x < w; x += 1) {
         for (let y = 0; y < w; y += 1) {
@@ -988,8 +1428,247 @@ function generateTerrain(floor, player) {
       delete terrain[`${bx + c},${by + c}`]; // the island
     });
   };
-  const SET_PIECES = [storeroom, fountain, garden, pond];
-  for (let i = 0, n = 3 + randomInt(3); i < n; i += 1) SET_PIECES[randomInt(SET_PIECES.length)]();
+  // An IGLOO: a dome of ICE with one way in. Ice is not stone — a boulder shears it, spellfire thaws
+  // it, and a leaper shatters it landing — so the walls of this room are a suggestion. It reads as
+  // shelter and is anything but.
+  const igloo = () => {
+    const w = 5 + 2 * randomInt(2);
+    return tryPlace(w, w, (bx, by) => {
+      // A SQUARE box of ice, walls running straight along the edges. A diamond of diagonal ice left
+      // a gap at every corner a piece could just walk through, so the shelter shut nothing in or
+      // out — an igloo has to be a wall, not a lattice.
+      for (let x = 0; x < w; x += 1) {
+        for (let y = 0; y < w; y += 1) {
+          if (x === 0 || x === w - 1 || y === 0 || y === w - 1) terrain[`${bx + x},${by + y}`] = 'ice';
+        }
+      }
+      const c = (w - 1) / 2;
+      const gap = [[c, 0], [c, w - 1], [0, c], [w - 1, c]][randomInt(4)]; // one way in, mid a wall
+      delete terrain[`${bx + gap[0]},${by + gap[1]}`];
+    });
+  };
+
+  // A BRIDGE: a lava pond with one dry span across it. The only safe crossing is a single file of
+  // stone, so the pond becomes a decision — walk the bridge and be predictable, or wade and burn.
+  const bridge = () => {
+    const w = 7 + 2 * randomInt(2);
+    const h = 5;
+    return tryPlace(w, h, (bx, by) => {
+      for (let x = 0; x < w; x += 1) {
+        for (let y = 0; y < h; y += 1) {
+          if (x === 0 || x === w - 1 || y === 0 || y === h - 1) continue; // a dry lip round the pond
+          terrain[`${bx + x},${by + y}`] = 'lava';
+        }
+      }
+      const span = by + 1 + randomInt(h - 2); // the one row that is not fire
+      for (let x = 0; x < w; x += 1) delete terrain[`${bx + x},${span}`];
+    });
+  };
+
+  // A COPSE: an irregular stand of trees — clumps at wandering spots with clearings between, NOT a
+  // tended grid (that read as an orchard someone planted; a wild wood does not line its trees up).
+  // Still a sight-line puzzle — you can thread through it but not see across it — just a natural one.
+  const orchard = () => {
+    const w = 5 + 2 * randomInt(3);
+    const h = 5 + 2 * randomInt(2);
+    return tryPlace(w, h, (bx, by) => {
+      const clumps = 2 + randomInt(3);
+      for (let c = 0; c < clumps; c += 1) {
+        const ccx = 1 + randomInt(Math.max(1, w - 2));
+        const ccy = 1 + randomInt(Math.max(1, h - 2));
+        const n = 3 + randomInt(4);
+        for (let i = 0; i < n; i += 1) {
+          const tx = ccx + randomInt(3) - 1;
+          const ty = ccy + randomInt(3) - 1;
+          if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+          if (Math.random() < 0.78) terrain[`${bx + tx},${by + ty}`] = 'tree';
+        }
+      }
+    });
+  };
+
+  // A HEDGE MAZE: a proper maze of timber, carved by recursive backtracking on the odd lattice.
+  // Every cell is reachable and there is exactly one route between any two — but it is TREES, so a
+  // player with an axe (or a boulder, or a fireball) writes his own shortcut and pays turns for it.
+  const hedgeMaze = () => {
+    const w = 9 + 2 * randomInt(3); // odd
+    const h = 7 + 2 * randomInt(3);
+    return tryPlace(w, h, (bx, by) => {
+      for (let x = 0; x < w; x += 1) for (let y = 0; y < h; y += 1) terrain[`${bx + x},${by + y}`] = 'tree';
+      const seen = new Set();
+      const key = (x, y) => `${x},${y}`;
+      const carve = (x, y) => {
+        seen.add(key(x, y));
+        delete terrain[`${bx + x},${by + y}`];
+        const dirs = [[2, 0], [-2, 0], [0, 2], [0, -2]];
+        for (let i = dirs.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [dirs[i], dirs[j]] = [dirs[j], dirs[i]]; }
+        for (const [dx, dy] of dirs) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 1 || nx >= w - 1 || ny < 1 || ny >= h - 1 || seen.has(key(nx, ny))) continue;
+          delete terrain[`${bx + x + dx / 2},${by + y + dy / 2}`]; // knock the hedge between them through
+          carve(nx, ny);
+        }
+      };
+      carve(1, 1);
+      // Two ways in, so it is a maze and not a trap.
+      delete terrain[`${bx},${by + 1}`];
+      delete terrain[`${bx + w - 1},${by + h - 2}`];
+    });
+  };
+
+  // A GAOL: a walled hall of one-tile cells, each barred by a GATE with something behind it. You can
+  // SEE what is in every cell (that is what gates are for) and walk the corridor untouched — or cut
+  // one open. The whole structure is a question the player asks himself.
+  const gaol = () => {
+    const w = 7;
+    const h = 5;
+    return tryPlace(w, h, (bx, by) => {
+      for (let x = 0; x < w; x += 1) {
+        for (let y = 0; y < h; y += 1) {
+          if (x === 0 || x === w - 1 || y === 0 || y === h - 1) terrain[`${bx + x},${by + y}`] = 'wall';
+        }
+      }
+      terrain[`${bx + (w - 1) / 2},${by + h - 1}`] = 'door'; // the way in
+      if (keepDoors) keepDoors.add(`${bx + (w - 1) / 2},${by + h - 1}`);
+      // The cell block, along the top: a row of one-tile cells (by+1), each barred by its own gate
+      // (by+2), opening onto the corridor (by+3).
+      //
+      // The rows matter. The prisoner used to be posted at `by` — which is the OUTER WALL — so it
+      // was never placed at all and every gaol was an empty corridor of gates. Its cell is the tile
+      // BEHIND the gate, not the masonry behind that.
+      for (let x = 1; x < w - 1; x += 2) {
+        delete terrain[`${bx + x},${by + 1}`]; // the cell itself
+        terrain[`${bx + x},${by + 2}`] = 'gate'; // ...and the bars across it
+        if (keepDoors) keepDoors.add(`${bx + x},${by + 2}`); // deliberate: a cell has ONE tile behind it
+        if (garrison) garrison.push({ kind: 'prisoner', x: bx + x, y: by + 1 });
+      }
+      for (let x = 2; x < w - 1; x += 2) { // the masonry between one cell and the next
+        terrain[`${bx + x},${by + 1}`] = 'wall';
+        terrain[`${bx + x},${by + 2}`] = 'wall';
+      }
+    });
+  };
+
+  // A BATTERY: turrets set back in alcoves, so their lanes rake the room while they themselves are
+  // awkward to reach. A gun you cannot walk up to is a very different problem from one you can.
+  const battery = () => {
+    const w = 7;
+    const h = 7;
+    return tryPlace(w, h, (bx, by) => {
+      for (let x = 0; x < w; x += 1) {
+        for (let y = 0; y < h; y += 1) {
+          const edge = x === 0 || x === w - 1 || y === 0 || y === h - 1;
+          if (edge) terrain[`${bx + x},${by + y}`] = 'wall';
+        }
+      }
+      // RECESSES in two opposite walls, each with a gun set at the back of it: the gun rakes the room
+      // down its lane, but reaching it means stepping INTO the alcove — one tile, no room to dodge,
+      // and its own muzzle at the end of it.
+      const c = (h - 1) / 2;
+      for (const side of [1, w - 2]) {
+        delete terrain[`${bx + side},${by + c}`]; // the mouth of the recess
+        if (garrison) garrison.push({ kind: 'turret', x: bx + side, y: by + c });
+      }
+      terrain[`${bx + (w - 1) / 2},${by}`] = 'door';
+      terrain[`${bx + (w - 1) / 2},${by + h - 1}`] = 'door';
+      if (keepDoors) { keepDoors.add(`${bx + (w - 1) / 2},${by}`); keepDoors.add(`${bx + (w - 1) / 2},${by + h - 1}`); }
+    });
+  };
+
+  // A CRUCIBLE: a summoning circle behind a gate. Diabolical, and fair: you can SEE the rune ticking
+  // over, you can shoot it through the bars, and you can watch what it makes walk out of a door on
+  // the far side. Everything about it is visible and none of it is convenient.
+  // A QUARRY: rows of boulders. Ammunition, cover, and a shoving puzzle all at once — the only
+  // structure on the floor whose walls you can pick up and throw at things.
+  const quarry = () => {
+    const w = 5 + 2 * randomInt(2);
+    const h = 5;
+    return tryPlace(w, h, (bx, by) => {
+      for (let x = 0; x < w; x += 2) {
+        for (let y = 1; y < h - 1; y += 2) terrain[`${bx + x},${by + y}`] = 'boulder';
+      }
+    });
+  };
+
+  // A CATACOMB: a grid of alcoves with the dead laid in them. Pure atmosphere on most floors — and
+  // then one day a Lich walks in, and the room is a magazine.
+  const catacomb = () => {
+    const w = 7;
+    const h = 5;
+    return tryPlace(w, h, (bx, by) => {
+      for (let x = 0; x < w; x += 1) {
+        for (let y = 0; y < h; y += 1) {
+          if (x === 0 || x === w - 1 || y === 0 || y === h - 1) terrain[`${bx + x},${by + y}`] = 'wall';
+        }
+      }
+      terrain[`${bx + (w - 1) / 2},${by + h - 1}`] = 'door';
+      if (keepDoors) keepDoors.add(`${bx + (w - 1) / 2},${by + h - 1}`);
+      for (let x = 1; x < w - 1; x += 2) terrain[`${bx + x},${by + 2}`] = 'wall'; // the shelving
+      if (garrison) {
+        for (let x = 1; x < w - 1; x += 2) garrison.push({ kind: 'bones', x: bx + x, y: by + 1 });
+      }
+    });
+  };
+
+  // A WELL: a shaft ringed by stone with one way in. A hole you have to WANT to stand next to —
+  // which is exactly what makes it worth shoving something toward.
+  const well = () => tryPlace(5, 5, (bx, by) => {
+    for (let x = 0; x < 5; x += 1) {
+      for (let y = 0; y < 5; y += 1) {
+        const r = Math.max(Math.abs(x - 2), Math.abs(y - 2));
+        if (r === 2) terrain[`${bx + x},${by + y}`] = 'wall';
+        else if (r === 0) terrain[`${bx + x},${by + y}`] = 'pit';
+      }
+    }
+    const gap = [[2, 0], [2, 4], [0, 2], [4, 2]][randomInt(4)];
+    delete terrain[`${bx + gap[0]},${by + gap[1]}`];
+  });
+
+  // A BRAZIER HALL: a colonnade of lit torches. Every pillar is a hazard to a phaser and a light in
+  // the dark to everyone else.
+  const brazierHall = () => {
+    const w = 7;
+    const h = 3;
+    return tryPlace(w, h, (bx, by) => {
+      for (let x = 0; x < w; x += 2) {
+        for (const y of [0, h - 1]) {
+          terrain[`${bx + x},${by + y}`] = 'wall';
+          if (garrison) garrison.push({ kind: 'torch', x: bx + x, y: by + y });
+        }
+      }
+    });
+  };
+
+  // A set-piece has to belong to the floor it stands on. The RECIPE is the spec — "each floor is
+  // made of what its name says" — so an orchard only grows where trees grow, and a lava bridge only
+  // spans a floor that has lava to span. Left ungated, these quietly put a hedge maze in the
+  // Whispering Crypt and a fire pond in the Old Forest, which is precisely what the recipes exist
+  // to prevent. Masonry, water and ice are at home anywhere.
+  const floorRecipe = (levelForFloor(floor) || {}).recipe || {};
+  const SET_PIECES = [
+    ['storeroom', storeroom], ['fountain', fountain], ['garden', garden], ['pond', pond],
+    ['igloo', igloo], ['gaol', gaol], ['battery', battery],
+    ['quarry', quarry], ['catacomb', catacomb], ['well', well], ['brazier', brazierHall],
+  ];
+  if (floorRecipe.tree) SET_PIECES.push(['orchard', orchard], ['hedgemaze', hedgeMaze]);
+  if (floorRecipe.lava) SET_PIECES.push(['bridge', bridge]);
+  // ONE OF EACH PER RUN. A structure is a place you RECOGNISE — that is the entire reason they
+  // exist — and the second igloo is worth a fraction of the first. `seenStructures` rides on the
+  // player, which is the only thing that survives a descent, so the run remembers what it has
+  // already shown him and spends the rest of its vocabulary instead.
+  //
+  // If he outlives the vocabulary the slate is wiped rather than the floor going bare: eight floors
+  // of nothing but open ground would be worse than a repeat.
+  const seen = new Set(player.seenStructures || []);
+  let pool = SET_PIECES.filter(([name]) => !seen.has(name));
+  if (!pool.length) { seen.clear(); pool = SET_PIECES.slice(); }
+  for (let i = pool.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  for (let i = 0, n = Math.min(pool.length, 3 + randomInt(3)); i < n; i += 1) {
+    const [name, build] = pool[i];
+    if (build()) seen.add(name); // only remember it if it actually FOUND room
+  }
+  player.seenStructures = [...seen];
 
   const blob = (type, patches, spread) => {
     for (let i = 0; i < patches; i += 1) {
@@ -1039,7 +1718,25 @@ function generateTerrain(floor, player) {
   if (seeds('water')) blob('water', 2 * seeds('water'), 5);
   if (seeds('lava')) blob('lava', 2 * seeds('lava'), 5);
   if (seeds('wall')) wallLine(3 * seeds('wall'), 5);
-  rooms(3 + randomInt(3));
+  // ROOMS are part of the RECIPE now. They used to be a flat 3-5 on every floor, whatever the
+  // recipe said — which is why every floor came out 23-36% stone: the Battlefield had more wall
+  // than the Drowned Lake, and the Old Forest was a masonry maze with a pond in it. A crypt and a
+  // castle are made of rooms; a forest and an open field are not.
+  if (seeds('rooms')) rooms(seeds('rooms'));
+  // TREES: solid, sight-blocking timber (3 wounds, see damageTree). A forest and a hedge maze are
+  // MADE of these — they are the reason those floors read as anything but corridors.
+  if (seeds('tree')) {
+    // Irregular COPSES rather than an even stipple: each stand gets its OWN random spread (1-3 tiles)
+    // and cell count, so a wood comes out as tight thickets, the odd broad stand, and clearings
+    // between — not trees marching at a regular pitch.
+    for (let i = 0, stands = 2 * seeds('tree'); i < stands; i += 1) {
+      const cx = randomInt(WORLD_SIZE);
+      const cy = randomInt(WORLD_SIZE);
+      const rad = 1 + randomInt(3); // this stand's spread
+      const cells = 3 + randomInt(2 * rad + 2);
+      for (let j = 0; j < cells; j += 1) put(cx + randomInt(2 * rad + 1) - rad, cy + randomInt(2 * rad + 1) - rad, 'tree');
+    }
+  }
   // Depth hazards: bottomless PITS from floor 2, pushable BOULDERS from floor 3, scattered
   // as a few small clusters. (Connectivity is guaranteed afterward — carves clear both.)
   if (floor >= 2) for (let i = 0; i < 3 + Math.floor(floor / 2); i += 1) put(2 + randomInt(WORLD_SIZE - 4), 2 + randomInt(WORLD_SIZE - 4), 'pit');
@@ -1050,19 +1747,25 @@ function generateTerrain(floor, player) {
   if (floor >= 2) {
     blob('ice', 1 + Math.floor(floor / 3), 4);
     if (Math.random() < 0.5) {
+      // A small ice CHAMBER: a SOLID box of slabs (corners included) with one ORTHOGONAL way in. The
+      // old version left the corners as loose diagonal slabs with walk-through gaps — a ragged ring
+      // that read as a LATTICE of diagonal ice, which is exactly what an ice room should not look
+      // like (the same fix the igloo already had). Ortho walls only now.
       const cx = 4 + randomInt(WORLD_SIZE - 8);
       const cy = 4 + randomInt(WORLD_SIZE - 8);
       for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) {
-        if (dx === 0 && dy === 0) continue;
-        if (Math.abs(dx) === 1 && Math.abs(dy) === 1 && Math.random() < 0.5) continue; // gaps at the corners
+        if (dx === 0 && dy === 0) continue; // hollow centre
         put(cx + dx, cy + dy, 'ice');
       }
+      const door = [[0, -1], [0, 1], [-1, 0], [1, 0]][randomInt(4)]; // one orthogonal entrance
+      clear(cx + door[0], cy + door[1]);
     }
   }
-  // GRASS on every floor — tall enough to block sight but not passage; withers to floor when
-  // scorched and is flattened by a rolling boulder. It is the SAME terrain everywhere and behaves
-  // identically; only its look changes, to dry pink-grey DEVILGRASS husks in the demon realm.
-  blob('devilgrass', 2 + Math.floor(floor / 3), 5);
+  // GRASS — tall enough to block sight but not passage; withers when scorched and is flattened by
+  // a rolling boulder. Same terrain everywhere; only its look changes, to dry pink-grey DEVILGRASS
+  // husks in the demon realm. Per-RECIPE now: a forest is deep in it, a crypt has none. It used to
+  // be a flat trickle on every floor, so every floor had the same ~3% of it, forest or not.
+  if (seeds('grass')) blob('devilgrass', 2 * seeds('grass'), 5);
 
   // SHUT DOORS: hang a handful in genuine doorways (1-wide gaps a wall already frames) — walkable,
   // but sight-/fire-blocking until pushed open. A few more the deeper he goes.
@@ -1075,8 +1778,32 @@ function generateTerrain(floor, player) {
     if (isDoorwaySpot(atT, dx, dy)) doorSpots.push([dx, dy]);
   }
   for (let i = doorSpots.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [doorSpots[i], doorSpots[j]] = [doorSpots[j], doorSpots[i]]; }
-  const wantDoors = Math.min(doorSpots.length, 3 + Math.floor(floor / 2));
-  for (let i = 0; i < wantDoors; i += 1) terrain[`${doorSpots[i][0]},${doorSpots[i][1]}`] = 'door';
+  // GATES hang in the SAME doorways, and the vetting problem is already solved: isDoorwaySpot has
+  // established that each of these is a real way in — a 1-wide gap a wall genuinely frames, opening
+  // into real space (>= 6 tiles) on BOTH sides. A gate can no more land somewhere daft than a door can.
+  // The point of a gate is the INVERSE of a door: a door hides what is past it, a gate shows you. You
+  // see (and shoot) straight through the bars; you just cannot walk through until you have cut them
+  // down, three swings. A way in you can case before committing to.
+  //
+  // Both are hung from ONE shuffled list in ONE pass, alternating, and every spot is RE-CHECKED against
+  // the terrain as it stands right now. That re-check is load-bearing: the list was vetted against the
+  // solid wall, but hanging something at A un-walls A, and isDoorwaySpot demands wall at +/-2 — so a
+  // door hung early silently invalidates any candidate within two tiles of it. Judging the stale list
+  // would hang the later ones in gaps that no longer frame anything. Alternating (rather than doors
+  // taking the whole list first) is what stops gates from being starved on wall-poor floors: doors want
+  // 3-7 of them, and on a sparse floor that was every spot there was.
+  const wantDoors = 3 + Math.floor(floor / 2);
+  const wantGates = 1 + randomInt(3); // 1-3
+  let doors = 0;
+  let gates = 0;
+  for (const [dx, dy] of doorSpots) {
+    if (doors >= wantDoors && gates >= wantGates) break;
+    if (!isDoorwaySpot(atT, dx, dy)) continue; // re-vet: an earlier door/gate may have unframed this
+    // Alternate, so neither starves the other; fall through to whichever still wants spots.
+    const wantsGate = gates < wantGates && (doors >= wantDoors || (doors + gates) % 2 === 1);
+    terrain[`${dx},${dy}`] = wantsGate ? 'gate' : 'door';
+    if (wantsGate) gates += 1; else doors += 1;
+  }
 
   // PILLARS: colonnades of LONE wall tiles (each ringed by floor) dropped into OPEN areas — cover to
   // fight around, so a big empty room turns perilous. Two parallel rows preferred; a lone tile never
@@ -1118,15 +1845,49 @@ function generateTerrain(floor, player) {
   return terrain;
 }
 
-// Lay a CHAMBER at (cx,cy): a 5x5 court cleared to open ground, ringed at chebyshev 3, with one
-// open doorway facing `toward` and 1-2 shut doors set into the other sides (a lava/water moat gets
-// no doors). Returns the open doorway, which the caller must keep reachable.
-//
-// Shared by the REAL guarded chamber and by the DECOYS — one shape, so a false chamber is
-// indistinguishable from the true one until you are inside it.
-function buildChamber(state, cx, cy, ringType, toward) {
+// The STYLES a guarded chamber (and its decoys) can take. Each is a 7x7 footprint: a cleared 5x5
+// court ringed at chebyshev 3, with one open doorway facing the king. ONE style is chosen per floor
+// (pickChamberStyle) and used for the REAL chamber AND every decoy, so a false court is
+// indistinguishable from the true one until you are inside it. The boss stands at the centre with its
+// eight neighbours always cleared, so it never wants for a move.
+//   ring       - what the wall of the court is made of (wall / lava / water / tree / ice)
+//   sideDoors  - punch 1-2 SHUT doors into a STONE ring (more ways in, sealed from sight)
+//   extraGap   - cut one more OPEN mouth into a timber/ice ring (there is no framing a door in a hedge)
+//   clutter    - strew the court CORNERS with boulders and pits (never the boss's ring or the approach)
+const CHAMBER_STYLES = {
+  keep: { ring: 'wall', sideDoors: true }, // a walled keep with barred side-doors
+  moatFire: { ring: 'lava' }, // a moat of fire
+  moatDeep: { ring: 'water' }, // a moat of deep water
+  copse: { ring: 'tree', extraGap: true }, // a stockade of timber — chop, burn or leap in
+  sanctum: { ring: 'ice', extraGap: true }, // an icy sanctum — see through it, shatter or melt in
+  quarry: { ring: 'wall', sideDoors: true, clutter: true }, // a walled court strewn with boulders and pits
+};
+
+// Pick a chamber style for the floor. A lake of fire guards its own with fire and a lake with water;
+// a forest favours a timber stockade; otherwise it is a weighted roll across the walled, cluttered
+// and icy variants, so the guarded key rarely looks the same two floors running.
+function pickChamberStyle(level) {
+  const recipe = (level && level.recipe) || {};
+  // A floor DEFINED by fire or water guards its own with a matching moat (and keeps the floor reading
+  // as its name says). A merely damp floor — the forest's stream, the castle's fire-veins — is free to
+  // grow something else. Threshold at 5 seeds: the Lake of Fire (10), the Drowned Lake (10) and the
+  // Sunken Ruins (5) keep their moats; the Old Forest (water 2) and Demon Castle (lava 3) do not.
+  if ((recipe.lava || 0) >= 5) return CHAMBER_STYLES.moatFire;
+  if ((recipe.water || 0) >= 5) return CHAMBER_STYLES.moatDeep;
+  const pool = [];
+  if (recipe.tree) pool.push('copse', 'copse'); // forests lean toward a stockade
+  pool.push('keep', 'keep', 'quarry', 'sanctum');
+  return CHAMBER_STYLES[pool[randomInt(pool.length)]] || CHAMBER_STYLES.keep;
+}
+
+// Lay a CHAMBER of `style` at (cx,cy). Returns the open doorway, which the caller must keep reachable.
+function buildChamber(state, cx, cy, style, toward) {
+  const ring = style.ring;
   for (let dx = -2; dx <= 2; dx += 1) {
-    for (let dy = -2; dy <= 2; dy += 1) delete state.terrain[`${cx + dx},${cy + dy}`];
+    for (let dy = -2; dy <= 2; dy += 1) {
+      delete state.terrain[`${cx + dx},${cy + dy}`];
+      if (state.treeHp) delete state.treeHp[`${cx + dx},${cy + dy}`];
+    }
   }
   const doorX = cx + Math.sign(toward.x - cx) * 3;
   const doorY = cy + Math.sign(toward.y - cy) * 3;
@@ -1137,34 +1898,70 @@ function buildChamber(state, cx, cy, ringType, toward) {
       const ry = cy + dy;
       if (rx < 1 || rx >= WORLD_SIZE - 1 || ry < 1 || ry >= WORLD_SIZE - 1) continue;
       if (chebyshev(rx, ry, doorX, doorY) === 0) continue;
-      state.terrain[`${rx},${ry}`] = ringType;
+      state.terrain[`${rx},${ry}`] = ring;
+      if (state.treeHp) delete state.treeHp[`${rx},${ry}`]; // a fresh ring-tree starts whole
     }
   }
   delete state.terrain[`${doorX},${doorY}`];
-  // Doors only where it's a GENUINE doorway — the court within on one side and real open ground on
-  // the other. A ring tile backed by solid rock would be a door that leads nowhere.
-  if (ringType === 'wall') {
+  // The mid-tiles of the three non-doorway sides: candidates for a second way in.
+  const midSides = [[3, 0], [-3, 0], [0, 3], [0, -3]].map(([dx, dy]) => ({ x: cx + dx, y: cy + dy }))
+    .filter((t) => t.x > 1 && t.x < WORLD_SIZE - 2 && t.y > 1 && t.y < WORLD_SIZE - 2 && chebyshev(t.x, t.y, doorX, doorY) > 1);
+  if (style.sideDoors && ring === 'wall') {
+    // Doors only where it's a GENUINE doorway — court within, real open ground without. A ring tile
+    // backed by solid rock would be a door that leads nowhere.
     const atS = (x, y) => terrainAt(state, x, y);
-    const doorSpots = [[3, 0], [-3, 0], [0, 3], [0, -3]]
-      .map(([dx, dy]) => ({ x: cx + dx, y: cy + dy }))
-      .filter((t) => t.x > 1 && t.x < WORLD_SIZE - 2 && t.y > 1 && t.y < WORLD_SIZE - 2
-        && chebyshev(t.x, t.y, doorX, doorY) > 1 && isDoorwaySpot(atS, t.x, t.y));
+    const doorSpots = midSides.filter((t) => isDoorwaySpot(atS, t.x, t.y));
     for (let i = doorSpots.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [doorSpots[i], doorSpots[j]] = [doorSpots[j], doorSpots[i]]; }
     const nDoors = Math.min(doorSpots.length, 1 + randomInt(2)); // 1-2 chamber doors
     for (let i = 0; i < nDoors; i += 1) state.terrain[`${doorSpots[i].x},${doorSpots[i].y}`] = 'door';
+  } else if (style.extraGap && midSides.length) {
+    const g = midSides[randomInt(midSides.length)];
+    delete state.terrain[`${g.x},${g.y}`]; // a second, open mouth in the timber/ice ring
+  }
+  if (style.clutter) {
+    // Court CORNERS only (the chebyshev-2 diagonals): never the boss's own ring, never a knight's
+    // landing tiles, never the doorway approach — hazards that enrich the court without penning anyone.
+    for (const [dx, dy] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
+      if (Math.random() < 0.35) continue; // leave some corners clear
+      state.terrain[`${cx + dx},${cy + dy}`] = Math.random() < 0.5 ? 'boulder' : 'pit';
+    }
   }
   return { doorX, doorY };
 }
 
+// The king's start is roughly CENTRED — a good default — but jittered a few tiles each floor so it
+// never looks quite the same twice (dead centre every time goes stale). Kept well inside the border
+// and a safe distance from the floor's guarded chamber, so he never spawns inside the boss court.
+// Everything downstream reads his ACTUAL position (terrain-clearing, the chamber doorway's facing,
+// the exit's distance checks), so the whole floor arranges itself around wherever he lands.
+function randomizedStart(floor) {
+  const anchor = chamberAnchorForFloor(floor);
+  const clamp = (v) => Math.max(4, Math.min(WORLD_SIZE - 5, v));
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const x = clamp(PLAYER_START.x + randomInt(13) - 6); // centre +/- 6
+    const y = clamp(PLAYER_START.y + randomInt(13) - 6);
+    if (chebyshev(x, y, anchor.x, anchor.y) >= 8) return { x, y };
+  }
+  return { x: PLAYER_START.x, y: PLAYER_START.y }; // fallback: dead centre
+}
+
 // Build (or rebuild) a floor. Carries the player's stats forward between floors.
 function generateFloor(floor, carryPlayer, score) {
-  const player = carryPlayer ? { ...carryPlayer, x: PLAYER_START.x, y: PLAYER_START.y } : createPlayer('warrior');
+  const player = carryPlayer ? { ...carryPlayer } : createPlayer('warrior');
+  const start = randomizedStart(floor);
+  player.x = start.x;
+  player.y = start.y;
 
+  // What the set-pieces want putting inside them: a prisoner behind each gate, a gun in each alcove,
+  // Collected while the terrain is laid; honoured below, once enemies exist.
+  const garrison = [];
+  const keepDoors = new Set(); // doors/gates a set-piece built ON PURPOSE — the prune must not judge them
   const state = {
     worldSize: WORLD_SIZE,
     viewSize: player.vision,
     player,
-    terrain: generateTerrain(floor, player),
+    terrain: generateTerrain(floor, player, garrison, keepDoors),
+    fixedDoors: keepDoors,
     explored: {},
     enemies: [],
     spatters: [],
@@ -1172,6 +1969,9 @@ function generateFloor(floor, carryPlayer, score) {
     ashes: [], // fading ash piles left by spell kills (cosmetic)
     rubble: [], // fading rock piles left by crushed / blasted boulders (cosmetic)
     scorches: [], // fading soot where spellfire washed over bare stone (cosmetic)
+    sticks: [], // fading sticks & leaves left by a felled tree (cosmetic)
+    treeHp: {}, // per-tile wounds left in each standing tree (terrain has nowhere to hang a number)
+    burningTrees: {}, // trees lit by spellfire — they burn away next turn (tickBurningTrees)
     scrap: [], // fading rusty wreckage left by destroyed turrets (cosmetic)
     iceShards: [], // fading pale-blue splinters left by shattered ice (cosmetic)
     scars: [], // permanent marks (shattered summoning circles)
@@ -1180,6 +1980,7 @@ function generateFloor(floor, carryPlayer, score) {
     allies: [], // the Necromancer's familiar / undead pieces (the player's side)
     floor,
     turn: 0,
+    geyserPhase: 0, // the shared geyser clock — starts calm, ticks each turn (passTurn); see geyserErupting
     score: score || 0,
     enemyTurn: false,
     gameOver: false,
@@ -1190,6 +1991,7 @@ function generateFloor(floor, carryPlayer, score) {
     lastAction: 'start',
     spawnInterval: Math.max(3, 9 - floor),
     turnsSinceSpawn: 0,
+    lastDreadGear: 0, // the HURRY gear last seen — every rise fires a hostile event
     dreadTurns: dreadTurnsFor(), // turns until the dread clock maxes (the same at every difficulty)
   };
 
@@ -1227,6 +2029,41 @@ function generateFloor(floor, carryPlayer, score) {
     return enemy;
   }
 
+  // GARRISON the set-pieces: whatever they asked for, now that there is somebody to put in them.
+  // A structure is only worth building if the thing that makes it interesting is actually IN it —
+  // an empty gaol is a corridor, an empty battery is a room with holes in the walls.
+  for (const post of garrison) {
+    if (post.x < 1 || post.x >= WORLD_SIZE - 1 || post.y < 1 || post.y >= WORLD_SIZE - 1) continue;
+    // Scenery (bones, a lit torch) is not a unit and does not care what is standing there.
+    if (post.kind !== 'bones' && post.kind !== 'torch'
+        && state.enemies.some((e) => e.x === post.x && e.y === post.y)) continue;
+    if (post.kind === 'turret') {
+      state.enemies.push(makeTurret(state, randomTurretKind(floor), post.x, post.y));
+    } else if (post.kind === 'circle') {
+      const k = randomStructureKind(floor);
+      const c = createEnemy(k, post.x, post.y);
+      c.summonCircle = true;
+      state.enemies.push(c);
+    } else if (post.kind === 'bones') {
+      // The catacomb's dead: real corpses on the real decay clock, so they fade like any other body
+      // — and a Lich that walks in while they are still fresh has a magazine.
+      addCorpse(state, post.x, post.y, randomEnemyKind(floor));
+    } else if (post.kind === 'torch') {
+      if (!state.torches) state.torches = {};
+      state.torches[`${post.x},${post.y}`] = true;
+    } else {
+      // A PRISONER: asleep behind its gate. Asleep because the cell is a thing to look at and think
+      // about — cut it open on your terms, or leave it and walk on. A cell full of something already
+      // awake and hammering the bars is just a fight you did not choose.
+      const e = createEnemy(randomEnemyKind(floor), post.x, post.y);
+      e.asleep = true;
+      e.caged = true; // DELIBERATELY immobile: walled in its cell behind a gate. Exempt from the
+      // frozen-piece prune below (which drops wanderers that terrain sealed in) — a prisoner with no
+      // move is the POINT of the cell, not an accident to clean up. Cut the gate and it walks out.
+      state.enemies.push(e);
+    }
+  }
+
   // Every initial cohort is scaled to 0.75x for a gentler starting population.
   const initCount = (n) => Math.round(n * 0.75);
 
@@ -1251,10 +2088,12 @@ function generateFloor(floor, carryPlayer, score) {
   const portalFloor = isFinalFloor(floor);
   state.isPortalFloor = portalFloor;
   occupied.add(`${ax},${ay}`);
-  const ringType = (level && level.recipe && level.recipe.lava) ? 'lava' : (level && level.recipe && level.recipe.water) ? 'water' : 'wall';
-  // The guarded chamber: its ring's open doorway faces the king. Its shut side-doors keep the fight
-  // sealed from sight until he pushes through, while giving him more than one way in and out.
-  const { doorX, doorY } = buildChamber(state, ax, ay, ringType, player);
+  // ONE chamber style per floor — a moat of fire/water, a walled keep, a timber copse, an icy
+  // sanctum, or a hazard-strewn quarry — shared by the real chamber and its decoys alike.
+  const chamberStyle = pickChamberStyle(level);
+  // The guarded chamber: its ring's open doorway faces the king. Its shut side-doors (or a second
+  // gap) keep more than one way in and out, and the fight sealed from sight until he pushes through.
+  const { doorX, doorY } = buildChamber(state, ax, ay, chamberStyle, player);
 
   // FALSE CHAMBERS: the same court, ring and doors — but empty. The real chamber sits at a FIXED
   // anchor per floor, so a walled court on the horizon used to be proof of where the key was. A
@@ -1274,7 +2113,7 @@ function generateFloor(floor, carryPlayer, score) {
       if (chebyshev(cx, cy, player.x, player.y) < 6) continue;
       spot = { x: cx, y: cy };
     }
-    if (spot) buildChamber(state, spot.x, spot.y, ringType, player);
+    if (spot) buildChamber(state, spot.x, spot.y, chamberStyle, player);
   }
 
   // The KEY / Orb at the chamber's heart — the boss stands on it and guards it. A wanderer
@@ -1284,35 +2123,92 @@ function generateFloor(floor, carryPlayer, score) {
   state.enemies = state.enemies.filter((e) => !(e.x === ax && e.y === ay));
   const boss = createBoss(floor, ax, ay);
   state.enemies.push(boss);
-  // A pure jumper (e.g. a knight) only ever lands on the chebyshev-2 ring, so a solid
-  // wall ring would pen it in forever. If the boss can't move once roused, flood the
-  // ring to water so any piece can wade out.
+  // Belt and braces: a jumper penned by a barrier ring (wall, timber, ice) that somehow has no move
+  // once roused gets its ring flooded to water, so any piece can wade out. (The cleared court almost
+  // always leaves it a move; this is the last resort.)
   if (!enemyHasMove(state, boss)) {
     for (let dx = -3; dx <= 3; dx += 1) {
       for (let dy = -3; dy <= 3; dy += 1) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== 3) continue;
         const key = `${ax + dx},${ay + dy}`;
-        if (state.terrain[key] === 'wall') state.terrain[key] = 'water';
+        const t = state.terrain[key];
+        if (t === 'wall' || t === 'tree' || t === 'ice') {
+          state.terrain[key] = 'water';
+          if (state.treeHp) delete state.treeHp[key];
+        }
       }
     }
   }
 
-  // The EXIT (stair / victory portal) sits NEAR the king's start — he begins beside the way out,
-  // and it is DISCOVERED from the off so he always knows where to return. It stays sealed until
-  // the guarded key is claimed.
-  // Always within a few tiles of the king (never more than chebyshev 6), preferring a spot well
-  // clear of the guarded chamber; each fallback only relaxes the constraints, never the cap.
-  const nearKing = (x, y, lo, hi) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= lo && chebyshev(x, y, player.x, player.y) <= hi;
-  const exitTile = place((x, y) => nearKing(x, y, 2, 4) && chebyshev(x, y, ax, ay) >= 5)
-    || place((x, y) => nearKing(x, y, 2, 6) && chebyshev(x, y, ax, ay) >= 4)
-    || place((x, y) => nearKing(x, y, 2, 6))
-    || place((x, y) => nearKing(x, y, 1, 6));
-  const exx = exitTile ? exitTile.x : Math.min(WORLD_SIZE - 2, player.x + 2);
+  // The EXIT (stair / victory portal). It is DISCOVERED from the off — he always knows where the
+  // way out IS — but it no longer sits on his doorstep. He used to start beside it, which made the
+  // floor a single out-and-back errand: walk to the key, walk home. Now the stair, the key and the
+  // king are three separate places, so the route is a real decision.
+  //
+  // It is kept clear of the guarded chamber too, so the stair and the key never collapse into one
+  // trip. Each fallback relaxes the constraints in turn; the last accepts any standable ground,
+  // because a floor with no stair is unplayable.
+  const EXIT_MIN_FROM_KING = 8;
+  const farFromKing = (x, y, lo) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= lo;
+  const exitTile = place((x, y) => farFromKing(x, y, EXIT_MIN_FROM_KING) && chebyshev(x, y, ax, ay) >= 7)
+    || place((x, y) => farFromKing(x, y, EXIT_MIN_FROM_KING) && chebyshev(x, y, ax, ay) >= 5)
+    || place((x, y) => farFromKing(x, y, 6) && chebyshev(x, y, ax, ay) >= 4)
+    || place((x, y) => farFromKing(x, y, 5))
+    || place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
+  const exx = exitTile ? exitTile.x : Math.min(WORLD_SIZE - 2, player.x + 8);
   const exy = exitTile ? exitTile.y : player.y;
   for (let dx = -1; dx <= 1; dx += 1) {
     for (let dy = -1; dy <= 1; dy += 1) { const k = `${exx + dx},${exy + dy}`; if (state.terrain[k] === 'wall') delete state.terrain[k]; }
   }
-  state.exit = { x: exx, y: exy, discovered: true, portal: portalFloor, locked: Boolean(state.key) };
+  // The stair's OWN tile holds nothing whatever. Clearing only walls above was not enough: `place`
+  // accepts any STANDABLE tile, and a door is standable — so the stair could be set down on a
+  // doorway, and pruneUselessDoors would then judge that door, find it leads nowhere in particular,
+  // and revert it to solid rock. With the stair under it. (Measured at ~1 floor in 1000, which is
+  // exactly the rate a test that generates 120 floors a run had been flaking at.)
+  //
+  // fireDangerEvent already enforces this at runtime — "the exit and the key tile must NEVER hold
+  // terrain" — so this is the same rule, finally applied where the floor is built.
+  delete state.terrain[`${exx},${exy}`];
+  if (state.key && !state.key.collected) delete state.terrain[`${state.key.x},${state.key.y}`];
+  // NOT discovered. He used to start beside the stair, so knowing where it was cost nothing — now
+  // that it is across the floor, having it painted through the fog would hand him the map. He must
+  // FIND it, exactly as he must find the key: two things to locate, and a real choice which first.
+  // (updateDiscovery flips this the moment he lays eyes on it, and it persists in fog thereafter.)
+  state.exit = { x: exx, y: exy, discovered: false, portal: portalFloor, locked: Boolean(state.key) };
+  // A gate that opens onto the DEMON REALM (floor 4's stair down, and every stair below it) or the
+  // portal home gets a built precinct: a cleared court and standing pillars. An ordinary stair
+  // between two mortal floors stays an ordinary stair — if every one of them had columns, none of
+  // them would mean anything. Placed AFTER state.exit/state.key exist, so it can refuse to bury them.
+  if (portalFloor || floor + 1 >= DEMON_FLOOR) {
+    buildGatePrecinct(state, exx, exy);
+    // DEMONS AT THE DOOR: a berolina or two dozing in the precinct. They are the point of the whole
+    // gate — on floor 4 they are the first demons he ever lays eyes on, asleep at their post on the
+    // wrong side of the threshold, and they tell him exactly what is waiting below before he takes
+    // a single step down.
+    //
+    // ASLEEP, so the precinct is a warning rather than an ambush: he can see them, walk around them
+    // and take the stair, or wake them (a blow, or coming within a tile) and fight for it. Either
+    // way that is his choice to make, and he makes it knowing.
+    const guards = 1 + randomInt(2);
+    for (let i = 0; i < guards; i += 1) {
+      const spot = place((x, y) => standable(x, y)
+        && chebyshev(x, y, exx, exy) === 2       // in the court, never blocking the threshold itself
+        && !(x === exx && y === exy)
+        && !state.enemies.some((e) => e.x === x && e.y === y));
+      if (!spot) break;
+      const beast = addMobileEnemy('berolina', spot.x, spot.y, false);
+      if (beast) beast.asleep = true;
+    }
+  } else if (Math.random() < 0.45) {
+    // An ORDINARY stair: now and then, dress it in a small feature (a grove, a cairn, an ice nook, a
+    // ring of pillars) so it reads as a place worth reaching, not just a hole in the floor. The mouth
+    // faces the king; connectivity is guaranteed by the reachability pass below either way.
+    buildStairFeature(state, exx, exy, player);
+  }
+  // The COLLAPSED upstair he arrived by: pure scenery, on his starting tile. It cannot be used —
+  // there is no going back — but it marks where he came onto the floor, which is the one landmark
+  // that never moves and now the only thing he starts out knowing.
+  state.upstair = { x: player.x, y: player.y };
   state.message = portalFloor
     ? 'The final floor. Seize the Orb of Victory, then reach the portal to escape!'
     : 'A new floor. You start by the stair — find the floor key to unlock it.';
@@ -1389,7 +2285,7 @@ function generateFloor(floor, carryPlayer, score) {
   // smuggled a MORTAL piece onto the demon floors, where only natives belong.)
   const nativeRoster = enemyRosterForFloor(floor);
   state.enemies = state.enemies.filter((e) => {
-    if (e.boss || e.turret || e.summonCircle) return true;
+    if (e.boss || e.turret || e.summonCircle || e.caged) return true;
     const solo = { ...state, enemies: [e] };
     if (getPieceMoves(e, solo).length > 0) return true;
     for (const alt of nativeRoster) {
@@ -1407,6 +2303,7 @@ function generateFloor(floor, carryPlayer, score) {
   // nearest hidden tile, or is dropped if none exists.
   for (const e of state.enemies) {
     if (e.boss) continue;
+    if (e.caged) continue; // a prisoner belongs in its cell — never drag it out to hide it from the king
     if (!seen(e.x, e.y)) continue;
     const canGo = (x, y) =>
       isStandable(terrainAt(state, x, y)) &&
@@ -1433,9 +2330,42 @@ function generateFloor(floor, carryPlayer, score) {
   // The Necromancer's familiar rejoins him on each fresh floor (undead do not follow down).
   if (player.familiar) spawnFamiliar(state);
 
+  scatterGeysers(state, floor, occupied); // demon-realm vents (floors 6+), laid LAST so nothing sits on one
   scatterTorches(state, floor); // bracket wall-torches, thicker the deeper he goes
   updateDiscovery(state);
   return state;
+}
+
+// GEYSERS are a DEMON-REALM hazard: the deeper floors of each cycle (6, 7, 8 — the Hedge Maze, the
+// Lake of Fire, the Demon Castle) are riddled with vents that blow scalding gas on a shared 3-turn
+// clock (tickGeysers / geyserErupting). Scattered singly on OPEN ground, laid last of all so no unit,
+// structure, key, stair or upstair ever sits on one — the user's rule: never spawn a foe/circle/boss
+// on a vent. Placed on plain floor only; a vent over water or lava would make no sense.
+function isDemonRealmFloor(floor) {
+  return (((floor - 1) % FINAL_FLOOR) + 1) >= 6;
+}
+function scatterGeysers(state, floor, occupied) {
+  if (!isDemonRealmFloor(floor)) return;
+  const taken = new Set(occupied || []);
+  for (const e of state.enemies) taken.add(`${e.x},${e.y}`);
+  for (const a of (state.allies || [])) taken.add(`${a.x},${a.y}`);
+  taken.add(`${state.player.x},${state.player.y}`);
+  if (state.key) taken.add(`${state.key.x},${state.key.y}`);
+  if (state.exit) taken.add(`${state.exit.x},${state.exit.y}`);
+  if (state.upstair) taken.add(`${state.upstair.x},${state.upstair.y}`);
+  const want = Math.round((5 + randomInt(4)) * (WORLD_SIZE / 20)); // 5-8, scaled to the board
+  let placed = 0;
+  for (let attempt = 0; attempt < 400 && placed < want; attempt += 1) {
+    const x = 2 + randomInt(WORLD_SIZE - 4);
+    const y = 2 + randomInt(WORLD_SIZE - 4);
+    const key = `${x},${y}`;
+    if (taken.has(key)) continue;
+    if (chebyshev(x, y, state.player.x, state.player.y) < 2) continue; // never on the king's doorstep
+    if (terrainAt(state, x, y) !== 'normal') continue; // open ground only — not water/lava/wall/tree
+    state.terrain[key] = 'geyser';
+    taken.add(key);
+    placed += 1;
+  }
 }
 
 // Wall-torch density climbs with depth: a rare flicker on the first floors, a hall of fire by the
@@ -1492,6 +2422,15 @@ function dreadFraction(turn, horizon) {
 function inDreadGrace(turn, horizon) {
   return turn < (horizon || MAX_TURNS_SCARY) * (DREAD_GRACE_STEPS / DREAD_TOTAL_STEPS);
 }
+// The OVERSTAY, 0..1 — how deep PAST max dread the king has lingered. Zero until MAX_TURNS_SCARY (the
+// 8th tick, where dread itself maxes), then climbs to 1 over the five overstay steps (to MAX_TURNS_LAVA,
+// tick 13). It drives the two things that make lingering fatal: the encroaching lava's intensity and
+// the now-unbounded spawn cap.
+function overstayFraction(turn) {
+  const span = MAX_TURNS_LAVA - MAX_TURNS_SCARY;
+  if (span <= 0) return 0;
+  return Math.max(0, Math.min(1, ((turn || 0) - MAX_TURNS_SCARY) / span));
+}
 
 // Descending the stair: fully heal and refresh cards, then build the next floor. The
 // level-up boon is NOT granted here — it is earned earlier, by slaying the floor's
@@ -1505,6 +2444,16 @@ function nextFloor(state) {
   if (!healed.hitThisFloor) healed.clearedFloorUnhit = true;
   healed.hitThisFloor = false;
   healed.maxFloorTurns = Math.max(healed.maxFloorTurns || 0, state.turn);
+  // He walked off this floor on his last heart. Banked HERE — before the descent heals him — which
+  // is the only moment the fact exists.
+  if (state.player.hp === 1) healed.finishedFloorOnOneHeart = true;
+  // Bank the floor's tallies and wipe the slate for the one below.
+  healed.maxKillsOnFloor = Math.max(healed.maxKillsOnFloor || 0, healed.killsThisFloor || 0);
+  healed.maxMinisOnFloor = Math.max(healed.maxMinisOnFloor || 0, healed.minisThisFloor || 0);
+  healed.maxTurretsOnFloor = Math.max(healed.maxTurretsOnFloor || 0, healed.turretsThisFloor || 0);
+  healed.killsThisFloor = 0;
+  healed.minisThisFloor = 0;
+  healed.turretsThisFloor = 0;
   const next = generateFloor(state.floor + 1, healed, state.score);
   next.pendingLevelUp = false;
   next.message = 'You descend the stair to the next floor.';
@@ -1581,6 +2530,7 @@ function addAsh(state, x, y) {
 // couple of stray chunks onto neighbouring tiles — so debris spreads and piles OVERLAP, the same
 // way blood spatter throws satellites (see addSpatter).
 function addRubble(state, x, y) {
+  cue(state, 'crush'); // rock breaking up — every rubble pile is something that just gave way
   if (!Array.isArray(state.rubble)) state.rubble = [];
   state.rubble.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, seed: randomInt(1000) });
   const extras = 1 + randomInt(2); // 1-2 satellite chunks flung to adjacent tiles
@@ -1595,6 +2545,20 @@ function addRubble(state, x, y) {
 }
 // Scrap: the twisted rusty wreckage a DESTROYED turret leaves — a distinct (metallic) remains,
 // coloured apart from grey wall/boulder rubble.
+// A felled tree leaves sticks and leaves — the same fading-debris idea as a broken wall's rubble
+// or a wrecked turret's scrap, with its own look.
+function addSticks(state, x, y, iron) {
+  if (!Array.isArray(state.sticks)) state.sticks = [];
+  // `iron` marks the wreck of a GATE rather than a tree: twisted bar-ends and rivets, not branches
+  // and leaves. It was leaving a drift of green leaves behind a felled iron gate.
+  state.sticks.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, seed: randomInt(1000), iron: Boolean(iron) });
+}
+// What a felled TREE or GATE leaves behind. Read the terrain BEFORE it is cleared: by the time the
+// debris is laid the tile is already bare, so the caller has to say which it was.
+function addTreeDebris(state, x, y, iron) {
+  addSticks(state, x, y, iron);
+}
+
 function addScrap(state, x, y) {
   if (!Array.isArray(state.scrap)) state.scrap = [];
   state.scrap.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, ...remainsJitter() });
@@ -1602,8 +2566,15 @@ function addScrap(state, x, y) {
 
 // One turn's upkeep: age counters, recharge cards, fade blood, and lapse wards.
 function passTurn(state) {
+  state.player.killsThisTurn = 0; // badge ledger: a fresh turn, a fresh tally (maxKillsInTurn is banked as they land)
   const p = state.player;
+  // What he is standing on, sounded ONCE on arrival — a turn he did not move must not re-splash,
+  // or wading a pond becomes a metronome.
+  if (p.x !== p.lastTileX || p.y !== p.lastTileY) cueStandingOn(state);
+  p.lastTileX = p.x;
+  p.lastTileY = p.y;
   state.turn += 1;
+  state.geyserPhase = (state.geyserPhase || 0) + 1; // the shared geyser clock (every third turn they blow)
   p.totalTurns = (p.totalTurns || 0) + 1;
   const calmHaste = Boolean(p.spellHaste) && getVisibleEnemies(state).length === 0;
   for (const card of p.cards || []) {
@@ -1639,25 +2610,59 @@ function passTurn(state) {
       const e = state.enemies.find((en) => en.x === p.x + dx && en.y === p.y + dy);
       if (e && !e.boss && !e.turret && !e.summonCircle && e.kind !== 'ferz') {
         e.kind = 'ferz';
-        e.awake = false;
-        e.surprised = false;
-        e.lastSeen = null;
-        e.lastSeenTtl = 0;
-        // Slumber (T3) + Hex (T1): the new ferz drops straight to sleep, not merely confused.
-        if (p.sleepAura) e.asleep = true;
+        // STARTLED, not confused. Confusion was tried here and it quietly gutted the perk: a
+        // confused piece ACTS at once (the phase makes it a mover before any surprise is reckoned),
+        // and half of what it does is swing at whatever is nearest — which is him, since the hex
+        // only ever reaches something already adjacent. Measured: the new ferz hit him 48% of the
+        // time on the turn it was made, and never once gasped. The bot had a ferz as the Hexer's
+        // single biggest killer, ahead of bosses.
+        //
+        // Startled, it loses that turn — which is the whole point of unmaking a foe beside you.
+        startle(e);
         break;
       }
     }
   }
   if (p.promotion > 0) p.promotion -= 1; // Promotion (horse form) wears off after its turns elapse
+  // SILENCE holds for its full run of turns now — striking a foe no longer snuffs the WHOLE hush.
+  // Instead only the foe he HITS wakes (damageBoss wakes a struck guardian; a lesser foe just dies),
+  // and the rest of the room sleeps on, so he can pick a hushed room apart one piece at a time. That
+  // is the utility the card was missing; the timer is its only cost.
+  if (p.silence > 0) {
+    p.silence = p.silence - 1;
+    if (p.silence <= 0) {
+      p.silence = 0;
+      // Wake only what the hush itself put down. It used to wake EVERY sleeping thing on the floor,
+      // which would have hauled a naturally-slumbering piece out of a sleep the spell never gave it.
+      for (const e of state.enemies) {
+        if (e.hushed) { e.asleep = false; e.hushed = false; }
+      }
+    }
+  }
   // Lava sears the king for 1 HP each turn he ends on it (Winged Boots / terrainImmune
   // negates it). He CAN cross lava now — it just costs blood.
-  if (terrainAt(state, p.x, p.y) === 'lava' && !p.terrainImmune) {
+  if (terrainAt(state, p.x, p.y) === 'lava' && !p.terrainImmune) { // Waiting does NOT stop the GROUND — only lava-crossing Fairy Wings does
     p.hp -= 1;
     p.wasHit = true; p.hitThisFloor = true;
     addSpatter(state, p.x, p.y);
+    hurtBy(state, 'lava');
+    p.burnedByFire = true; // badge ledger: fire has touched him
     if (state.message) state.message += ' The lava sears the king!';
     else state.message = 'The lava sears the king!';
+    checkDeath(state);
+  }
+  // A tree ABLAZE around him sears exactly as a wall-torch does: same fire, same price. Only Phase
+  // can put him inside a trunk and only spellfire can light one, so it is a rare corner — but taking
+  // no harm whatever while stood in the middle of a burning tree was plainly wrong when the torch
+  // one tile over costs a heart.
+  if (state.burningTrees && state.burningTrees[`${p.x},${p.y}`] && !p.terrainImmune) {
+    p.hp -= 1;
+    p.wasHit = true; p.hitThisFloor = true;
+    addSpatter(state, p.x, p.y);
+    hurtBy(state, 'burningtree');
+    p.burnedByFire = true; // badge ledger: fire has touched him
+    if (state.message) state.message += ' The burning tree sears the king!';
+    else state.message = 'The burning tree sears the king!';
     checkDeath(state);
   }
   // A wall-torch sears the phasing king for 1 HP each turn he ends EMBEDDED in it — the same price
@@ -1666,14 +2671,18 @@ function passTurn(state) {
     p.hp -= 1;
     p.wasHit = true; p.hitThisFloor = true;
     addSpatter(state, p.x, p.y);
+    hurtBy(state, 'torch');
+    p.burnedByFire = true; // badge ledger: fire has touched him
     if (state.message) state.message += ' The wall-torch sears the king!';
     else state.message = 'The wall-torch sears the king!';
     checkDeath(state);
   }
   p.warded = false;
-  p.firstHitUsedThisTurn = false;
-  p.freeMoveUsed = false; // Charge grants only ONE free kill-move per turn
   p.blinkedThisTurn = false;
+  // PARRY: end a turn without striking and the guard goes UP, to be spent on the next blow that
+  // would land (rollMitigation). Striking never lowers a guard already raised — it just doesn't
+  // raise one. `p.attacked` is this turn's, and deliberately survives into the enemy phase.
+  if (p.firstHitEachTurn && !p.attacked) p.guardUp = true;
   // Badge ledger: the longest he has ever lingered on ONE floor, and whether he ever waded.
   p.maxFloorTurns = Math.max(p.maxFloorTurns || 0, state.turn);
   if (terrainAt(state, p.x, p.y) === 'water') p.touchedWater = true;
@@ -1706,7 +2715,7 @@ function openDoorsUnderUnits(state) {
     if (t === 'door' || t === 'doorajar') state.terrain[`${x},${y}`] = 'dooropen';
     return t === 'door'; // it was SHUT and we just pushed it open
   };
-  if (state.player && open(state.player.x, state.player.y)) state.player.openedDoor = true; // badge ledger
+  if (state.player && open(state.player.x, state.player.y)) { state.player.openedDoor = true; cue(state, 'creak'); } // badge ledger
   for (const e of state.enemies || []) open(e.x, e.y);
   for (const a of state.allies || []) open(a.x, a.y);
 }
@@ -1729,6 +2738,17 @@ function tickDoors(state) {
 function updateDiscovery(state) {
   openDoorsUnderUnits(state); // a unit standing on a shut door has pushed it open
   revealSeen(state);
+  // REVELATION (Oracle capstone): the floor keeps no secrets. The fog is gone the moment he arrives
+  // and he knows where the key and the stair lie.
+  //
+  // Note what it does NOT give him: SIGHT. He still only sees — and shoots — what is inside his own
+  // window, and foes stay hidden in the dark exactly as before. This is a MAP, not x-ray: it answers
+  // "where am I going", which is the one question the fog made into busywork rather than a decision.
+  if (state.player.revealFloor) {
+    for (let x = 0; x < WORLD_SIZE; x += 1) {
+      for (let y = 0; y < WORLD_SIZE; y += 1) state.explored[`${x},${y}`] = true;
+    }
+  }
   if (state.exit && state.explored[`${state.exit.x},${state.exit.y}`]) state.exit.discovered = true;
   // Once the king lays eyes on the key it is remembered through the fog (like the stair).
   if (state.key && state.explored[`${state.key.x},${state.key.y}`]) state.key.discovered = true;
@@ -1748,14 +2768,17 @@ function getPlayerMoves(state) {
     const key = `${tile.x},${tile.y}`;
     if (seen.has(key)) return;
     seen.add(key);
-    moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture), push: Boolean(tile.push), embedded: Boolean(tile.embedded) });
+    // NB: this rebuilds the move rather than passing it through, so EVERY flag a caller sets must
+    // be listed here or it is silently dropped — which is exactly what happened to `chop`: the tile
+    // was offered as a plain move and the king walked into the tree.
+    moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture), push: Boolean(tile.push), chop: Boolean(tile.chop), embedded: Boolean(tile.embedded), pitDive: Boolean(tile.pitDive) });
   };
   if (p.promotion > 0) {
-    // Animal Form (Druid): the king becomes an invincible AMAZON — it slides like a queen AND
-    // leaps like a knight for a few turns, taking no damage and playing no cards. Click/target
-    // any reachable tile. (An amazon's queen-slides already include a single step in any direction.)
+    // Animal Form (Druid): the king becomes an invincible UNICORN — it glides like a bishop AND
+    // rides like a nightrider for a few turns, taking no damage and playing no cards. Click/target
+    // any reachable tile.
     const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
-    for (const t of generateMoves('amazon', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
+    for (const t of generateMoves('unicorn', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
     return moves;
   }
   const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
@@ -1771,6 +2794,18 @@ function getPlayerMoves(state) {
     const bx = p.x + dx;
     const by = p.y + dy;
     if (terrainAt(state, bx, by) === 'boulder') add({ x: bx, y: by, push: true });
+    // CHOP: an adjacent TREE is a valid action too. A tree is not standable, so it would otherwise
+    // never appear as a move at all — the king would simply have no way to cut one down by hand.
+    // He hacks at it for a wound and stays put; it takes TREE_HP swings to bring one down.
+    if (isChoppable(terrainAt(state, bx, by))) add({ x: bx, y: by, chop: true });
+  }
+  // PIT DIVE — a last resort offered ONLY when he is otherwise STRANDED (not one other move on the
+  // board): he scrambles down into an adjacent pit and hauls himself out the nearest side for a
+  // wound, rather than being stalemated on the spot. A terrain-immune king already walks pits freely.
+  if (!moves.length && !p.terrainImmune) {
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      if (terrainAt(state, p.x + dx, p.y + dy) === 'pit') add({ x: p.x + dx, y: p.y + dy, pitDive: true });
+    }
   }
   return moves;
 }
@@ -1845,6 +2880,86 @@ function pushBoulderFar(state, bx, by, dx, dy, dist) {
   }
   return moved;
 }
+// ---- TREES ---------------------------------------------------------------------------------
+// A tree is solid timber: it blocks movement AND sight exactly like a wall (see terrain.js), but
+// unlike a wall it can be brought DOWN. It carries TREE_HP wounds, tracked in `state.treeHp` —
+// terrain is a flat type map with nowhere to hang a number, so the pool lives beside it, keyed by
+// tile, and is cleared whenever the tile stops being a tree.
+//
+// Chop it and it falls, leaving sticks and leaves (the same fading-debris idea as a broken wall or
+// turret). Set it ALIGHT with spellfire and it does not fall at once: it burns where it stands for
+// a turn (blocking sight the whole time), then is gone, leaving a scorch.
+// A GATE is a tree made of iron: same 3 wounds, same chopping, same debris — it simply does not
+// block the look. Everything below treats the two as one thing so they can never drift apart.
+function isChoppable(t) {
+  return t === 'tree' || t === 'gate';
+}
+function treeHpAt(state, x, y) {
+  if (!isChoppable(terrainAt(state, x, y))) return 0;
+  const k = `${x},${y}`;
+  if (!state.treeHp) state.treeHp = {};
+  if (state.treeHp[k] == null) state.treeHp[k] = TREE_HP; // a tree generated without a pool starts whole
+  return state.treeHp[k];
+}
+function clearTree(state, x, y) {
+  delete state.terrain[`${x},${y}`];
+  if (state.treeHp) delete state.treeHp[`${x},${y}`];
+  if (state.burningTrees) delete state.burningTrees[`${x},${y}`];
+}
+// Chop a tree for `amount` wounds. Returns 'felled' | 'hurt' | null (there was no tree).
+// This is the ONE way a tree takes damage — every source routes through it (a normal attack, a
+// spell bolt, a rolled boulder, a foe slammed into it), so they can never disagree.
+function damageTree(state, x, y, amount) {
+  if (!isChoppable(terrainAt(state, x, y))) return null;
+  const k = `${x},${y}`;
+  const left = treeHpAt(state, x, y) - (amount || 1);
+  if (left > 0) {
+    state.treeHp[k] = left;
+    cue(state, 'chop'); // a bite out of the trunk — it still stands
+    return 'hurt';
+  }
+  const wasIron = terrainAt(state, x, y) === 'gate'; // read it BEFORE clearTree wipes the tile
+  clearTree(state, x, y);
+  cue(state, 'timber'); // it comes DOWN — a crash, not the chip of another axe blow
+  addTreeDebris(state, x, y, wasIron); // sticks and leaves, or twisted bar-ends
+  return 'felled';
+}
+// Spellfire doesn't chop — it LIGHTS. The tree stands and burns for a turn (still blocking the
+// look), then is gone. tickBurningTrees resolves it.
+// Fire lights TIMBER. Iron does not burn — a gate must be cut down, which is what makes it a
+// different problem from a tree rather than the same one twice.
+function igniteTree(state, x, y) {
+  if (terrainAt(state, x, y) !== 'tree') return false;
+  if (!state.burningTrees) state.burningTrees = {};
+  if (state.burningTrees[`${x},${y}`]) return false; // already alight
+  state.burningTrees[`${x},${y}`] = 1;
+  return true;
+}
+// Once per turn: every tree set alight last turn burns away, leaving scorched ground — and as it goes
+// it SPREADS, with a 50% chance to catch each adjacent tree, which then burns the turn after. A
+// forest fire rolls through the timber this way, opening sight lines and combining with the Gardener's
+// growth and any spellfire. Newly-caught trees are lit AFTER the old ones are cleared, so they burn
+// on the NEXT tick (never all in one flash).
+function tickBurningTrees(state) {
+  if (!state.burningTrees) return;
+  const catching = new Set();
+  for (const k of Object.keys(state.burningTrees)) {
+    const [x, y] = k.split(',').map(Number);
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (terrainAt(state, nx, ny) === 'tree' && !state.burningTrees[`${nx},${ny}`] && Math.random() < 0.5) catching.add(`${nx},${ny}`);
+    }
+    clearTree(state, x, y);
+    scorchGround(state, x, y); // the fire leaves its mark on the bare ground
+  }
+  state.burningTrees = {};
+  for (const k of catching) {
+    const [x, y] = k.split(',').map(Number);
+    igniteTree(state, x, y); // it catches now, and burns away next tick
+  }
+}
+
 // Smash a boulder to rubble: clear the tile and leave a fading pile of rocks (cosmetic).
 function smashBoulder(state, x, y) {
   if (terrainAt(state, x, y) !== 'boulder') return;
@@ -1889,6 +3004,7 @@ function addIceShards(state, x, y) {
 // Ice SHATTERS (leapt on / slammed into / a wall-breaking cave-in): slab → open floor + shards.
 function smashIce(state, x, y) {
   if (terrainAt(state, x, y) !== 'ice') return false;
+  cue(state, 'crush'); // the slab goes
   delete state.terrain[`${x},${y}`];
   addIceShards(state, x, y);
   return true;
@@ -1911,22 +3027,8 @@ function scorchTileTerrain(next, x, y) {
   const t = terrainAt(next, x, y);
   if (t === 'ice') { if (meltIce(next, x, y)) next.player.brokeIce = true; } // badge ledger
   else if (t === 'devilgrass') clearDevilgrass(next, x, y);
+  else if (t === 'tree') igniteTree(next, x, y); // fire doesn't fell a tree — it LIGHTS it (see tickBurningTrees)
   else if (t === 'boulder') smashBoulder(next, x, y);
-}
-// Blast (Conjuration T1): after a spell resolves, every foe it STRUCK that STILL STANDS (a boss,
-// mini-boss, or turret — anything the bolt couldn't fell outright) is HURLED one tile along the
-// bolt's own line of travel. They are shoved FARTHEST-first (the last foe the bolt hit before the
-// first) so a knocked foe never slams into one still awaiting its own shove.
-function applySpellBlast(next, impactTiles, dirX, dirY) {
-  if (!next.player.spellBlast || (!dirX && !dirY)) return;
-  const hit = new Set(impactTiles.map((t) => `${t.x},${t.y}`));
-  const survivors = next.enemies
-    .filter((e) => !e.summonCircle && hit.has(`${e.x},${e.y}`))
-    .sort((a, b) => (b.x * dirX + b.y * dirY) - (a.x * dirX + a.y * dirY)); // farthest along the bolt first
-  for (const e of survivors) {
-    if (next.gameOver || next.won) break;
-    knockbackEnemy(next, e, dirX, dirY);
-  }
 }
 
 // Resolve the king arriving on (x, y): attack a boss in place, destroy a summoning
@@ -1948,8 +3050,7 @@ function applyArrival(next, x, y, embedded) {
     else if (occ) { realKill = isKillablePiece(occ); resolveKill(next, occ); }
     if (realKill && !next.gameOver && !next.won) applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
     next.message = 'The king strikes through the cover!';
-    if (realKill && pl.freeKillMove && !pl.freeMoveUsed) {
-      pl.freeMoveUsed = true;
+    if (realKill && pl.freeKillMove) {
       next.enemyTurn = false;
       next.lastAction = 'move-free';
     } else {
@@ -1961,21 +3062,11 @@ function applyArrival(next, x, y, embedded) {
     return next;
   }
 
-  // Wild Empathy: STEPPING onto a befriended beast gently DISPLACES it (swap places) — no blow
-  // struck — exactly like trading places with an ally. (To attack it instead, use a card.)
-  const beastHere = next.enemies.find((e) => e.x === x && e.y === y && isBefriendedBeast(next, e));
-  if (beastHere) {
-    pl.x = x; pl.y = y;
-    beastHere.x = fromX; beastHere.y = fromY;
-    next.enemyTurn = true;
-    next.lastAction = 'move';
-    next.message = `The king slips past the friendly ${beastHere.kind}.`;
-    collectKeyIfHere(next);
-    if (tryDescend(next)) { updateDiscovery(next); return next; }
-    passTurn(next);
-    updateDiscovery(next);
-    return next;
-  }
+  // NB: there is deliberately NO free pass through a neutral beast. Stepping onto one used to
+  // gently swap places with it, which made a truce strictly better than an empty tile — a wild
+  // amazon was a doormat he could walk over from across the room. Its tile is now exactly what any
+  // other enemy's tile is: a blow, which breaks the truce for good (damageBoss sets provokedBeast).
+  // If he wants it on his side he has to walk up BESIDE it and offer his hand (see charmBeasts).
 
   // Leapt onto a boulder? He crushes it to rubble as he lands. Onto an ice slab? It shatters.
   smashBoulder(next, x, y);
@@ -1994,8 +3085,7 @@ function applyArrival(next, x, y, embedded) {
     } else {
       landBesideSurvivor(next, bossHere, x, y, fromX, fromY, false);
     }
-    if (result === 'slain' && pl.freeKillMove && !pl.freeMoveUsed) {
-      pl.freeMoveUsed = true; // Charge: only the FIRST kill-move each turn is free
+    if (result === 'slain' && pl.freeKillMove) {
       next.enemyTurn = false;
       next.lastAction = 'move-free';
     } else {
@@ -2018,6 +3108,20 @@ function applyArrival(next, x, y, embedded) {
     } else {
       landBesideSurvivor(next, turretHere, x, y, fromX, fromY, false);
     }
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+
+  // A WARDED foe (a Guardian's retinue) turns the first blow aside: struck IN PLACE like a turret,
+  // its guard drops, and the king lands beside it rather than striding onto a tile it still holds.
+  const parriedHere = next.enemies.find((e) => e.x === x && e.y === y && e.parry && !e.boss && !e.turret && !e.summonCircle);
+  if (parriedHere) {
+    pl.attacked = true; pl.usedNormalAttack = true;
+    resolveKill(next, parriedHere); // its parry soaks this — it survives, guard spent (returns false)
+    landBesideSurvivor(next, parriedHere, x, y, fromX, fromY, false);
     passTurn(next);
     next.enemyTurn = true;
     next.lastAction = 'combat';
@@ -2055,7 +3159,12 @@ function applyArrival(next, x, y, embedded) {
     realKill = isKillablePiece(enemy); // a circle is destroyed, but not an on-kill trigger
     resolveKill(next, enemy);
     pl.attacked = true; pl.usedNormalAttack = true; // badge ledger: struck without a card
-    next.message = enemy.summonCircle ? 'The king shatters a summoning circle!' : `The king defeats a ${enemy.kind}.`;
+    const adx = Math.abs(x - fromX);
+    const ady = Math.abs(y - fromY);
+    const leapt = (adx === 2 && ady === 1) || (adx === 1 && ady === 2); // a knight-style pounce (e.g. Animal Form)
+    next.message = enemy.summonCircle
+      ? 'The king shatters a summoning circle!'
+      : `The king ${leapt ? 'crushes' : 'cuts down'} ${aWord(enemy.kind)}!`;
     next.lastAction = 'combat';
   }
 
@@ -2066,8 +3175,8 @@ function applyArrival(next, x, y, embedded) {
   collectKeyIfHere(next);
   if (tryDescend(next)) return next;
 
-  if (realKill && pl.freeKillMove && !pl.freeMoveUsed) {
-    pl.freeMoveUsed = true; // Charge: only the FIRST kill-move each turn is free
+  // CHARGE: EVERY move that kills costs no turn — chain them as long as you keep killing.
+  if (realKill && pl.freeKillMove) {
     next.enemyTurn = false;
     next.lastAction = 'move-free';
   } else {
@@ -2079,14 +3188,45 @@ function applyArrival(next, x, y, embedded) {
 
 // Resolve a piece being slain by the king. Bosses take HP damage; everything else
 // is removed. Returns true if a unit was actually slain.
+// ONE place that tallies a felling for the badge ledger, so a kill by hand, by card, by boulder or
+// by shove all count the same. `killsThisTurn` is wiped at the top of each action (see passTurn),
+// and the per-floor tallies are banked on the descent.
+function tallyKill(state, enemy) {
+  const p = state.player;
+  if (!isKillablePiece(enemy)) {
+    if (enemy.turret) { p.turretsThisFloor = (p.turretsThisFloor || 0) + 1; p.maxTurretsOnFloor = Math.max(p.maxTurretsOnFloor || 0, p.turretsThisFloor); }
+    return;
+  }
+  p.killsThisFloor = (p.killsThisFloor || 0) + 1;
+  p.maxKillsOnFloor = Math.max(p.maxKillsOnFloor || 0, p.killsThisFloor);
+  p.killsThisTurn = (p.killsThisTurn || 0) + 1;
+  p.maxKillsInTurn = Math.max(p.maxKillsInTurn || 0, p.killsThisTurn);
+  if (enemy.boss && enemy.mini) { p.minisThisFloor = (p.minisThisFloor || 0) + 1; p.maxMinisOnFloor = Math.max(p.maxMinisOnFloor || 0, p.minisThisFloor); }
+}
+
 function resolveKill(state, enemy, opts) {
   if (enemy.boss) {
     damageBoss(state, enemy, 1);
     return true;
   }
+  // GUARDIAN's PARRY: a warded foe turns the first KILLING blow aside — the guard drops and it must be
+  // struck again. Environmental deaths (a pit, lava, spellfire, a crushing boulder) pass `bypassParry`
+  // and cut straight through. Returns FALSE so the caller knows nothing fell (no on-kill, no boon).
+  if (enemy.parry && !(opts && opts.bypassParry)) {
+    enemy.parry = false;
+    enemy.warded = null;
+    enemy.awake = true;
+    enemy.provoked = true;
+    bloody(enemy, BLOOD_STRIKE);
+    cue(state, 'deflect'); // a clang: its ward turned the blow
+    state.message = `The ${enemy.kind} parries the blow — its guard drops!`;
+    state.lastAction = 'combat';
+    return false;
+  }
   state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
   const p = state.player;
   p.killedEnemy = true;
+  tallyKill(state, enemy);
   const bySpell = Boolean(opts && opts.ash);
   // Necromancy: a felled real piece rises as an undead ally — but only ONE at a time.
   // When it dies, the next foe the king slays takes its place.
@@ -2096,13 +3236,19 @@ function resolveKill(state, enemy, opts) {
       return true;
     }
   }
-  addSpatter(state, enemy.x, enemy.y, Math.sign(enemy.x - p.x), Math.sign(enemy.y - p.y), isDemonKind(enemy.kind)); // blood flings away from the king
+  // A circle is a RUNE cut into the floor, not a creature — it has no blood to shed. Breaking one
+  // is a puff of arcane smoke over a scar, and nothing else. And a foe burnt down by SPELLFIRE is
+  // reduced to ASH — there is no blood to fling, so it leaves an ash pile alone, not a stain under it.
+  if (!enemy.summonCircle && !bySpell) {
+    addSpatter(state, enemy.x, enemy.y, Math.sign(enemy.x - p.x), Math.sign(enemy.y - p.y), isDemonKind(enemy.kind)); // blood flings away from the king
+  }
   // A shattered summoning circle leaves a permanent scar so its ruin stays visible; a foe
   // burnt down by a spell leaves an ash pile; an ordinary slain piece leaves a fading
   // corpse (a raised undead, above, left neither).
   if (enemy.summonCircle) {
     if (!Array.isArray(state.scars)) state.scars = [];
     state.scars.push({ x: enemy.x, y: enemy.y, kind: 'circle' });
+    state.banished = { x: enemy.x, y: enemy.y }; // the view puffs arcane smoke where the rune broke
     state.player.circlesDispelled = (state.player.circlesDispelled || 0) + 1; // badge ledger
   } else if (bySpell) {
     addAsh(state, enemy.x, enemy.y);
@@ -2122,32 +3268,261 @@ function attackTile(state, tx, ty, opts) {
     if (e.summonCircle) return null;
     if (e.boss) return damageBoss(state, e, 1) === 'slain' ? e : null;
     if (e.turret) return damageTurret(state, e, 1) === 'slain' ? e : null;
-    resolveKill(state, e, opts);
-    return e;
+    return resolveKill(state, e, opts) ? e : null; // a warded foe parries — nothing fell this hit
   }
   return null;
 }
 
+// A follow-through blow that lands on TIMBER. Cleave and Pierce carry the blade on into whatever
+// stands behind the body, and timber and iron are not exempt from that — but only for ONE wound,
+// the same as a deliberate swing: a follow-through is not a better axe than an axe.
+//
+// Never bites a tile a foe is standing in: a phasing guardian embedded in a trunk has already taken
+// the blow itself, and the tree should not be hacked as a bonus on top of it.
+function followThroughTimber(state, x, y) {
+  if (state.enemies.some((e) => e.x === x && e.y === y)) return false;
+  return Boolean(damageTree(state, x, y, 1));
+}
+
 function cleaveAdjacent(state, x, y) {
+  // A BODY first — the sweep is aimed at foes, and it must not spend itself on a tree while a piece
+  // stands on the other side of the king. Only when the sweep finds nothing to fell does it bite
+  // the timber beside it, and then only one trunk, exactly as it only ever fells one foe.
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     if (attackTile(state, x + dx, y + dy)) return;
+  }
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    if (followThroughTimber(state, x + dx, y + dy)) return;
   }
 }
 
 // Flourish (Duellist): after a kill, every foe adjacent to the king is caught off
 // guard — its memory of the king is wiped so it burns its next turn gasping in
 // surprise instead of striking (bosses/structures are unmoved).
-function flourishSurprise(state) {
-  const p = state.player;
+// Catch every foe around (cx,cy) off guard: it forgets the king outright, so on the next enemy
+// phase it gasps (the "!" telegraph) and loses that turn before it can act — one turn stolen.
+// Bosses and structures are never caught out. Shared by the Duellist's Flourish (around the king,
+// after a kill) and Blink (around the tile he vanished FROM).
+// Make a piece GASP: wipe what it knows of the king, so beginEnemyPhase re-startles it and it burns
+// its next turn catching its breath instead of striking.
+//
+// Setting `surprised = true` directly does NOTHING, which is worth stating plainly: the phase clears
+// that flag and makes any AWAKE piece a mover. The gasp has to come from the piece genuinely having
+// lost track of him — so losing track of him is what this does.
+function startle(enemy) {
+  enemy.awake = false;
+  enemy.surprised = false;
+  enemy.lastSeen = null;
+  enemy.lastSeenTtl = 0;
+}
+
+/* ------------------------------- confusion -------------------------------- */
+// A CONFUSED piece has lost track of which side it is on. Each turn it either lashes out at the
+// nearest thing it can reach — friend, foe, or king, it cannot tell them apart — or blunders off in
+// a random direction. Even chance of each.
+//
+// It is deliberately a plain boolean rather than a countdown: the wear-off is a coin flipped at the
+// end of each of its turns, so confusion is a fog that MIGHT lift rather than a timer the player can
+// count on. And any blow snaps it out of it — which is the tension of the thing: the chaos you
+// unleashed is undone by the first piece you decide to hit.
+function isConfused(enemy) {
+  return Boolean(enemy && enemy.confused);
+}
+
+// Confuse a piece. Turrets, guardians and summoning circles are all fair game — nothing is too
+// mindless or too mighty to be turned around.
+function confuse(enemy) {
+  if (!enemy) return false;
+  enemy.confused = true;
+  return true;
+}
+
+// NB: NOTHING clears confusion but the coin at the end of a confused piece's own turn. A blow used
+// to snap a piece straight out of it, which made the card fight itself: the Hexer scattered a room
+// and then could not touch any of it without sobering up whatever he hit. The fog lifts when it
+// lifts, and hitting a confused guardian is simply free value.
+
+// The blocker/target lookup for a confused piece: it can see bodies, but not whose they are. This
+// is the ONE difference from an ordinary enemy's move generation (which targets only the king and
+// his allies) — and it is what makes friendly fire fall out for free rather than being a special
+// case bolted on. The key is still not a target: it is a thing on the floor, not a body.
+function confusedPieceMoves(piece, state) {
+  const unitAt = enemyUnitAt(state, piece);
+  const isTarget = (x, y) => {
+    const u = unitAt(x, y);
+    return Boolean(u) && u !== 'key';
+  };
+  // A confused piece has NO self-preservation. pieceTerrainOpts is where a foe's good sense lives —
+  // it routes around fire it cannot survive and never steps into a hole — and a piece that has lost
+  // the thread has none of that. `flying`/`lavaOk` here do not make it immune to anything; they only
+  // stop the move generator from refusing the tile. What happens when it lands there is the floor's
+  // business, and the floor is not merciful (see confusedTurn).
+  const opts = { ...pieceTerrainOpts(piece), lavaOk: true, flying: true };
+  return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, opts);
+}
+
+// Timber and iron a confused piece could blunder into. They are not standable, so the move generator
+// never offers them — but a thing flailing about swings at whatever is in front of it, and a tree is
+// in front of it.
+function confusedChopTargets(piece, state) {
+  const out = [];
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-    const e = state.enemies.find((en) => en.x === p.x + dx && en.y === p.y + dy);
-    if (e && !e.boss && !e.turret && !e.summonCircle) {
-      e.awake = false;
-      e.surprised = false;
-      e.lastSeen = null;
-      e.lastSeenTtl = 0;
+    const x = piece.x + dx;
+    const y = piece.y + dy;
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+    if (isChoppable(terrainAt(state, x, y))) out.push({ x, y, chop: true });
+  }
+  return out;
+}
+
+// One confused piece cutting down another. Deliberately NOT damageBoss/resolveKill: those speak in
+// the king's name ("The king strikes...") and pay him the score, the on-kill perks and the boons.
+// He did not do this — he only started it — so it fells the piece and nothing more.
+function confusedFriendlyFire(state, attacker, target) {
+  addSpatter(state, target.x, target.y, Math.sign(target.x - attacker.x), Math.sign(target.y - attacker.y), isDemonKind(target.kind));
+  if (target.maxHp) { // a guardian or a turret soaks it
+    target.hp -= 1;
+    if (target.hp > 0) {
+      state.message = `A confused ${attacker.kind} hammers ${target.bossName || `a ${target.kind}`} (${target.hp}/${target.maxHp})!`;
+      return false;
     }
   }
+  state.enemies = state.enemies.filter((e) => e.id !== target.id);
+  state.message = `A confused ${attacker.kind} cuts down ${target.bossName || `a ${target.kind}`}!`;
+  return true;
+}
+
+// A confused piece's whole turn.
+function confusedTurn(state, enemy) {
+  state.lastAction = 'enemy';
+  // A summoning circle has no body to swing and no legs to blunder on. Confusing one simply stalls
+  // the conjuring — which is a real effect, and a better one than pretending a rune can stagger.
+  if (enemy.summonCircle) {
+    state.message = 'A summoning circle sputters, its rune scrambled.';
+    confusionMayLift(state, enemy);
+    return state;
+  }
+  const moves = confusedPieceMoves(enemy, state);
+  // Timber is a thing it can hit, so it counts as a strike — it is flailing, and a tree is in front
+  // of it. (These are not standable, so the move generator never offers them.)
+  const strikes = moves.filter((m) => m.capture).concat(confusedChopTargets(enemy, state));
+  const steps = moves.filter((m) => !m.capture);
+  const rooted = isStationary(enemy); // a turret, or a guardian still holding its stair
+  const canStrike = strikes.length > 0;
+  const canStep = steps.length > 0 && !rooted;
+  // THE COIN: lash out, or blunder. A piece that cannot do what it rolled does the other instead —
+  // one with nothing in reach staggers off, one boxed in lashes at what it can reach.
+  //
+  // A ROOTED piece has no "other": it cannot blunder anywhere, so its blunder is a wild swing at
+  // nothing. That is deliberate and load-bearing. Falling back to a strike for anything that cannot
+  // walk quietly deleted the coin for turrets — a confused turret fired every single turn, which
+  // made confusing one strictly BETTER for the player than leaving it alone, since a confused
+  // turret shot the room instead of him. It must be dangerous only every other turn.
+  let doStrike = randomInt(2) === 0;
+  if (doStrike && !canStrike && canStep) doStrike = false;
+  else if (!doStrike && !canStep && !rooted && canStrike) doStrike = true;
+  const pick = (list) => list[randomInt(list.length)];
+  if (doStrike && canStrike) {
+    const target = pick(strikes);
+    const king = state.player;
+    if (target.chop) {
+      // It swings at the tree. Same three wounds as anyone else's axe — a confused rook is not a
+      // better woodsman than the king.
+      const what = terrainAt(state, target.x, target.y) === 'gate' ? 'gate' : 'tree';
+      const res = damageTree(state, target.x, target.y, 1);
+      state.message = res === 'felled'
+        ? `A confused ${enemy.kind} hacks down a ${what}!`
+        : `A confused ${enemy.kind} hammers at a ${what}.`;
+      if (res === 'felled') updateDiscovery(state);
+    } else if (target.x === king.x && target.y === king.y) {
+      // It blunders into the king. Still a real blow — being confused makes it no less dangerous
+      // to be next to, which is what stops the card being a free "everything stops hitting me".
+      if (isJumperKind(enemy.kind) && !target.embedded) knockbackKing(state, enemy);
+      else strikeKing(state, enemy);
+    } else {
+      const ally = allyAt(state, target.x, target.y);
+      if (ally) {
+        addSpatter(state, ally.x, ally.y, 0, 0, isDemonKind(ally.kind));
+        if (damageAlly(state, ally, 1)) {
+          if (!rooted) { enemy.x = target.x; enemy.y = target.y; }
+          state.message = `A confused ${enemy.kind} cuts down your ${ally.kind}!`;
+        } else {
+          state.message = `A confused ${enemy.kind} hammers your ${ally.kind} (${ally.hp}/${ally.maxHp}).`;
+        }
+      } else {
+        const foe = state.enemies.find((e) => e.id !== enemy.id && e.x === target.x && e.y === target.y);
+        if (foe) {
+          const felled = confusedFriendlyFire(state, enemy, foe);
+          if (felled && !rooted) { enemy.x = target.x; enemy.y = target.y; }
+        }
+      }
+    }
+  } else if (!doStrike && canStep) {
+    const step = pick(steps);
+    enemy.x = step.x;
+    enemy.y = step.y;
+    crushBoulderUnder(state, enemy);
+    state.message = `A confused ${enemy.kind} staggers about.`;
+    // ...and it staggers onto whatever is there, having no sense left to avoid it. A piece with the
+    // thread would route around fire and never walk into a hole; this one does both, and the floor
+    // collects. Fires here rather than in the move generator because the generator's job is what is
+    // REACHABLE — what it costs you to reach is the floor's business.
+    if (confusedBlunderHarm(state, enemy)) return state; // it went over the edge: it is gone
+  } else {
+    state.message = `A confused ${enemy.kind} flails at nothing.`;
+  }
+  confusionMayLift(state, enemy);
+  return state;
+}
+
+// A confused piece that has just staggered onto something that hurts. Returns true if it is gone.
+//
+// The PIT rules are exactly the ones a shoved foe already lives by (see knockbackEnemy): only the
+// floor's own guardian is anchored enough to haul itself back out, for a wound. A rogue mini, a
+// rush boss, an ordinary piece, a turret — all of them go all the way down. One rule, two ways in.
+//
+// Lava is left to tickLavaDamage, which burns whatever is standing in it at the start of the enemy
+// phase — so a confused piece that wanders into fire simply cooks like anything else that does.
+function confusedBlunderHarm(state, enemy) {
+  if (terrainAt(state, enemy.x, enemy.y) !== 'pit') return false;
+  cue(state, 'fall');
+  if (enemy.boss && !enemy.mini && !enemy.rush) {
+    const slain = damageBoss(state, enemy, 1) === 'slain';
+    state.message = slain
+      ? `${bossTitle(enemy)} blunders into a pit and does not climb out!`
+      : `${bossTitle(enemy)} blunders into a pit and hauls itself back out!`;
+    if (!slain) {
+      const out = nearestFooting(state, enemy.x, enemy.y);
+      if (out) { enemy.x = out.x; enemy.y = out.y; }
+    }
+    return slain;
+  }
+  if (!enemy.turret) addSpatter(state, enemy.x, enemy.y, 0, 0, isDemonKind(enemy.kind));
+  state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
+  state.message = `A confused ${enemy.turret ? 'turret' : enemy.kind} staggers into a pit — gone!`;
+  return true;
+}
+
+// The fog lifts on a coin flip, at the END of the turn — so a confusion always costs its victim at
+// least one turn. Rolling at the START would let half of them shrug it off before it ever bit, and
+// a nine-turn capstone that does nothing at all to half the room is not a capstone.
+function confusionMayLift(state, enemy) {
+  if (randomInt(2) === 0) {
+    enemy.confused = false;
+    // It comes to its senses knowing only that it is in a fight. It does NOT get its bearings on
+    // the king for free — beginEnemyPhase decides that next turn, the same as for anything else.
+    enemy.frustrated = false;
+  }
+}
+
+function surpriseAround(state, cx, cy) {
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const e = state.enemies.find((en) => en.x === cx + dx && en.y === cy + dy);
+    if (e && !e.boss && !e.turret && !e.summonCircle) startle(e);
+  }
+}
+function flourishSurprise(state) {
+  surpriseAround(state, state.player.x, state.player.y);
 }
 
 // Fan out the Warrior's on-kill perks after he fells a foe by moving or with a melee
@@ -2159,11 +3534,25 @@ function applyOnKill(state, ox, oy, dx, dy) {
   if (state.gameOver || state.won) return;
   const before = state.enemies.length; // the main foe is already gone; count further kills
   if (p.meleeCleave) cleaveAdjacent(state, ox, oy);
-  if (p.meleePierce && (dx || dy)) attackTile(state, ox + dx, oy + dy);
-  const totalKills = 1 + (before - state.enemies.length); // the main kill + Cleave/Pierce kills
-  // Vampiric Edge: heal ONLY when the strike fells at least two foes at once (its natural
-  // partner is Cleave, which supplies the second kill).
-  if (p.meleeLeech && totalKills >= 2) p.hp = Math.min(p.maxHp, p.hp + 1);
+  if (p.meleePierce && (dx || dy)) {
+    // The thrust drives TWO tiles past the kill — into the next foe(s), or into the timber standing
+    // there. Each tile is struck in turn (a foe, or a tree/gate); walls it simply cannot punch through.
+    for (let step = 1; step <= 2; step += 1) {
+      const tx = ox + dx * step;
+      const ty = oy + dy * step;
+      if (!attackTile(state, tx, ty)) followThroughTimber(state, tx, ty);
+    }
+  }
+  // VAMPIRIC EDGE: a 1-in-3 chance of mending a wound for EACH foe he fells this action — the direct
+  // kill AND anything Cleave or Pierce takes with it. applyOnKill fires only on real, killable pieces
+  // (never a turret or circle — isKillablePiece draws that line), so every body counted here is his
+  // blade finding flesh. `before - length` is the collateral; the +1 is the kill that got us here.
+  if (p.meleeLeech) {
+    const bodies = 1 + Math.max(0, before - state.enemies.length);
+    for (let i = 0; i < bodies && p.hp < p.maxHp; i += 1) {
+      if (randomInt(3) === 0) p.hp += 1;
+    }
+  }
   if (p.meleeFlourish) flourishSurprise(state);
 }
 
@@ -2194,12 +3583,31 @@ function tryDescend(next) {
   return false;
 }
 
-// Blink (Sorcerer Translocations): when a foe lands a hit, teleport the king to a random
-// tile in sight that is standable, empty, off the stair, and NOT threatened by any visible
-// enemy. No-op when no such refuge exists. Returns true if he blinked.
+// The king has just been SHOVED (a knockback, or a Warper's swap) — if the shove dropped him onto the
+// OPEN stair, he tumbles straight down to the next floor: "defenestrated". Sets lastAction 'exit', so
+// the turn flow descends exactly as if he'd stepped on it himself. The finale portal is exempt: you
+// win that on your own feet, Orb in hand, not by being thrown through it.
+function checkDefenestration(state) {
+  if (state.won || state.gameOver) return false;
+  const ex = state.exit;
+  if (!ex || ex.locked || ex.portal) return false;
+  if (state.player.x !== ex.x || state.player.y !== ex.y) return false;
+  state.player.defenestrated = true; // badge ledger
+  state.player.knockedDownstair = true;
+  state.message = 'The king is hurled clean down the stair — into the next floor!';
+  state.lastAction = 'exit';
+  return true;
+}
+
+// Blink (Sorcerer Translocations): teleport the king to a random tile in sight that is standable,
+// empty, off the stair, and NOT threatened by any visible enemy. No-op when no such refuge exists.
+// Returns true if he blinked.
+//
+// Driven by the BLINK CARD (cooldown 6) — it is no longer a reflex that fired free, every time, on
+// every hit. Hence no `p.blink` flag: holding the card IS the permission.
 function blinkToSafety(state) {
   const p = state.player;
-  if (!p.blink || p.blinkedThisTurn || state.gameOver) return false;
+  if (p.blinkedThisTurn || state.gameOver) return false;
   // Danger must be judged as if the king already stood on the candidate — so a slider's
   // FULL line counts (his own body must not "block" a threat behind himself). Compute each
   // visible enemy's reach from a ghost state whose king sits off-board.
@@ -2224,13 +3632,19 @@ function blinkToSafety(state) {
     }
   }
   if (!options.length) return false;
+  const fromX = p.x;
+  const fromY = p.y;
   const pick = options[randomInt(options.length)];
   p.x = pick.x;
   p.y = pick.y;
   p.blinkedThisTurn = true;
+  // The king simply ISN'T THERE any more: every foe that was crowding the tile he vanished from is
+  // left swiping at empty air, and loses its next turn to the shock. That is what makes Blink an
+  // escape rather than a shuffle — it buys distance AND a turn from the pack that had him cornered.
+  surpriseAround(state, fromX, fromY);
   collectKeyIfHere(state);
   updateDiscovery(state); // reveal the fog around wherever he flickered to (a blink is a real move)
-  state.message = 'The king blinks away to safety!';
+  state.message = 'The king blinks away — the foes he left behind swipe at empty air!';
   return true;
 }
 
@@ -2298,16 +3712,13 @@ function useCard(state, cardIndex, x, y) {
     next.lastAction = 'blocked';
     return next;
   }
-  // While promoted the king wields no cards — he roams as the warhorse.
-  if (p.promotion > 0) {
-    next.message = 'The warhorse needs no cards — strike by leaping.';
-    next.lastAction = 'blocked';
-    return next;
-  }
-  const isAbilityCard = card.kind === 'promotion' || card.kind === 'reload' || card.kind === 'swap';
-  // Water forbids readying a WEAPON (Amphibious lifts that); ability cards are exempt.
-  if (isSlowTerrain(terrainAt(next, p.x, p.y)) && !p.terrainImmune && !isAbilityCard) {
-    next.message = `You can't ready a weapon while wading through ${terrainAt(next, p.x, p.y)}.`;
+  // NB: "the warhorse wields no cards" used to be a hardcoded refusal RIGHT HERE, which
+  // cardBlockedReason knew nothing about — so through the whole of Animal Form every card button
+  // sat there looking live, and pressing one just beeped at you. It lives in cardBlockedReason now,
+  // which is the one thing both the view and this function ask.
+  const blocked = cardBlockedReason(next, card);
+  if (blocked) {
+    next.message = blocked;
     next.lastAction = 'blocked';
     return next;
   }
@@ -2319,24 +3730,118 @@ function useCard(state, cardIndex, x, y) {
   }
   if (!isAbilityCard) p.usedCard = true; // badge ledger: he drew a WEAPON (Animal Form/Reload/Swap don't count)
 
+  // FIREBALL: work out WHERE the burst will centre before anything resolves.
+  //
+  // A spell card is aimed at its ray's FAR END — the bolt always flies its full reach, and the
+  // aimed tile only picks a direction (see the spell branch below). So the aimed (x,y) is usually
+  // empty ground well past the foe, and bursting there would miss the thing the player meant to
+  // hit. The burst centres on the FIRST foe along the ray instead. Captured NOW, because once the
+  // bolt has flown that foe is ash and its tile is unknowable.
+  let fireballCentre = null;
+  if (card.kind === 'fireball') {
+    const bdx = Math.sign(x - p.x);
+    const bdy = Math.sign(y - p.y);
+    const bReach = cardReach(card.kind, p.cardReach || 0);
+    for (let i = 1; i <= bReach; i += 1) {
+      const cx = p.x + bdx * i;
+      const cy = p.y + bdy * i;
+      if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
+      if (terrainAt(next, cx, cy) === 'wall') break; // a wall stops the bolt cold
+      if (next.enemies.some((e) => e.x === cx && e.y === cy)) { fireballCentre = { x: cx, y: cy }; break; }
+    }
+  }
+
   // Promotion: a FREE action (no turn spent) that turns the king into an invincible
   // warhorse for a few turns — he leaps like a knight, takes no damage, and can play no
   // cards until it wears off. Its long cooldown is what balances the invulnerability.
   if (card.kind === 'promotion') {
     p.promotion = PROMOTION_TURNS;
     card.remaining = card.cooldown;
-    next.message = 'The Ranger takes Animal Form — an invincible amazon-beast storms the board!';
+    const rallied = rallyHorses(next); // the wild horses recognise kin and join the herd
+    next.message = rallied
+      ? `The Ranger takes Animal Form — an invincible UNICORN storms the board, and ${rallied} wild horse${rallied === 1 ? '' : 's'} rally to it!`
+      : 'The Ranger takes Animal Form — an invincible UNICORN storms the board!';
     next.enemyTurn = false;
     next.lastAction = 'card-free';
     updateDiscovery(next);
     return next;
   }
   // Reload: spend the turn to recharge every OTHER card at once.
+  // BLINK: flicker to a random safe tile in sight. A FREE action (no turn spent) on a long
+  // cooldown — it used to fire reflexively every time a foe landed a hit, which cost the player no
+  // decision at all. If there is no refuge, the card is not spent.
+  if (card.kind === 'blink') {
+    if (!blinkToSafety(next)) {
+      next.message = 'Nowhere safe to blink to.';
+      next.lastAction = 'blocked';
+      return next;
+    }
+    card.remaining = card.cooldown;
+    card.justFired = true;
+    next.enemyTurn = false;
+    next.lastAction = 'move-free';
+    updateDiscovery(next);
+    return next;
+  }
+  // SILENCE: every foe he can SEE drops into a dead sleep. A free action on a long cooldown — it
+  // buys a window to walk through a room or out of one, and it shuts the instant he takes a swing
+  // (see passTurn). This replaced Silent, a passive that just switched the game off permanently.
+  // MASS CONFUSION (Hexer capstone): every foe in sight loses the thread. Unlike Silence — which
+  // holds the room STILL and breaks the moment he strikes — this leaves the room moving and
+  // dangerous, just no longer aimed at him. It costs a turn, so the fog falls and the whole board
+  // immediately blunders about under it; and any piece he then hits sobers up at once.
+  if (card.kind === 'confuse') {
+    const caught = getVisibleEnemies(next).filter((e) => confuse(e));
+    card.remaining = card.cooldown;
+    card.justFired = true;
+    next.message = caught.length
+      ? `The hex takes hold — ${caught.length} foe${caught.length === 1 ? '' : 's'} lose all sense of friend and foe!`
+      : 'The hex goes out into an empty room.';
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+  if (card.kind === 'silence') {
+    p.silence = SILENCE_TURNS;
+    applySilence(next);
+    card.remaining = card.cooldown;
+    card.justFired = true;
+    next.message = 'A hush falls — every foe in sight drops where it stands.';
+    next.enemyTurn = false;
+    next.lastAction = 'move-free';
+    updateDiscovery(next);
+    return next;
+  }
   if (card.kind === 'reload') {
     for (const c of p.cards) if (c !== card) c.remaining = 0;
     card.remaining = card.cooldown;
     card.justFired = true;
     next.message = 'You reload — every other card is ready.';
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+  // BANISH: the target is simply GONE — no blood, no corpse, no boon, no kill credit. It was never
+  // slain, so it feeds nothing that keys off killing (Charge, Vampiric Edge, the level-up boon).
+  // What it leaves is smoke.
+  if (card.kind === 'banish') {
+    const unit = next.enemies.find((e) => e.x === x && e.y === y);
+    if (!unit || !isBanishable(unit)) {
+      next.message = 'That cannot be banished.';
+      next.lastAction = 'blocked';
+      return next;
+    }
+    next.enemies = next.enemies.filter((e) => e.id !== unit.id);
+    next.banished = { x, y }; // the view puffs smoke where it stood (see main.js)
+    p.attacked = true; // it IS aggression: it shatters Silence and raises no Parry guard
+    card.remaining = card.cooldown;
+    card.justFired = true;
+    const what = unit.turret ? `${unit.kind} turret` : (unit.mini || unit.rush) ? bossTitle(unit) : unit.kind;
+    next.message = `The king BANISHES the ${what} — nothing remains but smoke.`;
     passTurn(next);
     next.enemyTurn = true;
     next.lastAction = 'combat';
@@ -2359,10 +3864,13 @@ function useCard(state, cardIndex, x, y) {
     unit.y = ky;
     card.remaining = card.cooldown;
     card.justFired = true;
-    next.message = `The king swaps places with a ${unit.kind}.`;
-    // The violent arrival shoves every OTHER foe (and loose boulder) now adjacent to the
-    // king back a tile (colliding with whatever's behind it); the just-swapped unit is spared.
-    if (!next.gameOver && !next.won) shoveAdjacentAway(next, p.x, p.y, unit.id);
+    next.message = `The king swaps places with a ${unit.kind} — the air tears where he lands!`;
+    // A SHOCKWAVE at the DESTINATION only: his violent arrival shoves every other foe (and loose
+    // boulder) now beside him. The tile he vanished FROM is left calm now — the swap no longer tears
+    // at both ends, only where he comes down. The just-swapped unit is spared.
+    if (!next.gameOver && !next.won) {
+      shoveAdjacentAway(next, p.x, p.y, unit.id);
+    }
     collectKeyIfHere(next);
     passTurn(next);
     next.enemyTurn = true;
@@ -2403,14 +3911,64 @@ function useCard(state, cardIndex, x, y) {
   if (category === 'melee') {
     let survived = false;
     const isLeap = Boolean(move.viaJump) && isJumperKind(card.kind);
+    // A CHARGE that reaches two tiles TRAMPLES whatever stood in the first one. The targeting only
+    // offers the far tile when the near piece would actually die to the blow (a guardian or a turret
+    // halts the charge on its own square instead), so this is a foe he is genuinely running down —
+    // and it must be resolved BEFORE he arrives, or he would land on top of it.
+    if (card.kind === 'doublestep' && chebyshev(x, y, fromX, fromY) === 2) {
+      const tx = fromX + Math.sign(x - fromX);
+      const ty = fromY + Math.sign(y - fromY);
+      const trampled = next.enemies.find((e) => e.x === tx && e.y === ty && isCapturable(next, e));
+      if (trampled) {
+        resolveKill(next, trampled);
+        scored = true;
+        if (isKillablePiece(trampled)) realKill = true;
+      }
+    }
     // A leap card that lands on a boulder crushes it to rubble (the king ends up there);
     // landing on an ice slab shatters it.
     if (isLeap) { smashBoulder(next, x, y); if (smashIce(next, x, y)) p.brokeIce = true; } // badge ledger
-    if (mainTarget && (mainTarget.boss || mainTarget.turret)) {
-      // A boss or turret soaks HP. The KILLING blow lets the king stride onto its now-empty tile
+    if (move.chop) {
+      // He sprang at TIMBER or IRON. There is no landing on it: the blade goes in and he BOUNCES
+      // OFF — coming down on the nearest tile beside the trunk, the way a knight rebounds off a boss
+      // it cannot displace, not teleporting straight back to where he started. `lungeAt` drives the
+      // view: it pounces him onto the trunk first, then eases him to where he actually settles.
+      const what = terrainAt(next, x, y) === 'gate' ? 'gate' : 'tree';
+      // A CHARGE lands twice — the Cavalier's whole idea is weight behind the blow. Everything else
+      // bites once; this is what makes the card worth a slot.
+      const blows = card.kind === 'doublestep' ? 2 : 1;
+      const res = damageTree(next, x, y, blows);
+      next.lungeAt = { x, y };
+      // Felled it? Stride onto the cleared tile. Still standing? Bounce off it, landing beside it.
+      if (res === 'felled') { p.x = x; p.y = y; collectKeyIfHere(next); }
+      else bounceOffTarget(next, x, y, fromX, fromY);
+      scored = res === 'felled';
+      next.message = res === 'felled'
+        ? (what === 'gate' ? 'The king leaps — the gate buckles and crashes down!' : 'The king leaps — the tree comes down in a crash of sticks and leaves!')
+        : `The king hacks at the ${what} (${treeHpAt(next, x, y)}/${TREE_HP}).`;
+      updateDiscovery(next); // a felled tree opens the view beyond it
+    } else if (mainTarget && (mainTarget.boss || mainTarget.turret || mainTarget.parry)) {
+      // A boss, turret, or WARDED foe (a Guardian's retinue) soaks the blow. The KILLING blow lets the king stride onto its now-empty tile
       // (grabbing any key it guarded); a survived hit lands him beside it (a leap first tries to
       // shove it back and take its square) — never leaving him frozen on his start tile.
-      const res = mainTarget.boss ? damageBoss(next, mainTarget, 1) : damageTurret(next, mainTarget, 1);
+      //
+      // A CHARGE at something that can soak a blow lands TWICE. The whole idea of the Cavalier is
+      // the weight behind it, and an adjacent guardian is exactly the moment the card should be
+      // worth its slot.
+      //
+      // Two separate calls rather than damage(2), so every on-hit reaction fires per blow — a
+      // Blinkborn flickers off after the first and the second finds nothing, a Shifting boss takes a
+      // lesser form and THEN eats the second. That is what swinging twice means.
+      const hit = () => {
+        if (!mainTarget.boss && !mainTarget.turret && mainTarget.parry) return resolveKill(next, mainTarget) ? 'slain' : 'hurt'; // ward eats the first, next hoof fells it
+        return mainTarget.boss ? damageBoss(next, mainTarget, 1) : damageTurret(next, mainTarget, 1);
+      };
+      let res = hit();
+      const stillThere = () => next.enemies.some((e) => e.id === mainTarget.id && e.x === x && e.y === y);
+      if (card.kind === 'doublestep' && res !== 'slain' && !next.gameOver && !next.won && stillThere()) {
+        res = hit(); // the second hoof
+      }
+
       survived = res !== 'slain';
       scored = !survived;
       realKill = scored && isKillablePiece(mainTarget); // a felled turret is not an on-kill
@@ -2444,11 +4002,14 @@ function useCard(state, cardIndex, x, y) {
       }
       next.message = scored ? 'En passant — the king strikes as he slips by!' : 'The king slips past.';
     }
-    // Trample (leapShock): once the king actually LANDS a knight leap, its shockwave
-    // HURLS every adjacent foe back a tile (slamming it into whatever's behind it), rather
-    // than striking it in place. Fixed structures don't budge.
+    // THUNDERING CHARGE (leapShock): when the king LANDS a knight leap, the shock of it goes through
+    // the whole floor — every foe, turret and boulder he can SEE is hurled directly away from where
+    // he came down. Not the ring around him: the room.
+    //
+    // Deliberately gated on a landed leap (`p.x === x`), so it is a thing he SETS UP rather than a
+    // passive aura — a Cavalier lines the room up and then drops into the middle of it.
     if (isLeap && p.leapShock && p.x === x && p.y === y && !next.gameOver && !next.won) {
-      shoveAdjacentAway(next, x, y, null);
+      thunderingCharge(next, x, y);
     }
     // On-kill perks fan out once (Cleave/Pierce/Leech/Flourish); Pierce strikes along
     // the king's line of advance.
@@ -2458,10 +4019,11 @@ function useCard(state, cardIndex, x, y) {
   } else if (card.kind === 'horse') {
     // The Conjuration horse: a spectral steed charges the L-shaped path toward the aimed
     // knight tile — WITHOUT moving the king — scorching every foe along the L (leaving ash).
-    for (const t of knightLPath(fromX, fromY, x - fromX, y - fromY)) {
+    for (const t of knightLPath(fromX, fromY, x - fromX, y - fromY, next)) {
       if (t.x < 0 || t.x >= WORLD_SIZE || t.y < 0 || t.y >= WORLD_SIZE) continue;
       impactTiles.push({ x: t.x, y: t.y });
       scorchGround(next, t.x, t.y); // the steed's spellfire burns the ground it charges over
+      scorchTileTerrain(next, t.x, t.y); // ...and reacts with terrain like any spellfire: LIGHT timber, thaw ice, wither grass, blast a boulder
       dispelAllyAt(next, t.x, t.y);
       const felled = attackTile(next, t.x, t.y, { ash: true });
       if (felled) {
@@ -2469,8 +4031,7 @@ function useCard(state, cardIndex, x, y) {
         if (isKillablePiece(felled)) kills.push(felled);
       }
     }
-    realKill = kills.length > 0;
-    applySpellBlast(next, impactTiles, Math.sign(x - fromX), Math.sign(y - fromY)); // Blast hurls survivors along the charge
+    realKill = kills.length > 0; // Blast hurls survivors along the charge
     next.message = scored ? 'A spectral steed tramples through the ranks!' : 'The spectral steed charges past.';
   } else if (category === 'spell' && !move.viaJump) {
     // A sorcerer's bolt ALWAYS travels its FULL range in the aimed direction — every
@@ -2488,6 +4049,12 @@ function useCard(state, cardIndex, x, y) {
       const bt = terrainAt(next, cx, cy);
       if (bt === 'ice') { if (meltIce(next, cx, cy)) p.brokeIce = true; impactTiles.push({ x: cx, y: cy }); scored = true; break; } // fire thaws the slab to water and is spent
       if (bt === 'devilgrass') clearDevilgrass(next, cx, cy); // fire scorches the thicket away, then rages on
+      if (bt === 'tree') { // fire doesn't blast a tree apart — it LIGHTS it, and the trunk stops the bolt
+        igniteTree(next, cx, cy);
+        impactTiles.push({ x: cx, y: cy });
+        scored = true;
+        break;
+      }
       if ((bt === 'wall' || bt === 'boulder') && !p.seeThroughWalls) {
         if (bt === 'boulder') { smashBoulder(next, cx, cy); impactTiles.push({ x: cx, y: cy }); scored = true; } // the bolt blasts it to rubble
         break;
@@ -2501,8 +4068,7 @@ function useCard(state, cardIndex, x, y) {
         if (isKillablePiece(felled)) kills.push(felled);
       }
     }
-    realKill = kills.length > 0;
-    applySpellBlast(next, impactTiles, dx, dy); // Blast: hurl any survivor along the bolt's path (farthest-first)
+    realKill = kills.length > 0; // Blast: hurl any survivor along the bolt's path (farthest-first)
     if (!next.gameOver && !next.won && p.spellDazzle) {
       for (const s of kills) {
         for (const [dx2, dy2] of [...ORTHO, ...DIAG]) {
@@ -2534,7 +4100,16 @@ function useCard(state, cardIndex, x, y) {
 
   if (category === 'spell' && p.spellSurprise && !next.gameOver && !next.won) {
     for (const e of next.enemies) {
-      if (!e.boss && unitInSight(next, e.x, e.y)) e.awake = false;
+      // A gun does not gasp, and neither does a rune cut into the floor — there are no wits there to
+      // scatter. A floor guardian is too mighty to be caught out by a light show.
+      if (e.boss || e.turret || e.summonCircle) continue;
+      if (!unitInSight(next, e.x, e.y)) continue;
+      // startle(), NOT `awake = false`. beginEnemyPhase only lets a piece gasp if it has genuinely
+      // lost him (`!remembersKing`), and clearing `awake` alone leaves its memory of him untouched —
+      // so every foe actually CHASING him re-engaged at once without missing a beat. Cataclysm did
+      // nothing whatever to the only foes it mattered against; it worked solely on pieces that had
+      // already lost him, which had nothing to gasp about.
+      startle(e);
     }
   }
 
@@ -2570,18 +4145,55 @@ function useCard(state, cardIndex, x, y) {
     shoveAdjacentAway(next, originX, originY, null);
   }
 
-  // Shrapnel (Marksman T3): a ranged/spell shot SHATTERS on impact — striking every foe adjacent
-  // to the tile it hit, on top of the target itself.
+  // FIREBALL (Conjuration T3): the bolt BURSTS where it lands — spellfire washes over every tile
+  // around the target. Indiscriminate on purpose: it burns the king and his own allies if they are
+  // standing in the ring. That is the price of its reach, and the reason it isn't just a better
+  // rook card.
+  if (card.kind === 'fireball' && fireballCentre && !next.gameOver && !next.won) {
+    const burst = [];
+    const bcx = fireballCentre.x;
+    const bcy = fireballCentre.y;
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      if (next.gameOver || next.won) break;
+      const fx = bcx + dx;
+      const fy = bcy + dy;
+      if (fx < 0 || fx >= WORLD_SIZE || fy < 0 || fy >= WORLD_SIZE) continue;
+      burst.push({ x: fx, y: fy });
+      scorchGround(next, fx, fy); // spellfire blackens the ground and boils off water
+      if (next.player.x === fx && next.player.y === fy) {
+        // His OWN blast. No parry, no ward: this is his fire, and he chose to stand in it.
+        next.player.hp -= 1;
+        next.player.wasHit = true;
+        next.player.hitThisFloor = true;
+        addSpatter(next, fx, fy);
+        checkDeath(next);
+        if (next.gameOver) break;
+      }
+      dispelAllyAt(next, fx, fy); // his own conjurations burn just as readily
+      const felled = attackTile(next, fx, fy, { ash: true });
+      if (felled) { scored = true; if (isKillablePiece(felled)) realKill = true; }
+    }
+    if (next.lastShot) next.lastShot.tiles = [...(next.lastShot.tiles || []), { x: bcx, y: bcy }, ...burst];
+  }
+
+  // EXPLOSIVE ROUND (Marksman T3): a ranged/spell shot DETONATES on impact — every foe around the
+  // tile it hit is HURLED a tile OUTWARD (slamming into whatever is behind it — see Knockback),
+  // rather than simply struck. Reworked from Shrapnel, which just damaged the ring and so did
+  // almost exactly what the Conjurer's Fireball does; a shove is a different tool.
   if (p.shrapnel && category !== 'melee' && !next.gameOver && !next.won) {
     const frags = [];
     for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-      if (next.gameOver || next.won) break;
       const fx = x + dx;
       const fy = y + dy;
       if (fx < 0 || fx >= WORLD_SIZE || fy < 0 || fy >= WORLD_SIZE) continue;
       frags.push({ x: fx, y: fy });
-      const felled = attackTile(next, fx, fy);
-      if (felled) { scored = true; if (isKillablePiece(felled)) realKill = true; }
+    }
+    // Snapshot WHO is caught before shoving anyone: hurling the first foe must not change which
+    // others the blast catches (a shoved foe could otherwise be blown twice, or dodge the ring).
+    const caught = next.enemies.filter((e) => !e.summonCircle && chebyshev(e.x, e.y, x, y) === 1);
+    for (const e of caught) {
+      if (next.gameOver || next.won) break;
+      knockbackEnemy(next, e, Math.sign(e.x - x), Math.sign(e.y - y));
     }
     if (next.lastShot) next.lastShot.tiles = [...(next.lastShot.tiles || []), { x, y }, ...frags]; // a burst at impact
   }
@@ -2666,7 +4278,56 @@ function movePlayerTo(state, x, y) {
     return next;
   }
   if (move.push) return resolveBoulderPush(next, x, y); // shove the boulder standing there
+  if (move.chop) return resolveTreeChop(next, x, y); // hack at the tree standing there
+  if (move.pitDive) return resolvePitDive(next, x, y); // stranded: drop into the pit and scramble out
   return applyArrival(next, x, y, move.embedded);
+}
+
+// The king, otherwise STRANDED, drops into an adjacent pit and hauls himself out the nearest solid
+// side — a wound for the fall, then up onto the closest footing. His only escape from a would-be
+// stalemate when a pit is all that borders him. Offered by getPlayerMoves only with no other move.
+function resolvePitDive(next, x, y) {
+  const p = next.player;
+  p.pitDived = true; // badge ledger: he escaped a corner through the void
+  cue(next, 'fall');
+  hurtBy(next, 'pit');
+  p.hp -= 1;
+  p.wasHit = true; p.hitThisFloor = true;
+  checkDeath(next);
+  if (!next.gameOver) {
+    const out = nearestFooting(next, x, y, p.x, p.y); // never back into the corner he just fled
+    if (out) { p.x = out.x; p.y = out.y; }
+    collectKeyIfHere(next);
+    next.message = 'Cornered, the king drops into the pit and hauls himself out the far side!';
+    next.lastAction = 'hit';
+    if (tryDescend(next)) { updateDiscovery(next); return next; } // he might surface onto the open stair
+  } else {
+    next.message = 'The king drops into the pit — and does not climb out.';
+    next.lastAction = 'hit';
+  }
+  next.enemyTurn = true;
+  passTurn(next);
+  updateDiscovery(next);
+  return next;
+}
+
+// Resolve the king hacking at a tree: one wound a swing, and he holds his tile (a tree is solid
+// until it falls). It IS an attack — it breaks Silence and raises no Parry guard — and the felling
+// blow leaves sticks and leaves, not a corpse: a tree is scenery, so it grants no boon and counts
+// toward nothing.
+function resolveTreeChop(next, x, y) {
+  const p = next.player;
+  p.attacked = true;
+  const what = terrainAt(next, x, y) === 'gate' ? 'gate' : 'tree';
+  const res = damageTree(next, x, y, 1);
+  next.message = res === 'felled'
+    ? (what === 'gate' ? 'The gate buckles and crashes down!' : 'The king fells the tree — it comes down in a crash of sticks and leaves!')
+    : `The king hacks at the ${what} (${treeHpAt(next, x, y)}/${TREE_HP}).`;
+  next.lastAction = 'combat';
+  passTurn(next);
+  next.enemyTurn = true;
+  updateDiscovery(next); // a felled tree opens the view beyond it
+  return next;
 }
 
 // Resolve the king heaving a boulder. A successful shove spends the turn like a move; a FUTILE
@@ -2676,6 +4337,7 @@ function resolveBoulderPush(next, x, y) {
   const dx = Math.sign(x - p.x);
   const dy = Math.sign(y - p.y);
   p.attacked = false;
+  cue(next, 'rumble'); // stone grinding on stone — whether it MOVES or he merely strains against it
   if (!canPushBoulder(next, x, y, dx, dy)) {
     // Heaving against an immovable boulder (wall/unit/edge behind it) still SPENDS the turn —
     // you strained and the enemy phase runs. (Walking into a wall is the no-turn "bump"; a
@@ -2703,8 +4365,15 @@ function resolveBoulderPush(next, x, y) {
 
 // Keyboard movement: a single ground step in a direction.
 function movePlayer(state, dx, dy) {
-  // Stepping into a boulder shoves it (if its far side is clear) — route to the pusher.
-  if (terrainAt(state, state.player.x + dx, state.player.y + dy) === 'boulder') {
+  // Stepping into a boulder shoves it; stepping into a TREE chops it. Both are actions against a
+  // tile the king can never STAND on, so neither is a "move" — and without routing them here they
+  // fall through to the slide below, find no stop, and come back "the king cannot move that way".
+  // (This is exactly what happened to trees: movePlayerTo offered the chop, but nothing walking in
+  // with a direction ever reached it.)
+  const ahead = terrainAt(state, state.player.x + dx, state.player.y + dy);
+  // A boulder is shoved, timber/iron is chopped, and a PIT is dived into (movePlayerTo enforces that
+  // the dive is only legal when he is stranded — otherwise it just reports he cannot go that way).
+  if (ahead === 'boulder' || isChoppable(ahead) || ahead === 'pit') {
     return movePlayerTo(state, state.player.x + dx, state.player.y + dy);
   }
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || allyAt(state, x, y) || null;
@@ -2722,11 +4391,32 @@ function movePlayer(state, dx, dy) {
   return movePlayerTo(state, dest.x, dest.y);
 }
 
+// DISCIPLINE (the Warrior's innate trait): hold your ground for a turn. The king strikes nothing and
+// stays put, so the enemy phase runs and foes close on him — a way to bait a charge, wait out a
+// cooldown, or (ending a turn without a blow) bank a Sentinel's Parry guard. Only ever reached when
+// the king actually has the trait; the input layer gates it.
+function skipTurn(state) {
+  const next = structuredClone(state);
+  const p = next.player;
+  p.attacked = false; // he swung at nothing — passTurn raises a Parry guard on this
+  // WAITING (Sentinel): holding his ground turns him invincible until his next turn — set BEFORE
+  // passTurn so even a lava/torch sear on the wait tile is shrugged off. settleTurn clears it once the
+  // enemy phase has run.
+  if (p.waiting) p.invuln = true;
+  next.message = p.waiting ? 'The king holds his ground — untouchable.' : 'The king holds his ground.';
+  next.lastAction = 'move'; // a spent, non-combat turn (no bump, no beep)
+  passTurn(next);
+  next.enemyTurn = true;
+  updateDiscovery(next);
+  return next;
+}
+
 /* --------------------------------- allies --------------------------------- */
 
 // Place an ally on (x,y) or, failing that, an adjacent free tile — never the king, an
 // enemy, another ally, or the floor key. Returns the placed ally, or null if hemmed in.
 function spawnAllyNear(state, kind, x, y, props) {
+  cue(state, 'thrum'); // something is being pulled into the world
   if (!Array.isArray(state.allies)) state.allies = [];
   const spots = [{ x, y }];
   for (const [dx, dy] of [...ORTHO, ...DIAG]) spots.push({ x: x + dx, y: y + dy });
@@ -2748,7 +4438,7 @@ function spawnAllyNear(state, kind, x, y, props) {
 // carrying a mini-boss's pool of wounds, which is what makes the upgrade worth its tier.
 function allyProps(kind, extra) {
   const props = { ...(extra || {}) };
-  if (kind === 'general') { props.hp = GENERAL_HP; props.maxHp = GENERAL_HP; }
+  if (kind === 'vampiress') { props.hp = VAMPIRESS_HP; props.maxHp = VAMPIRESS_HP; }
   return props;
 }
 
@@ -2769,7 +4459,7 @@ function damageAlly(state, ally, amount) {
 // upgraded. No-op if one already lives.
 function spawnFamiliar(state) {
   if (!state.player.familiar || hasLivingFamiliar(state)) return null;
-  const kind = state.player.generalForm ? 'general' : 'mann';
+  const kind = state.player.generalForm ? 'vampiress' : 'king'; // the risen familiar is a (non-royal) king
   return spawnAllyNear(state, kind, state.player.x, state.player.y, allyProps(kind, { familiar: true }));
 }
 
@@ -2782,13 +4472,78 @@ function maybeRespawnFamiliar(state) {
 
 // The move (from `moves`) that steps CLOSEST to (tx,ty), skipping `blocked` tiles — or
 // null if none beats standing still.
-function allyStepToward(moves, ax, ay, tx, ty, blocked) {
+// A true walking distance to (tx,ty) for every tile an ally could stand on — flooded OUT from the
+// target, so following it downhill is a real path round corners and through doorways.
+//
+// Passability mirrors what moveAlly's own generator allows (`lavaOk: false` — the king's summons are
+// not fire-proof), so the field can never route it somewhere its legs refuse to go. Bodies are NOT
+// obstacles here: they shuffle every turn, and treating them as walls made allies dither in a crowd.
+function allyPathField(state, tx, ty) {
+  const W = WORLD_SIZE;
+  const dist = new Int16Array(W * W).fill(-1);
+  const id = (x, y) => y * W + x;
+  const open = (x, y) => x >= 0 && x < W && y >= 0 && y < W && standableFor(terrainAt(state, x, y), { lavaOk: false });
+  if (!open(tx, ty)) {
+    // The target itself is somewhere no ally can stand (the king wading in lava, phased into a
+    // wall). Flood from the ground AROUND it instead, so it still walks to him rather than freezing.
+    const q0 = [];
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const x = tx + dx;
+      const y = ty + dy;
+      if (open(x, y)) { dist[id(x, y)] = 1; q0.push([x, y]); }
+    }
+    return floodFrom(state, dist, id, open, q0);
+  }
+  dist[id(tx, ty)] = 0;
+  return floodFrom(state, dist, id, open, [[tx, ty]]);
+}
+
+function floodFrom(state, dist, id, open, queue) {
+  let h = 0;
+  while (h < queue.length) {
+    const [x, y] = queue[h];
+    h += 1;
+    const d = dist[id(x, y)];
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!open(nx, ny) || dist[id(nx, ny)] !== -1) continue;
+      dist[id(nx, ny)] = d + 1;
+      queue.push([nx, ny]);
+    }
+  }
+  return { dist, id };
+}
+
+// The move that actually gets an ally CLOSER to (tx,ty) along the floor.
+//
+// This used to accept only a move that shortened the straight-line distance — so the instant
+// anything stood between an ally and its target, no move qualified and it simply stopped. A wall, a
+// boulder, a lake: the familiar pinned itself against the thing and stayed there for the rest of the
+// floor while the king walked off. (Measured: 30 turns against a wall with an open gap four tiles
+// away, one tile moved, and it mirrored the king's every step from where it stood.)
+//
+// It now reads a flood from the target, so "closer" means closer THE WAY IT WOULD HAVE TO WALK.
+function allyStepToward(state, moves, ax, ay, tx, ty, blocked) {
+  const { dist, id } = allyPathField(state, tx, ty);
+  const here = dist[id(ax, ay)];
   let best = null;
-  let bestD = distanceSq(ax, ay, tx, ty);
+  let bestD = here >= 0 ? here : Infinity; // unreachable from here: any step that IS on the path beats standing
   for (const m of moves) {
     if (blocked(m.x, m.y)) continue;
-    const d = distanceSq(m.x, m.y, tx, ty);
+    const d = dist[id(m.x, m.y)];
+    if (d < 0) continue; // that tile cannot reach the target at all
     if (d < bestD) { bestD = d; best = m; }
+  }
+  // Nothing on the floor leads there (a sealed pocket, or it is already as close as the floor
+  // allows). Fall back to the old straight-line hunch rather than freeze — at worst it shuffles.
+  if (!best && here < 0) {
+    let bd = distanceSq(ax, ay, tx, ty);
+    for (const m of moves) {
+      if (blocked(m.x, m.y)) continue;
+      const d = distanceSq(m.x, m.y, tx, ty);
+      if (d < bd) { bd = d; best = m; }
+    }
   }
   return best;
 }
@@ -2833,21 +4588,38 @@ function moveAlly(state, ally) {
         addCorpse(state, foe.x, foe.y, foe.kind);
       }
       bloody(ally, BLOOD_STRIKE); // the ally is spattered by its blow
+      // The VAMPIRESS feeds on what she fells: each kill knits another wound shut, so a queen left
+      // alive grows into the most dangerous thing on the floor. Capped so she cannot run away with it.
+      // She feeds on BLOOD. A turret is dead metal and a summoning circle is a rune scratched in the
+      // floor — there is nothing in either to drink, so breaking one never grows her. (isKillablePiece
+      // draws exactly this line already, and is what keeps the king's own Vampiric Edge off turrets.)
+      // She MENDS on a kill, up to her own maximum — she does not grow past it. Feeding used to raise
+      // her cap as well, so a queen left alive quietly became the stoutest thing on the floor; the
+      // point of her is that she keeps herself alive, not that she outgrows everything.
+      if (slain && isKillablePiece(foe) && ally.kind === 'vampiress' && ally.maxHp && ally.hp < ally.maxHp) {
+        ally.hp = Math.min(ally.maxHp, (ally.hp || 0) + 1);
+        state.message = `Your vampiress drinks deep (${ally.hp}/${ally.maxHp}).`;
+      }
       if (slain) { ally.x = cap.x; ally.y = cap.y; } // it only takes the tile if the foe actually FELL
     }
     return;
   }
+  // WHAT IT IS ALLOWED TO FIGHT: only what the KING can see. getVisibleEnemies is his sight, not the
+  // ally's — which is deliberate. An ally that went hunting things off in the dark wandered away
+  // from him after foes the player did not know existed, and the first he heard of it was his
+  // familiar dying somewhere he could not see. It fights beside him or it comes back to him.
   const foes = getVisibleEnemies(state);
   const blocked = (x, y) => isTarget(x, y);
   if (foes.length) {
     let target = foes[0];
     for (const f of foes) if (distanceSq(f.x, f.y, ally.x, ally.y) < distanceSq(target.x, target.y, ally.x, ally.y)) target = f;
-    const step = allyStepToward(moves, ally.x, ally.y, target.x, target.y, blocked);
-    if (step) { ally.x = step.x; ally.y = step.y; }
-    return;
+    const step = allyStepToward(state, moves, ally.x, ally.y, target.x, target.y, blocked);
+    if (step) { ally.x = step.x; ally.y = step.y; return; }
+    // It cannot get at that foe (walled off, boxed in). Rather than stand there staring at it,
+    // fall through and go to the king — which is what it should be doing anyway.
   }
   if (chebyshev(ally.x, ally.y, king.x, king.y) > 1) {
-    const step = allyStepToward(moves, ally.x, ally.y, king.x, king.y, blocked);
+    const step = allyStepToward(state, moves, ally.x, ally.y, king.x, king.y, blocked);
     if (step) { ally.x = step.x; ally.y = step.y; }
   }
 }
@@ -2874,11 +4646,32 @@ function dispelAllyAt(state, x, y) {
 
 /* ------------------------------ enemy phase ------------------------------- */
 
+// SILENCE: lull every foe the king can SEE into a dead sleep. Turrets and circles are masonry, not
+// creatures, and have their own dozing rules; a GUARDIAN is not spared, because the window ends the
+// moment he strikes anything — so it can buy him out of a boss room, never through one.
+function applySilence(state) {
+  const p = state.player;
+  if (!(p.silence > 0)) return;
+  for (const enemy of state.enemies) {
+    if (enemy.turret || enemy.summonCircle) continue;
+    if (enemy.provoked) continue; // a foe the king has STRUCK stays awake — the hush only holds what he leaves be
+    if (!unitInSight(state, enemy.x, enemy.y)) continue;
+    enemy.asleep = true;
+    enemy.hushed = true; // THIS spell put it down — so only this spell gets to pick it back up
+    enemy.awake = false;
+    enemy.surprised = false;
+    enemy.lastSeen = null;
+    enemy.lastSeenTtl = 0;
+  }
+}
+
 // An unaware enemy shuffles one tile at random. Normally it steers clear of the king's
 // sight (so it only pokes into view when the KING moves, and is reliably surprised). When
-// `hidden` (the king is Silent/stealthed and this enemy can't perceive him at all), it
-// roams freely and may BLUNDER onto his tile — bumping (striking) him and waking at last.
-function wanderEnemy(state, enemy, hidden) {
+// `hidden` (this foe failed its Ghost roll and can't perceive him at all), it roams freely and may
+// BLUNDER onto his tile — bumping (striking) him and waking at last.
+// `hidden`: the king cannot be sensed (Camouflage), so the foe blunders about freely and may walk
+// into him by accident. `roamFreely`: this piece has no interest in hiding from him at all.
+function wanderEnemy(state, enemy, hidden, roamFreely) {
   const king = state.player;
   const unitAt = (x, y) => {
     if (x === king.x && y === king.y) return hidden ? null : 'player'; // a hidden king isn't sensed
@@ -2897,7 +4690,12 @@ function wanderEnemy(state, enemy, hidden) {
     const dest = stops[stops.length - 1];
     // An unaware foe steers clear of tiles from which the KING would spot it — but by its
     // OWN (wall-blocked) sight line, so Sixth Sense doesn't make it cower behind walls.
-    if (hidden || !enemyAwareOfKing(state, dest.x, dest.y)) candidates.push(dest);
+    //
+    // `roamFreely` opts out of that entirely, and a NEUTRAL BEAST must: it is not sneaking, it
+    // simply does not care about him. Made to cower, one standing inside his sight window had
+    // nowhere at all it was willing to step and froze solid — every wild horse on screen turned
+    // into a statue the moment he looked at it.
+    if (hidden || roamFreely || !enemyAwareOfKing(state, dest.x, dest.y)) candidates.push(dest);
   }
   if (!candidates.length) return null;
   const pick = candidates[randomInt(candidates.length)];
@@ -2905,8 +4703,7 @@ function wanderEnemy(state, enemy, hidden) {
     // It walks straight into the hidden king — an accidental blow that gives him away.
     strikeKing(state, enemy);
     enemy.awake = true;
-    enemy.lastSeen = { x: king.x, y: king.y };
-    enemy.lastSeenTtl = PURSUIT_TTL;
+    rememberKing(state, enemy);
     return true; // it BUMPED the king
   }
   enemy.x = pick.x;
@@ -2931,6 +4728,36 @@ function movesTowardTile(state, enemy) {
 
 // An out-of-sight enemy hunts toward the king's last-seen tile. Returns true if it
 // pursued; false if it gave up (then it wanders).
+// How many turns THIS pursuit lasts: rolled fresh each time it lays eyes on him, so the trail never
+// goes cold on a schedule the player can count.
+// How many turns THIS pursuit lasts: rolled fresh each time a foe lays eyes on him, so the trail
+// never goes cold on a schedule the player can count.
+//
+// NB: this deliberately does NOT scale with dread. Making foes hunt longer and longer was tried as
+// an anti-kiting measure and it is the wrong lever — it quietly rewrites how every foe on the floor
+// behaves in order to correct one habit of the BOT. Kiting is a real tool and the pursuit window is
+// the honest cost of using it; if a bot leans on it too hard, that is the bot's policy to fix.
+function pursuitTurns() {
+  return PURSUIT_TTL_MIN + randomInt(PURSUIT_TTL_MAX - PURSUIT_TTL_MIN + 1);
+}
+
+// It has him. ONE place that records everything a pursuit needs: where he was, how long the memory
+// holds, which way he was going, and a fresh right to guess once when the trail runs out. Eight call
+// sites used to set the first two of those by hand, which is eight chances to forget the rest.
+function rememberAt(enemy, x, y, heading, turns) {
+  enemy.lastSeen = { x, y };
+  enemy.lastSeenTtl = turns || pursuitTurns();
+  // A heading of null is honest, not a gap: a foe that snaps awake beside him (a fresh spawn, a
+  // blow out of nowhere) never watched him WALK anywhere, so it has nothing to cast along and will
+  // simply give up at the tile rather than guess a direction it never saw.
+  enemy.lastSeenDir = heading || null;
+  enemy.guessed = false;
+}
+
+function rememberKing(state, enemy) {
+  rememberAt(enemy, state.player.x, state.player.y, state.kingHeading, pursuitTurns());
+}
+
 function pursueLastSeen(state, enemy) {
   const target = enemy.lastSeen;
   if (!target) return false;
@@ -2939,6 +4766,22 @@ function pursueLastSeen(state, enemy) {
     enemy.lastSeenTtl = 0;
   };
   if (enemy.x === target.x && enemy.y === target.y) {
+    // It stands where it last had him — and he is not here. Rather than shrug and wander off the
+    // instant it arrives, it CASTS ON: carries the chase a few tiles further along the way he was
+    // heading, which is what a hunter does when its quarry rounds a corner. That is the difference
+    // between a foe that gives up at the corner and one that comes round it after you.
+    //
+    // One guess per pursuit (`guessed`), and only while the memory still holds — so it cannot chain
+    // guesses across the whole floor, and the recursion below can only ever go one level deep.
+    if (!enemy.guessed && enemy.lastSeenTtl > 0 && enemy.lastSeenDir
+        && (enemy.lastSeenDir.dx || enemy.lastSeenDir.dy)) {
+      enemy.guessed = true;
+      enemy.lastSeen = {
+        x: clamp(target.x + enemy.lastSeenDir.dx * PURSUIT_GUESS, 0, WORLD_SIZE - 1),
+        y: clamp(target.y + enemy.lastSeenDir.dy * PURSUIT_GUESS, 0, WORLD_SIZE - 1),
+      };
+      return pursueLastSeen(state, enemy); // hunt the guess on this same turn
+    }
     forget();
     return false;
   }
@@ -2989,53 +4832,190 @@ function tickLavaDamage(state) {
   if (doomedAllies.length) state.allies = state.allies.filter((a) => !doomedAllies.includes(a));
 }
 
+// A non-flying, non-burrowing piece that ENDS a turn standing on a PIT falls into the void — the
+// mirror of the lava tick, so a CONFUSED foe that blunders onto a pit dies just as one that blunders
+// onto lava burns (it used to perch on the hole, harmless). A shove already drops them elsewhere.
+function tickPitFalls(state) {
+  const falls = (u) => terrainAt(state, u.x, u.y) === 'pit' && !bossHas(u, 'flying') && !bossHas(u, 'burrower') && !u.terrainImmune;
+  const doomedFoes = state.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle && falls(e));
+  if (doomedFoes.length) { cue(state, 'fall'); state.enemies = state.enemies.filter((e) => !doomedFoes.includes(e)); }
+  const doomedAllies = (state.allies || []).filter((a) => falls(a));
+  if (doomedAllies.length) { cue(state, 'fall'); state.allies = state.allies.filter((a) => !doomedAllies.includes(a)); }
+}
+
+// GEYSERS (demon floors 6+) share ONE clock: every third turn they all blow at once. `geyserPhase`
+// ticks up each turn (passTurn); on a multiple of GEYSER_PERIOD every geyser erupts — scalding gas
+// that also blocks the look. The turn a geyser SHOWS its tall warning plume (phase % 3 === 2), ending
+// a turn on it means eating the blast, so the tell is a full turn ahead.
+const GEYSER_PERIOD = 3;
+function geyserErupting(state) {
+  const phase = state.geyserPhase || 0;
+  // phase 0 is FLOOR START, not an eruption: the clock has not ticked yet, so the vents are calm and
+  // must not block sight before the king has taken a step. Real eruptions are the later multiples.
+  return phase > 0 && (phase % GEYSER_PERIOD) === 0;
+}
+// One turn BEFORE an eruption the vent shows a tall warning plume — the tell that ending a turn on it
+// now means eating the blast. (phase % 3 === 2 leads into the phase % 3 === 0 eruption.)
+function geyserImminent(state) {
+  return ((state.geyserPhase || 0) % GEYSER_PERIOD) === GEYSER_PERIOD - 1;
+}
+// The blast: 1 damage to ANY unit standing over a geyser on its erupting turn — the king (no parry
+// stops the ground, like lava), foes, and allies alike.
+function tickGeysers(state) {
+  if (!geyserErupting(state)) return;
+  const onGeyser = (u) => terrainAt(state, u.x, u.y) === 'geyser';
+  let blew = false;
+  // The king. Waiting does NOT stop a geyser — it is the GROUND, like lava; only terrainImmune shrugs it.
+  if (onGeyser(state.player) && !state.player.terrainImmune) {
+    blew = true;
+    hurtBy(state, 'geyser');
+    state.player.hp -= 1;
+    state.player.wasHit = true; state.player.hitThisFloor = true;
+    addSpatter(state, state.player.x, state.player.y);
+    state.message = state.message ? `${state.message} A geyser erupts under the king!` : 'A geyser erupts under the king!';
+    checkDeath(state);
+  }
+  // Foes: a lesser piece caught over one is destroyed; a boss/turret soaks 1.
+  const caughtFoes = state.enemies.filter((e) => onGeyser(e));
+  for (const e of caughtFoes) {
+    if (e.summonCircle) continue; // a rune doesn't stand ON anything to be scalded
+    blew = true;
+    if (e.boss) damageBoss(state, e, 1);
+    else if (e.turret) damageTurret(state, e, 1);
+    else { addSpatter(state, e.x, e.y, 0, 0, isDemonKind(e.kind)); tallyKill(state, e); state.enemies = state.enemies.filter((o) => o.id !== e.id); }
+  }
+  for (const a of (state.allies || []).filter((al) => onGeyser(al))) { blew = true; damageAlly(state, a, 1); }
+  if (blew) cue(state, 'hiss');
+}
+
+// PAST max dread, a floor the king refuses to leave turns MOLTEN. From MAX_TURNS_SCARY onward, fresh
+// LAVA wells up in new fissures near him AND existing lava creeps toward him — even under his feet —
+// thickening as the overstay runs (overstayFraction). With the unbounded swarm this is a guaranteed
+// kill: Fairy Wings crosses the fire but not the horde, Waiting shrugs the horde but not the fire, and
+// no class holds both. The stair, the uncollected key and the upstair are spared so escape stays open.
+function tickLavaEncroachment(state) {
+  const intensity = overstayFraction(state.turn || 0);
+  if (intensity <= 0) return;
+  const p = state.player;
+  // Only the way OUT and the key he still needs are spared — escape must stay possible. The collapsed
+  // UPSTAIR is dead scenery (no going back), so the fire takes it like anything else: a king who camps
+  // on his entry tile burns there just the same.
+  const spared = (x, y) => (state.exit && state.exit.x === x && state.exit.y === y)
+    || (state.key && !state.key.collected && state.key.x === x && state.key.y === y);
+  // Where fresh lava may well up or creep: open ground, water, grass — or the king's own tile.
+  const molten = (x, y) => {
+    if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) return false;
+    if (spared(x, y)) return false;
+    if (x === p.x && y === p.y) return true; // the fire reaches under him
+    const t = terrainAt(state, x, y);
+    return t === 'normal' || t === 'water' || t === 'devilgrass';
+  };
+  const light = (x, y) => { state.terrain[`${x},${y}`] = 'lava'; if (state.treeHp) delete state.treeHp[`${x},${y}`]; };
+  // 1) FISSURES: fresh vents erupt near the king, more of them the deeper the overstay.
+  if (Math.random() < 0.3 + 0.6 * intensity) {
+    const n = 1 + Math.floor(intensity * 3);
+    for (let i = 0; i < n; i += 1) {
+      const rad = 2 + randomInt(6);
+      const fx = Math.max(1, Math.min(WORLD_SIZE - 2, p.x + randomInt(2 * rad + 1) - rad));
+      const fy = Math.max(1, Math.min(WORLD_SIZE - 2, p.y + randomInt(2 * rad + 1) - rad));
+      if (molten(fx, fy)) light(fx, fy);
+    }
+  }
+  // 2) CREEP: existing lava reaches into adjacent open tiles, PREFERRING those nearer the king, so the
+  // fire closes in on him rather than sprawling at random. Collected first, applied after, so it only
+  // spreads one ring per turn (no chain-reaction flood in a single tick).
+  const additions = [];
+  for (const k in state.terrain) {
+    if (state.terrain[k] !== 'lava') continue;
+    const [lx, ly] = k.split(',').map(Number);
+    for (const [dx, dy] of ORTHO) {
+      const nx = lx + dx;
+      const ny = ly + dy;
+      if (!molten(nx, ny)) continue;
+      const nearer = chebyshev(nx, ny, p.x, p.y) < chebyshev(lx, ly, p.x, p.y);
+      if (Math.random() < intensity * (nearer ? 0.4 : 0.08)) additions.push([nx, ny]);
+    }
+  }
+  for (const [ax, ay] of additions) if (molten(ax, ay)) light(ax, ay);
+}
+
 function beginEnemyPhase(state) {
   const next = structuredClone(state);
   let moverIds = [];
   const p = next.player;
-  const stealthed = Boolean(p.stealth);
+  // WHICH WAY HE IS GOING. Worked out once, here, because this is the one function that runs exactly
+  // once per turn — deriving it inside the movement code would mean touching all dozen paths that
+  // can shift the king (a step, a card, a blink, a knockback) and getting the same answer from each.
+  // A foe that sees him copies this; when it later loses him, it is what it casts along to guess
+  // where he went round the corner.
+  const was = next.kingWas;
+  next.kingHeading = was ? { dx: Math.sign(p.x - was.x), dy: Math.sign(p.y - was.y) } : null;
+  next.kingWas = { x: p.x, y: p.y };
   recordSeenEnemies(next);
   charmBeasts(next); // Wild Empathy: beasts in view bow and join the king's side before the foes act
+  tickBurningTrees(next); // a tree lit last turn burns away now, leaving a scorch (and may spread)
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
+  tickPitFalls(next); // anything that blundered onto a pit (a confused foe) falls in
+  tickGeysers(next); // on the third turn, every geyser blows — scalding whatever stands over it
+  tickLavaEncroachment(next); // past max dread: the floor turns molten and closes in on a lingering king
   tickTurrets(next); // every turret re-scans: no target in its lane → it idles and drops its lock
 
-  // Slumber (Sorcerer): non-boss, non-structure foes adjacent to the king are lulled to
-  // sleep and skip their turn; any no longer adjacent wake back up.
-  if (p.sleepAura) {
-    for (const enemy of next.enemies) {
-      if (enemy.boss || enemy.turret || enemy.summonCircle) continue;
-      if (chebyshev(enemy.x, enemy.y, p.x, p.y) === 1) {
-        enemy.asleep = true;
-        enemy.awake = false;
-        enemy.surprised = false;
-        enemy.lastSeen = null;
-        enemy.lastSeenTtl = 0;
-      } else if (enemy.asleep) {
-        enemy.asleep = false;
-      }
-    }
-  }
+  applySilence(next); // Silence: while the hush holds, everything in view stays down
 
   for (const enemy of next.enemies) {
-    if (enemy.asleep) continue; // a slumbering foe holds still
+    if (enemy.asleep) {
+      // A slumbering foe holds still — but it is asleep, not carved out of stone. It wakes if he
+      // STRIKES it, or if he blunders within arm's reach of it.
+      //
+      // A held Silence overrides both: while the hush lasts the room stays down no matter how he
+      // walks through it, which is the entire point of the card (and it already breaks the instant
+      // he strikes anything, elsewhere). Without this guard, adding a wake-on-approach rule for
+      // natural sleepers would have quietly gutted Silence.
+      const near = chebyshev(enemy.x, enemy.y, p.x, p.y);
+      let disturbed = enemy.provoked || near <= 1;
+      // AT THE BARS. A gaol prisoner sits in a one-tile cell walled on three sides with a gate on
+      // the fourth, so every neighbour of it is stone or iron — the king can NEVER stand adjacent to
+      // it, and a rule of "wake within one tile" left it dozing forever however long he loitered at
+      // its door. So it also stirs when he stands next to the GATE (or tree) it sits directly
+      // behind: he is right at the cell, and the thing inside knows it.
+      if (!disturbed && near === 2) {
+        for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+          const gx = enemy.x + dx;
+          const gy = enemy.y + dy;
+          if (isChoppable(terrainAt(next, gx, gy)) && chebyshev(gx, gy, p.x, p.y) <= 1) { disturbed = true; break; }
+        }
+      }
+      if (p.silence > 0 || !disturbed) continue;
+      enemy.asleep = false;
+      enemy.awake = true;
+      enemy.surprised = true; // it comes to with a start — that gasp is the turn he bought by finding it asleep
+      rememberKing(next, enemy);
+      continue; // gasping, not swinging: it is NOT a mover this turn
+    }
+    // CONFUSED pieces act no matter what — they are not looking for the king, so none of the
+    // awareness reckoning below applies to them. It must come before all of it: that code would
+    // otherwise send an unaware confused piece off to wander normally, and the fog would never
+    // show. A turret or a dormant guardian is a mover here too, though it never normally moves:
+    // confusedTurn is what decides that a rooted thing can only lash out, not stagger.
+    if (isConfused(enemy)) {
+      enemy.frustrated = false;
+      enemy.surprised = false;
+      moverIds.push(enemy.id);
+      continue;
+    }
     // Wild Empathy: a befriended beast (untamed until struck) never hunts the king — it roams
     // idly (or holds if it's a stationary kind) and takes no hostile action.
-    if (isBefriendedBeast(next, enemy)) {
+    if (isNeutralBeast(next, enemy)) {
       enemy.awake = false;
       enemy.surprised = false;
       enemy.lastSeen = null;
       enemy.lastSeenTtl = 0;
-      if (!isStationary(enemy)) wanderEnemy(next, enemy, false);
+      // It ROAMS — openly, in front of him, with no interest in staying out of his eyeline.
+      if (!isStationary(enemy)) wanderEnemy(next, enemy, false, true);
       continue;
     }
     const wasSurprised = enemy.surprised;
     enemy.frustrated = false;
-    // Silent (stealth): a foe MORE than one tile away NEVER perceives the king — even one already
-    // awake loses track of him, and even loosing a shot from range won't give him away. It wanders
-    // on, oblivious, and can only ever harm him by BLUNDERING onto his tile. Only a foe within one
-    // tile detects him and attacks (handled by the aware branch below). The lone EXCEPTION: a foe
-    // he STRUCK that survived (`provoked`) is enraged and hunts him regardless of distance.
-    const hiddenFromThis = stealthed && !enemy.provoked && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1;
     const sensesWalls = bossHas(enemy, 'phasing'); // a Phasing boss sees the king through walls/boulders
     // GHOST (elusive): the king is a hard thing to fix on. A foe more than one tile away only truly
     // notices him on HALF the turns he stands in its view, so he can draw one foe off a pack and
@@ -3047,28 +5027,25 @@ function beginEnemyPhase(state) {
     const remembersKing = Boolean(enemy.lastSeen) && enemy.lastSeenTtl > 0;
     const elusiveMiss = Boolean(p.elusive) && !enemy.awake && !enemy.provoked && !remembersKing
       && chebyshev(enemy.x, enemy.y, p.x, p.y) > 1 && randomInt(2) === 0;
-    if (hiddenFromThis || elusiveMiss || !enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
+    if (elusiveMiss || !enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
       enemy.awake = false;
       enemy.surprised = false;
       if (!isStationary(enemy)) {
-        if (hiddenFromThis || elusiveMiss) {
-          // Blind to him this turn — Silent hides him outright, Ghost merely means this foe failed
-          // to fix on him. Either way it wanders on, oblivious. Only BLUNDERING straight into the
+        if (elusiveMiss) {
+          // Blind to him this turn: Ghost means this foe failed to fix on him. It wanders on, oblivious. Only BLUNDERING straight into the
           // king (a bump) gives him away now; merely wandering next to him doesn't — it will
           // notice next turn, once it's within a tile at the start of its turn.
           const bumped = wanderEnemy(next, enemy, true);
           if (bumped) {
             enemy.awake = true;
             enemy.surprised = true;
-            enemy.lastSeen = { x: p.x, y: p.y };
-            enemy.lastSeenTtl = PURSUIT_TTL;
+            rememberKing(next, enemy);
           }
         } else if (inLineOfSight(next, enemy.x, enemy.y)) {
           // ONE-WAY ORACLE BAND: the king SEES this foe (and can pick it off) but it's beyond his
           // two-way footprint, so it can't see him back. It still SENSES him closing and gives
           // CHASE — it just can't strike from out there.
-          enemy.lastSeen = { x: p.x, y: p.y };
-          enemy.lastSeenTtl = PURSUIT_TTL;
+          rememberKing(next, enemy);
           if (!pursueLastSeen(next, enemy)) wanderEnemy(next, enemy, false);
         } else {
           // It has lost sight of him — hunt his last-seen tile while the memory lasts.
@@ -3082,21 +5059,42 @@ function beginEnemyPhase(state) {
       // it aware and refresh its memory so it acts as a mover next turn.
       // (A foe that MISSED its Ghost roll is exempt too — it never noticed him, so ending its
       // wander in view must not hand him straight back.)
-      if (!hiddenFromThis && !elusiveMiss && enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
+      if (!elusiveMiss && enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
         enemy.awake = true;
-        enemy.lastSeen = { x: p.x, y: p.y };
-        enemy.lastSeenTtl = PURSUIT_TTL;
+        rememberKing(next, enemy);
       }
       continue;
     }
     // An enemy is only startled if it had truly lost track of the king (`remembersKing`, read above
     // — nothing has touched its memory since). If it still holds a live memory of him (it was
     // pursuing his last-seen tile), it re-engages at once rather than gasping in surprise again.
-    enemy.lastSeen = { x: p.x, y: p.y };
-    enemy.lastSeenTtl = PURSUIT_TTL;
+    rememberKing(next, enemy);
+    // A foe is startled only if it has genuinely LOST him — `remembersKing`, which holds for the 5-10
+    // turns of a live pursuit. So a hunter that loses sight of him for a moment and finds him again
+    // re-engages at once; it is only once the trail has actually gone cold that he can catch it out.
+    //
+    // A `!enemy.provoked` clause briefly lived here — anything he had ever struck could never be
+    // surprised again, ever. That was too blunt: a monster SHOULD lose track of him eventually, and
+    // camping already pays for itself in turns against the dread clock. The pursuit window is the
+    // right amount of memory; permanent memory is not.
     if (!enemy.awake && !wasSurprised && !remembersKing) {
       enemy.awake = true;
       enemy.surprised = true;
+      // A GUARDIAN roars the moment it is startled — on the SAME turn the "!" goes up over its head.
+      // Its roar used to live in bossMove, but a freshly-surprised boss is deliberately NOT a mover
+      // (the gasp costs it the turn), so bossMove did not run and the bubble only appeared a turn
+      // LATER, over a boss that was already swinging.
+      //
+      // `!enemy.dormant` used to gate this, which quietly undid the whole fix for the ordinary case:
+      // a guardian is DORMANT for as long as it holds its stair, which is precisely the state it is
+      // in when the king first walks into view. So it gasped in silence and bellowed a turn later as
+      // it advanced. This branch is only reached once it is already aware of him — which is exactly
+      // the moment it should roar, dormant or not. It stays dormant; bossMove rouses it next turn.
+      if (enemy.boss && !enemy.spokeLine) {
+        enemy.spokeLine = true;
+        next.bossLine = bossHostileLine(enemy);
+        next.bossShout = { x: enemy.x, y: enemy.y, text: bossShoutLine(enemy), demon: isDemonBoss(enemy) };
+      }
     } else {
       enemy.awake = true;
       enemy.surprised = false;
@@ -3124,22 +5122,16 @@ function beginEnemyPhase(state) {
   return { state: next, moverIds };
 }
 
-// Valkyrie-style Reflection: a ranged attack is turned back on its caster.
-function tryReflect(state, attacker) {
-  if (!state.player.reflect) return false;
-  state.lastShot = { fromX: state.player.x, fromY: state.player.y, toX: attacker.x, toY: attacker.y, role: 'turret' };
-  if (isCapturable(state, attacker)) resolveKill(state, attacker);
-  state.message = `The king reflects the ${attacker.kind}'s attack!`;
-  state.lastAction = 'enemy';
-  return true;
-}
-
 // A turret's turn: it holds ground and fires along its piece pattern.
 // The direction {dx,dy} a FIRE turret can hit the king along (one of its piece's slide lines),
 // or null. Spellfire pierces bodies, so only WALLS and BOULDERS between block it (units don't).
 function fireTurretLineToKing(state, turret) {
-  const kx = state.player.x;
-  const ky = state.player.y;
+  return fireTurretLineTo(state, turret, state.player.x, state.player.y);
+}
+
+// The firing line from a turret to an arbitrary tile, or null if it has none. Split out from
+// fireTurretLineToKing so a gun can bear on ANY of his pieces, not only the man himself.
+function fireTurretLineTo(state, turret, kx, ky) {
   const ddx = kx - turret.x;
   const ddy = ky - turret.y;
   if (ddx === 0 && ddy === 0) return null;
@@ -3151,11 +5143,35 @@ function fireTurretLineToKing(state, turret) {
   let y = turret.y + dy;
   while (x !== kx || y !== ky) {
     const t = terrainAt(state, x, y);
-    if (t === 'wall' || t === 'boulder') return null; // opaque cover stops the bolt (bodies don't)
+    if (t === 'wall' || t === 'boulder' || t === 'gate' || t === 'tree') return null; // cover stops the gout (bodies don't) — including a gate's bars
     x += dx;
     y += dy;
   }
   return { dx, dy };
+}
+
+// The first gate or tree standing between a turret and a tile on one of its firing lines — the thing
+// its bolt strikes INSTEAD of the target beyond it. Returns { x, y, kind } or null if: the tile is
+// off the turret's lines, the lane is clear to it, or solid cover (wall/boulder) stops the shot
+// before any gate/tree (in which case the gun has no shot at all, not a shot at the barrier).
+function turretLaneObstacle(state, turret, tx, ty) {
+  const ddx = tx - turret.x;
+  const ddy = ty - turret.y;
+  if (ddx === 0 && ddy === 0) return null;
+  if (!(ddx === 0 || ddy === 0 || Math.abs(ddx) === Math.abs(ddy))) return null;
+  const dx = Math.sign(ddx);
+  const dy = Math.sign(ddy);
+  if (!cardSlideDirs(turret.kind).some(([sx, sy]) => sx === dx && sy === dy)) return null;
+  let x = turret.x + dx;
+  let y = turret.y + dy;
+  while (x !== tx || y !== ty) {
+    const t = terrainAt(state, x, y);
+    if (t === 'wall' || t === 'boulder') return null; // solid cover — no shot reaches even the barrier
+    if (t === 'gate' || t === 'tree') return { x, y, kind: t };
+    x += dx;
+    y += dy;
+  }
+  return null;
 }
 
 // A fire turret looses a PIERCING gout of spellfire down `line`: it scorches every tile to the
@@ -3174,6 +5190,8 @@ function fireTurretBlast(state, turret, line) {
   while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
     const t = terrainAt(state, x, y);
     if (t === 'wall') break;
+    if (t === 'tree') { igniteTree(state, x, y); tiles.push({ x, y }); lastX = x; lastY = y; break; } // a turret's spellfire lights it too
+    if (t === 'gate') { damageTree(state, x, y, 1); tiles.push({ x, y }); lastX = x; lastY = y; break; } // iron does not burn — the gout heats the bars, chipping them
     if (t === 'boulder') { smashBoulder(state, x, y); tiles.push({ x, y }); lastX = x; lastY = y; break; }
     if (t === 'ice') meltIce(state, x, y);
     else if (t === 'devilgrass') clearDevilgrass(state, x, y);
@@ -3196,15 +5214,16 @@ function fireTurretBlast(state, turret, line) {
   }
   state.lastShot = { fromX: turret.x, fromY: turret.y, toX: lastX, toY: lastY, role: 'fireball', tiles };
   if (hitKing) {
-    const mit = rollMitigation(state.player);
+    const mit = rollMitigation(state, turret);
     if (mit) { state.message = mitigationMessage(mit, 'fire turret'); state.lastAction = 'enemy'; return state; }
-    state.player.hp -= 1;
+    hurtBy(state, ['turret', 'fire']);
+    state.player.hp = state.player.hp - 1;
+    state.player.burnedByFire = true; // spellfire, even from a machine
     state.player.wasHit = true; state.player.hitThisFloor = true;
     addSpatter(state, state.player.x, state.player.y);
     state.message = 'A fire turret engulfs the king in spellfire!';
     state.lastAction = 'hit';
     checkDeath(state);
-    if (!state.gameOver) blinkToSafety(state);
     return state;
   }
   state.message = 'A fire turret looses a gout of spellfire!';
@@ -3220,6 +5239,39 @@ function turretTargetsKing(state, turret) {
   return getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
 }
 
+// Can this gun bear on a given tile?
+function turretBearsOn(state, turret, x, y) {
+  if (turret.fire) return Boolean(fireTurretLineTo(state, turret, x, y));
+  return getPieceThreats(turret, state).some((t) => t.x === x && t.y === y);
+}
+
+// WHAT a turret is shooting at this turn: the king if it can reach him, else any of his ALLIES
+// standing in its lane.
+//
+// It only ever looked for the king, which meant a summoned rook could park in front of a gun and
+// take it apart at total leisure — it never once shot back. A turret is a machine that shoots what
+// is in front of it; a familiar is not invisible to it.
+//
+// The king comes FIRST and that ordering matters: a gun that has him does not stop to shoot his
+// dog, so parking an ally in the lane can never be used to draw its fire off him.
+function turretTarget(state, turret) {
+  if (turretTargetsKing(state, turret)) return { x: state.player.x, y: state.player.y, king: true };
+  for (const a of state.allies || []) {
+    if (turretBearsOn(state, turret, a.x, a.y)) return { x: a.x, y: a.y, ally: a };
+  }
+  // Nobody in a CLEAR lane — but a gate or tree may stand between the gun and the king (or an ally)
+  // on its firing line. The bolt strikes that barrier and chips it; three shots bring a gate down
+  // and expose the man behind it. Without this the gun would simply doze, and a gate would be a
+  // permanent shield rather than a temporary one. King's lane first (he is the priority target).
+  const kb = turretLaneObstacle(state, turret, state.player.x, state.player.y);
+  if (kb) return { x: kb.x, y: kb.y, obstacle: kb };
+  for (const a of state.allies || []) {
+    const ab = turretLaneObstacle(state, turret, a.x, a.y);
+    if (ab) return { x: ab.x, y: ab.y, obstacle: ab, forAlly: true };
+  }
+  return null;
+}
+
 // Turrets are machines that SCAN every turn — whether or not they get an action this phase. (They
 // only act while the king is close enough to be "aware" of them, so without this a turret that
 // locked on, then watched him walk out of sight, would keep its lock indefinitely and shoot him the
@@ -3231,7 +5283,13 @@ function tickTurrets(state) {
     if (!turret.turret) continue;
     const blind = Boolean(state.player.camouflage)
       && chebyshev(turret.x, turret.y, state.player.x, state.player.y) > 1;
-    if (blind || !turretTargetsKing(state, turret)) {
+    // Camouflage hides the KING (and any barrier he shelters behind) from a gun more than a tile
+    // away; it never hides an ally, so an ally target — or a gate/tree in an ally's lane — keeps
+    // the gun awake either way. A barrier in the KING's lane only wakes it when it can see him.
+    const target = turretTarget(state, turret);
+    const forAlly = Boolean(target && (target.ally || target.forAlly));
+    const hasTarget = Boolean(target) && (forAlly || !blind);
+    if (!hasTarget) {
       turret.dozing = true;
       turret.aiming = false;
       turret.recovering = false;
@@ -3243,19 +5301,25 @@ function tickTurrets(state) {
 
 function fireTurret(state, turret) {
   const label = turret.fire ? 'fire turret' : `${turret.kind} turret`;
-  const fireLine = turret.fire ? fireTurretLineToKing(state, turret) : null;
-  const hitsKing = turretTargetsKing(state, turret);
+  // WHO it is shooting at — the king, or one of his allies parked in its lane. Everything below
+  // reads off this rather than assuming the man himself.
+  const target = turretTarget(state, turret);
+  const fireLine = turret.fire && target ? fireTurretLineTo(state, turret, target.x, target.y) : null;
+  const hitsKing = Boolean(target);
 
   // Camouflage (Gloom Stalker): a camouflaged king is INVISIBLE to any turret MORE than one tile
   // away — it simply dozes (a sleep "z") and never fires, however he moves. Step ADJACENT (within
   // one tile) and it wakes and targets him exactly like an ordinary turret; back off and it sleeps
   // again. Purely a matter of distance now — no strike-to-provoke or line-of-fire bookkeeping.
-  if (state.player.camouflage && chebyshev(turret.x, turret.y, state.player.x, state.player.y) > 1) {
+  // Camouflage hides the KING. It does not hide his familiar — so a gun with an ally in its lane
+  // stays awake and shoots that instead of dozing.
+  if (state.player.camouflage && chebyshev(turret.x, turret.y, state.player.x, state.player.y) > 1
+      && !(target && (target.ally || target.forAlly))) {
     turret.aiming = false;
     turret.recovering = false;
     turret.dozing = true;
-    state.message = `A ${label} sleeps, blind to the distant camouflaged king.`;
-    state.lastAction = 'enemy';
+    state.message = ''; // it dozes: nothing to see, nothing to log, no beat to pay
+    state.lastAction = 'idle';
     return state;
   }
   turret.dozing = false;
@@ -3270,15 +5334,26 @@ function fireTurret(state, turret) {
   }
   if (!hitsKing) {
     turret.aiming = false; // the king left its line — it must re-acquire before it can fire
-    state.message = `A ${label} sweeps for a target.`;
-    state.lastAction = 'enemy';
+    // A gun sweeping an EMPTY lane has done nothing. It used to log a line and cost the player a
+    // full beat of animation, every turn, for every turret in view — which is why a Gloom Stalker
+    // (whose whole game is never being in a lane) waded through "a turret sweeps for a target" and
+    // watched the game stutter between his turns.
+    state.message = '';
+    state.lastAction = 'idle';
     return state;
   }
   // TARGETING (not windup): the king just entered the line — the turret needs ONE turn to lock
   // on before it can shoot, so he always has a turn to step clear.
   if (!turret.aiming) {
     turret.aiming = true;
-    state.message = `A ${label} locks onto the king — move!`;
+    cue(state, 'alarm'); // it has him: a whirring lock-on, one turn before it fires
+    if (target.obstacle) {
+      state.message = `A ${label} takes aim at the ${target.obstacle.kind === 'gate' ? 'gate' : 'tree'} in its way.`;
+    } else {
+      state.message = target.ally
+        ? `A ${label} swivels onto your ${target.ally.kind}!`
+        : `A ${label} locks onto the king — move!`;
+    }
     state.lastAction = 'enemy';
     return state;
   }
@@ -3287,26 +5362,84 @@ function fireTurret(state, turret) {
   // Locked on and STILL in the line — it SHOOTS, and the recoil costs it the lock: it must spend
   // another turn re-targeting before it can fire again, so it never chains shots turn after turn.
   turret.aiming = false;
-  if (tryReflect(state, turret)) return state;
+  // A GATE or TREE in the lane takes the bolt — the iron bars (or timber) stop the shot the king
+  // shelters behind, and each hit chips it; three bring a gate down. No Reflect, no mitigation: the
+  // barrier is not the king, and the bolt never reaches him this turn.
+  if (target.obstacle) {
+    state.lastShot = { fromX: turret.x, fromY: turret.y, toX: target.x, toY: target.y, role: 'turret' };
+    const what = target.obstacle.kind === 'gate' ? 'gate' : 'tree';
+    const res = damageTree(state, target.x, target.y, 1);
+    state.message = res === 'felled'
+      ? `A ${label}'s bolt shatters the ${what}!`
+      : `A ${label}'s bolt chips the ${what}.`;
+    state.lastAction = 'enemy';
+    return state;
+  }
+  // An ALLY in the lane takes the bolt instead. Deliberately no Reflect and no mitigation roll:
+  // both are the KING's (his ward, his parry, his mirror) and none of them are his familiar's.
+  if (target.ally) {
+    state.lastShot = { fromX: turret.x, fromY: turret.y, toX: target.x, toY: target.y, role: 'turret' };
+    const a = target.ally;
+    addSpatter(state, a.x, a.y, Math.sign(a.x - turret.x), Math.sign(a.y - turret.y), isDemonKind(a.kind));
+    state.message = damageAlly(state, a, 1)
+      ? `A ${label} blasts your ${a.kind} apart!`
+      : `A ${label} blasts your ${a.kind} (${a.hp}/${a.maxHp}).`;
+    state.lastAction = 'enemy';
+    return state;
+  }
   state.lastShot = { fromX: turret.x, fromY: turret.y, toX: state.player.x, toY: state.player.y, role: 'turret' };
-  const mit = rollMitigation(state.player);
+  const mit = rollMitigation(state, turret);
   if (mit) {
     state.message = mitigationMessage(mit, `${turret.kind} turret`);
     state.lastAction = 'enemy';
     return state;
   }
+  hurtBy(state, 'turret');
   state.player.hp -= 1;
   state.player.wasHit = true; state.player.hitThisFloor = true;
   addSpatter(state, state.player.x, state.player.y);
   state.message = `A ${turret.kind} turret blasts the king!`;
   state.lastAction = 'hit';
   checkDeath(state);
-  if (!state.gameOver) blinkToSafety(state);
   return state;
 }
 
 // Conjure a fresh minion of `kind` on a free tile beside `origin`.
+// A Lich calling ONE of the fallen back up, from a body lying beside it. Returns the kind raised.
+//
+// "Not too badly decayed" is the corpse's own decay clock (life/max, ticked in passTurn): once a
+// body is more than half gone it is past answering. That is the counter-play and it is a real one —
+// a corpse it has not reached in time is a corpse it never gets, so drawing a Lich AWAY from the
+// bodies costs it the room. Reusing the existing clock rather than inventing a second one means the
+// thing the player watches fade on the floor IS the thing the rule reads.
+const LICH_FRESH = 0.5;
+function raiseNearbyDead(state, boss) {
+  const bodies = (state.corpses || []).filter((c) => chebyshev(c.x, c.y, boss.x, boss.y) <= 1
+    && (c.life / (c.max || CORPSE_LIFE)) >= LICH_FRESH
+    && !state.enemies.some((e) => e.x === c.x && e.y === c.y)
+    && !(state.player.x === c.x && state.player.y === c.y)
+    && !allyAt(state, c.x, c.y)
+    && isStandable(terrainAt(state, c.x, c.y)));
+  if (!bodies.length) return null;
+  const body = bodies[randomInt(bodies.length)]; // ONE a turn — it is a lich, not a chorus
+  state.corpses = state.corpses.filter((c) => c !== body);
+  const risen = createEnemy(body.kind, body.x, body.y);
+  risen.awake = true;
+  risen.summoned = true; // drawn violet, like anything else conjured into the world
+  rememberAt(risen, state.player.x, state.player.y, state.kingHeading);
+  state.enemies.push(risen);
+  cue(state, 'thrum');
+  // Logged on the SEPARATE boss line, not state.message. Raising is a free action — the Lich acts as
+  // normal straight afterwards — so whatever it then does (advance, strike, fire) overwrites
+  // state.message and the player never learns why there is suddenly another pawn on the board.
+  // `bossLine` is the channel the view already drains for exactly this: a thing a guardian did that
+  // is worth its own line in the log.
+  state.bossLine = `${bossTitle(boss)} calls the fallen ${body.kind} back to its feet!`;
+  return body.kind;
+}
+
 function summonAdjacent(state, origin, kind) {
+  cue(state, 'thrum'); // something is being pulled into the world
   const dirs = [...ORTHO, ...DIAG];
   for (let i = dirs.length - 1; i > 0; i -= 1) {
     const j = randomInt(i + 1);
@@ -3341,13 +5474,14 @@ function summonCircleTurn(state, circle) {
   // conjures as normal; he can also still step onto it to dispel it any time.
   if (state.player.camouflage && chebyshev(circle.x, circle.y, state.player.x, state.player.y) > 1) {
     circle.summonTick = 0;
-    state.message = 'A summoning circle gropes blindly for the distant camouflaged king.';
-    state.lastAction = 'enemy';
+    state.message = '';
+    state.lastAction = 'idle';
     return state;
   }
-  // Conjure only every FOURTH turn — a slow drip of reinforcements with a longer, readable wind-up.
+  // Conjure every SUMMON_TURNS-th turn (3). It was four, which — once circles stopped huddling next
+  // to each other and the turrets around the chamber — left a lone rune contributing almost nothing.
   circle.summonTick = (circle.summonTick || 0) + 1;
-  if (circle.summonTick % 4 === 0 && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, circle, circle.kind)) {
+  if (circle.summonTick % SUMMON_TURNS === 0 && state.enemies.length < MAX_ENEMIES && summonAdjacent(state, circle, circle.kind)) {
     state.message = 'A summoning circle conjures a minion!';
     state.lastAction = 'enemy';
     return state;
@@ -3355,6 +5489,13 @@ function summonCircleTurn(state, circle) {
   state.message = 'A summoning circle pulses with dark light.';
   state.lastAction = 'enemy';
   return state;
+}
+
+// Enemies shy off geyser vents when they can — landing on one only if every other move is worse or
+// there's nowhere dry to go. Knockbacks bypass this (they aren't chosen moves).
+function preferNonGeyser(state, legal) {
+  const dry = legal.filter((m) => terrainAt(state, m.x, m.y) !== 'geyser');
+  return dry.length ? dry : legal;
 }
 
 function chooseHostileMove(moves, px, py) {
@@ -3375,16 +5516,18 @@ function chooseHostileMove(moves, px, py) {
 
 // A boss strikes without expending itself (a hit costs 1 HP by default).
 function bossHit(state, boss, hitMsg) {
-  const mit = rollMitigation(state.player);
+  markStrikeBump(state, boss); // no-op unless it is close enough to have actually swung
+  const mit = rollMitigation(state, boss);
   if (!mit) {
+    hurtBy(state, foeDeathTags(boss));
     state.player.hp -= bossDamage(boss);
     state.player.wasHit = true; state.player.hitThisFloor = true;
     bossLeech(boss); // a Leech guardian mends a wound as it draws blood
     addSpatter(state, state.player.x, state.player.y, Math.sign(state.player.x - boss.x), Math.sign(state.player.y - boss.y));
     state.message = hitMsg;
     state.lastAction = 'hit';
+    if (!state.gameOver) bossOnHitKing(state, boss); // Icy Grasp: ice sheets the ground by the king
     checkDeath(state);
-    if (!state.gameOver) blinkToSafety(state);
   } else {
     state.message = `The king withstands ${boss.bossName || `the ${boss.kind} guardian`}!`;
     state.lastAction = 'enemy';
@@ -3404,18 +5547,21 @@ function bossHit(state, boss, hitMsg) {
 // now CLEAR (the shover should advance onto it), false if it held (the shover stops).
 // `moverId` is the shover's enemy id (null for the king); `moverIsKing` gives the king
 // kill-credit for a foe he is driven into.
+// `moverId` is what is being SHOVED; (tx,ty) the tile it is slamming into. Returns true if the tile
+// is now free for it to take.
 function resolveShoveInto(state, tx, ty, moverId, moverIsKing) {
-  // Slammed into the king: he takes a hit but holds his ground.
+  const shover = state.enemies.find((e) => e.id === moverId);
+  if (shover && !moverIsKing) {
+    // It has hit SOMETHING (that is what this function is for) — lurch it at whatever that was.
+    const occupied = (tx === state.player.x && ty === state.player.y)
+      || allyAt(state, tx, ty) || state.enemies.some((e) => e.id !== moverId && e.x === tx && e.y === ty);
+    if (occupied) markShoveBump(state, moverId, Math.sign(tx - shover.x), Math.sign(ty - shover.y));
+  }
+  // Slammed into the king: he is UNHARMED. A piece stumbling into him as it is hurled back cannot
+  // hurt him — he simply blocks it and it stops short. (Everything ELSE a knockback slams still takes
+  // the hit; only the king is immune to being bumped this way.)
   if (tx === state.player.x && ty === state.player.y) {
-    const mit = rollMitigation(state.player);
-    if (!mit) {
-      state.player.hp -= 1;
-      state.player.wasHit = true; state.player.hitThisFloor = true;
-      addSpatter(state, tx, ty);
-      checkDeath(state);
-      if (!state.gameOver) blinkToSafety(state);
-    }
-    return false;
+    return false; // the shover stops short against him, no damage
   }
   // Slammed into one of the king's allies: it's crushed, the shover takes its tile.
   const ally = allyAt(state, tx, ty);
@@ -3438,12 +5584,22 @@ function resolveShoveInto(state, tx, ty, moverId, moverIsKing) {
       state.player.circlesDispelled = (state.player.circlesDispelled || 0) + 1; // badge ledger
       return true;
     }
+    if (foe.parry) { // a warded foe turns aside the collision too — its guard drops, it holds its tile
+      foe.parry = false; foe.warded = null; foe.awake = true; foe.provoked = true;
+      bloody(foe, BLOOD_STRIKE);
+      return false; // the shover stops short
+    }
     if (moverIsKing) {
       resolveKill(state, foe); // the king's shove counts as his kill (boon / necromancy)
     } else {
+      // A piece HE shoved has crushed another piece. That is his doing at one remove, so it counts.
+      state.player.killedFoeWithFoe = true;
+      const shoverName = shover ? (shover.boss ? bossTitle(shover) : capitalize(aWord(foeLabel(shover)))) : 'A piece';
       state.enemies = state.enemies.filter((e) => e.id !== foe.id);
+      tallyKill(state, foe);
       addSpatter(state, tx, ty, 0, 0, isDemonKind(foe.kind));
       addCorpse(state, tx, ty, foe.kind);
+      state.message = `${shoverName} smashes into ${aWord(foeLabel(foe))} — it dies!`;
     }
     return true;
   }
@@ -3454,12 +5610,29 @@ function resolveShoveInto(state, tx, ty, moverId, moverIsKing) {
 // whatever's there. A wall / boulder / the board edge halts it; it may be driven across water
 // and onto lava (where it then burns). Hurled over a PIT it PLUNGES to its death — except a
 // boss / mini-boss, which clambers back out for 1 wound instead of falling in.
+// A piece SLAMMING into something — flagged so the view can lurch it at what it hit, the way the
+// king's own blows lurch.
+//
+// The sound was the only tell, and for the STOP-SHORT case (shoved into a guardian, which does not
+// budge) literally nothing on screen moved: an HP bar ticked down somewhere and that was it. Even
+// the kill case only read as an ordinary glide onto the vacated tile.
+function markShoveBump(state, id, dx, dy) {
+  if (!Array.isArray(state.shoveBumps)) state.shoveBumps = [];
+  state.shoveBumps.push({ id, dx, dy });
+}
+
 function knockbackEnemy(state, enemy, dx, dy) {
   if (!dx && !dy) return;
+  if (bossHas(enemy, 'anchored')) return; // ANCHORED: nothing shoves or hurls it — it holds its ground
+  cue(state, 'bonk'); // something just got shoved (deduped: five foes hurled at once is ONE bonk)
   const tx = enemy.x + dx;
   const ty = enemy.y + dy;
   if (tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) return; // the edge halts it
   const t = terrainAt(state, tx, ty);
+  if (isChoppable(t)) { // hurled into timber or iron: it cracks, and the shove stops dead against it
+    damageTree(state, tx, ty, 1);
+    return;
+  }
   if (t === 'wall' || t === 'boulder') return; // solid — the shove just stops
   if (t === 'ice') { // slammed into an ice slab — it SHATTERS and the foe crashes through onto the open tile
     smashIce(state, tx, ty);
@@ -3467,7 +5640,13 @@ function knockbackEnemy(state, enemy, dx, dy) {
     return;
   }
   if (t === 'pit') {
-    if (enemy.boss) {
+    cue(state, 'fall'); // it goes over the edge — even a guardian that climbs back out fell first
+    // Only the floor's OWN GUARDIAN is anchored enough to haul itself back out (for a wound). A
+    // rogue mini/rush boss is a loose piece like any other and goes all the way down; a turret is a
+    // machine that clangs in and is gone. Same line isBanishable draws: the guardian holds the key
+    // and the floor together, nothing else does.
+    state.player.knockedIntoPit = true; // badge ledger: he put something over an edge
+    if (enemy.boss && !enemy.mini && !enemy.rush) {
       const slain = damageBoss(state, enemy, 1) === 'slain';
       state.message = slain
         ? `${bossTitle(enemy)} is hurled screaming into the pit!`
@@ -3475,13 +5654,22 @@ function knockbackEnemy(state, enemy, dx, dy) {
     } else {
       if (!enemy.turret) addSpatter(state, enemy.x, enemy.y, 0, 0, isDemonKind(enemy.kind)); // a MACHINE leaves no blood as it clangs in
       state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
-      state.message = `The ${enemy.turret ? 'turret' : enemy.kind} plunges into the pit!`;
+      tallyKill(state, enemy);
+      state.message = enemy.boss
+        ? `${bossTitle(enemy)} is hurled screaming into the pit — gone!`
+        : enemy.turret
+          ? 'A turret clatters into the pit — gone!'
+          : `${capitalize(aWord(enemy.kind))} falls to its death in the pit!`;
     }
     return;
   }
   if (resolveShoveInto(state, tx, ty, enemy.id, false)) {
     enemy.x = tx;
     enemy.y = ty;
+    // Shoved into FIRE. It does not die here — tickLavaDamage burns it at the top of the next enemy
+    // phase — but the shove is what put it there, so the credit belongs to this moment. Waiting for
+    // the burn would lose the connection entirely: by then nobody knows who pushed it in.
+    if (terrainAt(state, tx, ty) === 'lava' && !isLavaSafe(enemy)) state.player.knockedIntoLava = true;
   }
 }
 
@@ -3497,6 +5685,7 @@ function knockbackBoulder(state, bx, by, dx, dy) {
   if (terrainAt(state, bx, by) !== 'boulder') return;
   let cx = bx;
   let cy = by;
+  cue(state, 'rumble'); // it's moving
   delete state.terrain[`${cx},${cy}`]; // the boulder is now in motion — vacate its start
   const rest = () => { state.terrain[`${cx},${cy}`] = 'boulder'; }; // come to rest where it is
   const shatter = () => { addRubble(state, cx, cy); }; // the roll ends in a burst of rubble
@@ -3505,9 +5694,20 @@ function knockbackBoulder(state, bx, by, dx, dy) {
     const ny = cy + dy;
     if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) { shatter(); return; } // off the edge → breaks apart
     const t = terrainAt(state, nx, ny);
+    if (isChoppable(t)) { // a boulder at speed shears a trunk through — and buckles a gate
+      damageTree(state, nx, ny, TREE_HP);
+      shatter();
+      return;
+    }
     if (t === 'wall' || t === 'ice' || t === 'boulder') { shatter(); return; } // slams something solid → breaks apart
     if (keyTileAt(state, nx, ny)) { rest(); return; } // never bury the floor key
     if (nx === state.player.x && ny === state.player.y) { // rolls into the king
+      // A boulder is the ONE physical smash a raised guard turns aside — unlike fire, pits and lava,
+      // which are the ground itself and no parry stops (see rollMitigation / the environmental sears).
+      // No attacker to REFLECT onto — a boulder is not a foe.
+      const mit = rollMitigation(state, null);
+      if (mit) { state.message = mitigationMessage(mit, 'rolling boulder'); state.lastAction = 'enemy'; rest(); return; }
+      hurtBy(state, 'boulder');
       state.player.hp -= 1;
       state.player.wasHit = true; state.player.hitThisFloor = true;
       state.lastAction = 'hit';
@@ -3525,9 +5725,12 @@ function knockbackBoulder(state, bx, by, dx, dy) {
         if (!Array.isArray(state.scars)) state.scars = [];
         state.scars.push({ x: nx, y: ny, kind: 'circle' });
       } else { // an ordinary foe is crushed and the boulder PLOWS ON
+        state.player.killedWithBoulder = true; // badge ledger: the rock did it
         addSpatter(state, nx, ny, 0, 0, isDemonKind(foe.kind));
         addCorpse(state, nx, ny, foe.kind);
         state.enemies = state.enemies.filter((e) => e.id !== foe.id);
+        tallyKill(state, foe);
+        state.message = `${capitalize(aWord(foeLabel(foe)))} is flattened by a rolling boulder!`;
       }
     } else if (allyAt(state, nx, ny)) { rest(); return; } // it won't crush your own ally — it stops short
     if (t === 'pit' || t === 'lava' || t === 'water') { delete state.terrain[`${nx},${ny}`]; return; } // rolls in, fills the hazard, consumed
@@ -3541,9 +5744,44 @@ function knockbackBoulder(state, bx, by, dx, dy) {
 // Shove everything ADJACENT to (cx,cy) — mobile foes, TURRETS (pushable now), AND loose boulders
 // — one tile directly away, colliding with whatever's behind it. Summoning circles and the
 // excluded piece stay put. Shared by Recoil, Trample, and Displacement.
-function shoveAdjacentAway(state, cx, cy, excludeId) {
+// `exclude` takes an id OR a Set of ids, so a caller firing two shockwaves can spare anything the
+// first one already threw (Displacement shoves both ends of its swap). Returns the ids it shoved.
+// THUNDERING CHARGE: everything the king can SEE is hurled straight away from (cx,cy) — foes,
+// turrets, boulders alike. Ordered FARTHEST FIRST, which is the whole trick: shove the near ones
+// first and they slam into the far ones that have not moved yet, and half the room piles up instead
+// of scattering. Going outside-in, every piece has somewhere to go before it is asked to go there.
+function thunderingCharge(state, cx, cy) {
+  const seen = getVisibleEnemies(state)
+    .filter((e) => !e.summonCircle)
+    .map((e) => ({ id: e.id, d: chebyshev(e.x, e.y, cx, cy) }))
+    .sort((a, b) => b.d - a.d);
+  for (const { id } of seen) {
+    const foe = state.enemies.find((e) => e.id === id);
+    if (!foe || (foe.x === cx && foe.y === cy)) continue;
+    knockbackEnemy(state, foe, Math.sign(foe.x - cx), Math.sign(foe.y - cy));
+  }
+  // ...and every boulder in sight goes with them.
+  const rocks = [];
+  for (const k in state.terrain) {
+    if (state.terrain[k] !== 'boulder') continue;
+    const [x, y] = k.split(',').map(Number);
+    if (!inLineOfSight(state, x, y)) continue;
+    if (x === cx && y === cy) continue;
+    rocks.push({ x, y, d: chebyshev(x, y, cx, cy) });
+  }
+  rocks.sort((a, b) => b.d - a.d); // farthest first, same reason
+  for (const r of rocks) {
+    if (terrainAt(state, r.x, r.y) !== 'boulder') continue; // something already moved it
+    knockbackBoulder(state, r.x, r.y, Math.sign(r.x - cx), Math.sign(r.y - cy));
+  }
+  cue(state, 'rumble');
+  state.message = 'The king lands like a thunderclap — the whole floor is hurled back!';
+}
+
+function shoveAdjacentAway(state, cx, cy, exclude) {
+  const skip = exclude instanceof Set ? exclude : new Set(exclude ? [exclude] : []);
   const ids = state.enemies
-    .filter((e) => !e.summonCircle && e.id !== excludeId && chebyshev(e.x, e.y, cx, cy) === 1)
+    .filter((e) => !e.summonCircle && !skip.has(e.id) && chebyshev(e.x, e.y, cx, cy) === 1)
     .map((e) => e.id);
   for (const id of ids) {
     const foe = state.enemies.find((e) => e.id === id);
@@ -3552,6 +5790,7 @@ function shoveAdjacentAway(state, cx, cy, excludeId) {
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     if (terrainAt(state, cx + dx, cy + dy) === 'boulder') knockbackBoulder(state, cx + dx, cy + dy, dx, dy);
   }
+  return ids;
 }
 
 // Place the king on the free tile ADJACENT to (tx,ty) nearest his origin (fromX,fromY) — so a
@@ -3598,6 +5837,59 @@ function landBesideSurvivor(state, target, tx, ty, fromX, fromY, isLeap) {
 // A jumper (or a Bulwark boss) leaps onto the king and bowls him back one tile — into
 // whatever stands behind him (crushing an ordinary foe/ally, bumping a boss/turret). The
 // jumper then takes the ground the king vacated.
+// The nearest ground a fallen king can HAUL HIMSELF OUT onto: the closest standable, unoccupied,
+// non-hazardous tile to (x,y), searched ring by ring so he always surfaces as near the hole as the
+// floor allows. isStandable bars lava and other pits, so he can never climb out of one hole into a
+// worse one.
+function nearestFooting(state, x, y, avoidX, avoidY) {
+  for (let r = 1; r < WORLD_SIZE; r += 1) {
+    const ring = [];
+    for (let dx = -r; dx <= r; dx += 1) {
+      for (let dy = -r; dy <= r; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
+        if (nx === avoidX && ny === avoidY) continue; // e.g. a pit-diver never surfaces back in the corner he fled
+        if (!isStandable(terrainAt(state, nx, ny))) continue;
+        if (keyTileAt(state, nx, ny)) continue;
+        if (state.enemies.some((e) => e.x === nx && e.y === ny)) continue;
+        if (allyAt(state, nx, ny)) continue;
+        ring.push({ x: nx, y: ny });
+      }
+    }
+    if (ring.length) return ring[randomInt(ring.length)];
+  }
+  return null;
+}
+
+// A JUMPER that leapt at the king but could NOT shift him has to land somewhere: it bounces off and
+// comes to rest ADJACENT to him, on the free tile nearest where it sprang from. It leapt — it does
+// not hang in the air and reappear back at its start, which is what it used to do whenever the king
+// had his back to a wall. The mirror of bounceOffTarget, which does this for the king.
+function bounceJumperBeside(state, jumper, kx, ky, fromX, fromY) {
+  let best = null;
+  let bestD = Infinity;
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const x = kx + dx;
+    const y = ky + dy;
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+    if (!standableFor(terrainAt(state, x, y), pieceTerrainOpts(jumper))) continue;
+    if (terrainAt(state, x, y) === 'lava' && !isLavaSafe(jumper)) continue; // it won't land in fire it can't survive
+    if (terrainAt(state, x, y) === 'pit') continue; // nor down a hole
+    if (keyTileAt(state, x, y)) continue;
+    if (state.enemies.some((e) => e.id !== jumper.id && e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+    // The tile it came FROM is the natural place to fall back to — hence "logical angle": nearest
+    // its origin, so it reads as a bounce back down its own line of approach rather than a teleport.
+    const d = chebyshev(x, y, fromX, fromY);
+    if (d < bestD) { bestD = d; best = { x, y }; }
+  }
+  if (!best) return false;
+  jumper.x = best.x;
+  jumper.y = best.y;
+  return true;
+}
+
 function knockbackKing(state, enemy) {
   const king = state.player;
   let pdx = Math.sign(king.x - enemy.x);
@@ -3605,21 +5897,52 @@ function knockbackKing(state, enemy) {
   if (pdx === 0 && pdy === 0) pdx = 1;
   const bx = king.x + pdx;
   const by = king.y + pdy;
-  const mit = rollMitigation(king);
+  const mit = rollMitigation(state, enemy);
+  // WAITING (Sentinel) is the one mitigation that does NOT root him: the blow does no damage, but the
+  // shove still lands (unlike Animal Form / a Parry, which turn the whole thing aside). A pit or lava
+  // he is bowled into simply cannot hurt him while it holds.
+  const shoveOnly = Boolean(king.invuln) && !(king.promotion > 0);
   if (!mit) {
+    hurtBy(state, foeDeathTags(enemy));
     king.hp -= enemy.boss ? bossDamage(enemy) : 1;
     king.wasHit = true; king.hitThisFloor = true;
     bloody(enemy, BLOOD_STRIKE); // an ordinary jumper is flecked (a boss shows HP wounds)
     if (enemy.boss) bossLeech(enemy); // a Leech guardian mends as it lands the shove
     addSpatter(state, king.x, king.y, pdx, pdy); // blood carries in the shove direction
+    if (!state.gameOver) bossOnHitKing(state, enemy); // Icy Grasp, if this shove was a guardian's
     checkDeath(state);
   }
   // The king is bowled back unless he just fell, or a wall/lava/edge halts him. Whatever
   // stands behind him is slammed (see resolveShoveInto); if it clears, he slides in and
   // the jumper takes his old tile.
   let pushed = false;
-  if (!mit && !state.gameOver) {
+  if ((!mit || shoveOnly) && !state.gameOver) {
     const inBounds = bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE;
+    // A PIT behind him is the one thing that doesn't merely halt the shove — he goes over the edge.
+    // Rare (it needs a pit exactly behind him, and the blow must land), but it should be possible.
+    // He hauls himself out the way a GUARDIAN does: another wound, and back onto the nearest ground
+    // he can find. Not fatal — a hole is a beating, not an instant loss. Fairy Wings simply flies over
+    // it; WAITING does not — a pit is the GROUND, and Waiting shrugs off blows, never the ground.
+    if (inBounds && terrainAt(state, bx, by) === 'pit' && !king.terrainImmune) {
+      cue(state, 'fall');
+      hurtBy(state, 'pit'); // shoved over an edge: the HOLE is what got him, not the shover
+      king.hp -= 1;
+      king.wasHit = true; king.hitThisFloor = true;
+      checkDeath(state);
+      if (!state.gameOver) {
+        const out = nearestFooting(state, bx, by);
+        if (out) { king.x = out.x; king.y = out.y; }
+        // bossTitle NEVER returns falsy (it falls back to "<kind> guardian"), so a `||` here would
+        // be dead and a plain knight would be announced as a guardian. Ask what it IS.
+        state.message = `${enemy.boss ? bossTitle(enemy) : `The ${enemy.kind}`} hurls the king into a pit — he claws his way out!`;
+      } else {
+        state.message = 'The king is hurled into the pit — and does not climb out.';
+      }
+      state.lastAction = 'hit';
+      if (!state.gameOver) collectKeyIfHere(state); // he might climb out onto the key
+      updateDiscovery(state);
+      return state; // NB: callers do `return knockbackKing(...)` — this MUST hand the state back
+    }
     if (inBounds && standableFor(terrainAt(state, bx, by), { phaseWalls: Boolean(king.phase) })) {
       if (resolveShoveInto(state, bx, by, null, true)) {
         const kx = king.x;
@@ -3632,6 +5955,11 @@ function knockbackKing(state, enemy) {
       }
     }
   }
+  // It leapt at him and could NOT move him (his back was to a wall, or the blow was warded). It
+  // still has to come DOWN somewhere — it bounces off and lands beside him, nearest the side it
+  // sprang from. Otherwise a king with his back to a wall watched a knight lunge at him and stay
+  // exactly where it was, which read as the leap never happening.
+  if (!pushed && !state.gameOver) bounceJumperBeside(state, enemy, king.x, king.y, enemy.x, enemy.y);
   if (mit) {
     state.message = mitigationMessage(mit, enemy.kind);
     state.lastAction = 'enemy';
@@ -3640,7 +5968,7 @@ function knockbackKing(state, enemy) {
     state.lastAction = 'hit';
   }
   if (!state.gameOver) collectKeyIfHere(state); // shoved onto the key? he grabs it
-  if (!state.gameOver && !mit) blinkToSafety(state); // a struck blink-mage flickers away
+  if (!state.gameOver && pushed) checkDefenestration(state); // bowled onto the open stair? he tumbles down
   updateDiscovery(state);
   return state;
 }
@@ -3669,6 +5997,90 @@ function closeInBeforeStrike(state, mover) {
   if (!standableFor(terrainAt(state, ax, ay), pieceTerrainOpts(mover))) return; // never slide into a wall/pit/ice
   mover.x = ax;
   mover.y = ay;
+}
+
+// A tree or a gate between a foe and the king is not cover — it is a door it can cut through. When
+// nothing it may legally do brings it any closer, it hacks at the timber in its way instead of
+// milling about. Without this a stand of trees made a piece harmless for the rest of the run: it
+// would shuffle back and forth forever while the king shot it through the bars of a gate at leisure.
+// Only timber that stands nearer the king than the foe itself counts — it cuts its way TOWARD him,
+// never idly at a tree behind its back.
+// A flood of grid distances OUT from the king over tiles a mover could plausibly cross — used to ask
+// "is there a way AROUND this timber, or is cutting through it the only route?". Solid barriers a
+// mover routes around (wall / boulder / pit / ice / lava) always block; TIMBER and IRON (choppable)
+// block only when `blockChoppable`. Comparing the two floods tells us how much LONGER the detour is
+// than plowing straight through. 8-directional, one step per tile — a rough proxy, but enough for the
+// chop-or-go-around call. Enemies are ignored (terrain only), so it is the same for every mover this
+// turn and cheap to run per blocked piece.
+function floodDistFromKing(state, blockChoppable) {
+  const dist = new Map();
+  const passable = (x, y) => {
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) return false;
+    const t = terrainAt(state, x, y);
+    if (t === 'wall' || t === 'boulder' || t === 'pit' || t === 'ice' || t === 'lava') return false;
+    if (blockChoppable && isChoppable(t)) return false;
+    return true;
+  };
+  dist.set(`${state.player.x},${state.player.y}`, 0);
+  let frontier = [[state.player.x, state.player.y]];
+  let d = 0;
+  while (frontier.length) {
+    const nextFrontier = [];
+    d += 1;
+    for (const [x, y] of frontier) {
+      for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        const k = `${nx},${ny}`;
+        if (dist.has(k) || !passable(nx, ny)) continue;
+        dist.set(k, d);
+        nextFrontier.push([nx, ny]);
+      }
+    }
+    frontier = nextFrontier;
+  }
+  return dist;
+}
+
+// Should a blocked mover GO AROUND the timber/iron in its way rather than hack through it? Yes when a
+// route around EXISTS and is not much longer than plowing straight through — the flood with choppables
+// blocked vs passable measures exactly that gap. When it says "go around", the caller simply lets the
+// piece take its ordinary advance (which steps to the side and rounds a lone tree on its own); only a
+// genuine wall of timber, or a detour far longer than cutting through, is worth stopping to chop.
+// (No move is made here — deciding is all this does, so a slider's own multi-tile step does the going
+// around, which a one-grid-step proxy would wrongly read as "no progress" and send it back to chopping.)
+const DETOUR_SLACK = 4; // go around unless the way around is more than this many tiles longer
+function preferDetour(state, enemy) {
+  const ek = `${enemy.x},${enemy.y}`;
+  const around = floodDistFromKing(state, true);
+  const dAround = around.has(ek) ? around.get(ek) : Infinity;
+  if (dAround === Infinity) return false; // no way around at all — the choppable is a true chokepoint
+  const through = floodDistFromKing(state, false);
+  const dThrough = through.has(ek) ? through.get(ek) : Infinity;
+  return dAround <= dThrough + DETOUR_SLACK; // around is comparable to through → round it, don't chop
+}
+
+function chopTowardKing(state, enemy) {
+  const king = state.player;
+  const here = chebyshev(enemy.x, enemy.y, king.x, king.y);
+  let best = null;
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const x = enemy.x + dx;
+    const y = enemy.y + dy;
+    if (!isChoppable(terrainAt(state, x, y))) continue;
+    const d = chebyshev(x, y, king.x, king.y);
+    if (d >= here) continue; // it is not in the way
+    if (!best || d < best.d) best = { x, y, d };
+  }
+  if (!best) return false;
+  const what = terrainAt(state, best.x, best.y) === 'gate' ? 'gate' : 'tree';
+  const res = damageTree(state, best.x, best.y, 1);
+  state.message = res === 'felled'
+    ? `A ${enemy.kind} hacks down the ${what} in its way!`
+    : `A ${enemy.kind} hacks at the ${what} in its way.`;
+  state.lastAction = 'enemy';
+  if (res === 'felled') updateDiscovery(state); // it just opened the view beyond
+  return true;
 }
 
 function meleeMove(state, enemy) {
@@ -3700,7 +6112,16 @@ function meleeMove(state, enemy) {
     state.lastAction = 'enemy';
     return state;
   }
-  const legal = moves.filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y));
+  const legal = preferNonGeyser(state, moves.filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y)));
+  // Cornered, or able to move but never any NEARER: if timber bars the way, cut it down. Checking
+  // "can I actually close?" rather than merely "am I stuck?" is what makes a foe chop through a
+  // hedge instead of pacing along it forever — pacing is a legal move, so it never looked stuck.
+  const here = chebyshev(enemy.x, enemy.y, king.x, king.y);
+  const closes = legal.some((m) => chebyshev(m.x, m.y, king.x, king.y) < here);
+  // Blocked from getting nearer by a straight step. Cut down the timber/iron in the way — UNLESS
+  // there's an easy way around, in which case fall through to the ordinary advance and round it. A
+  // foe should not stop to chop a lone tree or a hedge it could just walk past.
+  if (!closes && !preferDetour(state, enemy) && chopTowardKing(state, enemy)) return state;
   if (!legal.length) {
     enemy.frustrated = true;
     state.message = 'A cornered piece fumes, unable to move.';
@@ -3711,15 +6132,31 @@ function meleeMove(state, enemy) {
   enemy.x = chosen.x;
   enemy.y = chosen.y;
   crushBoulderUnder(state, enemy); // a leaper that lands on a boulder crushes it
-  state.message = 'An enemy piece advances.';
+  state.message = `${capitalize(aWord(enemy.kind))} advances.`;
   state.lastAction = 'enemy';
   return state;
 }
 
+// A blow has to be SEEN to land. A foe that strikes without moving did it in total silence: the
+// king simply lost a heart while every piece on the board stood perfectly still. Flag the striker
+// and the way it swung, and the view shoves its token at him and snaps it back — the mirror of the
+// king's own lunge into something he can't fell in one blow.
+//
+// ADJACENCY is the test for "did it swing". A turret or a ranged guardian hits from across the room
+// and already shows a bolt in flight; it must not lurch forward. Keying off distance rather than a
+// per-piece flag means any ranged attacker added later is silently correct without touching this.
+function markStrikeBump(state, attacker) {
+  const k = state.player;
+  if (!attacker || chebyshev(attacker.x, attacker.y, k.x, k.y) > 1) return; // a shot, not a swing
+  state.strikeBump = { id: attacker.id, dx: Math.sign(k.x - attacker.x), dy: Math.sign(k.y - attacker.y) };
+}
+
 // Resolve an ordinary enemy striking the king (it persists — never expends itself).
 function strikeKing(state, enemy) {
-  const mit = rollMitigation(state.player);
+  markStrikeBump(state, enemy); // a parried blow was still swung — mark it before mitigation
+  const mit = rollMitigation(state, enemy);
   if (!mit) {
+    hurtBy(state, foeDeathTags(enemy));
     state.player.hp -= 1;
     state.player.wasHit = true; state.player.hitThisFloor = true;
     bloody(enemy, BLOOD_STRIKE); // the striker is flecked (the king shows HP wounds)
@@ -3727,7 +6164,6 @@ function strikeKing(state, enemy) {
     state.message = `A ${enemy.kind} strikes the king!`;
     state.lastAction = 'hit';
     checkDeath(state);
-    if (!state.gameOver) blinkToSafety(state);
   } else {
     state.message = mitigationMessage(mit, enemy.kind);
     state.lastAction = 'enemy';
@@ -3750,17 +6186,27 @@ function bossRangedAttack(state, boss) {
   if (!onLine) return false;
   const dx = Math.sign(ddx);
   const dy = Math.sign(ddy);
-  // The king must sit on a ray the boss's piece can actually slide along.
+  // The king must sit on a ray the boss's piece can actually slide along...
   if (!cardSlideDirs(boss.kind).some(([sx, sy]) => sx === dx && sy === dy)) return false;
+  // ...and WITHIN ITS REACH. A bolt travels the piece's own line and no further: Volley changes what
+  // happens when it strikes down that line, not how far the line goes. Without this the ray ran to
+  // the edge of the world on nothing but a direction match, so a KING boss (reach: one step, but
+  // eight legal directions) sniped the player from across the floor — while the threat map, reading
+  // its real one-tile pattern, promised him the ground was safe.
+  if (!hasFiringLine(boss.kind)) return false;
+  const reach = pieceLineReach(boss.kind);
+  if (Math.max(Math.abs(ddx), Math.abs(ddy)) > reach) return false;
   const pierce = bossHas(boss, 'sorcerer');
   const path = [];
   const shattered = []; // boulders the bolt smashes through on its way to the king
   let x = boss.x + dx;
   let y = boss.y + dy;
   let reached = false;
-  while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
+  let step = 0;
+  while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE && ++step <= reach) {
     const terr = terrainAt(state, x, y);
-    if (terr === 'wall') return false; // a wall stops any bolt cold
+    if (terr === 'wall') return false; // stone stops any bolt cold
+    if (terr === 'tree') return false; // a trunk stops it too — a Sorcerer LIGHTS it instead (below)
     if (terr === 'boulder') shattered.push({ x, y }); // the bolt blasts it apart in passing (incidental)
     if (terr === 'ice') { if (!pierce) return false; shattered.push({ x, y, melt: true }); } // only a Sorcerer's fire thaws through an ice slab
     if (terr === 'devilgrass') { if (!pierce) return false; shattered.push({ x, y, grass: true }); } // a plain volley can't see through the thicket; fire burns it
@@ -3790,6 +6236,15 @@ function bossRangedAttack(state, boss) {
     tiles: pierce ? [...path.map((t) => ({ x: t.x, y: t.y })), { x: king.x, y: king.y }] : null,
   };
   if (pierce) {
+    state.player.burnedByFire = true; // its bolt is spellfire, and it is about to wash over him
+    // A SORCERER's bolt is SPELLFIRE, and fire does the same things to the floor whoever throws it.
+    // This used to shatter a boulder and stop there — no scorch, no lit trees, no boiled water —
+    // so the same bolt left a completely different world behind depending on which end it came from.
+    // scorchTileTerrain and scorchGround are the king's own, reused verbatim rather than restated.
+    for (const t of [...path, { x: king.x, y: king.y }]) {
+      scorchTileTerrain(state, t.x, t.y); // thaw ice, wither grass, LIGHT trees, blast boulders
+      scorchGround(state, t.x, t.y); // ...and blacken the stone, boiling off any water
+    }
     // Everything caught on the path is wounded (the boss spares only itself).
     for (const t of path) {
       const ally = allyAt(state, t.x, t.y);
@@ -3807,7 +6262,7 @@ function bossRangedAttack(state, boss) {
       }
     }
   }
-  const mit = rollMitigation(king);
+  const mit = rollMitigation(state, boss);
   if (!mit) {
     king.hp -= 1;
     king.wasHit = true; king.hitThisFloor = true;
@@ -3818,7 +6273,6 @@ function bossRangedAttack(state, boss) {
       : `${bossTitle(boss)} looses a bolt at the king!`;
     state.lastAction = 'hit';
     checkDeath(state);
-    if (!state.gameOver) blinkToSafety(state);
   } else {
     state.message = mitigationMessage(mit, boss.kind);
     state.lastAction = 'enemy';
@@ -3827,6 +6281,168 @@ function bossRangedAttack(state, boss) {
 }
 
 // A boss's turn: hunt like its piece, and strike ONLY if it can capture the king.
+// WARPER (boss trait): swap the boss and the king if the BOSS'S tile is markedly more dangerous to
+// the king than his own — measured by the very threat map the player sees (how many foes could hit
+// him if he stood there). Never when adjacent (its strike is for that), and only from a genuinely
+// worse tile, so it reads as "you lured me somewhere lethal — now YOU stand here". Returns true if it
+// swapped. `getThreatenedTiles` lives in board.js (loaded first), so it is a global here at runtime.
+// --- ON-TURN GUARDIAN TRAITS -------------------------------------------------
+// Each is gated on the boss being SEEN and HUNTING (bossSeenAndHunting) — a guardian the player has
+// never laid eyes on never breeds turrets, grows forests, or teleports from off in the dark.
+
+// MECHANIC: a 1-in-4 chance each turn to bolt a fresh turret onto sound nearby ground (spends the
+// turn, like Summoner). Returns true if it built one.
+function bossBuildTurret(state, boss) {
+  if (Math.random() >= 0.25) return false;
+  const spots = [];
+  for (let dx = -2; dx <= 2; dx += 1) for (let dy = -2; dy <= 2; dy += 1) {
+    const x = boss.x + dx;
+    const y = boss.y + dy;
+    if (dx === 0 && dy === 0) continue;
+    if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) continue;
+    if (terrainAt(state, x, y) !== 'normal') continue; // plain ground only
+    if (x === state.player.x && y === state.player.y) continue;
+    if (keyTileAt(state, x, y) || (state.exit && x === state.exit.x && y === state.exit.y)) continue;
+    if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+    if (turretBlocksHallway(state, x, y)) continue; // never plug a corridor with it
+    spots.push({ x, y });
+  }
+  if (!spots.length) return false;
+  const s = spots[randomInt(spots.length)];
+  state.enemies.push(makeTurret(state, randomTurretKind(state.floor), s.x, s.y));
+  cue(state, 'thrum');
+  state.message = `${bossTitle(boss)} bolts together a turret!`;
+  state.lastAction = 'enemy';
+  return true;
+}
+
+// BEASTMASTER (pet owner): keeps a ferz familiar. Whenever NO hostile ferz is in view, it conjures a
+// fresh one at its side — so the pet cannot be permanently killed while the master lives. Spends the turn.
+function bossSpawnPet(state, boss) {
+  const hasFerz = getVisibleEnemies(state).some((e) => e.kind === 'ferz' && !e.summonCircle && !isNeutralBeast(state, e));
+  if (hasFerz) return false;
+  if (!summonAdjacent(state, boss, 'ferz')) return false;
+  const pet = state.enemies[state.enemies.length - 1];
+  if (pet) { pet.awake = true; pet.provoked = true; rememberAt(pet, state.player.x, state.player.y, state.kingHeading); }
+  state.message = `${bossTitle(boss)} whistles up a ferz!`;
+  state.lastAction = 'enemy';
+  return true;
+}
+
+// GARDENER (mortal): now and then the wild grows up around it — a handful of adjacent tiles turn to
+// grass, timber or a pool. A FREE effect (it still acts); never touches walls or the king's tile.
+const GARDEN_TYPES = ['devilgrass', 'tree', 'water'];
+function bossGarden(state, boss) {
+  if (Math.random() >= 0.34) return;
+  let grew = false;
+  const n = 1 + randomInt(3); // some, not all
+  for (let i = 0; i < n; i += 1) {
+    if (terraformNearby(state, boss.x, boss.y, GARDEN_TYPES[randomInt(GARDEN_TYPES.length)])) grew = true;
+  }
+  if (grew) cue(state, 'thrum');
+}
+
+// SHADOWSTEP (demon): slip through the dark to a tile inside the screen that the king cannot directly
+// SEE (behind a wall / in fog) and that is CLOSER to him than where it stands. Premonition's x-ray
+// does NOT shield a tile from this — only true line of sight does. Returns true if it stepped.
+function bossShadowstep(state, boss) {
+  const king = state.player;
+  const bounds = getVisibleBounds(state);
+  const here = chebyshev(boss.x, boss.y, king.x, king.y);
+  let best = null;
+  for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
+    for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+      if (hasLineOfSight(state, king.x, king.y, x, y, false)) continue; // must be UNSEEN (true sight only)
+      const d = chebyshev(x, y, king.x, king.y);
+      if (d < 1 || d >= here) continue; // never onto him, and only if it CLOSES the gap
+      if (!isStandable(terrainAt(state, x, y))) continue;
+      if (keyTileAt(state, x, y) || (state.exit && x === state.exit.x && y === state.exit.y)) continue;
+      if (state.enemies.some((e) => e.id !== boss.id && e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+      if (!kindCanMove(state, boss.kind, x, y)) continue;
+      if (!best || d < best.d) best = { x, y, d };
+    }
+  }
+  if (!best) return false;
+  puffSmoke(state, boss.x, boss.y);
+  boss.x = best.x;
+  boss.y = best.y;
+  puffSmoke(state, boss.x, boss.y);
+  cue(state, 'thrum');
+  state.message = `${bossTitle(boss)} melts into shadow and reappears, closer!`;
+  state.lastAction = 'enemy';
+  updateDiscovery(state);
+  return true;
+}
+
+// BURROWER: tear open a fresh pit on a VISIBLE, unoccupied tile nearer the king and drop into it (it
+// treads the void as solid ground). The pit devours whatever was there — grass, timber, a boulder —
+// but never stone, lava, or water. Returns true if it burrowed.
+function bossBurrowTeleport(state, boss) {
+  const king = state.player;
+  const bounds = getVisibleBounds(state);
+  const here = chebyshev(boss.x, boss.y, king.x, king.y);
+  let best = null;
+  for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
+    for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+      if (!hasLineOfSight(state, king.x, king.y, x, y, false)) continue; // surfaces where he can SEE it
+      const t = terrainAt(state, x, y);
+      if (t === 'wall' || t === 'lava' || t === 'water') continue; // cannot bore through these
+      const d = chebyshev(x, y, king.x, king.y);
+      if (d < 1 || d >= here) continue;
+      if (x === king.x && y === king.y) continue;
+      if (keyTileAt(state, x, y) || (state.exit && x === state.exit.x && y === state.exit.y)) continue;
+      if (state.enemies.some((e) => e.id !== boss.id && e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+      if (!best || d < best.d) best = { x, y, d };
+    }
+  }
+  if (!best) return false;
+  const k = `${best.x},${best.y}`;
+  const was = Object.prototype.hasOwnProperty.call(state.terrain, k) ? state.terrain[k] : undefined;
+  smashBoulder(state, best.x, best.y); // a boulder there is torn up as the pit opens
+  state.terrain[k] = 'pit';
+  if (typeof dangerReachOk === 'function' && !dangerReachOk(state)) { // never seal him off with the new hole
+    if (was === undefined) delete state.terrain[k]; else state.terrain[k] = was;
+    return false;
+  }
+  puffSmoke(state, boss.x, boss.y);
+  boss.x = best.x;
+  boss.y = best.y;
+  puffSmoke(state, boss.x, boss.y);
+  cue(state, 'rumble');
+  state.message = `${bossTitle(boss)} burrows and erupts from a fresh pit!`;
+  state.lastAction = 'enemy';
+  updateDiscovery(state);
+  return true;
+}
+
+const WARP_DANGER_GAP = 2; // the boss tile must threaten the king with at least this many MORE foes
+function bossWarpSwap(state, boss) {
+  const king = state.player;
+  if (chebyshev(boss.x, boss.y, king.x, king.y) <= 1) return false; // adjacent: it strikes, never warps
+  if (typeof getThreatenedTiles !== 'function') return false;
+  const threat = getThreatenedTiles(state);
+  const bossDanger = threat.get(`${boss.x},${boss.y}`) || 0;
+  const kingDanger = threat.get(`${king.x},${king.y}`) || 0;
+  if (bossDanger < kingDanger + WARP_DANGER_GAP) return false; // its tile isn't worse ENOUGH to bother
+  const bx = boss.x;
+  const by = boss.y;
+  puffSmoke(state, bx, by); // smoke at both ends of the wrench
+  puffSmoke(state, king.x, king.y);
+  boss.x = king.x;
+  boss.y = king.y;
+  king.x = bx;
+  king.y = by;
+  cue(state, 'thrum');
+  collectKeyIfHere(state); // wrenched onto the key? he grabs it
+  checkDefenestration(state); // wrenched onto the open stair? he tumbles to the next floor
+  updateDiscovery(state);
+  if (state.lastAction !== 'exit') {
+    state.message = `${bossTitle(boss)} wrenches reality — you and it trade places!`;
+    state.lastAction = 'enemy';
+  }
+  return true;
+}
+
 function bossMove(state, boss) {
   const king = state.player;
   // A non-immune guardian (an earlier-age piece, or one of the finale's rush bosses) sears in
@@ -3845,6 +6461,20 @@ function bossMove(state, boss) {
     boss.regenTick = (boss.regenTick || 0) + 1;
     if (boss.regenTick % 4 === 0 && boss.hp < boss.maxHp) boss.hp += 1;
   }
+  // LICH: it calls the fallen back up — one a turn, from a body still fresh enough to answer.
+  //
+  // Ticked HERE, beside regen and above the recovering gate, because raising is not an ACTION: it
+  // does not have to stop to do it, so it raises on the turns it swings AND the turns it stands
+  // there getting its breath back. Below the gate it would only manage one every OTHER turn, which
+  // is not what "one a turn" means.
+  //
+  // The pressure it makes is unlike Summoner's. A Summoner adds to the room out of nothing, so it
+  // is a clock you race. A Lich adds nothing — it recycles what the king has ALREADY killed, so it
+  // turns his own victories into the thing beating him, and the only answer is to kill IT. Fighting
+  // one in a room you have already fought through is exactly the wrong idea.
+  // Only a COIN-FLIP each turn, so it recycles the dead at half pace — a room it fought through does
+  // not refill under the king faster than he can clear it. Still at most one a turn when it does fire.
+  if (bossHas(boss, 'lich') && Math.random() < 0.5) raiseNearbyDead(state, boss);
   // A giant guardian must catch its breath after every exertion: the turn AFTER it acts it
   // only RECOVERS, giving the king a window to strike or reposition. (This is what makes
   // these long-reach, high-HP bosses fair to fight.)
@@ -3863,7 +6493,7 @@ function bossMove(state, boss) {
     } else {
       const guarded = state.key && state.key.orb ? 'Orb' : 'key';
       state.message = `${bossTitle(boss)} guards the ${guarded}, unmoving.`;
-      state.lastAction = 'enemy';
+      state.lastAction = 'idle'; // it sits: worth SAYING once, but not worth a beat of animation
       return state;
     }
   }
@@ -3889,6 +6519,12 @@ function bossMove(state, boss) {
       return state;
     }
   }
+  // BEASTMASTER: if its ferz familiar has fallen, whistle up a new one (spends the turn).
+  if (bossHas(boss, 'petowner') && bossSeenAndHunting(state, boss) && bossSpawnPet(state, boss)) return state;
+  // MECHANIC: a 1-in-4 chance to bolt together a turret instead of acting.
+  if (bossHas(boss, 'mechanic') && bossSeenAndHunting(state, boss) && bossBuildTurret(state, boss)) return state;
+  // GARDENER: the wild sometimes grows around it — a FREE effect, so it still acts below.
+  if (bossHas(boss, 'gardener') && bossSeenAndHunting(state, boss)) bossGarden(state, boss);
   // Volley / Sorcerer: loose a bolt down an open line rather than closing to melee.
   if ((bossHas(boss, 'ranged') || bossHas(boss, 'sorcerer')) && bossRangedAttack(state, boss)) {
     return state;
@@ -3902,6 +6538,14 @@ function bossMove(state, boss) {
     if (terrainAt(state, king.x, king.y) !== 'wall' && terrainAt(state, king.x, king.y) !== 'ice') closeInBeforeStrike(state, boss);
     return bossHit(state, boss, `${bossTitle(boss)} strikes the king!`);
   }
+  // WARPER: it cannot reach him this turn — but if it STANDS somewhere far deadlier to him than where
+  // he stands, it wrenches the two of them into each other's places, shoving him into the crossfire
+  // and taking the safe ground for itself. (Its whole counter to being lured onto a dangerous tile.)
+  if (bossHas(boss, 'warper') && bossWarpSwap(state, boss)) return state;
+  // SHADOWSTEP / BURROWER: displace closer to the king when it can't reach him by walking — through
+  // the dark to an unseen tile, or by tearing open a new pit to erupt from. Both only if it CLOSES in.
+  if (bossHas(boss, 'shadowstep') && bossSeenAndHunting(state, boss) && bossShadowstep(state, boss)) return state;
+  if (bossHas(boss, 'burrower') && bossSeenAndHunting(state, boss) && bossBurrowTeleport(state, boss)) return state;
   const bossAlly = moves.find((m) => allyAt(state, m.x, m.y));
   if (bossAlly) {
     const a = allyAt(state, bossAlly.x, bossAlly.y);
@@ -3913,7 +6557,7 @@ function bossMove(state, boss) {
     state.lastAction = 'enemy';
     return state;
   }
-  const legal = moves.filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y));
+  const legal = preferNonGeyser(state, moves.filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y)));
   if (!legal.length) {
     boss.frustrated = true;
     state.message = `${bossTitle(boss)} fumes.`;
@@ -3926,18 +6570,39 @@ function bossMove(state, boss) {
   crushBoulderUnder(state, boss); // a leaping boss crushes a boulder it lands on
   state.message = `${bossTitle(boss)} advances.`;
   state.lastAction = 'enemy';
+  // HASTY: neither the first step nor this one may LAND a blow (this is the advance branch, so the
+  // first drew no blood), and the second is only worth taking if it gets the boss CLOSER (or into
+  // striking range for next turn). It never chains into an attack — two moves, never move-then-hit.
+  if (bossHas(boss, 'hasty')) bossHastySecondMove(state, boss);
   return state;
+}
+
+function bossHastySecondMove(state, boss) {
+  const king = state.player;
+  const here = chebyshev(boss.x, boss.y, king.x, king.y);
+  const legal = getPieceMoves(boss, state).filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y));
+  if (!legal.length) return;
+  const chosen = chooseHostileMove(legal, king.x, king.y);
+  if (chebyshev(chosen.x, chosen.y, king.x, king.y) >= here) return; // no closer → don't bother (never paces)
+  boss.x = chosen.x;
+  boss.y = chosen.y;
+  crushBoulderUnder(state, boss);
+  state.message = `${bossTitle(boss)} surges forward again!`;
 }
 
 // Move a single (seen, aware) enemy.
 function moveEnemy(state, enemyId) {
   const next = structuredClone(state);
   next.lastShot = null;
+  next.strikeBump = null; // set below only if THIS enemy actually swings at him
   next.player.deflected = false; // set true only if THIS enemy's blow is deflected
   const enemy = next.enemies.find((piece) => piece.id === enemyId);
   if (!enemy) return next;
   let result;
-  if (enemy.boss) result = bossMove(next, enemy);
+  // Confusion overrides everything a piece would otherwise do — a guardian's cunning, a turret's
+  // firing solution, a rune's count. It cannot tell the king from the thing standing next to it.
+  if (isConfused(enemy)) result = confusedTurn(next, enemy);
+  else if (enemy.boss) result = bossMove(next, enemy);
   else if (enemy.turret) result = fireTurret(next, enemy);
   else if (enemy.summonCircle) result = summonCircleTurn(next, enemy);
   else result = meleeMove(next, enemy);
@@ -3979,7 +6644,17 @@ function ensureReachable(state) {
     spots.push({ x, y });
   }
   if (!spots.length) return false;
-  const dest = spots[randomInt(spots.length)];
+  // The NEAREST reachable tile, not a random one. A random pick across the whole exit-region could
+  // fling him clear across the map — most vividly when he leaps into the middle of an ice field and
+  // shatters only his landing tile, marooning himself on one square ringed by slabs: the net then
+  // teleported him a dozen tiles off. Nearest turns that into a minimal nudge — he slides off the
+  // ice to the closest solid ground — which is what the fairness net should feel like.
+  let dest = spots[0];
+  let bestD = chebyshev(dest.x, dest.y, p.x, p.y);
+  for (const s of spots) {
+    const d = chebyshev(s.x, s.y, p.x, p.y);
+    if (d < bestD) { bestD = d; dest = s; }
+  }
   state.player.x = dest.x;
   state.player.y = dest.y;
   state.message = 'The shifting walls seal you off — you are wrenched to safer ground!';
@@ -4069,14 +6744,13 @@ function freezeTerrain(next, count) {
 function startleSpawn(enemy, king) {
   enemy.awake = true;
   enemy.surprised = true;
-  enemy.lastSeen = { x: king.x, y: king.y };
-  enemy.lastSeenTtl = PURSUIT_TTL;
+  rememberAt(enemy, king.x, king.y, null); // a foe startled awake never watched him walk anywhere
 }
 
 // A wave of fresh foes: SOME materialise right in the king's view (a couple of tiles off, so he
 // sees them arrive), the rest pour in nearby (a few further off / out of sight).
 function spawnWave(next) {
-  const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5);
+  const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5 + Math.round(overstayFraction(next.turn) * 50)); // rises UNBOUNDED with overstay, up to the perf ceiling
   const p = next.player;
   const occupied = new Set([`${p.x},${p.y}`]);
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
@@ -4085,8 +6759,9 @@ function spawnWave(next) {
   const want = 3 + randomInt(3) + Math.round(ramp * 4); // 3-5 early → 7-9 at max dread
   const drop = (pred, inSight) => {
     if (next.enemies.length >= cap) return false;
-    const kind = randomEnemyKind(next.floor);
+    const kind = spawnKindForFloor(next);
     const tile = findFreeTile(occupied, (x, y) => pred(x, y) && isStandable(terrainAt(next, x, y))
+      && terrainAt(next, x, y) !== 'geyser' // a spawning foe never materialises on a vent
       && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y));
     if (!tile) return false;
     occupied.add(tile.key);
@@ -4113,15 +6788,16 @@ function spawnWave(next) {
 // king's sight (anywhere on the floor, not hovering near him — hostile events already crowd his
 // heels). It roams until it spots him. Returns true if one slipped in.
 function spawnAmbientWanderer(next) {
-  const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5);
+  const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5 + Math.round(overstayFraction(next.turn) * 50)); // rises UNBOUNDED with overstay, up to the perf ceiling
   if (next.enemies.length >= cap) return false;
   const p = next.player;
   const occupied = new Set([`${p.x},${p.y}`]);
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
-  const kind = randomEnemyKind(next.floor);
+  const kind = spawnKindForFloor(next);
   const tile = findFreeTile(occupied, (x, y) => x >= 1 && x < WORLD_SIZE - 1 && y >= 1 && y < WORLD_SIZE - 1
     && chebyshev(x, y, p.x, p.y) >= 4 && !inLineOfSight(next, x, y) // just out of sight (closer, so they reach him sooner)
-    && isStandable(terrainAt(next, x, y)) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y));
+    && isStandable(terrainAt(next, x, y)) && terrainAt(next, x, y) !== 'geyser' // never drop a wanderer onto a vent
+    && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y));
   if (!tile) return false;
   next.enemies.push(createEnemy(kind, tile.x, tile.y));
   return true;
@@ -4136,8 +6812,11 @@ function makeMiniBoss(next, kind, x, y) {
   b.mini = true; // smaller, lower-HP, no-boon variant
   b.bossName = `a rogue ${kind}`;
   b.originalKind = kind;
-  b.maxHp = 2 + Math.floor(next.floor / 3); // clearly fewer wounds than a floor guardian
-  b.bossPerks = rollBossPerks(1); // a mini stays lesser: ONE perk, and never the Hardened +3
+  // Same treatment as the floor guardians: the shallowest mini is unchanged, but it grows at half
+  // the old rate (was floor/3, topping out at 4). A rogue piece should be a nasty surprise, not a
+  // second boss fight — and at the old rate a late-game mini outlasted an early guardian.
+  b.maxHp = 2 + Math.floor(next.floor / 6); // clearly fewer wounds than a floor guardian
+  b.bossPerks = rollBossPerks(1, kind); // a mini stays lesser: ONE perk, and never the Hardened +3
   b.bossPerk = b.bossPerks[0];
   b.hp = b.maxHp;
   b.lavaImmune = isDemonKind(kind);
@@ -4155,7 +6834,7 @@ function spawnBossRush(next) {
   const kind = STANDARD_KINDS[randomInt(STANDARD_KINDS.length)]; // an earlier-age piece
   const occupied = new Set([`${p.x},${p.y}`]);
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
-  const near = (x, y) => isStandable(terrainAt(next, x, y)) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y);
+  const near = (x, y) => isStandable(terrainAt(next, x, y)) && terrainAt(next, x, y) !== 'geyser' && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y);
   const tile = findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 2 && chebyshev(x, y, p.x, p.y) <= 5)
     || findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) <= 7);
   if (!tile) return '';
@@ -4171,10 +6850,10 @@ function spawnBossRush(next) {
 function spawnMiniBoss(next) {
   if (next.enemies.filter((e) => e.boss && e.mini && !e.rush).length >= 2) return 'A distant roar — but no new terror rises.';
   const p = next.player;
-  const kind = randomEnemyKind(next.floor);
+  const kind = spawnKindForFloor(next);
   const occupied = new Set([`${p.x},${p.y}`]);
   for (const e of next.enemies) occupied.add(`${e.x},${e.y}`);
-  const near = (x, y) => isStandable(terrainAt(next, x, y)) && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y);
+  const near = (x, y) => isStandable(terrainAt(next, x, y)) && terrainAt(next, x, y) !== 'geyser' && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kind, x, y);
   const tile = findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 3 && chebyshev(x, y, p.x, p.y) <= 6 && inLineOfSight(next, x, y))
     || findFreeTile(occupied, (x, y) => near(x, y) && chebyshev(x, y, p.x, p.y) >= 3);
   if (!tile) return 'A distant roar — but no new terror rises.';
@@ -4184,11 +6863,11 @@ function spawnMiniBoss(next) {
   occupied.add(`${tile.x},${tile.y}`);
   // It does not rise ALONE: a rogue guardian drags a knot of floor-appropriate underlings up with
   // it, so the event lands as a real incursion rather than one wandering body.
-  const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5);
+  const cap = Math.min(MAX_ENEMIES, 14 + next.floor * 5 + Math.round(overstayFraction(next.turn) * 50)); // rises UNBOUNDED with overstay, up to the perf ceiling
   const wanted = 1 + randomInt(3); // 1-3
   let brought = 0;
   for (let i = 0; i < wanted && next.enemies.length < cap; i += 1) {
-    const kin = randomEnemyKind(next.floor);
+    const kin = spawnKindForFloor(next);
     const spot = findFreeTile(occupied, (x, y) => chebyshev(x, y, tile.x, tile.y) <= 2 // clustered around its master
       && chebyshev(x, y, p.x, p.y) >= 2 && isStandable(terrainAt(next, x, y))
       && !keyTileAt(next, x, y) && !allyAt(next, x, y) && kindCanMove(next, kin, x, y));
@@ -4285,31 +6964,85 @@ function fireDangerEvent(next, ramp) {
   pool.push('miniBoss', 'miniBoss'); // always available (enemies always exist)
   if (next.player.seenTurret) pool.push('turrets');
   // Terrain reshaping — each seen hazard contributes ONE entry (kept as garnish, not the main course).
-  if (seen.includes('water')) pool.push('flood');
+  // FLOOD is a mortal-realm hazard only. Down in hell, water rising through the ash is the wrong
+  // story — and mechanically it is nearly a KINDNESS there: water merely stops a slide, while the
+  // lava it would displace costs a heart every turn. Below the demon floor the same roll wells up
+  // lava instead, which is what the realm should be doing to him anyway.
+  // Once the floor counts as HELL — a real demon floor, OR an overworld floor gone molten in the
+  // overstay — the dread effects turn hellish: no more flood (water is the wrong story down here, and
+  // a near-kindness beside lava), and lava wells up in its place.
+  if (seen.includes('water') && !isHellNow(next)) pool.push('flood');
   if (seen.includes('lava')) pool.push('lavaSpread', 'wallsToLava');
+  if (isHellNow(next) && seen.includes('lava')) pool.push('lavaSpread'); // hell's share of the old flood roll
   if (seen.includes('pit')) pool.push('pits');
   if (seen.includes('boulder')) pool.push('caveIn');
   if (seen.includes('ice')) pool.push('freeze');
-  if (seen.includes('devilgrass')) pool.push('devilgrass');
-  const kind = pool[randomInt(pool.length)];
+  // NB: no 'devilgrass' event. Grass blocks SIGHT but not movement, so a floor full of it is
+  // COVER — it makes the king harder to see and easier to break away from. Every other entry in
+  // this pool costs him something; that one was a gift wearing a hazard's name.
+  const runOne = (kind) => {
+    switch (kind) {
+      case 'wave': return spawnWave(next);
+      case 'miniBoss': return spawnMiniBoss(next);
+      case 'turrets': return dropTurrets(next);
+      case 'wallsToLava': return wallsToLava(next);
+      case 'lavaSpread': return scatterTerrain(next, 'lava', hazardCount(next, 0.05, 3, 13)) ? 'Lava wells up across the floor!' : 'The floor smoulders.';
+      case 'flood': return scatterTerrain(next, 'water', hazardCount(next, 0.05, 4, 14)) ? 'Water floods across the floor!' : 'A damp chill spreads.';
+      case 'pits': return scatterTerrain(next, 'pit', hazardCount(next, 0.04, 2, 11)) ? 'The ground gives way — pits yawn open across the floor!' : 'The ground shudders.';
+      case 'freeze': return freezeTerrain(next, hazardCount(next, 0.04, 3, 12)) ? 'A killing frost sweeps in — ice sheets over the floor!' : 'Your breath fogs in a sudden chill.';
+      case 'caveIn':
+        scatterTerrain(next, 'boulder', hazardCount(next, 0.035, 2, 9));
+        scatterTerrain(next, 'wall', hazardCount(next, 0.02, 1, 5));
+        collapseWalls(next, 1 + randomInt(3)); // some standing walls give way, leaving rubble
+        return 'The ceiling caves in — rubble crashes down!';
+      default: return 'The floor darkens with menace.';
+    }
+  };
+  // An event can FIZZLE: the mini-boss cap is already full, a wave finds no room, a hazard has
+  // nowhere left to scatter. It then reports something like "a distant roar — but no new terror
+  // rises" and is SPENT. Harmless on the ordinary timer (it comes round again in a few turns) —
+  // but every dread STEP-UP now fires one of these, and the music has just promised the player that
+  // something is happening. A silent step-up makes the score a liar.
+  //
+  // So: measure whether the world actually CHANGED, and if it did not, try a different kind. The
+  // footprint is deliberately crude (piece count + terrain count) rather than a per-event success
+  // flag — every event either adds a piece or writes terrain, and this cannot rot when a new event
+  // is added and someone forgets to return a flag.
+  const footprint = () => next.enemies.length * 1000 + Object.keys(next.terrain).length;
+  let kind = null;
   let msg = '';
-  switch (kind) {
-    case 'wave': msg = spawnWave(next); break;
-    case 'miniBoss': msg = spawnMiniBoss(next); break;
-    case 'turrets': msg = dropTurrets(next); break;
-    case 'wallsToLava': msg = wallsToLava(next); break;
-    case 'lavaSpread': msg = scatterTerrain(next, 'lava', hazardCount(next, 0.05, 3, 13)) ? 'Lava wells up across the floor!' : 'The floor smoulders.'; break;
-    case 'flood': msg = scatterTerrain(next, 'water', hazardCount(next, 0.05, 4, 14)) ? 'Water floods across the floor!' : 'A damp chill spreads.'; break;
-    case 'pits': msg = scatterTerrain(next, 'pit', hazardCount(next, 0.04, 2, 11)) ? 'The ground gives way — pits yawn open across the floor!' : 'The ground shudders.'; break;
-    case 'freeze': msg = freezeTerrain(next, hazardCount(next, 0.04, 3, 12)) ? 'A killing frost sweeps in — ice sheets over the floor!' : 'Your breath fogs in a sudden chill.'; break;
-    case 'devilgrass': msg = scatterTerrain(next, 'devilgrass', hazardCount(next, 0.045, 3, 12)) ? 'Devilgrass erupts, choking the floor in writhing fronds!' : 'A foul weed stirs underfoot.'; break;
-    case 'caveIn':
-      scatterTerrain(next, 'boulder', hazardCount(next, 0.035, 2, 9));
-      scatterTerrain(next, 'wall', hazardCount(next, 0.02, 1, 5));
-      collapseWalls(next, 1 + randomInt(3)); // some standing walls give way, leaving rubble
-      msg = 'The ceiling caves in — rubble crashes down!';
-      break;
-    default: msg = 'The floor darkens with menace.';
+  let choices = pool.slice();
+  while (choices.length) {
+    const pick = choices[randomInt(choices.length)];
+    kind = pick;
+    const before = footprint();
+    msg = runOne(pick);
+    if (footprint() !== before) break; // it landed
+    // It fizzled — and re-rolling the SAME pool would just pick it again, because 'wave' and
+    // 'miniBoss' ARE most of the pool by design. Both cap out on a crowded floor (spawnWave stops
+    // at 14 + 5/floor; two live mini-bosses block a third), so a naive retry re-picked a capped
+    // event over and over and still came up empty. Strike the kind and try a genuinely different
+    // one — which pushes a full floor onto the terrain events, and those can always land.
+    choices = choices.filter((k) => k !== pick);
+  }
+  if (!choices.length) {
+    // Everything the floor could throw is capped or not yet unlocked — the spawn caps are full and
+    // he has met no hazard to turn against him. The score has still just changed gear, and a step-up
+    // that does nothing makes the music a liar. So ROUSE the floor instead: every foe that had not
+    // noticed him does now, and comes. It costs no piece and no tile, which is exactly why it can
+    // never fizzle — and being hunted by what is already here is a real cost.
+    let roused = 0;
+    for (const e of next.enemies) {
+      if (e.turret || e.summonCircle || e.boss || e.awake) continue;
+      e.awake = true;
+      e.asleep = false;
+      rememberKing(next, e);
+      roused += 1;
+    }
+    kind = 'rouse';
+    msg = roused
+      ? 'A shudder runs through the floor — every foe knows where you are!'
+      : 'The floor darkens with menace.';
   }
   // The exit (stair / portal) and the key/orb tile must NEVER hold terrain — always clear floor.
   if (next.exit) delete next.terrain[`${next.exit.x},${next.exit.y}`];
@@ -4339,7 +7072,7 @@ function maybeSpawnEnemy(state) {
   }
   // Floor 1 is a gentle on-ramp: NO ambient spawns and NO hostile events — the dungeon only
   // starts turning against the king from floor 2 onward.
-  if ((next.floor || 1) < 2) { ensureReachable(next); return next; }
+  if ((next.floor || 1) < 2) { settleTurn(next); return next; }
   next.turnsSinceSpawn = (next.turnsSinceSpawn || 0) + 1;
   const ramp = dreadFraction(next.turn, next.dreadTurns); // 0 through the grace, then 0 -> 1 over the climb
 
@@ -4355,14 +7088,43 @@ function maybeSpawnEnemy(state) {
     for (let i = 0; i < burst; i += 1) spawnAmbientWanderer(next);
   }
 
+  // EVERY dread STEP-UP is itself a hostile event. The score changing gear and the floor turning on
+  // the king are now the SAME moment, which is the whole point: what he HEARS is what just happened.
+  // Before, the tempo climbed on one clock and events fired on another, so the music was a mood
+  // rather than a tell. (dreadGear is shared with audio.js — see constants.js.)
+  const gear = dreadGear(ramp);
+  const steppedUp = gear > (next.lastDreadGear || 0);
+  next.lastDreadGear = gear;
+
   // Through the GRACE the floor stays its own: no event fires at all, however long the timer has
-  // run. The timer keeps counting, so the first hint of dread lands the moment grace lifts.
+  // run. The timer keeps counting, so the first hint of dread lands the moment grace lifts — which
+  // is also gear 1, so that first event and the first tempo change are one and the same.
   const interval = Math.max(7, Math.round(32 - 25 * ramp)); // ~32 turns early → ~7 at max dread (events pile on fast when maxed)
-  if (next.turnsSinceSpawn < interval || inDreadGrace(next.turn, next.dreadTurns)) { ensureReachable(next); return next; }
+  if (!steppedUp && (next.turnsSinceSpawn < interval || inDreadGrace(next.turn, next.dreadTurns))) { settleTurn(next); return next; }
   next.turnsSinceSpawn = 0;
   fireDangerEvent(next, ramp);
-  ensureReachable(next); // never let a terrain event wall the king off from the key/stair
+  settleTurn(next);
   return next;
+}
+
+// How every turn ENDS, however maybeSpawnEnemy got there. Order is the whole rule.
+//
+// ensureReachable is a fairness net: if he can still WALK but the floor has shifted so that no route
+// to the key or stair is left, it wrenches him back to solid ground. That is right — the dungeon did
+// that to him, not the other way round.
+//
+// But it never asked whether he could move AT ALL, so it was also quietly bailing him out of the one
+// thing he genuinely earned: leaping onto an island of pits with an empty hand. Judged FIRST, a king
+// with nowhere to step and nothing to spend is finished, and the net only catches what it was built
+// for. (There were three exits from maybeSpawnEnemy, each calling ensureReachable by hand — so the
+// rule went in at one of them and two paths quietly kept rescuing him.)
+function settleTurn(state) {
+  tickGuardianWards(state); // refresh Guardian wards from FINAL positions, ready for the king's turn
+  // WAITING (Sentinel) invincibility lasts exactly one enemy phase — the one right after he holds his
+  // ground — and lifts here, at its close, so his next turn is played as a mortal king again.
+  if (state.player.invuln) state.player.invuln = false;
+  if (checkStalemate(state)) return;
+  ensureReachable(state);
 }
 
 /* --------------------------------- upkeep --------------------------------- */

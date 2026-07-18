@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, dreadFraction, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, chamberAnchorForFloor, playerReachable };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, tickGeysers, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -20,11 +20,17 @@ const {
   getVisibleBounds, capturableAt, createBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
   fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
   advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, getPieceThreats, maybeSpawnEnemy,
-  ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isBefriendedBeast,
+  ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast,
   hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks,
-  runAllyPhase, scorchGround,
+  runAllyPhase, scorchGround, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent,
   randomEnemyKind: rollEnemy, randomTurretKind: rollTurret,
-  dreadFraction, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, chamberAnchorForFloor, playerReachable,
+  dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn,
+  isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor,
+  isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies,
+  playerTitle, cardBlockedReason, committedChain, attackTile, isStalemate, knightLPath, BOSS_PERKS,
+  fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards,
+  tickGeysers, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
+  overstayFraction, MAX_TURNS_LAVA,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -38,12 +44,13 @@ function makeEnemy(extra) {
   };
 }
 
-test('createInitialState starts the king at the center and spawns enemies', () => {
+test('createInitialState starts the king near the center and spawns enemies', () => {
   const state = createInitialState('warrior');
-  // Derived, not hardcoded — the board has been resized once already and these went stale.
-  assert.equal(state.player.x, PLAYER_START.x);
-  assert.equal(state.player.y, PLAYER_START.y);
-  assert.equal(state.player.x, Math.floor(WORLD_SIZE / 2), 'and PLAYER_START really is the centre');
+  assert.equal(PLAYER_START.x, Math.floor(WORLD_SIZE / 2), 'PLAYER_START really is the centre');
+  // The start is JITTERED around the centre now (dead-centre every floor went stale), but stays
+  // roughly central and well clear of the border.
+  assert.ok(chebyshev(state.player.x, state.player.y, PLAYER_START.x, PLAYER_START.y) <= 6, 'near the centre');
+  assert.ok(state.player.x >= 4 && state.player.x < WORLD_SIZE - 4 && state.player.y >= 4 && state.player.y < WORLD_SIZE - 4, 'clear of the border');
   assert.ok(state.enemies.length >= 3);
 });
 
@@ -62,16 +69,17 @@ test('category is a class property; each class starts with its one card', () => 
 });
 
 test('visible bounds are a centered 7x7 window', () => {
-  const bounds = getVisibleBounds(createInitialState('warrior'));
+  const s = createInitialState('warrior');
+  const bounds = getVisibleBounds(s);
   assert.equal(bounds.width, 7);
   assert.equal(bounds.height, 7);
-  assert.equal(bounds.x, PLAYER_START.x - 3, 'centred on the king');
-  assert.equal(bounds.y, PLAYER_START.y - 3);
+  assert.equal(bounds.x, s.player.x - 3, 'centred on the king');
+  assert.equal(bounds.y, s.player.y - 3);
 });
 
 test('a fresh floor reveals fog around the king but not the far corners', () => {
   const state = createInitialState('warrior');
-  assert.ok(state.explored[`${PLAYER_START.x},${PLAYER_START.y}`]);
+  assert.ok(state.explored[`${state.player.x},${state.player.y}`]);
   assert.ok(!state.explored['0,0']);
 });
 
@@ -90,8 +98,8 @@ test('arriving on any floor leaves no enemy in the king’s line of sight', () =
 test('the king’s token colour is his class colour, upgraded to a tier-3 subclass capstone', () => {
   let s = createInitialState('warrior');
   assert.equal(playerDisplayColor(s.player), CLASSES.warrior.color, 'base is the class colour');
-  // Climb the Sentinel chain to its tier-3 capstone (Parry) — the colour becomes Sentinel's.
-  for (const id of ['w_hp1', 'w_hp2', 'w_bulwark']) {
+  // Climb the Sentinel chain to its tier-3 capstone (Reflect) — the colour becomes Sentinel's.
+  for (const id of ['w_waiting', 'w_bulwark', 'w_reflect']) {
     s.pendingLevelUp = true;
     s = learnPerk(s, id);
   }
@@ -287,14 +295,17 @@ test('demon guardians bear TWO perks and the final one THREE — never two that 
   b.bossPerks = ['flying', 'brutal'];
   b.bossPerk = 'flying';
   assert.equal(bossDamage(b), 2, 'Brutal in the second slot still doubles its blow');
-  // The final guardian is a far bigger pool than the floor below it.
+  // The final guardian takes NO HP bonus on top of the curve — it used to carry a 14-point pool
+  // against the floor below it's 8, and grinding it down was the whole fight. Its THREE perks are
+  // its escalation now (asserted above); its HP is simply the next step of the same curve.
   const balrog = createBoss(8, 9, 8);
   const prior = createBoss(7, 9, 8);
   // Compare the AUTHORED pools: a rolled Hardened (+3) on either side would otherwise muddy this,
   // and did — it made a raw maxHp comparison fail roughly one run in eight.
   const base = (b) => b.maxHp - (bossHas(b, 'tough') ? 3 : 0);
-  assert.ok(balrog.maxHp >= 14, `the Balrog carries the finale's pool (${balrog.maxHp})`);
-  assert.ok(base(balrog) > base(prior) + 4, `and it looms far over the floor below (${base(balrog)} vs ${base(prior)})`);
+  assert.equal(base(balrog), levelForFloor(8).boss.hp, 'the Balrog carries exactly its authored pool');
+  assert.ok(base(balrog) > base(prior), `it is still the stoutest thing in the dungeon (${base(balrog)} vs ${base(prior)})`);
+  assert.ok(base(balrog) - base(prior) <= 2, `but by a normal step, not a wall of HP (${base(balrog)} vs ${base(prior)})`);
 });
 
 test('a Regenerating boss knits one wound shut every fourth turn', () => {
@@ -576,10 +587,15 @@ test('a dormant guardian rouses when it SEES the king, not only when he is adjac
   assert.equal(b.dormant, false, 'the guardian wakes on sight');
 });
 
-test('every boss rolls one of the twelve boss perks', () => {
-  const boss = createBoss(4, 9, 8);
-  assert.ok(['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen'].includes(boss.bossPerk));
-  assert.equal(boss.originalKind, boss.kind);
+test('every boss rolls from the boss-perk list', () => {
+  // Read the REAL list, not a hand-copied one — this test flaked three separate times because a
+  // freshly-added perk (Lich, most recently) was not in the copy, and a boss that rolled it as its
+  // primary tripped the check about one run in three.
+  for (let i = 0; i < 40; i += 1) {
+    const boss = createBoss(4, 9, 8);
+    assert.ok(BOSS_PERKS.includes(boss.bossPerk), `${boss.bossPerk} is a real boss perk`);
+    assert.equal(boss.originalKind, boss.kind);
+  }
 });
 
 test('a Leech boss mends a wound each time it wounds the king', () => {
@@ -604,14 +620,26 @@ test('a Leech boss mends a wound each time it wounds the king', () => {
   assert.equal(full.enemies.find((e) => e.boss).hp, boss.maxHp, 'a full-health Leech boss does not overheal');
 });
 
-test('a Hardened boss bears three extra wounds', () => {
+test('a Hardened boss bears a THIRD again as much life', () => {
   // createBoss is random, so probe many draws and check the Hardened ones only.
-  const base = 5; // the floor-4 (queen) boss's authored HP
-  for (let i = 0; i < 40; i += 1) {
-    const b = createBoss(4, 9, 8);
-    if (b.bossPerk === 'tough') assert.equal(b.maxHp, base + 3);
-    else assert.equal(b.maxHp, base);
+  // Read the authored pool rather than restating it: a hardcoded number here silently went stale
+  // the moment the HP curve was retuned, failing this test for a reason that had nothing to do
+  // with the Hardened perk it exists to check.
+  for (const floor of [1, 4, 8]) {
+    const base = levelForFloor(floor).boss.hp;
+    let sawTough = false;
+    for (let i = 0; i < 80; i += 1) {
+      const b = createBoss(floor, 9, 8);
+      if (bossHas(b, 'tough')) { sawTough = true; assert.equal(b.maxHp, Math.ceil(base * 4 / 3), `floor ${floor}: a third again on ${base}`); }
+      else assert.equal(b.maxHp, base, `floor ${floor}: an ordinary guardian carries its authored pool`);
+    }
+    assert.ok(sawTough, `floor ${floor}: Hardened actually rolled (so this test can fail)`);
   }
+  // It must SCALE now, not add a flat lump: the bonus on the finale has to outweigh the one on
+  // floor 1, which is the entire point of the change.
+  const deep = Math.ceil(levelForFloor(8).boss.hp * 4 / 3) - levelForFloor(8).boss.hp;
+  const shallow = Math.ceil(levelForFloor(1).boss.hp * 4 / 3) - levelForFloor(1).boss.hp;
+  assert.ok(deep > shallow, `it grows with the guardian (+${deep} deep vs +${shallow} shallow)`);
 });
 
 test('a Brutal boss strikes the king for two', () => {
@@ -700,15 +728,15 @@ test('a summoning circle conjures a foe when it sees you, and dies when stepped 
   s.enemies = [circle];
   assert.equal(enemyRole(circle), 'circle');
   const before = s.enemies.length;
-  // Circles now conjure only every FOURTH turn (a longer, more readable wind-up).
-  let acted = moveEnemy(s, circle.id);
-  assert.equal(acted.enemies.length, before, 'no minion on turn 1');
+  // A circle conjures every SUMMON_TURNS-th turn (3 — it was 4, which left a lone rune contributing
+  // almost nothing once circles stopped spawning in clusters).
+  let acted = s;
+  for (let i = 1; i < SUMMON_TURNS; i += 1) {
+    acted = moveEnemy(acted, circle.id);
+    assert.equal(acted.enemies.length, before, `no minion on wind-up turn ${i}`);
+  }
   acted = moveEnemy(acted, circle.id);
-  assert.equal(acted.enemies.length, before, 'nor turn 2');
-  acted = moveEnemy(acted, circle.id);
-  assert.equal(acted.enemies.length, before, 'nor turn 3');
-  acted = moveEnemy(acted, circle.id);
-  assert.ok(acted.enemies.length > before, 'it conjures a minion on the FOURTH turn');
+  assert.ok(acted.enemies.length > before, `it conjures on turn ${SUMMON_TURNS}`);
   const destroyed = movePlayerTo(s, 9, 8);
   assert.ok(!destroyed.enemies.some((e) => e.summonCircle), 'stepping on it destroys it');
 });
@@ -789,7 +817,7 @@ test('wall-torches: density climbs with depth (rare early, a hall of fire by the
 });
 
 test('a wall-torch sears the phasing king each turn he ends embedded in it (Winged Boots negates)', () => {
-  const s = sorcererWith('s_blink', 's_phase'); // Phase lets him stand INSIDE a wall
+  const s = sorcererWith('s_swap', 's_phase'); // Phase lets him stand INSIDE a wall
   assert.equal(s.player.phase, true);
   s.terrain = { '11,10': 'wall' };
   s.torches = { '11,10': true };
@@ -800,7 +828,7 @@ test('a wall-torch sears the phasing king each turn he ends embedded in it (Wing
   assert.deepEqual({ x: burned.player.x, y: burned.player.y }, { x: 11, y: 10 }, 'he ends embedded in the wall');
   assert.equal(burned.player.hp, 3, 'the torch sears him 1 HP');
   // Winged Boots (terrainImmune) shrugs it off.
-  const immune = sorcererWith('s_blink', 's_phase');
+  const immune = sorcererWith('s_swap', 's_phase');
   immune.terrain = { '11,10': 'wall' };
   immune.torches = { '11,10': true };
   immune.enemies = [];
@@ -959,6 +987,161 @@ test('a compound piece leaps over a pit even though its slide cannot cross it', 
   assert.ok(moves.some((m) => m.viaJump && m.x === 12 && m.y === 11), 'but the knight-leap clears it');
 });
 
+test('Silence drops every foe in SIGHT, and HOLDS as he strikes — only the foe he hits wakes', () => {
+  const build = () => {
+    const t = rangerWith('r_ghost', 'r_camo', 'r_stealth');
+    t.terrain = {}; t.allies = [];
+    t.player.x = 10; t.player.y = 10; t.player.moveRange = 1;
+    t.enemies = [
+      makeEnemy({ kind: 'rook', x: 12, y: 10, awake: true, charged: true, id: 'near' }), // in sight
+      makeEnemy({ kind: 'rook', x: 22, y: 22, awake: true, charged: true, id: 'far' }), // far out of sight
+    ];
+    return t;
+  };
+  let s = build();
+  const card = s.player.cards.find((c) => c.kind === 'silence');
+  assert.ok(card, 'the perk grants a Silence card');
+  assert.equal(card.cooldown, 9);
+  const idx = s.player.cards.findIndex((c) => c.kind === 'silence');
+  s = useCard(s, idx, 10, 10); // a self-cast
+  assert.equal(s.enemyTurn, false, 'a free action');
+  assert.equal(s.player.silence, 3, 'the hush holds three turns');
+  const by = (id) => s.enemies.find((e) => e.id === id);
+  assert.equal(by('near').asleep, true, 'the foe he can see drops');
+  assert.ok(!by('far').asleep, 'one he cannot see is untouched');
+  // It holds across turns while he does not swing...
+  s = beginEnemyPhase(s).state;
+  assert.equal(s.enemies.find((e) => e.id === 'near').asleep, true, 'still down next phase');
+  // ...and it HOLDS as he strikes: only the foe he hits is disrupted (here, killed outright); the
+  // rest of the hushed room sleeps on, so he can pick it apart one piece at a time.
+  let t = build();
+  const i2 = t.player.cards.findIndex((c) => c.kind === 'silence');
+  t = useCard(t, i2, 10, 10);
+  assert.equal(t.enemies.find((e) => e.id === 'near').asleep, true, 'the far-side rook is hushed by the cast');
+  t.enemies.push(makeEnemy({ kind: 'pawn', x: 11, y: 10, id: 'food' })); // a fresh foe right beside him
+  t = movePlayerTo(t, 11, 10); // a kill — he took a swing
+  assert.ok(t.player.silence > 0, 'the hush HOLDS through a strike now (it does not shatter)');
+  assert.ok(!t.enemies.some((e) => e.id === 'food'), 'the struck pawn is dead');
+  assert.equal(t.enemies.find((e) => e.id === 'near')?.asleep, true, 'but the OTHER hushed foe sleeps on');
+});
+
+test('Waiting (Sentinel): skipping a turn makes the king invincible until his next turn', () => {
+  const build = () => {
+    const t = warriorWith('w_waiting');
+    t.terrain = {}; t.allies = [];
+    t.player.x = 10; t.player.y = 10; t.player.hp = 6; t.player.maxHp = 6;
+    t.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 11, awake: true, id: 'rk' })]; // adjacent, poised to strike
+    return t;
+  };
+  assert.equal(build().player.waiting, true, 'the perk grants it');
+  // WAIT: he goes invincible, and the rook's blow does nothing.
+  let s = skipTurn(build());
+  assert.equal(s.player.invuln, true, 'holding his ground turns him invincible');
+  const hp0 = s.player.hp;
+  s = moveEnemy(s, 'rk');
+  assert.equal(s.player.hp, hp0, 'the blow lands but does no damage while he waits');
+  // CONTROL: without the perk, the same skipped turn leaves him mortal and the rook wounds him.
+  let ctrl = build();
+  ctrl.player.waiting = false;
+  ctrl = skipTurn(ctrl);
+  assert.equal(Boolean(ctrl.player.invuln), false, 'no perk, no invincibility');
+  const c0 = ctrl.player.hp;
+  ctrl = moveEnemy(ctrl, 'rk');
+  assert.ok(ctrl.player.hp < c0, 'and the blow lands for real');
+  // The window is ONE turn: settleTurn (run by maybeSpawnEnemy) lifts it before his next turn.
+  const after = maybeSpawnEnemy(s);
+  assert.equal(after.player.invuln, false, 'invincibility lifts by his next turn');
+});
+
+test('Parry is a guard you RAISE and SPEND — banked by a quiet turn, kept through the fight', () => {
+  // Unconditional it blocked a hit EVERY turn while he attacked freely (the bot won 70% of runs on
+  // it). Requiring the immediately-previous turn to be blow-free went too far — it was worthless to
+  // anyone actually fighting. As a charge it is a decision: spend a turn covering up, bank one hit.
+  const build = () => {
+    const t = warriorWith('w_waiting', 'w_bulwark'); // Parry now sits at Sentinel tier 2, behind Waiting
+    t.terrain = {}; t.allies = [];
+    t.player.x = 10; t.player.y = 10; t.player.moveRange = 1;
+    t.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 14, awake: true, charged: true, id: 'rk', lastSeen: { x: 10, y: 10 }, lastSeenTtl: 9 })];
+    return t;
+  };
+  // A fresh king has NO guard — it must be earned.
+  const raw = build();
+  assert.ok(!raw.player.guardUp, 'the guard starts down');
+  // A quiet turn raises it, and the next blow is turned aside.
+  let s = movePlayerTo(build(), 10, 9);
+  assert.equal(s.player.guardUp, true, 'a turn without striking raises the guard');
+  const hp0 = s.player.hp;
+  s = moveEnemy(s, 'rk');
+  assert.equal(hp0 - s.player.hp, 0, 'and it turns the blow aside');
+  assert.equal(s.player.guardUp, false, 'spending it drops the guard');
+  // It is SPENT, not permanent: a second blow with no guard banked lands.
+  let t = movePlayerTo(build(), 10, 9);
+  t = moveEnemy(t, 'rk'); // first blow parried
+  const hp1 = t.player.hp;
+  t.player.attacked = true; // he swung this turn, so no new guard is raised
+  t = passTurn(t) || t;
+  t = moveEnemy(t, 'rk');
+  assert.equal(hp1 - t.player.hp, 1, 'with no guard banked, the next blow lands');
+  // Striking does NOT knock down a guard already raised — that is the softening.
+  let u = movePlayerTo(build(), 10, 9); // bank it
+  assert.equal(u.player.guardUp, true);
+  u.enemies.push(makeEnemy({ kind: 'pawn', x: 11, y: 9, id: 'food' }));
+  u = movePlayerTo(u, 11, 9); // now attack
+  assert.equal(u.player.guardUp, true, 'the banked guard survives him taking a swing');
+});
+
+test('Fireball bursts around the FIRST foe on its ray, and burns friend and king alike', () => {
+  const build = () => {
+    const s = sorcererWith('s_staff', 's_barrage', 's_fireball');
+    s.terrain = {}; s.allies = []; s.enemies = [];
+    s.player.x = 10; s.player.y = 10;
+    return s;
+  };
+  const s = build();
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }), // first on the ray -> the burst centre
+    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }), // in the ring
+    makeEnemy({ kind: 'pawn', x: 12, y: 13, awake: true }), // outside it
+  ];
+  s.allies = [{ id: 'pal', kind: 'mann', x: 11, y: 11 }];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'fireball');
+  // A SPELL aims at its ray's far end, not at the foe — the burst must still centre on the foe.
+  const aim = getCardMoves(s, s.player.cards[idx]).find((m) => m.y === 10 && m.x > 10);
+  assert.ok(aim && aim.x > 12, 'the aim point is past the target, at the ray end');
+  const hp0 = s.player.hp;
+  const r = useCard(s, idx, aim.x, aim.y);
+  const at = (x, y) => r.enemies.some((e) => e.x === x && e.y === y);
+  assert.ok(!at(12, 10), 'the target falls');
+  assert.ok(!at(12, 11), 'so does the foe in the burst ring');
+  assert.ok(at(12, 13), 'but not one outside it');
+  assert.ok(!(r.allies || []).some((a) => a.id === 'pal'), 'his own ally in the ring burns too');
+  assert.equal(hp0 - r.player.hp, 0, 'the king, two tiles clear, is unhurt');
+  // Stand next to your own blast and it takes a heart off you.
+  const close = build();
+  close.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+  const i2 = close.player.cards.findIndex((c) => c.kind === 'fireball');
+  const aim2 = getCardMoves(close, close.player.cards[i2]).find((m) => m.y === 10 && m.x > 10);
+  const hp1 = close.player.hp;
+  const r2 = useCard(close, i2, aim2.x, aim2.y);
+  assert.equal(hp1 - r2.player.hp, 1, 'firing at an ADJACENT foe burns the king himself');
+});
+
+test('Explosive Round HURLS the ring outward instead of damaging it', () => {
+  const s = rangerWith('r_recoil', 'r_longbow', 'r_shrapnel');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true, id: 'tgt' }),
+    makeEnemy({ kind: 'pawn', x: 13, y: 11, awake: true, id: 'ring' }),
+  ];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'queen'); // Ballista
+  const r = useCard(s, idx, 13, 10);
+  assert.ok(!r.enemies.some((e) => e.x === 13 && e.y === 10), 'the target itself is struck down');
+  const ring = r.enemies.find((e) => e.id === 'ring');
+  assert.ok(ring, 'the foe beside it is SHOVED, not killed — that is the rework');
+  assert.ok(ring.y > 11, `and shoved OUTWARD, away from the blast (now ${ring.x},${ring.y})`);
+});
+
 test('turrets and circles SCATTER — they no longer draw a map to the key', () => {
   // They used to be laid only in the chamber's ring: find the guns, find the door. They now spread
   // over the whole floor, weighted so the court is still much the most defended ground.
@@ -1002,7 +1185,7 @@ test('a storeroom is a ROOM, never a sealed block of stone', () => {
               if (!(x === bx || x === bx + size - 1 || y === by || y === by + size - 1)) continue;
               const t = at(x, y);
               if (t === 'wall') walls += 1;
-              else if (t === 'door' || t === 'dooropen') doors += 1;
+              else if (t === 'door' || t === 'dooropen' || t === 'gate') doors += 1; // a gate is a way in too
               else { ok = false; break; }
             }
           }
@@ -1098,20 +1281,133 @@ test('a chasing foe will not immolate itself — it enters only fire it can surv
 });
 
 test('the dread cycle opens with a GRACE: three quiet steps, then five climbing ones', () => {
+  // Derived, not hardcoded: the STEP has been re-paced once already (40 -> 20 turns) and these went
+  // stale. What matters is the SHAPE — 3 quiet steps then 5 climbing ones — not the wall-clock.
   const M = MAX_TURNS_SCARY;
-  assert.equal(M, 320, 'eight steps of 40 turns — an 8x8 board’s worth');
-  assert.equal(DREAD_GRACE_TURNS, 120, 'the first three steps are grace');
+  const step = DREAD_GRACE_TURNS / 3;
+  assert.equal(M, step * 8, 'eight steps — an 8x8 board’s worth');
+  assert.equal(DREAD_GRACE_TURNS, step * 3, 'the first three steps are grace');
   // Nothing stirs through the grace...
-  for (const t of [0, 40, 80, 119]) {
+  for (const t of [0, step, step * 2, DREAD_GRACE_TURNS - 1]) {
     assert.ok(inDreadGrace(t, M), `turn ${t} is still grace`);
     assert.equal(dreadFraction(t, M), 0, `turn ${t} carries no dread at all`);
   }
   // ...then dread climbs cleanly to full by the end of the cycle.
-  assert.ok(!inDreadGrace(120, M), 'grace lifts at turn 120');
-  assert.ok(dreadFraction(121, M) > 0, 'and dread starts the moment it does');
-  assert.equal(dreadFraction(220, M), 0.5, 'halfway through the CLIMB, not the cycle');
-  assert.equal(dreadFraction(320, M), 1, 'maxed at the end of the cycle');
-  assert.equal(dreadFraction(9999, M), 1, 'and never exceeds 1');
+  assert.ok(!inDreadGrace(DREAD_GRACE_TURNS, M), 'grace lifts when the third step ends');
+  assert.ok(dreadFraction(DREAD_GRACE_TURNS + 1, M) > 0, 'and dread starts the moment it does');
+  assert.equal(dreadFraction(DREAD_GRACE_TURNS + step * 2.5, M), 0.5, 'halfway through the CLIMB, not the cycle');
+  assert.equal(dreadFraction(M, M), 1, 'maxed at the end of the cycle');
+  assert.equal(dreadFraction(M * 40, M), 1, 'and never exceeds 1');
+});
+
+test('the threat map judges a tile as if the KING WERE ON IT — key, doors, and his own body', () => {
+  // This has been wrong three times, each in the same way: something that blocks a ray TODAY stops
+  // blocking it the moment he steps there, and the tile got painted green. The ghost has to model
+  // the board as it will BE with him on it.
+  //
+  // 1. THE KEY. Enemies treat it as impassable, so every threat ray broke ON it — leaving the key
+  //    AND the whole line beyond it safe. The one tile he is guaranteed to walk onto was the one
+  //    tile never marked dangerous.
+  {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = {}; s.allies = []; s.torches = {};
+    s.player.x = 10; s.player.y = 12; // near enough that everything below is in view
+    s.key = { x: 11, y: 10, collected: false, discovered: true };
+    s.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, awake: true })];
+    const t = getThreatenedTiles(s);
+    assert.ok(t.has('11,10'), 'the KEY tile is dangerous when a rook shares its rank');
+    assert.ok(t.has('10,10'), 'and so is the line PAST it — the key is not a wall');
+  }
+  // 2. SHUT DOORS. A door stops a turret's projectile, so the doorway read safe — but stepping onto
+  //    a door OPENS it, and the lane he just cleared is the lane he is standing in.
+  {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = { '12,10': 'door' }; s.allies = []; s.torches = {}; s.key = null;
+    s.player.x = 10; s.player.y = 10;
+    const gun = makeTurret(s, 'queen', 12, 12); // plainly visible; the door is on its file
+    gun.awake = true; gun.charged = true; gun.dozing = false; gun.aiming = true;
+    s.enemies = [gun];
+    const t = getThreatenedTiles(s);
+    assert.ok(t.has('12,10'), 'a DOOR in a turret lane is dangerous — walking onto it opens it');
+  }
+  // 3. CONTROL — a WALL must still shield. It is not a tile he can step onto, so it is not the same
+  //    case, and if this ever flips the fix has gone too far.
+  {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = { '11,10': 'wall' }; s.allies = []; s.torches = {}; s.key = null;
+    s.player.x = 10; s.player.y = 10;
+    const gun = makeTurret(s, 'rook', 13, 10);
+    gun.awake = true; gun.charged = true; gun.dozing = false; gun.aiming = true;
+    s.enemies = [gun];
+    const t = getThreatenedTiles(s);
+    assert.ok(!t.has('11,10'), 'a WALL tile is not a place he can stand, so it is not flagged');
+    assert.ok(!t.has('10,10'), 'and the wall really does shield what is behind it');
+  }
+});
+
+test('a danger event always LANDS — a fizzled pick is retried, never spent', () => {
+  // An event can fizzle: the mini-boss cap is full, a wave finds no room, a hazard has nowhere to
+  // scatter. It then reported "a distant roar — but no new terror rises" and was SPENT. Harmless on
+  // the ordinary timer, but every dread STEP-UP fires one of these now, and a silent step-up makes
+  // the score a liar. Jam the caps and check it still finds something.
+  const snap = (st) => JSON.stringify({
+    n: st.enemies.length,
+    t: Object.keys(st.terrain).length,
+    awake: st.enemies.filter((e) => e.awake).length,
+    seen: st.enemies.map((e) => (e.lastSeen ? `${e.lastSeen.x},${e.lastSeen.y}` : '-')).join('|'),
+  });
+  let silent = 0;
+  const N = 60;
+  for (let i = 0; i < N; i += 1) {
+    const s = generateFloor(4, createPlayer('warrior'), 0);
+    // Two live mini-bosses: every 'miniBoss' pick can now only fizzle. 'wave' also caps out on a
+    // busy floor — and those two ARE most of the pool by design, which is why a naive re-roll of
+    // the same pool kept picking a capped event and still came up empty.
+    for (let k = 0; k < 2; k += 1) s.enemies.push(makeMiniBoss(s, 'rook', 3 + k, 3));
+    const before = snap(s);
+    fireDangerEvent(s, 1);
+    if (snap(s) === before) silent += 1;
+  }
+  assert.equal(silent, 0, `every event changed the world (${silent}/${N} did nothing)`);
+});
+
+test('every dread STEP-UP is itself a hostile event — the music is a tell, not a mood', () => {
+  // The tempo used to climb on one clock and events fire on another, so a gear change meant nothing
+  // in particular. Now the gear you HEAR and the floor turning on you are the same moment.
+  const M = MAX_TURNS_SCARY;
+  let s = generateFloor(3, createPlayer('warrior'), 0);
+  s.player.x = PLAYER_START.x; s.player.y = PLAYER_START.y;
+  let prevGear = 0;
+  const stepUps = [];
+  const fired = [];
+  for (let t = 1; t <= M; t += 1) {
+    s.turn = t;
+    s.turnsSinceSpawn = 0; // pin the ORDINARY timer off — anything that fires is the step-up itself
+    s.dangerEvent = null;
+    s = maybeSpawnEnemy(s);
+    const g = dreadGear(dreadFraction(t, M));
+    if (g > prevGear) stepUps.push(t);
+    if (s.dangerEvent) fired.push(t);
+    prevGear = g;
+  }
+  assert.equal(stepUps.length, 5, 'five climbing gears in the cycle');
+  assert.deepEqual(fired, stepUps, 'an event fires on EVERY step-up, and only on step-ups');
+  assert.ok(!fired.some((t) => t < DREAD_GRACE_TURNS), 'and never during the grace');
+});
+
+test('the score and the floor read the SAME gear — one definition, no drift', () => {
+  // audio.js sets the tempo from dreadGear and game.js fires an event on every change. If they ever
+  // computed it separately they would disagree, and the cue would stop meaning anything.
+  assert.equal(dreadGear(0), 0, 'no dread is the grace gear');
+  assert.equal(dreadGear(0.0001), 1, 'the instant dread starts, so does the climb');
+  assert.equal(dreadGear(1), 5, 'and it tops out at the last climbing gear');
+  // Monotone: a gear may never fall as dread rises.
+  let last = 0;
+  for (let f = 0; f <= 1.0001; f += 0.01) {
+    const g = dreadGear(f);
+    assert.ok(g >= last, `gear never falls as dread climbs (${f.toFixed(2)})`);
+    last = g;
+  }
 });
 
 test('no danger event fires during the grace — the first hint waits for it to lift', () => {
@@ -1122,7 +1418,7 @@ test('no danger event fires during the grace — the first hint waits for it to 
     s.turnsSinceSpawn = 999; // the timer is long overdue — only the grace can hold it back
     return maybeSpawnEnemy(s);
   };
-  for (const turn of [0, 40, 80, 119]) {
+  for (const turn of [0, DREAD_GRACE_TURNS / 3, (DREAD_GRACE_TURNS / 3) * 2, DREAD_GRACE_TURNS - 1]) {
     let fired = false;
     for (let i = 0; i < 40; i += 1) if (build(turn).dangerEvent) fired = true;
     assert.ok(!fired, `turn ${turn}: the floor stays quiet through the grace`);
@@ -1246,29 +1542,71 @@ test('Winged Boots lets the king step over a pit', () => {
   assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 11, y: 10 }, 'the king stands over the pit');
 });
 
-test('Wild Empathy: a wild knight/amazon in sight JOINS the king as an ally (never attacks)', () => {
-  const s = rangerWith('r_wade', 'r_xray'); // Druid: r_xray is now Wild Empathy (beastFriend)
-  assert.equal(s.player.beastFriend, true);
-  s.terrain = {};
-  s.player.x = 10; s.player.y = 10; s.player.hp = 4; s.player.maxHp = 4;
-  const beast = makeEnemy({ kind: 'amazon', x: 11, y: 12, awake: true }); // a wild amazon in view
+test('Wild Empathy: a wild HORSE roams neutral, and is never befriended', () => {
+  // Wild Empathy no longer BEFRIENDS — it only makes horses (knights & nightriders) roam harmlessly.
+  // Walking right up to one no longer takes it as an ally.
+  const build = () => {
+    const s = rangerWith('r_wade', 'r_xray'); // Druid: r_xray is Wild Empathy (beastFriend)
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10; s.player.hp = 4; s.player.maxHp = 4;
+    s.enemies = [makeEnemy({ kind: 'nightrider', x: 12, y: 12, awake: true })]; // a wild horse in plain view
+    return s;
+  };
+  assert.equal(build().player.beastFriend, true, 'the perk grants it');
+  const s = build();
+  assert.ok(isNeutralBeast(s, s.enemies[0]), 'a wild horse is neutral');
+
+  const seen = beginEnemyPhase(s).state;
+  assert.equal(seen.player.hp, 4, 'a neutral horse never strikes him');
+  assert.ok(seen.enemies.some((e) => e.kind === 'nightrider'), 'and being SEEN does not tame it');
+  assert.equal((seen.allies || []).length, 0, 'no ally is made');
+
+  // Walk RIGHT up beside it — it STILL does not join (befriending is gone).
+  const near = build();
+  near.player.x = 11; near.player.y = 11; // adjacent to the horse at 12,12
+  const adj = beginEnemyPhase(near).state;
+  assert.ok(adj.enemies.some((e) => e.kind === 'nightrider'), 'stepping beside it no longer tames it');
+  assert.equal((adj.allies || []).length, 0, 'and it does not join his side');
+});
+
+test('a neutral beast is no threat, and a struck one is a beast no longer', () => {
+  const s = rangerWith('r_wade', 'r_xray');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const beast = makeEnemy({ kind: 'knight', x: 12, y: 11, awake: true });
   s.enemies = [beast];
-  const after = beginEnemyPhase(s).state;
-  assert.equal(after.player.hp, 4, 'the wild beast never strikes the king');
-  assert.ok(!after.enemies.some((e) => e.id === beast.id), 'it leaves the enemy ranks');
-  assert.ok((after.allies || []).some((a) => a.kind === 'amazon'), 'and joins his side as an amazon ally');
+  // It covers the king's tile by a knight's move, but at truce it threatens nothing.
+  assert.equal(getThreatenedTiles(s).get('10,10') || 0, 0, 'a neutral beast paints no danger');
+  // The control: provoke it and the same piece is suddenly lethal.
+  s.enemies[0].provokedBeast = true;
+  assert.ok(!isNeutralBeast(s, s.enemies[0]), 'a struck beast is no longer neutral');
+  assert.ok((getThreatenedTiles(s).get('10,10') || 0) > 0, 'and it covers him like any other knight');
+});
+
+test('a floor guardian is never a wild beast, whatever kind it is', () => {
+  const s = rangerWith('r_wade', 'r_xray');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const boss = makeEnemy({ kind: 'nightrider', x: 11, y: 11, boss: true, awake: true });
+  s.enemies = [boss];
+  assert.equal(isNeutralBeast(s, boss), false, 'a floor guardian is never tamed');
+  const mini = makeEnemy({ kind: 'nightrider', x: 11, y: 11, boss: true, mini: true, awake: true });
+  assert.equal(isNeutralBeast(s, mini), true, 'but a rogue mini-boss horse is');
+  const turret = makeEnemy({ kind: 'knight', x: 11, y: 11, turret: true, hp: 2, maxHp: 2 });
+  assert.equal(isNeutralBeast(s, turret), false, 'and a knight TURRET is a gun, not a horse');
+  const amazon = makeEnemy({ kind: 'amazon', x: 11, y: 11, mini: true, boss: true, awake: true });
+  assert.equal(isNeutralBeast(s, amazon), false, 'and an amazon is no longer kin — only knights & nightriders are');
 });
 
 test('Phase lets the king move through a boulder just like a wall', () => {
-  const s = sorcererWith('s_blink', 's_phase');
+  const s = sorcererWith('s_swap', 's_phase');
   assert.equal(s.player.phase, true);
   s.terrain = { '11,10': 'boulder' };
   assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10 && !m.push), 'the boulder tile is walkable while phasing');
 });
 
 test('Blink never lands the king on a pit', () => {
-  const s = sorcererWith('s_blink');
-  s.player.blink = true;
+  const s = sorcererWith('s_swap');
   s.player.hp = 5;
   // Fill the whole visible window with pits except a couple of safe tiles.
   s.terrain = {};
@@ -1387,6 +1725,11 @@ test('a Flying boss crosses pits, water, and lava freely', () => {
 test('a Phasing boss moves and sees through walls and boulders', () => {
   const s = createInitialState('warrior');
   s.terrain = { '11,10': 'boulder', '9,10': 'wall' };
+  // Torches live in their OWN map, so replacing `terrain` does not clear them. Leave them and the
+  // generated floor's torches linger on tiles this test just redefined — and a non-immune phaser
+  // correctly REFUSES to step into a burning wall, so the test failed at random depending on where
+  // the generator happened to put one.
+  s.torches = {};
   const boss = makeEnemy({ kind: 'rook', x: 10, y: 10, boss: true, bossPerk: 'phasing', awake: true });
   s.enemies = [boss];
   const moves = getPieceMoves(boss, s);
@@ -1666,38 +2009,61 @@ test('Cleave and Pierce fire on a plain move-kill, not just a card', () => {
   assert.equal(r.enemies.length, 0, 'pierce strikes the foe directly behind the kill');
 });
 
-test('Trample: landing a knight leap HURLS adjacent foes back, colliding with what is behind', () => {
+test('Thundering Charge hurls the whole ROOM, not just the ring around him', () => {
+  // It used to shove only the tiles adjacent to where he landed. Now the shock goes through
+  // everything he can SEE — which is the point of the rename.
   const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  assert.equal(s.player.leapShock, true, 'the perk grants it');
+  s.terrain = {}; s.allies = [];
   const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
-  s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 11, y: 11 }), // adjacent (W): shoved toward (10,11)...
-    makeEnemy({ kind: 'pawn', x: 10, y: 11 }), // ...where THIS foe stands — it's crushed
-    makeEnemy({ kind: 'pawn', x: 13, y: 11 }), // adjacent (E): shoved to open (14,11)
-  ];
-  const r = useCard(s, idx, 12, 11); // leap onto empty ground at (12,11)
-  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 11 });
-  assert.ok(r.enemies.some((e) => e.x === 10 && e.y === 11), 'the shoved foe takes the crushed one’s tile');
-  assert.ok(r.enemies.some((e) => e.x === 14 && e.y === 11), 'an open-backed foe is simply pushed back');
-  assert.equal(r.enemies.length, 2, 'the foe slammed into is destroyed; both shovers survive');
+  const far = makeEnemy({ kind: 'pawn', x: 9, y: 9 });   // three tiles off the landing: the old rule ignored it
+  const near = makeEnemy({ kind: 'pawn', x: 13, y: 11 }); // right beside it
+  s.enemies = [far, near];
+  const r = useCard(s, idx, 12, 11); // leap to (12,11)
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 11 }, 'he lands');
+  const f = r.enemies.find((e) => e.id === far.id);
+  const n = r.enemies.find((e) => e.id === near.id);
+  assert.ok(f && (f.x !== 9 || f.y !== 9), `even the distant foe is hurled (${f.x},${f.y})`);
+  assert.ok(n && (n.x !== 13 || n.y !== 11), `and the near one with it (${n.x},${n.y})`);
+  // Everything goes directly AWAY from where he came down.
+  assert.ok(chebyshev(f.x, f.y, 12, 11) > chebyshev(9, 9, 12, 11), 'the far foe is driven further off');
+  assert.ok(chebyshev(n.x, n.y, 12, 11) > chebyshev(13, 11, 12, 11), 'and so is the near one');
+});
+
+test('Thundering Charge fires only on a LANDED leap — it is set up, not an aura', () => {
+  // The control on the gating: a Cavalier lines the room up and then drops into the middle of it.
+  // A plain step must do nothing at all, or the perk is a passive that follows him around.
+  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  const foe = makeEnemy({ kind: 'pawn', x: 12, y: 12 });
+  s.enemies = [foe];
+  const stepped = movePlayerTo(s, 11, 10); // a plain step
+  const f = stepped.enemies[0];
+  assert.deepEqual({ x: f.x, y: f.y }, { x: 12, y: 12 }, 'walking about hurls nobody');
 });
 
 test('a foe shoved into a boss merely bumps it — the foe holds, the boss is wounded', () => {
-  const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
-  const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
-  const boss = createBoss(3, 10, 11); // rook boss, two tiles W of the landing
-  boss.bossPerk = 'brutal'; boss.bossPerks = ['brutal']; // a perk with no on-hit reaction, for a deterministic test
+  // The general knockback rule, driven directly rather than through Thundering Charge: the Charge
+  // now shoves the boss TOO (farthest-first, so it moves before the pawn reaches it), which is
+  // correct but makes it useless for testing a collision.
+  const s = warriorWith('w_fleet');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 12; s.player.y = 11;
+  const boss = createBoss(3, 10, 11);
+  boss.bossPerk = 'brutal'; boss.bossPerks = ['brutal']; // a perk with no on-hit reaction, for determinism
   boss.dormant = false; boss.spokeLine = true;
-  boss.maxHp = 4;
-  boss.hp = 4;
-  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 11 }), boss];
-  const r = useCard(s, idx, 12, 11); // leap to (12,11); the pawn is shoved W into the boss at (10,11)
-  const b = r.enemies.find((e) => e.boss);
+  boss.maxHp = 4; boss.hp = 4;
+  const pawn = makeEnemy({ kind: 'pawn', x: 11, y: 11 });
+  s.enemies = [pawn, boss];
+  knockbackEnemy(s, s.enemies[0], -1, 0); // shove the pawn WEST, into the boss
+  const b = s.enemies.find((e) => e.boss);
   assert.equal(b.hp, 3, 'the boss takes a wound from the impact');
-  assert.ok(r.enemies.some((e) => e.x === 11 && e.y === 11 && !e.boss), 'the shoved foe stops short against the boss');
+  assert.ok(s.enemies.some((e) => e.x === 11 && e.y === 11 && !e.boss), 'the shoved foe stops short against it');
 });
 
 test('Displacement knocks foes adjacent to the arrival tile back a tile', () => {
-  const s = sorcererWith('s_blink', 's_phase', 's_swap');
+  const s = sorcererWith('s_swap', 's_phase');
   const idx = s.player.cards.findIndex((c) => c.kind === 'swap');
   s.enemies = [
     makeEnemy({ kind: 'pawn', x: 13, y: 13 }), // the swap target
@@ -1749,12 +2115,12 @@ test('Wild Empathy: a floor BOSS is never tamed, and striking a beast provokes i
   s.terrain = {};
   // A true floor boss of amazon kind is NOT befriended.
   const boss = createBoss(8, 12, 12); boss.kind = 'amazon'; boss.mini = false; boss.rush = false;
-  assert.equal(isBefriendedBeast(s, boss), false, 'a floor guardian is never a friendly beast');
+  assert.equal(isNeutralBeast(s, boss), false, 'a floor guardian is never a friendly beast');
   // A mini-boss knight IS befriended — until struck (provokedBeast), then it turns hostile.
   const mini = makeEnemy({ kind: 'knight', x: 11, y: 11, boss: true, mini: true, maxHp: 3, hp: 3, awake: true });
-  assert.equal(isBefriendedBeast(s, mini), true, 'a wild mini-boss knight is befriended');
+  assert.equal(isNeutralBeast(s, mini), true, 'a wild mini-boss knight is befriended');
   mini.provokedBeast = true;
-  assert.equal(isBefriendedBeast(s, mini), false, 'once struck it is no longer friendly');
+  assert.equal(isNeutralBeast(s, mini), false, 'once struck it is no longer friendly');
 });
 
 test('Animal Form: a free cast that becomes an INVINCIBLE amazon-beast and locks cards', () => {
@@ -1782,41 +2148,24 @@ test('Animal Form: a free cast that becomes an INVINCIBLE amazon-beast and locks
   assert.equal(after.player.promotion, 2, 'the timer counts down each turn');
 });
 
-test('Charge: only the FIRST kill-move each turn is free', () => {
+test('Charge: EVERY kill-move is free — chain them as long as you keep killing', () => {
   const s = warriorWith('w_enpassant', 'w_flourish', 'w_rush'); // Duellist chain → Charge
   s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
   s.enemies = [
     makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }),
     makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true }),
   ];
-  const first = movePlayerTo(s, 11, 10); // kill by moving
-  assert.equal(first.lastAction, 'move-free', 'the first kill-move is free');
-  assert.equal(first.enemyTurn, false, 'no turn spent');
-  assert.equal(first.player.freeMoveUsed, true, 'the free move is now used up');
-  const second = movePlayerTo(first, 12, 10); // a second kill-move THIS turn
-  assert.equal(second.enemyTurn, true, 'the second kill-move spends the turn');
-});
-
-test('Vampiric Edge heals only when a strike fells two foes at once (Cleave supplies the second)', () => {
-  // Kill + Cleave = two deaths in one action → heal.
-  const s = warriorWith('w_edge', 'w_cleave', 'w_leech');
-  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
-  s.player.hp = 3; s.player.maxHp = 5;
-  s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }), // moved onto
-    makeEnemy({ kind: 'pawn', x: 11, y: 11, awake: true }), // adjacent → cleaved
-  ];
-  const two = movePlayerTo(s, 11, 10);
-  assert.equal(two.enemies.length, 0, 'both foes fall (kill + cleave)');
-  assert.equal(two.player.hp, 4, 'felling two at once heals 1');
-  // A lone kill (no second death) does NOT heal.
-  const s1 = warriorWith('w_edge', 'w_cleave', 'w_leech');
-  s1.player.x = 10; s1.player.y = 10; s1.player.moveRange = 1;
-  s1.player.hp = 3; s1.player.maxHp = 5;
-  s1.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
-  const one = movePlayerTo(s1, 11, 10);
-  assert.equal(one.enemies.length, 0, 'the single foe falls');
-  assert.equal(one.player.hp, 3, 'a lone kill does not heal');
+  let t = s;
+  for (let i = 0; i < 3; i += 1) {
+    t = movePlayerTo(t, 11 + i, 10); // kill by moving, three times in ONE turn
+    assert.equal(t.lastAction, 'move-free', `kill-move ${i + 1} is free`);
+    assert.equal(t.enemyTurn, false, `kill-move ${i + 1} spends no turn`);
+  }
+  assert.equal(t.enemies.length, 0, 'all three fall without the foes ever acting');
+  // A move that kills NOTHING still costs the turn — the perk rewards kills, not motion.
+  const idle = movePlayerTo(t, t.player.x, t.player.y + 1);
+  assert.equal(idle.enemyTurn, true, 'a killless move still spends the turn');
 });
 
 test('threat display: a tile the king SHADOWS from a slider/turret is still flagged (moving there exposes him)', () => {
@@ -1924,13 +2273,16 @@ test('doors drift shut over two turns once vacated (held open while occupied; re
 });
 
 test('doors and pillars are generated (walkable sight-blocking doorways; lone pillars in the open)', () => {
-  // Sample size and thresholds are set from the MEASURED rates (doors ~97% of floors, pillars ~86%).
-  // This used to take 14 samples and demand doors on 12 of them — a bar sitting right at the true
-  // rate, so it failed by luck about 1 run in 100. 40 samples with the bar well below the rate puts
-  // that at ~5e-6: it now fails only if generation is genuinely broken.
+  // Sample size and thresholds are set from the MEASURED rates. This used to take 14 samples and
+  // demand doors on 12 — a bar sitting right at the true rate, so it failed by luck about 1 run in
+  // 100. 40 samples with the bar well below the rate puts that at ~5e-6.
+  //
+  // Sampled on floor 5 (The Whispering Crypt), the floor MADE of masonry. It used to sample floor 2
+  // — but floor 2 is The Old Forest now, ~5% wall and almost no doorways, because a forest has no
+  // doors in it. Test the thing where the thing exists.
   let doorFloors = 0; let pillarFloors = 0;
   for (let i = 0; i < 40; i += 1) {
-    const s = generateFloor(2, createPlayer('warrior'), 0);
+    const s = generateFloor(5, createPlayer('warrior'), 0);
     let doors = 0; let lonePillars = 0;
     for (const key in s.terrain) {
       const t = s.terrain[key];
@@ -1953,6 +2305,10 @@ test('doors and pillars are generated (walkable sight-blocking doorways; lone pi
 });
 
 test('no door ever leads nowhere: both sides open into a real space', () => {
+  // Open ground the flood counts as "real space": plain floor, and a GEYSER vent — a walkable tile
+  // (you cross it, it merely scalds every third turn), so a door opening onto one genuinely leads
+  // somewhere. Anything solid or a hazard you cannot stand on does not count.
+  const isOpen = (v) => v === 'normal' || v === 'geyser';
   // Flood the open ground out from a tile (never through the door), capped.
   const area = (t, sx, sy, skip, cap) => {
     const at = (a, b) => t[`${a},${b}`] || 'normal';
@@ -1962,7 +2318,7 @@ test('no door ever leads nowhere: both sides open into a real space', () => {
       const k = `${cx},${cy}`;
       if (seen.has(k)) continue;
       seen.add(k);
-      if (at(cx, cy) !== 'normal') continue;
+      if (!isOpen(at(cx, cy))) continue;
       n += 1;
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) stack.push([cx + dx, cy + dy]);
     }
@@ -1975,12 +2331,13 @@ test('no door ever leads nowhere: both sides open into a real space', () => {
       for (const key in s.terrain) {
         const t = s.terrain[key];
         if (t !== 'door' && t !== 'dooropen' && t !== 'doorajar') continue;
+        if (s.fixedDoors && s.fixedDoors.has(key)) continue; // a set-piece's own door: deliberate
         doors += 1;
         const [x, y] = key.split(',').map(Number);
         const at = (a, b) => s.terrain[`${a},${b}`] || 'normal';
         let a; let b;
-        if (at(x, y - 1) === 'normal' && at(x, y + 1) === 'normal') { a = area(s.terrain, x, y - 1, key, 6); b = area(s.terrain, x, y + 1, key, 6); }
-        else if (at(x - 1, y) === 'normal' && at(x + 1, y) === 'normal') { a = area(s.terrain, x - 1, y, key, 6); b = area(s.terrain, x + 1, y, key, 6); }
+        if (isOpen(at(x, y - 1)) && isOpen(at(x, y + 1))) { a = area(s.terrain, x, y - 1, key, 6); b = area(s.terrain, x, y + 1, key, 6); }
+        else if (isOpen(at(x - 1, y)) && isOpen(at(x + 1, y))) { a = area(s.terrain, x - 1, y, key, 6); b = area(s.terrain, x + 1, y, key, 6); }
         else { useless += 1; continue; } // no open pair at all — it opens onto rock
         if (a < 6 || b < 6) useless += 1; // a side is a dead-end nook
       }
@@ -2044,16 +2401,16 @@ test('Oracle chain: Premonition (see/shoot through cover, one-way) → Hawk Eyes
   assert.ok(getCardMoves(p1, p1.player.cards[bowIdx]).some((m) => m.x === 12 && m.y === 12), 'and he can SHOOT it through the wall');
   // ...but ONE-WAY: the walled-off foe can't see the king back.
   assert.equal(enemyAwareOfKing(p1, 12, 12), false, 'the foe behind the wall cannot see the king');
-  // Hawk Eyes AND Power Draw EACH grant +1 sight radius (ONE-WAY) and +1 card reach.
+  // Hawk Eyes grants +2 sight radius and +2 card reach — the wider sight is TWO-WAY now (the nerf).
   const s = rangerWith('r_eagle', 'r_eyes2', 'r_reach');
-  assert.equal(s.player.vision, base.vision + 4, 'two +1-radius sight bumps');
-  assert.equal(s.player.cardReach, 2, 'two +1 card-reach bumps');
-  assert.equal(s.player.visionOneWay, 4, 'the extra sight is tracked as one-way');
-  // ONE-WAY: a foe out at the edge of the extended sight is SEEN but can't see the king back.
+  assert.equal(s.player.vision, base.vision + 4, 'a +2-radius sight bump atop the innate Sharpened Senses baseline');
+  assert.equal(s.player.cardReach, base.cardReach + 2, "Hawk Eyes' card-reach bump, over the innate +1");
+  assert.equal(s.player.visionOneWay || 0, 0, 'the extended sight is no longer one-way');
+  // TWO-WAY: a foe out at the edge of the extended sight SEES the king back now.
   s.terrain = {}; s.player.x = 10; s.player.y = 10;
   const farX = 10 + Math.floor(s.player.vision / 2); // edge of the extended display window
   assert.equal(inLineOfSight(s, farX, 10), true, 'the king SEES the far foe (extended sight)');
-  assert.equal(enemyAwareOfKing(s, farX, 10), false, 'but the far foe cannot see the king back');
+  assert.equal(enemyAwareOfKing(s, farX, 10), true, 'and the far foe now sees the king back too');
 });
 
 test('Premonition: a foe seen/shot through a wall wakes and CHASES, but can\'t hit you through it', () => {
@@ -2071,20 +2428,23 @@ test('Premonition: a foe seen/shot through a wall wakes and CHASES, but can\'t h
   assert.ok(Math.abs(r.x - 10) < before || r.y !== 10, 'but it wakes and closes in (chasing around the wall)');
 });
 
-test('Oracle one-way band: a far foe CHASES the king but cannot strike him from out there', () => {
-  const s = rangerWith('r_eagle', 'r_eyes2', 'r_reach'); // full Oracle: +4 sight (one-way)
+test('Oracle sight is now TWO-WAY: a far foe in the extended band sees the king back', () => {
+  // The nerf: the extended Oracle sight is no longer a one-way band. A foe out at its edge, which the
+  // king can see, can now see (and threaten) the king in return — the reach cuts both ways.
+  const s = rangerWith('r_eagle', 'r_eyes2', 'r_reach'); // full Oracle: +4 sight (TWO-way now)
   s.terrain = {};
   s.player.x = 10; s.player.y = 10; s.player.hp = 5; s.player.maxHp = 5; s.player.className = 'ranger';
-  const farX = 10 + Math.floor(s.player.vision / 2); // edge of the extended (one-way) sight, on the king's rank
+  const farX = 10 + Math.floor(s.player.vision / 2); // edge of the extended sight, on the king's rank
   const rook = makeEnemy({ kind: 'rook', x: farX, y: 10, awake: true });
   s.enemies = [rook];
   assert.equal(inLineOfSight(s, farX, 10), true, 'the king sees the far rook');
-  assert.equal(enemyAwareOfKing(s, farX, 10), false, 'the far rook cannot see the king back');
+  assert.equal(enemyAwareOfKing(s, farX, 10), true, 'and the far rook now sees the king back');
   const before = Math.abs(rook.x - 10);
   const phase = beginEnemyPhase(s);
-  const r = phase.state.enemies.find((e) => e.kind === 'rook');
-  assert.equal(phase.state.player.hp, 5, 'it deals no damage from the one-way band');
-  assert.ok(Math.abs(r.x - 10) < before, 'but it CLOSES IN toward the king (chases)');
+  let end = phase.state;
+  for (const id of phase.moverIds) end = moveEnemy(end, id);
+  const r = end.enemies.find((e) => e.kind === 'rook');
+  assert.ok(Math.abs(r.x - 10) < before, 'it closes in toward the king (and, being two-way, can now reach him)');
 });
 
 test('the king can strike a phasing boss EMBEDDED in an adjacent wall, without moving onto it', () => {
@@ -2235,26 +2595,6 @@ test('spellfire SCORCHES the bare stone it crosses and boils away any water', ()
   assert.ok(!burnt(12, 10), 'and that fresh floor is NOT scorched — the steam took the heat');
 });
 
-test('Blast: a foe that SURVIVES a spell is hurled one tile along the bolt path', () => {
-  const setup = (withBlast) => {
-    const s = withBlast ? sorcererWith('s_amp') : sorcererWith(); // s_amp is now Blast
-    s.terrain = {};
-    s.player.x = 10; s.player.y = 10;
-    // A TURRET on the east bolt line survives the bolt (hp > 1), so Blast can knock it back.
-    s.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, turret: true, hp: 3, maxHp: 3, awake: true })];
-    const bi = s.player.cards.findIndex((c) => c.kind === 'rook');
-    return { s, bi };
-  };
-  const a = setup(false);
-  const plain = useCard(a.s, a.bi, 13, 10); // aim the east endpoint; the bolt sweeps the turret at 12,10
-  assert.ok(plain.enemies.some((e) => e.turret && e.x === 12 && e.y === 10), 'without Blast the struck turret holds its tile');
-
-  const b = setup(true);
-  assert.equal(b.s.player.spellBlast, true, 'Blast grants spellBlast');
-  const blast = useCard(b.s, b.bi, 13, 10);
-  assert.ok(blast.enemies.some((e) => e.turret && e.x === 13 && e.y === 10), 'with Blast the surviving turret is hurled a tile along the bolt');
-  assert.ok(!blast.enemies.some((e) => e.turret && e.x === 12 && e.y === 10), 'and no longer stands where it was struck');
-});
 
 test('Camouflage: a turret sleeps while you are 2+ tiles off, wakes and fires when you step adjacent, then re-sleeps', () => {
   const s = rangerWith('r_ghost', 'r_camo');
@@ -2332,31 +2672,39 @@ test('Conjuration Phantom Steed: an L-shaped AOE spell that never moves the king
   assert.ok((r.ashes || []).length >= 1, 'spell kills leave ash');
 });
 
-test('Phase lets the king enter walls and blinds him while embedded', () => {
-  const s = sorcererWith('s_blink', 's_phase');
-  s.terrain = { '11,10': 'wall' };
-  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10), 'a wall is a legal move while phasing');
-  const inWall = movePlayerTo(s, 11, 10);
-  const bounds = getVisibleBounds(inWall);
-  assert.equal(bounds.width, 3, 'sight shrinks to a 3x3 window inside a wall');
+test('Phase lets the king enter walls, and no longer blinds him for it', () => {
+  // Standing inside stone used to cut him to a 3x3 window — so the perk's own signature move was
+  // something you did with your eyes shut. Phase is a capstone-chain perk; it should read as a
+  // power, not a trade.
+  const s = sorcererWith('s_swap', 's_phase');
+  assert.equal(s.player.phase, true, 'the perk grants it');
+  s.terrain = {}; s.enemies = [];
+  const open = getVisibleBounds(s).width;
+  s.terrain[`${s.player.x + 1},${s.player.y}`] = 'wall';
+  assert.ok(getPlayerMoves(s).some((m) => m.x === s.player.x + 1 && m.y === s.player.y), 'the wall is walkable while phasing');
+  const inside = movePlayer(s, 1, 0);
+  assert.equal(inside.player.x, s.player.x + 1, 'he steps into the stone');
+  assert.equal(getVisibleBounds(inside).width, open, 'and sees exactly as far from inside it as out');
 });
-
 test('Displacement swaps the king with a targeted unit; Blink flees to safety', () => {
-  const s = sorcererWith('s_blink', 's_phase', 's_swap');
+  const s = sorcererWith('s_swap', 's_phase');
   s.enemies = [makeEnemy({ kind: 'knight', x: 13, y: 13 })];
   const idx = s.player.cards.findIndex((c) => c.kind === 'swap');
   const r = useCard(s, idx, 13, 13);
   assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 13, y: 13 }, 'the king takes the unit’s tile');
   assert.deepEqual({ x: r.enemies[0].x, y: r.enemies[0].y }, { x: 10, y: 10 }, 'and the unit takes his');
 
-  const bs = sorcererWith('s_blink');
-  bs.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8 })]; // in sight, threatens the king's column
+  const bs = sorcererWith('s_swap');
+  // AWAKE, and it must be: a foe that has not noticed him paints no danger at all (it would gasp
+  // rather than swing), so an oblivious rook here would leave the board green and Blink with
+  // nothing to flee from.
+  bs.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, awake: true })]; // in sight, threatens his column
   assert.ok(getThreatenedTiles(bs).has('10,10'), 'the king starts on a threatened tile');
   assert.equal(blinkToSafety(bs), true);
   assert.ok(!getThreatenedTiles(bs).has(`${bs.player.x},${bs.player.y}`), 'blink lands on a safe tile');
 });
 
-test('Hex converts one adjacent foe per turn into a ferz (boss/ferz immune, pawns are not); Slumber sleeps adjacent foes', () => {
+test('Hex converts one adjacent foe per turn into a ferz (boss/ferz immune, pawns are not)', () => {
   const hex = sorcererWith('s_hex');
   hex.player.moveRange = 1;
   // Move UP, away from the foe — it ends adjacent (to the side), never "ahead": still hexed.
@@ -2382,14 +2730,428 @@ test('Hex converts one adjacent foe per turn into a ferz (boss/ferz immune, pawn
   bossHex.enemies = [makeEnemy({ kind: 'knight', x: 11, y: 10, awake: true, boss: true, hp: 3, maxHp: 3, dormant: false })];
   assert.equal(movePlayerTo(bossHex, 10, 9).enemies[0].kind, 'knight', 'the boss is immune to Hex');
 
-  const lull = sorcererWith('s_hex', 's_cata', 's_slumber');
-  const foe = makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true });
-  lull.enemies = [foe];
-  const hp0 = lull.player.hp;
-  const r = beginEnemyPhase(lull);
-  const woke = r.state;
-  assert.equal(woke.enemies[0].asleep, true, 'the adjacent foe is asleep');
-  assert.equal(woke.player.hp, hp0, 'a sleeping foe never strikes');
+});
+
+test('each floor is MADE of what its name says — the recipe is the spec', () => {
+  // Every floor used to come out 23-36% stone wall and ~3% grass whatever it was called: rooms()
+  // ran flat on all of them and grass was a flat trickle. The Old Forest was a masonry maze with a
+  // pond; the Sunken Ruins had LESS water than it. Measured on the INTERIOR — the border wall is
+  // fixed on every floor and would drown the signal.
+  // n=12 was too few: several of these compare one measured share against another, and at that
+  // sample the estimates wobbled enough to cross. This test has flaked once already.
+  const share = (floor) => {
+    const t = {}; const N = 30;
+    for (let i = 0; i < N; i += 1) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      for (const k in s.terrain) {
+        const [x, y] = k.split(',').map(Number);
+        if (x === 0 || y === 0 || x === WORLD_SIZE - 1 || y === WORLD_SIZE - 1) continue;
+        t[s.terrain[k]] = (t[s.terrain[k]] || 0) + 1;
+      }
+    }
+    const total = (WORLD_SIZE - 2) * (WORLD_SIZE - 2) * N;
+    return (kind) => (t[kind] || 0) / total;
+  };
+  const field = share(1); const forest = share(2); const ruins = share(3);
+  const lake = share(4); const crypt = share(5); const hedge = share(6); const fire = share(7);
+  // The Old Forest is TIMBER, not masonry.
+  assert.ok(forest('tree') > 0.04, `the forest has trees in it (${(100 * forest('tree')).toFixed(1)}%)`);
+  assert.ok(forest('wall') < crypt('wall') / 2, 'and far less stone than the crypt');
+  assert.ok(crypt('tree') === 0, 'while the crypt has no trees at all');
+  // The Hedge Maze is made of hedge.
+  assert.ok(hedge('tree') > 0.06, `the hedge maze is mostly hedge (${(100 * hedge('tree')).toFixed(1)}%)`);
+  // Water belongs to the wet floors.
+  assert.ok(lake('water') > 0.12, 'the Drowned Lake is drowned');
+  assert.ok(ruins('water') > 0.08, 'and the Sunken Ruins are sunken');
+  assert.ok(lake('water') > crypt('water') * 2.5, 'the crypt is dry by comparison'); // measured ~16.7% vs ~4.0%
+  // Fire belongs to the fire floor.
+  assert.ok(fire('lava') > 0.09, 'the Lake of Fire is lava');
+  assert.ok(crypt('lava') === 0 && forest('lava') === 0, 'and nowhere else has any');
+  // The Battlefield is OPEN ground — the least cluttered floor in the game.
+  // Margins here are a few points at most, so compare with a little slack rather than bare `<`.
+  const clutter = (f) => f('wall') + f('tree') + f('water') + f('lava');
+  assert.ok(clutter(field) < clutter(crypt) - 0.02, 'a battlefield is more open than a crypt');
+  assert.ok(clutter(field) < clutter(forest) - 0.02, 'and than a forest');
+});
+
+test('sound CUES name what happened — and stay silent when nothing was touched', () => {
+  // The logic layer names events; the view decides how they sound. The interesting half is the
+  // NEGATIVE: a cue must not fire for ground he never actually touched.
+  const base = (cls) => {
+    const t = createInitialState(cls || 'warrior', 'easy');
+    t.terrain = {}; t.allies = []; t.enemies = [];
+    t.player.x = 10; t.player.y = 10; t.player.moveRange = 1;
+    return t;
+  };
+  const cuesOf = (st) => st.cues || [];
+  // The tile he ENDS on sounds.
+  const water = base(); water.terrain = { '11,10': 'water' };
+  assert.ok(cuesOf(movePlayerTo(water, 11, 10)).includes('splash'), 'wading splashes');
+  const lava = base(); lava.terrain = { '11,10': 'lava' };
+  assert.ok(cuesOf(movePlayerTo(lava, 11, 10)).includes('hiss'), 'fire hisses');
+  const grass = base(); grass.terrain = { '11,10': 'devilgrass' };
+  assert.ok(cuesOf(movePlayerTo(grass, 11, 10)).includes('swish'), 'grass swishes');
+  const door = base(); door.terrain = { '11,10': 'door' };
+  assert.ok(cuesOf(movePlayerTo(door, 11, 10)).includes('creak'), 'a door creaks open');
+  // FAIRY WINGS carries him over untouched — no splash, no hiss.
+  let fly = learnPerk(base('ranger'), 'r_wade');
+  fly.terrain = { '11,10': 'water' }; fly.player.moveRange = 1;
+  assert.equal(cuesOf(movePlayerTo(fly, 11, 10)).length, 0, 'Fairy Wings flits over water in silence');
+  let fly2 = learnPerk(base('ranger'), 'r_wade');
+  fly2.terrain = { '11,10': 'lava' }; fly2.player.moveRange = 1;
+  assert.equal(cuesOf(movePlayerTo(fly2, 11, 10)).length, 0, 'and over lava');
+  // A LEAP passes clean over water — the arc touches nothing.
+  const leap = base(); leap.terrain = { '11,10': 'water', '11,11': 'water' };
+  leap.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 12, awake: true })];
+  const ki = leap.player.cards.findIndex((c) => c.kind === 'knight');
+  assert.ok(!cuesOf(useCard(leap, ki, 11, 12)).includes('splash'), 'a leap OVER water never splashes');
+  // Incidents.
+  const boulder = base(); boulder.terrain = { '11,10': 'boulder' };
+  assert.ok(cuesOf(movePlayerTo(boulder, 11, 10)).includes('rumble'), 'a shoved boulder rumbles');
+  const pit = base(); pit.terrain = { '12,10': 'pit' };
+  const doomed = makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true });
+  pit.enemies = [doomed];
+  knockbackEnemy(pit, doomed, 1, 0);
+  assert.ok(cuesOf(pit).includes('fall'), 'something going down a pit falls');
+  // DEDUPE: one shove that hurls three foes is ONE bonk, not three stacked.
+  const many = base();
+  const foes = [[11, 10], [11, 11], [9, 10]].map(([x, y], i) => makeEnemy({ kind: 'rook', x, y, awake: true, id: `f${i}` }));
+  many.enemies = foes;
+  for (const f of foes) knockbackEnemy(many, f, Math.sign(f.x - 10) || 1, Math.sign(f.y - 10));
+  assert.equal(cuesOf(many).filter((c) => c === 'bonk').length, 1, 'three shoves make ONE bonk cue');
+});
+
+test('a piece that does NOTHING costs no beat and logs no line', () => {
+  // A turret sweeping an empty lane used to set lastAction='enemy' and a message, so the view logged
+  // "a turret sweeps for a target" and paid a full animation beat — every turn, for every turret in
+  // view. Worst for a Gloom Stalker, whose whole game is never being in a lane: the log filled with
+  // noise and the game stuttered between his turns exactly when he was playing well.
+  const base = () => {
+    const t = createInitialState('warrior', 'easy');
+    t.terrain = {}; t.allies = []; t.enemies = [];
+    t.player.x = 10; t.player.y = 10;
+    return t;
+  };
+  // King at (10,10) is on neither the rank nor the file of a rook turret at (14,14).
+  const s = base();
+  const idle = makeTurret(s, 'rook', 14, 14);
+  idle.awake = true; idle.charged = true;
+  s.enemies = [idle];
+  const r = moveEnemy(s, idle.id);
+  assert.equal(r.lastAction, 'idle', 'a turret that cannot reach him did NOTHING');
+  assert.equal(r.message, '', 'so it says nothing (logMessage skips empty text)');
+  // Control: put him in its file and it must act, and announce.
+  const c = base();
+  c.player.x = 14; c.player.y = 10;
+  const live = makeTurret(c, 'rook', 14, 14);
+  live.awake = true; live.charged = true;
+  c.enemies = [live];
+  const r2 = moveEnemy(c, live.id);
+  assert.equal(r2.lastAction, 'enemy', 'control: a turret with a line on him really acts');
+  assert.ok(r2.message.length > 0, 'and announces it');
+});
+
+test('a guardian ROARS on the turn it is startled, not the turn after — and only once', () => {
+  // The roar used to live in bossMove. But a freshly-surprised boss is deliberately NOT a mover
+  // (the gasp costs it the turn), so bossMove never ran and the bubble appeared a turn LATE, over a
+  // boss that was already swinging. The shout belongs to the gasp.
+  let s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const b = createBoss(3, 12, 10);
+  b.dormant = false; b.awake = false; b.surprised = false; b.spokeLine = false; b.lastSeen = null; b.lastSeenTtl = 0;
+  s.enemies = [b];
+  const p1 = beginEnemyPhase(s);
+  assert.equal(p1.state.enemies[0].surprised, true, 'it gasps on spotting him');
+  assert.ok(p1.state.bossShout, 'and roars on that SAME turn');
+  assert.ok(p1.state.bossLine, 'with a log line to match');
+  assert.ok(!p1.moverIds.includes(b.id), 'while the gasp costs it its action');
+  // It roars ONCE. (The view nulls the shout after showing it; do the same or the structuredClone
+  // in beginEnemyPhase just carries the old one forward and it reads as a repeat.)
+  const p2 = beginEnemyPhase({ ...p1.state, bossShout: null, bossLine: null });
+  assert.ok(!p2.state.bossShout, 'and never roars a second time');
+});
+
+test('breaking a summoning circle sheds no blood — it is a rune, not a creature', () => {
+  let s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, summonCircle: true, awake: true, id: 'c' })];
+  const r = movePlayerTo(s, 11, 10);
+  assert.ok(!r.enemies.some((e) => e.id === 'c'), 'the rune breaks');
+  assert.equal((r.spatters || []).length, 0, 'and sheds NO blood — it never had any');
+  assert.deepEqual(r.banished, { x: 11, y: 10 }, 'it puffs arcane smoke instead');
+  assert.ok((r.scars || []).some((c) => c.x === 11 && c.y === 10), 'over a permanent scar');
+  // Control: a real creature still bleeds.
+  let t = createInitialState('warrior', 'easy');
+  t.terrain = {}; t.allies = [];
+  t.player.x = 10; t.player.y = 10; t.player.moveRange = 1;
+  t.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+  assert.ok((movePlayerTo(t, 11, 10).spatters || []).length > 0, 'control: a real foe bleeds');
+});
+
+test('the Spectral Steed charges any L with a foe ON it — not just one at the far end', () => {
+  const build = () => {
+    let t = createInitialState('sorcerer', 'easy');
+    t.terrain = {}; t.allies = []; t.enemies = [];
+    t.player.x = 10; t.player.y = 10;
+    return learnPerk(t, 's_staff');
+  };
+  const horseIdx = (t) => t.player.cards.findIndex((c) => c.kind === 'horse');
+  // The L for dx=+2,dy=+1 runs (11,10) -> (12,10) -> (12,11).
+  // A foe MID-path, with the endpoint hidden behind cover: the charge must still be offered. Gating
+  // on the ENDPOINT's line of sight (as this did) threw the whole direction away.
+  const s = build();
+  s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true })];
+  s.terrain = { '12,10': 'wall' }; // hides everything beyond, including the aim tile
+  assert.ok(
+    getCardMoves(s, s.player.cards[horseIdx(s)]).some((t) => t.x === 12 && t.y === 11),
+    'a foe on the path is enough — the aim tile is only where he points',
+  );
+  // Control: no foe on any L at all -> nothing is offered.
+  const n = build();
+  n.enemies = [makeEnemy({ kind: 'rook', x: 16, y: 16, awake: true })];
+  assert.equal(getCardMoves(n, n.player.cards[horseIdx(n)]).length, 0, 'control: no foe on an L, no charge');
+  // And it tramples the WHOLE path, which is what the AOE preview promises.
+  const c = build();
+  c.enemies = [
+    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }),
+  ];
+  const r = useCard(c, horseIdx(c), 12, 11);
+  assert.equal(r.enemies.length, 0, 'every foe along the L is trampled');
+});
+
+test('a TREE is solid timber: it blocks sight, takes three swings, and leaves sticks', () => {
+  const build = () => {
+    const t = createInitialState('warrior', 'easy');
+    t.terrain = { '11,10': 'tree' }; t.allies = []; t.enemies = [];
+    t.player.x = 10; t.player.y = 10; t.player.moveRange = 1;
+    return t;
+  };
+  let s = build();
+  // Solid AND opaque — like a wall.
+  const m = getPlayerMoves(s).find((t) => t.x === 11 && t.y === 10);
+  assert.ok(m, 'an adjacent tree is offered as an action');
+  assert.ok(m.chop, 'and it is a CHOP, not a step — the king must never walk into a trunk');
+  assert.ok(!inLineOfSight(s, 12, 10), 'it blocks the look past it');
+  // Three swings to fell it, and the king holds his tile.
+  s = movePlayerTo(s, 11, 10);
+  assert.equal(terrainAt(s, 11, 10), 'tree', 'one swing does not fell it');
+  assert.equal(s.treeHp['11,10'], 2);
+  assert.deepEqual({ x: s.player.x, y: s.player.y }, { x: 10, y: 10 }, 'he stays put — a tree is solid until it falls');
+  s = movePlayerTo(s, 11, 10);
+  s = movePlayerTo(s, 11, 10);
+  assert.notEqual(terrainAt(s, 11, 10), 'tree', 'the third swing brings it down');
+  assert.ok((s.sticks || []).length > 0, 'leaving sticks and leaves');
+  assert.equal((s.rubble || []).length, 0, 'not a wall’s rubble');
+  assert.ok(inLineOfSight(s, 12, 10), 'and the view opens up beyond it');
+});
+
+test('spellfire LIGHTS a tree rather than felling it — it burns away next turn, leaving a scorch', () => {
+  let s = createInitialState('sorcerer', 'easy');
+  s.terrain = { '12,10': 'tree' }; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'rook');
+  const aim = getCardMoves(s, s.player.cards[idx]).find((m) => m.y === 10 && m.x > 10);
+  s = useCard(s, idx, aim.x, aim.y);
+  assert.equal(terrainAt(s, 12, 10), 'tree', 'the bolt does not blast it apart...');
+  assert.ok(s.burningTrees['12,10'], '...it sets it ALIGHT, and it stands burning');
+  assert.ok(!inLineOfSight(s, 13, 10), 'still blocking the look while it burns');
+  s = beginEnemyPhase(s).state;
+  assert.notEqual(terrainAt(s, 12, 10), 'tree', 'next turn it is gone');
+  assert.ok((s.scorches || []).some((c) => c.x === 12 && c.y === 10), 'leaving scorched ground');
+  assert.equal((s.sticks || []).length, 0, 'burnt, not felled — no sticks survive a fire');
+});
+
+test('a tree takes a wound from a slam, and a rolling boulder shears it clean through', () => {
+  // Hurled into a trunk: it cracks, and the shove stops dead against it.
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = { '12,10': 'tree' }; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const e = makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true, id: 'f' });
+  s.enemies = [e];
+  knockbackEnemy(s, e, 1, 0);
+  assert.equal(s.treeHp['12,10'], 2, 'the trunk takes a wound');
+  assert.deepEqual({ x: e.x, y: e.y }, { x: 11, y: 10 }, 'and halts the shove, like a wall');
+  // A boulder at speed shears it through in one.
+  const b = createInitialState('warrior', 'easy');
+  b.terrain = { '11,10': 'boulder', '14,10': 'tree' }; b.allies = []; b.enemies = [];
+  b.player.x = 10; b.player.y = 10;
+  knockbackBoulder(b, 11, 10, 1, 0);
+  assert.notEqual(terrainAt(b, 14, 10), 'tree', 'a rolling boulder fells it outright');
+  assert.ok((b.sticks || []).length > 0, 'leaving sticks');
+  assert.ok((b.rubble || []).length > 0, 'and breaking apart on the trunk');
+});
+
+test('walking into a tree CHOPS it — the directional path, not just movePlayerTo', () => {
+  // movePlayer (what a keypress/click actually calls) special-cased boulders and nothing else, so a
+  // tree fell through to the slide, found no stop, and came back "the king cannot move that way".
+  // getPlayerMoves offered the chop the whole time — nothing walking in with a DIRECTION reached it.
+  let s = createInitialState('warrior', 'easy');
+  s.terrain = { '11,10': 'tree' }; s.allies = []; s.enemies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  s = movePlayer(s, 1, 0);
+  assert.notEqual(s.lastAction, 'blocked', 'walking into a tree is an ACTION, not a refusal');
+  assert.equal(s.treeHp['11,10'], 2, 'it takes a wound');
+  assert.ok((s.cues || []).includes('chop'), 'and sounds like an axe biting timber');
+  s.cues = [];
+  s = movePlayer(s, 1, 0);
+  s.cues = [];
+  s = movePlayer(s, 1, 0);
+  assert.notEqual(terrainAt(s, 11, 10), 'tree', 'three swings fell it');
+  assert.ok((s.cues || []).includes('timber'), 'and THAT sounds like a tree coming down, not another chip');
+});
+
+test('a jumper that cannot shift the king bounces off and lands BESIDE him', () => {
+  // With his back to a wall the king cannot be bowled back — and the knight used to simply stay
+  // where it started, which read as the leap never happening at all.
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = { '11,10': 'wall' }; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.hp = 9; s.player.maxHp = 9;
+  const k = makeEnemy({ kind: 'knight', x: 8, y: 10, awake: true, id: 'k' }); // springs from two tiles west
+  s.enemies = [k];
+  const r = knockbackKing(s, k);
+  const kn = r.enemies.find((e) => e.id === 'k');
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 10, y: 10 }, 'the wall holds him in place');
+  assert.ok(!(kn.x === 8 && kn.y === 10), 'the jumper does NOT hang back at its start');
+  assert.equal(chebyshev(kn.x, kn.y, r.player.x, r.player.y), 1, 'it lands beside him');
+  // "A logical angle": nearest the side it sprang from, so it reads as a bounce down its own line.
+  assert.ok(kn.x < 10, 'on the side it came from');
+});
+
+test('the KING can be hurled into a pit — he climbs out for a wound, he does not die', () => {
+  // Rare (a pit must sit exactly behind him and the blow must land) but possible. A hole is a
+  // beating, not an instant loss — he hauls himself out the way a guardian does.
+  const build = (cls) => {
+    const t = createInitialState(cls || 'warrior', 'easy');
+    t.terrain = { '11,10': 'pit' }; t.allies = []; t.enemies = [];
+    t.player.x = 10; t.player.y = 10; t.player.hp = 9; t.player.maxHp = 9;
+    return t;
+  };
+  const s = build();
+  const jumper = makeEnemy({ kind: 'knight', x: 9, y: 10, awake: true }); // bowls him EAST, into the pit
+  s.enemies = [jumper];
+  const r = knockbackKing(s, jumper);
+  assert.ok(r && r.player, 'it hands the state back — callers do `return knockbackKing(...)`');
+  assert.equal(r.player.hp, 7, 'the blow costs 1 and the fall costs 1');
+  assert.ok(!r.gameOver, 'a hole is a beating, not a loss');
+  assert.notEqual(terrainAt(r, r.player.x, r.player.y), 'pit', 'he does not stay down there');
+  assert.ok(chebyshev(r.player.x, r.player.y, 11, 10) <= 2, 'and surfaces right beside the hole he fell in');
+  assert.ok((r.cues || []).includes('fall'), 'and it sounds like the fall it is');
+  // FAIRY WINGS: he simply flies. No fall, no second wound.
+  let fly = learnPerk(build('ranger'), 'r_wade');
+  fly.terrain = { '11,10': 'pit' };
+  fly.player.x = 10; fly.player.y = 10; fly.player.hp = 9; fly.player.maxHp = 9;
+  const j2 = makeEnemy({ kind: 'knight', x: 9, y: 10, awake: true });
+  fly.enemies = [j2];
+  const r2 = knockbackKing(fly, j2);
+  assert.equal(r2.player.hp, 8, 'Fairy Wings takes the blow but never the fall');
+  assert.ok(!(r2.cues || []).includes('fall'), 'and there is no fall to hear');
+});
+
+test('a pit swallows anything but the floor GUARDIAN — mini-bosses and turrets included', () => {
+  const shove = (extra) => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = { '11,10': 'pit' }; s.allies = [];
+    s.player.x = 9; s.player.y = 10;
+    const e = makeEnemy({ kind: 'rook', x: 10, y: 10, awake: true, hp: 3, maxHp: 3, id: 'u', ...extra });
+    s.enemies = [e];
+    knockbackEnemy(s, e, 1, 0);
+    return s.enemies.find((x) => x.id === 'u') || null;
+  };
+  assert.equal(shove({}), null, 'a plain foe plunges');
+  assert.equal(shove({ turret: true }), null, 'so does a turret — a machine that clangs in and is gone');
+  assert.equal(shove({ boss: true, mini: true, bossName: 'a rogue rook', dormant: false }), null, 'and a rogue MINI-boss goes all the way down');
+  assert.equal(shove({ boss: true, rush: true, mini: true, bossName: 'a rogue rook', dormant: false }), null, 'as does a rush boss');
+  // The floor's own guardian is the ONE thing anchored enough to haul itself back out.
+  const guard = shove({ boss: true, bossName: 'the Guardian', dormant: false });
+  assert.ok(guard, 'the floor GUARDIAN clambers back out');
+  assert.equal(guard.hp, 2, 'for one wound');
+});
+
+test('Banish sends a foe clean out of the world — guardians and circles are anchored', () => {
+  const build = () => {
+    const t = sorcererWith('s_swap', 's_phase', 's_banish');
+    // Clear the SCENERY too, not just terrain: createInitialState can roll a catacomb, which seeds
+    // corpses (its bones) onto the floor — and this test asserts banish leaves "nothing remains",
+    // which meant those pre-existing bones. Isolate to what is actually being tested.
+    t.terrain = {}; t.allies = []; t.corpses = []; t.spatters = [];
+    t.player.x = 10; t.player.y = 10;
+    t.enemies = [
+      makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true, id: 'foe' }),
+      makeEnemy({ kind: 'rook', x: 12, y: 10, turret: true, hp: 3, maxHp: 3, id: 'turret' }),
+      makeEnemy({ kind: 'knight', x: 11, y: 11, boss: true, mini: true, hp: 3, maxHp: 3, dormant: false, bossName: 'a rogue knight', id: 'mini' }),
+      makeEnemy({ kind: 'queen', x: 10, y: 11, boss: true, hp: 5, maxHp: 5, dormant: false, bossName: 'the Guardian', id: 'guard' }),
+      makeEnemy({ kind: 'pawn', x: 9, y: 10, summonCircle: true, id: 'circle' }),
+    ];
+    return t;
+  };
+  const s = build();
+  // The chain now reads Displacement -> Phase -> Banish.
+  assert.ok(s.player.cards.some((c) => c.kind === 'swap'), 'T1 is Displacement');
+  const card = s.player.cards.find((c) => c.kind === 'banish');
+  assert.ok(card && card.cooldown === 9, 'T3 grants a Banish card on cooldown 9');
+  const idx = s.player.cards.findIndex((c) => c.kind === 'banish');
+  const tg = getCardMoves(s, s.player.cards[idx]);
+  const at = (x, y) => tg.some((t) => t.x === x && t.y === y);
+  assert.ok(at(11, 10), 'a plain foe may be banished');
+  assert.ok(at(12, 10), 'so may a turret');
+  assert.ok(at(11, 11), 'and a rogue mini-boss');
+  assert.ok(!at(10, 11), 'but NOT a floor guardian — it is anchored to its key');
+  assert.ok(!at(9, 10), 'and NOT a summoning circle — it is a rune in the floor, not a creature');
+  // It leaves NOTHING: no corpse, no blood, no kill credit (so it feeds nothing that keys off kills).
+  const r = useCard(s, idx, 11, 10);
+  assert.ok(!r.enemies.some((e) => e.id === 'foe'), 'the foe is gone from the world');
+  assert.deepEqual(r.banished, { x: 11, y: 10 }, 'and the view is told where to puff smoke');
+  assert.equal((r.corpses || []).length, 0, 'nothing remains — no corpse');
+  assert.equal((r.spatters || []).length, 0, 'and no blood');
+  assert.ok(!r.player.killedEnemy, 'it was never SLAIN, so it is not a kill');
+  assert.equal(r.player.cards[idx].remaining, 9, 'the card goes on its long cooldown');
+});
+
+test('the Vampiress is a QUEEN who MENDS — kills heal her, but never past her own pool', () => {
+  let s = sorcererWith('s_familiar', 's_undead', 's_general');
+  s.terrain = {};
+  s.player.x = 2; s.player.y = 2; // well out of the way
+  const v = (t) => (t.allies || []).find((a) => a.familiar);
+  assert.equal(v(s).kind, 'vampiress', 'the familiar rises as a Vampiress');
+  assert.equal(v(s).maxHp, 3, 'with a mini-boss pool of three wounds');
+  // She moves as a QUEEN, not the old king+knight General.
+  const q = { ...v(s), x: 10, y: 10 };
+  s.allies = [q]; s.enemies = [];
+  const moves = getPieceMoves({ ...q, id: 'vq' }, { ...s, allies: [], enemies: [{ ...q, id: 'vq' }] });
+  assert.ok(moves.some((m) => m.x === 10 && m.y === 16), 'she slides the full file, like a queen');
+  assert.ok(moves.some((m) => m.x === 16 && m.y === 16), 'and the full diagonal');
+
+  // FEEDING mends her — it does not grow her. Her pool used to rise with every kill, up to 9, so a
+  // queen left alive quietly became the stoutest thing on the floor. The point of her is that she
+  // keeps herself alive, not that she outgrows the guardians.
+  let t = sorcererWith('s_familiar', 's_undead', 's_general');
+  t.terrain = {};
+  t.player.x = 10; t.player.y = 10;
+  t.allies = [{ id: 'vamp', kind: 'vampiress', x: 12, y: 12, familiar: true, hp: 1, maxHp: 3 }]; // wounded
+  for (let i = 0; i < 3; i += 1) {
+    // She TAKES the tile of whatever she fells, so each new foe must be placed beside where she
+    // now stands — not where she started.
+    const her = t.allies[0];
+    t.enemies = [makeEnemy({ kind: 'pawn', x: her.x, y: her.y + 1, awake: true })];
+    const before = her.hp;
+    t = runAllyPhase(t);
+    const a = t.allies[0];
+    assert.equal(t.enemies.length, 0, `she fells foe ${i + 1}`);
+    assert.equal(a.maxHp, 3, `kill ${i + 1}: her POOL never moves (${a.hp}/${a.maxHp})`);
+    assert.equal(a.hp, Math.min(3, before + 1), `kill ${i + 1}: it knits a wound shut (${a.hp}/${a.maxHp})`);
+  }
+  assert.equal(t.allies[0].hp, 3, 'three kills bring her back to full...');
+  // ...and a fourth does nothing at all: she is already whole.
+  const her = t.allies[0];
+  t.enemies = [makeEnemy({ kind: 'pawn', x: her.x, y: her.y + 1, awake: true })];
+  t = runAllyPhase(t);
+  assert.equal(t.allies[0].hp, 3, 'a kill at full health is just a kill');
+  assert.equal(t.allies[0].maxHp, 3, 'and she never exceeds her max');
 });
 
 test('Marksman opens with Recoil (T1); the queen (Ballista) is T2; Shrapnel is T3', () => {
@@ -2460,9 +3222,9 @@ test('the undead ally sears in lava; a demonic ally is immune', () => {
 test('Necromancy: familiar spawns and respawns; foes rise as one undead at a time', () => {
   const s = sorcererWith('s_familiar');
   assert.equal(s.allies.length, 1);
-  // The familiar is a skeletal MANN — a non-royal king. It steps one tile in ANY direction, so it
-  // can actually follow the king through doorways and around corners (a berolina kept snagging).
-  assert.ok(s.allies[0].familiar && s.allies[0].kind === 'mann');
+  // The familiar is a (non-royal) KING: it steps one tile in ANY direction, so it can actually follow
+  // the king through doorways and around corners (a berolina kept snagging).
+  assert.ok(s.allies[0].familiar && s.allies[0].kind === 'king');
   assert.equal(chebyshev(s.allies[0].x, s.allies[0].y, s.player.x, s.player.y), 1, 'spawns beside the king');
   assert.ok((nextFloor(s).allies || []).some((a) => a.familiar), 'rejoins on the next floor');
   assert.ok(!s.allies[0].maxHp, 'a plain familiar is a one-hit wisp');
@@ -2470,7 +3232,7 @@ test('Necromancy: familiar spawns and respawns; foes rise as one undead at a tim
   // The GENERAL upgrade (T3) re-forges it into a lieutenant carrying a mini-boss's wounds.
   const gen = sorcererWith('s_familiar', 's_undead', 's_general');
   const g = (gen.allies || []).find((a) => a.familiar);
-  assert.ok(g && g.kind === 'general', 'the familiar is re-forged into a General');
+  assert.ok(g && g.kind === 'vampiress', 'the familiar rises as a Vampiress');
   assert.equal(g.maxHp, 3, 'and carries 3 HP, like a mini-boss');
 
   const necro = sorcererWith('s_familiar', 's_undead');
@@ -2499,89 +3261,7 @@ test('allies: enemies may capture them, the king swaps with them, the General up
   assert.deepEqual({ x: swapped.allies[0].x, y: swapped.allies[0].y }, { x: 10, y: 10 }, 'king and familiar trade tiles');
 
   const gen = sorcererWith('s_familiar', 's_undead', 's_general');
-  assert.ok(gen.allies.some((a) => a.familiar && a.kind === 'general'), 'the familiar becomes a General');
-});
-
-test('Blink fires at most once per turn; Silent hides only foes beyond a tile', () => {
-  const bs = sorcererWith('s_blink');
-  bs.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8 })];
-  assert.equal(blinkToSafety(bs), true);
-  assert.equal(blinkToSafety(bs), false, 'the second blink this turn is spent');
-
-  const phase = (state) => beginEnemyPhase(state).state;
-  // An unaware foe TWO tiles from the Silent king stays oblivious (it wanders, never wakes).
-  const far = createInitialState('warrior');
-  far.terrain = {};
-  far.player.x = 10; far.player.y = 10; far.player.stealth = true;
-  far.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false })];
-  const farFoe = phase(far).enemies.find((e) => e.kind === 'rook');
-  assert.ok(farFoe && !farFoe.awake && !farFoe.surprised, 'a foe beyond a tile never notices him');
-  // An unaware foe WITHIN a tile detects him at once (surprised) — exactly like a normal
-  // first sighting, not fooled by stealth.
-  const near = createInitialState('warrior');
-  near.terrain = {};
-  near.player.x = 10; near.player.y = 10; near.player.stealth = true;
-  near.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
-  const nearFoe = phase(near).enemies[0];
-  assert.ok(nearFoe.awake || nearFoe.surprised, 'a foe within a tile detects the Silent king');
-});
-
-test('Silent: even attacking never reveals you — only adjacency does', () => {
-  const phase = (state) => {
-    const r = beginEnemyPhase(state);
-    let st = r.state;
-    for (const id of r.moverIds) st = moveEnemy(st, id);
-    return st;
-  };
-
-  // Firing a weapon from RANGE does NOT give the Silent king away: he holds his tile and a
-  // bystander two tiles off (not the one he shot) stays oblivious.
-  const atk = createInitialState('ranger'); // bishop bow — a ranged shot that doesn't move the king
-  atk.terrain = {};
-  atk.player.x = 10; atk.player.y = 10; atk.player.stealth = true;
-  atk.enemies = [
-    makeEnemy({ kind: 'rook', x: 12, y: 10, awake: false }), // bystander, 2 east, in sight, OFF the shot line
-    makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: false }), // the shot target, SE diagonal
-  ];
-  const bi = atk.player.cards.findIndex((c) => c.kind === 'bishop');
-  const struck = useCard(atk, bi, 12, 12); // loose an arrow SE — the king stays put
-  assert.deepEqual({ x: struck.player.x, y: struck.player.y }, { x: 10, y: 10 }, 'a ranged shot does not move the king');
-  assert.ok(!struck.enemies.some((e) => e.kind === 'pawn'), 'the arrow fells its target');
-  const bystander = phase(struck).enemies.find((e) => e.kind === 'rook');
-  assert.ok(bystander && !bystander.awake && !bystander.surprised, 'a foe beyond a tile stays oblivious even after the shot');
-
-  // A foe ADJACENT at the START of a phase detects the Silent king at once (surprised), then hunts —
-  // within a tile it is no longer fooled.
-  const adj = createInitialState('warrior');
-  adj.terrain = {};
-  adj.player.x = 10; adj.player.y = 10; adj.player.stealth = true;
-  adj.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: false })];
-  const woke = phase(adj).enemies[0];
-  assert.ok(woke.awake || woke.surprised, 'only a foe within a tile notices the Silent king');
-});
-
-test('Silent: a foe you strike but do not kill is provoked and hunts you despite stealth', () => {
-  const phase = (state) => beginEnemyPhase(state).state;
-  const mk = () => {
-    const s = createInitialState('ranger'); // bishop bow — a ranged shot that keeps the king in place
-    s.terrain = {};
-    s.player.x = 10; s.player.y = 10; s.player.stealth = true;
-    const boss = makeEnemy({ kind: 'queen', x: 12, y: 12, awake: false });
-    boss.boss = true; boss.bossName = 'the Warden'; boss.hp = 3; boss.maxHp = 3;
-    boss.dormant = false; boss.spokeLine = true; boss.recovering = false;
-    s.enemies = [boss];
-    return s;
-  };
-  // Control: never struck → Silent keeps the distant boss oblivious (it wanders, unaware).
-  const calm = phase(mk());
-  assert.ok(!calm.enemies[0].awake && !calm.enemies[0].surprised, 'un-struck, the distant boss stays oblivious under Silent');
-  // Strike it from range (it survives at 2/3), THEN the enemy phase: it is provoked and gives chase.
-  const s = mk();
-  const bi = s.player.cards.findIndex((c) => c.kind === 'bishop');
-  const shot = useCard(s, bi, 12, 12); // arrow hits the boss on the SE diagonal
-  assert.ok(shot.enemies[0].hp < 3 && shot.enemies[0].provoked, 'the wounded boss is provoked');
-  const hunted = phase(shot).enemies[0];
-  assert.ok(hunted.awake && !hunted.surprised, 'the struck boss hunts the Silent king rather than wandering off');
+  assert.ok(gen.allies.some((a) => a.familiar && a.kind === 'vampiress'), 'the familiar becomes a Vampiress');
 });
 
 test('every floor spawns a key and a stair sealed until it is collected', () => {
@@ -2594,8 +3274,17 @@ test('every floor spawns a key and a stair sealed until it is collected', () => 
     // The GUARDIAN now stands on the key (it guards it); no OTHER piece/turret/circle may.
     assert.ok(s.enemies.some((e) => e.boss && e.x === s.key.x && e.y === s.key.y), 'the guardian guards the key');
     assert.ok(!s.enemies.some((e) => !e.boss && e.x === s.key.x && e.y === s.key.y), 'no non-boss piece sits on the key');
-    // The king spawns NEAR the exit (a short journey to the way out).
-    assert.ok(chebyshev(s.exit.x, s.exit.y, s.player.x, s.player.y) <= 6, 'the king starts near the exit');
+    // The king, the KEY and the STAIR are three separate places. He used to start beside the exit,
+    // which made every floor one out-and-back errand: walk to the key, walk home. Now the route is
+    // a real decision.
+    assert.ok(chebyshev(s.exit.x, s.exit.y, s.player.x, s.player.y) >= 5, `floor ${floor}: the stair is NOT on his doorstep`);
+    assert.ok(chebyshev(s.exit.x, s.exit.y, s.key.x, s.key.y) >= 4, `floor ${floor}: nor is it in the guarded chamber`);
+    // He does NOT start knowing where it is. Painting it through the fog was free only while he
+    // started beside it; across the floor it would hand him the map. Two things to find now.
+    assert.equal(s.exit.discovered, false, `floor ${floor}: the stair must be FOUND`);
+    // The one landmark he always has: the collapsed upstair he arrived by, on his own tile.
+    assert.deepEqual(s.upstair, { x: s.player.x, y: s.player.y }, 'he starts on the ruin he came in by');
+    assert.ok(s.explored[`${s.upstair.x},${s.upstair.y}`], 'which is explored from the off');
   }
 });
 
@@ -2734,11 +3423,10 @@ test('descending the stair is a separate step and grants no further boon', () =>
 });
 
 test('taking a tier-1 perk and a card perk both apply', () => {
-  let hp = createInitialState('warrior');
-  const hp0 = hp.player.maxHp;
-  hp.pendingLevelUp = true;
-  hp = learnPerk(hp, 'w_hp1'); // tier 1 gives +1
-  assert.equal(hp.player.maxHp, hp0 + 1);
+  let flag = createInitialState('warrior');
+  flag.pendingLevelUp = true;
+  flag = learnPerk(flag, 'w_waiting'); // Sentinel tier-1 is now a flag perk (Waiting)
+  assert.equal(flag.player.waiting, true, 'a tier-1 flag perk applies');
 
   let card = createInitialState('warrior');
   const cards0 = card.player.cards.length;
@@ -2752,15 +3440,15 @@ test('perks are tiered: a capstone stays gated until its prerequisites are taken
   const p = createPlayer('warrior');
   // Fresh: only the four tier-1 chain roots are offerable; the tier-2/3 are gated.
   const rootIds = rollLevelPerks({ ...p, takenPerks: [] }, 99).map((o) => o.id).sort();
-  assert.deepEqual(rootIds, ['w_edge', 'w_enpassant', 'w_fleet', 'w_hp1']);
-  // Taking the tier-1 HP unlocks the tier-2 (but not yet the tier-3 Bulwark).
-  const afterHp1 = rollLevelPerks({ ...p, takenPerks: ['w_hp1'] }, 99).map((o) => o.id);
-  assert.ok(afterHp1.includes('w_hp2'), 'tier 2 unlocked by tier 1');
-  assert.ok(!afterHp1.includes('w_bulwark'), 'tier 3 still gated');
-  assert.ok(!afterHp1.includes('w_hp1'), 'a taken perk is not re-offered');
+  assert.deepEqual(rootIds, ['w_edge', 'w_enpassant', 'w_fleet', 'w_waiting']);
+  // Taking the tier-1 Waiting unlocks the tier-2 Parry (but not yet the tier-3 Reflect).
+  const afterT1 = rollLevelPerks({ ...p, takenPerks: ['w_waiting'] }, 99).map((o) => o.id);
+  assert.ok(afterT1.includes('w_bulwark'), 'tier 2 (Parry) unlocked by tier 1 (Waiting)');
+  assert.ok(!afterT1.includes('w_reflect'), 'tier 3 (Reflect) still gated');
+  assert.ok(!afterT1.includes('w_waiting'), 'a taken perk is not re-offered');
   // With tier-1 and tier-2 in, the tier-3 capstone finally appears.
-  const afterHp2 = rollLevelPerks({ ...p, takenPerks: ['w_hp1', 'w_hp2'] }, 99).map((o) => o.id);
-  assert.ok(afterHp2.includes('w_bulwark'), 'tier 3 unlocked by tier 2');
+  const afterT2 = rollLevelPerks({ ...p, takenPerks: ['w_waiting', 'w_bulwark'] }, 99).map((o) => o.id);
+  assert.ok(afterT2.includes('w_reflect'), 'tier 3 (Reflect) unlocked by tier 2 (Parry)');
 });
 
 test('an enemy is never surprised two enemy phases in a row', () => {
@@ -2800,4 +3488,2473 @@ test('an enemy that pursues into view reads as aware, not "unaware" on screen', 
   assert.ok(unitInSight(s, e.x, e.y), 'it advanced onto the screen');
   assert.equal(e.awake, true, 'so it must read as aware/hostile');
   assert.equal(e.surprised, false, 'not surprised (it was already hunting), and never left unaware');
+});
+
+test('a GATE bars the way but never the view', () => {
+  // The whole point of a gate, and the ONLY thing separating it from a tree. Get this backwards and
+  // it is just a tree that renders differently.
+  assert.equal(standableFor('gate', {}), false, 'you cannot walk through a gate');
+  assert.equal(blocksSight('gate'), false, 'but you CAN see through the bars');
+  assert.equal(blocksSight('tree'), true, 'the control: timber is opaque');
+  assert.equal(standableFor('gate', { phaseWalls: true }), true, 'a phaser slips through iron');
+  assert.ok(isChoppable('gate') && isChoppable('tree'), 'both can be cut down');
+});
+
+test('a gate takes THREE swings to fell, like a tree', () => {
+  const s = createInitialState('warrior', 'hard');
+  s.terrain['13,12'] = 'gate';
+  assert.equal(treeHpAt(s, 13, 12), 3, 'a fresh gate is at full HP');
+  damageTree(s, 13, 12);
+  assert.equal(terrainAt(s, 13, 12), 'gate', 'one swing does not fell it');
+  damageTree(s, 13, 12);
+  assert.equal(terrainAt(s, 13, 12), 'gate', 'nor two');
+  damageTree(s, 13, 12);
+  assert.notEqual(terrainAt(s, 13, 12), 'gate', 'the third swing brings it down');
+});
+
+test('the king can WALK INTO a gate to cut it down', () => {
+  // The trap that already bit trees: movePlayer (the directional path the player actually uses)
+  // special-cased only boulders, so walking into timber gave "the king cannot move that way" while
+  // movePlayerTo happily offered the chop. A test on the wrong path proves an unreachable feature.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain[`${s.player.x + 1},${s.player.y}`] = 'gate';
+  const before = treeHpAt(s, s.player.x + 1, s.player.y);
+  const next = movePlayer(s, 1, 0);
+  assert.ok(next, 'walking into a gate is a legal move');
+  assert.ok(treeHpAt(next, s.player.x + 1, s.player.y) < before, 'and it swings at the bars');
+});
+
+test('gates hang only in GENUINE doorways, and never seal a floor', () => {
+  // Gates are placed from the same vetted list as doors, so they must meet the same bar: a real
+  // 1-wide gap that a wall frames, opening into real space both ways. And because the king can
+  // always chop through, a gate must never leave anything unreachable.
+  let gates = 0; let nonsense = 0; let floorsWithGate = 0; let unreachable = 0;
+  for (let i = 0; i < 40; i += 1) {
+    for (const floor of [1, 3, 5, 8]) { // the floors with masonry; forests have no walls to gate
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      const at = (x, y) => terrainAt(s, x, y);
+      const walk = playerReachable(s, s.player.x, s.player.y);
+      let here = 0;
+      for (const k in s.terrain) {
+        if (s.terrain[k] !== 'gate') continue;
+        // A set-piece's own bars are exempt: a gaol cell is ONE tile deep on purpose, which is what
+        // makes it a cell. This is about gates the random pass hung.
+        if (s.fixedDoors && s.fixedDoors.has(k)) continue;
+        gates += 1; here += 1;
+        const [x, y] = k.split(',').map(Number);
+        if (!walk.has(k)) unreachable += 1; // he can chop through, so it must count as reachable
+        s.terrain[k] = 'wall'; // judge it as the wall it was cut from
+        if (!isDoorwaySpot(at, x, y)) nonsense += 1;
+        s.terrain[k] = 'gate';
+      }
+      if (here > 0) floorsWithGate += 1;
+    }
+  }
+  assert.ok(gates > 30, `gates actually spawn on stone floors (saw ${gates})`);
+  assert.ok(floorsWithGate > 40, `on a good share of them (${floorsWithGate}/160)`);
+  assert.equal(unreachable, 0, 'a gate is a way IN — never a wall the king cannot pass');
+  // The carve runs after the prune and can strand a doorway; doors live with ~1% of this already.
+  // Connectivity carves now route AROUND deliberate gates (so a gaol's bars survive), which carves a
+  // touch more elsewhere and strands a few more random gates — a fair trade for intact cells.
+  assert.ok(nonsense / gates < 0.05, `gates sit in sensible masonry (${(100 * nonsense / gates).toFixed(1)}% stranded)`);
+});
+
+test('a room reachable ONLY through a gate is not bypassed by a fresh corridor', () => {
+  // The bug this locks down: playerReachable used standableFor, so a gate read as a wall, the room
+  // behind it read as a sealed pocket, and connectWalledPockets punched a corridor through the wall
+  // beside it — bypassing the very way in the gate was there to be.
+  const s = createInitialState('warrior', 'hard');
+  // Build the scenario outright. Sampling whatever terrain generation happened to roll made this
+  // flaky: a stray lava tile or wall beyond the gate decided the result, not the gate.
+  s.terrain = {};
+  const px = s.player.x;
+  const py = s.player.y;
+  // The wall must span the whole map. A short stub proves nothing — he simply walks around the end,
+  // and the control below (stone seals it) fails for a reason that has nothing to do with gates.
+  for (let y = 0; y < WORLD_SIZE; y += 1) s.terrain[`${px + 2},${y}`] = 'wall'; // a wall he cannot pass...
+  s.terrain[`${px + 2},${py}`] = 'gate'; // ...with exactly one way through it
+  const reach = playerReachable(s, px, py);
+  assert.ok(reach.has(`${px + 2},${py}`), 'the gate tile itself is reachable (he chops it)');
+  assert.ok(reach.has(`${px + 3},${py}`), 'and so is the ground beyond it');
+  // The control: swap the gate for solid stone and the far side must go dark. Without this, the
+  // test would pass just as happily if playerReachable ignored terrain altogether.
+  s.terrain[`${px + 2},${py}`] = 'wall';
+  const sealed = playerReachable(s, px, py);
+  assert.ok(!sealed.has(`${px + 3},${py}`), 'but plain stone in the same gap DOES seal it off');
+});
+
+test('wading into LAVA costs a heart, and the state SHOWS it', () => {
+  // The view flashes/shakes/sounds by comparing player.hp across an action. Lava burns during the
+  // king's OWN turn (passTurn), and resolveCommitted never compared HP — so he could stroll across
+  // a lake of fire losing a heart a step in total silence. This locks the contract the view reads:
+  // the returned state must carry a visibly lower HP than the one handed in.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {};
+  s.terrain[`${s.player.x + 1},${s.player.y}`] = 'lava';
+  const before = s.player.hp;
+  const next = movePlayer(s, 1, 0);
+  assert.ok(next, 'he can step into lava — it just costs blood');
+  assert.equal(terrainAt(next, next.player.x, next.player.y), 'lava', 'and he is standing in it');
+  assert.equal(next.player.hp, before - 1, 'the sear shows up as a real HP drop the view can see');
+  assert.ok(/sears the king/.test(next.message || ''), 'and it says so');
+});
+
+test('Winged Boots carry the king over lava unburnt', () => {
+  // The control: without this, the test above would pass just as well if lava simply hurt everyone
+  // unconditionally, and the immunity could rot away unnoticed.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {};
+  s.terrain[`${s.player.x + 1},${s.player.y}`] = 'lava';
+  s.player.terrainImmune = true;
+  const before = s.player.hp;
+  const next = movePlayer(s, 1, 0);
+  assert.equal(next.player.hp, before, 'he floats over it untouched');
+});
+
+test('the hover highlight names exactly the foes that make a tile red', () => {
+  // The rings and the red tint MUST agree — they are two renderings of one claim. Sharing the ghost
+  // is what guarantees it; this proves the two views actually match, tile for tile.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {};
+  s.enemies = [makeEnemy({ kind: 'rook', x: s.player.x + 3, y: s.player.y, awake: true })];
+  const counts = getThreatenedTiles(s);
+  let checked = 0;
+  for (let x = s.player.x - 4; x <= s.player.x + 4; x += 1) {
+    for (let y = s.player.y - 4; y <= s.player.y + 4; y += 1) {
+      const tinted = counts.get(`${x},${y}`) || 0;
+      assert.equal(threatenersOf(s, x, y).length, tinted, `the rings match the tint at ${x},${y}`);
+      if (tinted > 0) checked += 1;
+    }
+  }
+  assert.ok(checked > 0, 'and the rook actually threatened something (the test can fail)');
+});
+
+test('a mini-boss and a guardian both scale at HALF the old rate', () => {
+  // The starting guardian is untouched; the deep ones come down by roughly half. The finale takes
+  // no bonus on top of the curve — its three perks are its escalation, not a wall of hit points.
+  const hp = [1, 2, 3, 4, 5, 6, 7, 8].map((f) => levelForFloor(f).boss.hp);
+  assert.equal(hp[0], 3, 'the first guardian is exactly as it was');
+  assert.deepEqual(hp, [3, 4, 4, 4, 4, 5, 6, 7], 'and the curve climbs at half the old pace');
+  assert.ok(hp[7] - hp[6] <= 2, 'the finale is the next step of the curve, not a spike');
+  for (let i = 1; i < hp.length; i += 1) assert.ok(hp[i] >= hp[i - 1], 'and never dips as you descend');
+});
+
+test('hell wells up LAVA where the mortal floors would flood', () => {
+  // Water in the demon realm is close to a gift: it only stops a slide, while the lava it displaces
+  // costs a heart per turn. Down there the same roll must bring lava instead.
+  //
+  // Read dangerEvent.kind, not the prose: fireDangerEvent returns nothing at all (it mutates the
+  // state), so an earlier cut of this test matched a regex against `undefined` and reported zero
+  // floods everywhere — which looked exactly like a pass for the demon half.
+  const roll = (floor) => {
+    const s = createInitialState('warrior', 'hard');
+    s.floor = floor;
+    s.player.seenTerrain = ['water', 'lava'];
+    fireDangerEvent(s, 1);
+    return s.dangerEvent.kind;
+  };
+  let hellFloods = 0;
+  let hellLava = 0;
+  let mortalFloods = 0;
+  for (let i = 0; i < 400; i += 1) {
+    const h = roll(DEMON_FLOOR);
+    if (h === 'flood') hellFloods += 1;
+    if (h === 'lavaSpread' || h === 'wallsToLava') hellLava += 1;
+    if (roll(2) === 'flood') mortalFloods += 1;
+  }
+  assert.equal(hellFloods, 0, 'no flood ever rises in hell');
+  assert.ok(hellLava > 0, `and hell still wells lava instead (${hellLava}/400)`);
+  assert.ok(mortalFloods > 0, `but water still floods up top, so this test can fail (${mortalFloods}/400)`);
+});
+
+test('nothing alights on top of a TREE or a GATE — but a boulder still crushes', () => {
+  // A knight could perch in a treetop: the leapers each kept their own hand-written list of
+  // terrain names (wall/lava/pit/ice), and trees and gates were added long after those were
+  // written. A boulder is genuinely different — the impact crushes it flat — so it stays landable,
+  // and that difference is exactly what this pins down.
+  const land = (t) => {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.enemies = [];
+    const kn = makeEnemy({ kind: 'knight', x: 10, y: 10 });
+    s.enemies = [kn];
+    s.player.x = 0; s.player.y = 0; // out of the way — this is about terrain, not targets
+    s.terrain['12,11'] = t;
+    return getPieceMoves(kn, s).some((m) => m.x === 12 && m.y === 11);
+  };
+  assert.equal(land('tree'), false, 'no knight perches in a treetop');
+  assert.equal(land('gate'), false, 'nor on top of a gate');
+  assert.equal(land('wall'), false, 'nor on stone (the control that always worked)');
+  assert.equal(land('boulder'), true, 'but a leaper still crushes a boulder flat');
+  assert.equal(land('ice'), true, 'and still shatters an ice slab');
+  assert.equal(land('grass'), true, 'and open ground is still open ground');
+  assert.ok(isSolidBarrier('tree') && isSolidBarrier('gate') && isSolidBarrier('wall'), 'timber, iron and stone are one class');
+  assert.ok(!isSolidBarrier('boulder'), 'a boulder is not — it is crushed, not stood upon');
+});
+
+test('an enemy knight really does END UP somewhere else than in the tree', () => {
+  // The move list is one thing; where the piece actually finishes is what the player sees.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = [];
+  const kn = makeEnemy({ kind: 'knight', x: 10, y: 10, awake: true });
+  s.enemies = [kn];
+  s.player.x = 13; s.player.y = 11; // pull it toward the tree tile
+  s.terrain['12,11'] = 'tree';
+  const next = moveEnemy(s, kn.id);
+  const e = next.enemies[0];
+  assert.ok(!(e.x === 12 && e.y === 11), 'it did not land on the tree');
+  assert.equal(terrainAt(next, 12, 11), 'tree', 'and the tree is still standing');
+});
+
+test('a foe with timber in its way CUTS THROUGH instead of pacing forever', () => {
+  // A stand of trees used to make a piece harmless for the rest of the run: pacing is a legal
+  // move, so it never looked stuck, and it would shuffle back and forth while the king shot at it
+  // through the bars at his leisure.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = [];
+  // Wall the foe in save for one tree, directly between it and the king.
+  for (let y = 9; y <= 11; y += 1) for (let x = 9; x <= 11; x += 1) {
+    if (x === 10 && y === 10) continue;
+    s.terrain[`${x},${y}`] = 'wall';
+  }
+  s.terrain['11,10'] = 'tree'; // the one way out, and it faces the king
+  const foe = makeEnemy({ kind: 'rook', x: 10, y: 10, awake: true });
+  s.enemies = [foe];
+  s.player.x = 14; s.player.y = 10;
+  const before = treeHpAt(s, 11, 10);
+  // ONE clone, and the piece taken out of THAT clone. Passing structuredClone(s).enemies[0] as the
+  // mover alongside a separate structuredClone(s) hands meleeMove a piece from a different board:
+  // it dutifully moves a foe nobody can see, and the state under test never changes.
+  const next = structuredClone(s);
+  meleeMove(next, next.enemies[0]);
+  assert.ok(treeHpAt(next, 11, 10) < before, `it hacks at the tree in its way (${before} -> ${treeHpAt(next, 11, 10)})`);
+  assert.ok(/hacks at|hacks down/.test(next.message || ''), `and says so: "${next.message}"`);
+});
+
+test('a foe that can simply WALK closer never stops to chop', () => {
+  // The control. Without it this would pass just as happily if every foe hacked at every tree it
+  // could reach, turning the forest floors to stumps for no reason.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = [];
+  s.terrain['9,10'] = 'tree'; // a tree BEHIND it — never in the way
+  const foe = makeEnemy({ kind: 'rook', x: 10, y: 10, awake: true });
+  s.enemies = [foe];
+  s.player.x = 14; s.player.y = 10; // clear open ground between them
+  const before = treeHpAt(s, 9, 10);
+  const next = structuredClone(s);
+  meleeMove(next, next.enemies[0]);
+  assert.equal(treeHpAt(next, 9, 10), before, 'the tree at its back is left alone');
+  assert.ok(next.enemies[0].x > 10, 'it just advances on the king');
+});
+
+test('a foe that SWINGS is flagged for the view; one that SHOOTS is not', () => {
+  // The blow was invisible: the king lost a heart while every piece stood perfectly still. The
+  // flag drives the lunge-and-recoil. Adjacency is the test, so anything ranged is silently right.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = [];
+  const foe = makeEnemy({ kind: 'rook', x: s.player.x + 1, y: s.player.y, awake: true });
+  s.enemies = [foe];
+  const next = moveEnemy(s, foe.id);
+  assert.ok(next.strikeBump, 'the adjacent foe swung, so the view is told to lunge it');
+  assert.equal(next.strikeBump.id, foe.id, 'and told WHICH piece swung');
+  assert.equal(next.strikeBump.dx, -1, 'and which way it swung (toward the king)');
+  assert.equal(next.strikeBump.dy, 0, '');
+});
+
+test('the king LEAPS at a tree, buries the blade, and rebounds — he never lands on it', () => {
+  // He used to come down on the tree tile itself ("the king repositions"), standing in the trunk —
+  // or, as it read on screen, clean through to the far side of it. A leap at timber is a STRIKE.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = [];
+  const card = { kind: 'knight', cooldown: 3, remaining: 0 };
+  s.player.cards = [card];
+  const tx = s.player.x + 1;
+  const ty = s.player.y + 2; // a knight's move away
+  s.terrain[`${tx},${ty}`] = 'tree';
+  const fromX = s.player.x;
+  const fromY = s.player.y;
+  const moves = getCardMoves(s, card);
+  const m = moves.find((t) => t.x === tx && t.y === ty);
+  assert.ok(m, 'the tree is still offered as a target — he can reach it');
+  assert.ok(m.chop, 'but as a CHOP, not a landing');
+  const next = useCard(s, 0, tx, ty);
+  // He BOUNCES OFF — landing on a tile beside the trunk, one step from where he sprang, the way a
+  // knight rebounds off a boss it cannot move. He never lands ON the tree, and never rebounds all
+  // the way home when there is open ground beside it.
+  assert.notEqual(`${next.player.x},${next.player.y}`, `${tx},${ty}`, 'he never stands in the trunk');
+  assert.equal(chebyshev(next.player.x, next.player.y, tx, ty), 1, 'he comes down beside it');
+  assert.equal(chebyshev(next.player.x, next.player.y, fromX, fromY), 1, 'a single tile from his start');
+  assert.equal(terrainAt(next, tx, ty), 'tree', 'the tree still stands...');
+  assert.equal(treeHpAt(next, tx, ty), TREE_HP - 1, '...but wears the wound');
+  assert.ok(next.lungeAt && next.lungeAt.x === tx, 'and the view is told to pounce onto it first');
+});
+
+test('a leap onto open ground still lands, and onto a GATE still rebounds', () => {
+  // The control: without it, the test above would pass just as well if the leap card had simply
+  // stopped working altogether.
+  const open = createInitialState('warrior', 'hard');
+  open.terrain = {}; open.enemies = [];
+  open.player.cards = [{ kind: 'knight', cooldown: 3, remaining: 0 }];
+  const ox = open.player.x + 1;
+  const oy = open.player.y + 2;
+  const landed = useCard(open, 0, ox, oy);
+  assert.equal(landed.player.x, ox, 'open ground is still a landing');
+  assert.equal(landed.player.y, oy, '');
+
+  const g = createInitialState('warrior', 'hard');
+  g.terrain = {}; g.enemies = [];
+  g.player.cards = [{ kind: 'knight', cooldown: 3, remaining: 0 }];
+  const gx = g.player.x + 1;
+  const gy = g.player.y + 2;
+  g.terrain[`${gx},${gy}`] = 'gate';
+  const bounced = useCard(g, 0, gx, gy);
+  assert.notEqual(`${bounced.player.x},${bounced.player.y}`, `${gx},${gy}`, 'he never stands in the gate');
+  assert.equal(chebyshev(bounced.player.x, bounced.player.y, gx, gy), 1, 'iron bounces him off beside it too');
+  assert.equal(treeHpAt(bounced, gx, gy), TREE_HP - 1, 'and takes the wound');
+});
+
+test('a tree ABLAZE around the phasing king sears him, just as a wall-torch does', () => {
+  // Only Phase can put him inside a trunk and only spellfire can light one, so this is a rare
+  // corner — but he took NO harm at all standing in the middle of a burning tree while the lit
+  // torch one tile over cost him a heart. Same fire, same price.
+  const s = createInitialState('sorcerer', 'hard');
+  s.terrain = {}; s.enemies = [];
+  s.player.phase = true;
+  s.terrain[`${s.player.x},${s.player.y}`] = 'tree';
+  s.burningTrees = { [`${s.player.x},${s.player.y}`]: true };
+  const before = s.player.hp;
+  passTurn(s);
+  assert.equal(s.player.hp, before - 1, 'the fire he is standing in costs him a heart');
+  assert.ok(/burning tree sears/.test(s.message || ''), `and says so: "${s.message}"`);
+});
+
+test('Winged Boots carry the king through a burning tree unburnt', () => {
+  // The control — and the same exemption lava and the wall-torch already grant.
+  const s = createInitialState('sorcerer', 'hard');
+  s.terrain = {}; s.enemies = [];
+  s.player.phase = true; s.player.terrainImmune = true;
+  s.terrain[`${s.player.x},${s.player.y}`] = 'tree';
+  s.burningTrees = { [`${s.player.x},${s.player.y}`]: true };
+  const before = s.player.hp;
+  passTurn(s);
+  assert.equal(s.player.hp, before, 'the flames do not touch him');
+});
+
+test('the phasing king slips into timber and iron alike', () => {
+  // Phase must work on the terrain added since it was written. (It no longer costs him any sight —
+  // the 3x3 blinding is gone — so this is purely about whether he can get INTO each.)
+  const inside = (t) => {
+    const s = createInitialState('sorcerer', 'hard');
+    s.terrain = {}; s.enemies = [];
+    s.player.phase = true;
+    s.terrain[`${s.player.x + 1},${s.player.y}`] = t;
+    const n = movePlayer(s, 1, 0);
+    return Boolean(n && n.player.x === s.player.x + 1);
+  };
+  assert.equal(inside('tree'), true, 'he phases into timber');
+  assert.equal(inside('gate'), true, 'and iron');
+  assert.equal(inside('wall'), true, 'and stone (the control that always worked)');
+  assert.equal(inside('door'), true, 'and a doorway is just a doorway');
+});
+test("the king's ray passes through a gate; a turret's bolt is stopped by it", () => {
+  // The gate's whole reason to exist. You can SEE and SHOOT through bars — so the king's card rays
+  // cross a gate — but a TURRET'S physical bolt strikes the iron and stops (chipping it), which is
+  // the shield the player asked a gate to be. A tree stops both.
+  const shoot = (t) => {
+    const s = createInitialState('ranger', 'hard');
+    s.terrain = {}; s.enemies = [];
+    const ex = s.player.x + 3;
+    const ey = s.player.y + 3; // the ranger opens with a BISHOP card — it fires on the diagonal
+    s.enemies = [makeEnemy({ kind: 'pawn', x: ex, y: ey })];
+    if (t) s.terrain[`${s.player.x + 1},${s.player.y + 1}`] = t;
+    return getCardMoves(s, s.player.cards[0]).some((m) => m.x === ex && m.y === ey);
+  };
+  assert.equal(shoot(null), true, 'clear ground: he can shoot (so this test can fail)');
+  assert.equal(shoot('gate'), true, 'and straight through the bars of a gate');
+  assert.equal(shoot('tree'), false, 'but not through timber');
+  assert.equal(shoot('wall'), false, 'nor stone');
+
+  const shotAt = (t) => {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.enemies = [];
+    const turret = makeEnemy({ kind: 'rook', x: s.player.x + 3, y: s.player.y, turret: true, hp: 2, maxHp: 2 });
+    s.enemies = [turret];
+    if (t) s.terrain[`${s.player.x + 1},${s.player.y}`] = t;
+    return getPieceThreats(turret, s, true).some((q) => q.x === s.player.x && q.y === s.player.y);
+  };
+  assert.equal(shotAt(null), true, 'and a turret shoots back down a clear lane');
+  assert.equal(shotAt('gate'), false, 'but a gate STOPS its bolt — the bars shield the king (and take the hit)');
+  assert.equal(shotAt('tree'), false, 'timber shields him');
+  assert.equal(shotAt('wall'), false, 'as does stone');
+
+  // A FIRE turret's piercing gout is stopped by the gate the same way.
+  const fs = createInitialState('warrior', 'hard');
+  fs.terrain = {}; fs.enemies = [];
+  const fturret = makeEnemy({ kind: 'rook', x: fs.player.x + 3, y: fs.player.y, turret: true, fire: true });
+  fs.enemies = [fturret];
+  assert.ok(fireTurretLineToKing(fs, fturret), 'a fire turret bears on a clear lane');
+  fs.terrain[`${fs.player.x + 1},${fs.player.y}`] = 'gate';
+  assert.ok(!fireTurretLineToKing(fs, fturret), 'but a gate stops its gout short of the king');
+});
+
+test('a turret behind a gate shoots the GATE, chipping it, not the king through it', () => {
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 12; s.player.y = 12; s.player.hp = 9;
+  const turret = makeEnemy({ kind: 'rook', x: s.player.x + 3, y: s.player.y, turret: true, hp: 2, maxHp: 2 });
+  s.enemies = [turret];
+  const gx = s.player.x + 1;
+  const gy = s.player.y;
+  s.terrain[`${gx},${gy}`] = 'gate';
+  const before = treeHpAt(s, gx, gy);
+  // 1st beat locks onto the gate, 2nd looses the bolt into it. The king behind it is never touched.
+  fireTurret(s, turret);
+  fireTurret(s, turret);
+  assert.equal(s.player.hp, 9, 'the king is unharmed — the gate is in the way');
+  assert.ok(treeHpAt(s, gx, gy) < before, 'and the gate has been chipped by the bolt');
+  // Control: pull the gate and the same gun now blasts the king down the newly-clear lane.
+  delete s.terrain[`${gx},${gy}`];
+  turret.aiming = false;
+  fireTurret(s, turret);
+  fireTurret(s, turret);
+  assert.ok(s.player.hp < 9, 'with the gate gone the bolt reaches him');
+});
+
+test('Double Step charges THROUGH a bush to the tile behind it', () => {
+  // A bush (devilgrass) is walkable cover you cannot see past. The charge commits to a direction and
+  // barrels through it, so the landing two tiles off must be offered even though sight is blocked —
+  // otherwise a foe lurking behind the bush is safe from a charge that should skewer him.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = [];
+  s.player.x = 12; s.player.y = 12;
+  const card = { kind: 'doublestep', cooldown: 3, remaining: 0 };
+  s.player.cards = [card];
+  const dx = -1;
+  const dy = -1; // up-left, on the diagonal
+  const bx = s.player.x + dx;
+  const by = s.player.y + dy; // the bush, one tile off
+  const cx = s.player.x + dx * 2;
+  const cy = s.player.y + dy * 2; // the landing, behind it
+  s.terrain[`${bx},${by}`] = 'devilgrass';
+  assert.ok(getCardMoves(s, card).some((m) => m.x === cx && m.y === cy), 'the tile behind the bush is a charge target');
+  // Control: with the bush gone the same tile is still offered (proves the tile itself is legal, so
+  // the test above is really measuring the sight-block and not some other obstruction).
+  delete s.terrain[`${bx},${by}`];
+  assert.ok(getCardMoves(s, card).some((m) => m.x === cx && m.y === cy), 'and on clear ground too');
+});
+
+test('a turret lane tile that puts the gun OUT of awareness reads safe', () => {
+  // A stationary turret only fires while the king is inside its awareness window (an unaware turret
+  // idles and never reaches fireTurret). So stepping down a lane until the gun drops out of range is
+  // a SAFE move — the tint used to paint the whole lane red regardless, the bug this pins.
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 12; s.player.y = 12; s.player.vision = 7; // awareness half = 3
+  s.enemies = [makeEnemy({ kind: 'rook', x: 12, y: 9, turret: true, aiming: true, awake: true })];
+  const danger = getThreatenedTiles(s);
+  assert.ok(danger.has('12,11'), 'a lane tile still in the awareness window is dangerous');
+  assert.ok(danger.has('12,10'), 'and the tile right beside the gun');
+  assert.ok(!danger.has('12,13'), 'but stepping DOWN (gun now 4 off, out of awareness) is safe');
+  assert.ok(!danger.has('12,14'), 'and further still is safe');
+});
+
+test('a gaol always seats its prisoners (they are not pruned as frozen pieces)', () => {
+  // A prisoner is walled in a one-tile cell behind a gate — deliberately immobile (flagged `caged`).
+  // The frozen-piece net that drops wanderers terrain sealed in must never eat it; it once did,
+  // except when the kind happened to be a jumper that could leap the bars. Every gaol seats all three.
+  let gaols = 0;
+  for (let i = 0; i < 400 && gaols < 15; i += 1) {
+    const s = createInitialState('warrior', 'normal');
+    if (!(s.player.seenStructures || []).includes('gaol')) continue;
+    gaols += 1;
+    const prisoners = s.enemies.filter((e) => e.caged);
+    assert.equal(prisoners.length, 3, 'all three cells are seated (a gaol has three)');
+    assert.ok(prisoners.every((e) => e.asleep), 'and every prisoner starts asleep');
+  }
+  assert.ok(gaols >= 1, 'the run produced at least one gaol to check');
+});
+
+test('land ringed by lava gets a DRY bridge — never a marooned island', () => {
+  // carveWallPathTo routes around lava and gives up on a lava-locked pocket; the fallback lays a
+  // corridor straight across (lava -> floor). Every patch of ground must have a dry way on and off it.
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 5; s.player.y = 5;
+  // An island at (18,18) inside a 2-tile-thick lava moat — no dry route, and too wide to wade.
+  for (let dx = -3; dx <= 3; dx += 1) for (let dy = -3; dy <= 3; dy += 1) {
+    const r = Math.max(Math.abs(dx), Math.abs(dy));
+    if (r === 2 || r === 3) s.terrain[`${18 + dx},${18 + dy}`] = 'lava';
+  }
+  assert.ok(!playerReachable(s, 5, 5).has('18,18'), 'the island is lava-locked to begin with');
+  connectWalledPockets(s, 5, 5);
+  assert.ok(playerReachable(s, 5, 5).has('18,18'), 'a dry bridge now reaches it (playerReachable never walks lava)');
+});
+
+test('a GUARDIAN wards its retinue — a warded foe survives one blow, and env-death cuts through it', () => {
+  // A warded foe (parry) is struck IN PLACE the first time: it lives, guard dropped; the next blow fells it.
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 9; s.player.y = 7;
+  const foe = makeEnemy({ id: 'F', kind: 'pawn', x: 9, y: 8, awake: true, parry: true });
+  s.enemies = [foe];
+  let n = movePlayerTo(s, 9, 8);
+  const f = n.enemies.find((e) => e.id === 'F');
+  assert.ok(f && !f.parry, 'the ward turns the first blow aside — it lives, guard spent');
+  assert.ok(n.player.x !== 9 || n.player.y !== 8, 'and the king did not stride onto its tile');
+  n = movePlayerTo(n, 9, 8);
+  assert.ok(!n.enemies.some((e) => e.id === 'F'), 'the second blow fells it');
+  // Environmental death IGNORES the ward: a warded foe knocked into a pit dies outright.
+  const p = createInitialState('warrior', 'normal');
+  p.terrain = {}; p.enemies = []; p.allies = [];
+  p.player.x = 5; p.player.y = 5;
+  p.terrain['9,8'] = 'pit';
+  p.enemies = [makeEnemy({ id: 'F', kind: 'pawn', x: 8, y: 8, awake: true, parry: true })];
+  knockbackEnemy(p, p.enemies[0], 1, 0);
+  assert.ok(!p.enemies.some((e) => e.id === 'F'), 'a warded foe hurled into a pit dies — parry never stops the ground');
+});
+
+test('a GUARDIAN wards only ONE foe beside it, not its whole retinue', () => {
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.allies = []; s.player.vision = 25; s.player.x = 5; s.player.y = 8;
+  const g = makeEnemy({ id: 'G', kind: 'rook', x: 8, y: 8, boss: true, hp: 6, maxHp: 6, bossPerks: ['guardian'], bossPerk: 'guardian', awake: true, provoked: true, dormant: false, spokeLine: true });
+  const foes = [['A', 7, 7], ['B', 7, 8], ['C', 7, 9], ['D', 8, 7]].map(([id, x, y]) => makeEnemy({ id, kind: 'pawn', x, y, awake: true }));
+  s.enemies = [g, ...foes];
+  tickGuardianWards(s);
+  const warded = s.enemies.filter((e) => e.parry);
+  assert.equal(warded.length, 1, 'exactly one retainer is warded, however many crowd the guardian');
+  assert.ok(chebyshev(warded[0].x, warded[0].y, 5, 8) === 2, 'and it is one of the foes nearest the king');
+});
+
+test('the king is immune to being STUMBLED into by a knocked-back foe; a boulder still needs a guard', () => {
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 5; s.player.y = 5; s.player.hp = 8;
+  s.enemies = [makeEnemy({ id: 'F', kind: 'pawn', x: 4, y: 5, awake: true })];
+  knockbackEnemy(s, s.enemies[0], 1, 0); // shoved toward the king
+  assert.equal(s.player.hp, 8, 'a foe stumbling into him deals no damage');
+  // A boulder is the one physical smash a raised guard parries; unguarded, it lands.
+  const g = createInitialState('warrior', 'nightmare');
+  g.terrain = {}; g.enemies = []; g.allies = [];
+  g.player.x = 5; g.player.y = 5; g.player.hp = 8; g.player.firstHitEachTurn = true; g.player.guardUp = true;
+  g.terrain['2,5'] = 'boulder';
+  knockbackBoulder(g, 2, 5, 1, 0);
+  assert.equal(g.player.hp, 8, 'a raised guard parries a rolling boulder');
+  const u = createInitialState('warrior', 'nightmare');
+  u.terrain = {}; u.enemies = []; u.allies = [];
+  u.player.x = 5; u.player.y = 5; u.player.hp = 8;
+  u.terrain['2,5'] = 'boulder';
+  knockbackBoulder(u, 2, 5, 1, 0);
+  assert.equal(u.player.hp, 7, 'but an unguarded king takes it');
+});
+
+test('ANCHORED shrugs off knockback; BURROWER treads the void; demon/mortal traits stay in their realm', () => {
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 5; s.player.y = 5;
+  const anchored = makeEnemy({ id: 'A', kind: 'rook', x: 9, y: 9, boss: true, hp: 6, maxHp: 6, bossPerks: ['anchored'], bossPerk: 'anchored' });
+  s.enemies = [anchored];
+  knockbackEnemy(s, anchored, 1, 0);
+  const a = s.enemies.find((e) => e.id === 'A');
+  assert.ok(a.x === 9 && a.y === 9, 'nothing shoves an Anchored guardian');
+  // Burrower walks a pit as solid ground.
+  const b = createInitialState('warrior', 'normal');
+  b.terrain = {}; b.enemies = []; b.allies = [];
+  b.player.x = 5; b.player.y = 5;
+  b.terrain['9,8'] = 'pit';
+  const bur = makeEnemy({ id: 'B', kind: 'rook', x: 9, y: 9, boss: true, bossPerks: ['burrower'], bossPerk: 'burrower' });
+  b.enemies = [bur];
+  assert.ok(getPieceMoves(bur, b).some((m) => m.x === 9 && m.y === 8), 'a Burrower can move onto a pit');
+  // Realm-locking over many rolls (the teleport/terraform groups let only one through per roll).
+  let mortalHasDemon = false; let demonHasGardener = false;
+  for (let i = 0; i < 150; i += 1) {
+    if (rollBossPerks(24, 'rook').some((p) => ['hotblooded', 'icygrasp', 'shadowstep'].includes(p))) mortalHasDemon = true;
+    if (rollBossPerks(24, 'nightrider').includes('gardener')) demonHasGardener = true;
+  }
+  assert.ok(!mortalHasDemon, 'demon-only traits never roll on a mortal guardian');
+  assert.ok(!demonHasGardener, 'and the Gardener never rolls on a demon guardian');
+});
+
+test('a WARPER guardian swaps places with the king from a deadlier tile — and only then', () => {
+  assert.ok(BOSS_PERKS.includes('warper'), 'warper is a rollable guardian trait');
+  const build = () => {
+    const s = createInitialState('warrior', 'normal');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.vision = 25; s.player.x = 5; s.player.y = 5; // the king on quiet ground
+    const boss = makeEnemy({ id: 'B', kind: 'knight', x: 10, y: 5, boss: true, hp: 6, maxHp: 6, awake: true, bossName: 'the Warper', bossPerks: ['warper'], bossPerk: 'warper', spokeLine: true, dormant: false });
+    s.enemies = [boss];
+    return { s, boss };
+  };
+  // Two rooks rake the boss's column, so its tile is +2 threats over the king's — it wrenches them.
+  const { s, boss } = build();
+  s.enemies.push(makeEnemy({ id: 'r1', kind: 'rook', x: 10, y: 1, awake: true }));
+  s.enemies.push(makeEnemy({ id: 'r2', kind: 'rook', x: 10, y: 9, awake: true }));
+  const danger = getThreatenedTiles(s);
+  assert.ok((danger.get('10,5') || 0) - (danger.get('5,5') || 0) >= 2, 'the boss tile really is far deadlier');
+  bossMove(s, boss);
+  const b = s.enemies.find((e) => e.id === 'B');
+  assert.ok(b.x === 5 && b.y === 5 && s.player.x === 10 && s.player.y === 5, 'the two trade places — the king is shoved into the crossfire');
+  // Control: on a tile no more dangerous than the king's, it does NOT warp (it just advances).
+  const q = build();
+  bossMove(q.s, q.boss);
+  assert.ok(q.s.player.x === 5 && q.s.player.y === 5, 'no swap from a safe tile — the king stays put');
+});
+
+test('DEFENESTRATED: a knockback onto the open stair tumbles the king down a floor', () => {
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 5; s.player.y = 5; s.player.hp = 5;
+  s.exit = { x: 6, y: 5, locked: false }; // the OPEN stair, directly behind him
+  const jumper = makeEnemy({ id: 'J', kind: 'knight', x: 4, y: 5, awake: true }); // shoves him toward it
+  s.enemies = [jumper];
+  knockbackKing(s, jumper);
+  assert.ok(s.player.x === 6 && s.player.y === 5, 'he is bowled onto the stair');
+  assert.equal(s.player.defenestrated, true, 'the badge ledger records it');
+  assert.equal(s.lastAction, 'exit', 'and the turn flow descends (lastAction exit)');
+  // Control: a LOCKED stair does not let him fall through (no key yet).
+  const t = createInitialState('warrior', 'normal');
+  t.terrain = {}; t.enemies = []; t.allies = [];
+  t.player.x = 5; t.player.y = 5; t.player.hp = 5;
+  t.exit = { x: 6, y: 5, locked: true };
+  t.enemies = [makeEnemy({ id: 'J2', kind: 'knight', x: 4, y: 5, awake: true })];
+  knockbackKing(t, t.enemies[0]);
+  assert.ok(!t.player.defenestrated && t.lastAction !== 'exit', 'a sealed stair does not fling him down');
+});
+
+test('a foe ROUNDS a lone tree in its way, but CHOPS a wall of timber with no way around', () => {
+  const lone = createInitialState('warrior', 'normal');
+  lone.terrain = {}; lone.enemies = []; lone.allies = [];
+  lone.player.x = 10; lone.player.y = 5;
+  lone.terrain['6,5'] = 'tree'; // one tree between a rook and the king, open ground all around
+  lone.enemies = [makeEnemy({ id: 'E', kind: 'rook', x: 5, y: 5, awake: true })];
+  const beforeHp = treeHpAt(lone, 6, 5);
+  meleeMove(lone, lone.enemies[0]);
+  const e = lone.enemies.find((x) => x.id === 'E');
+  assert.ok(e.x !== 5 || e.y !== 5, 'it moves to go around');
+  assert.equal(treeHpAt(lone, 6, 5), beforeHp, 'leaving the tree untouched (it did not stop to chop)');
+  // A full wall of timber, no way around → it cuts through.
+  const wall = createInitialState('warrior', 'normal');
+  wall.terrain = {}; wall.enemies = []; wall.allies = [];
+  wall.player.x = 10; wall.player.y = 5;
+  for (let y = 0; y < WORLD_SIZE; y += 1) wall.terrain[`6,${y}`] = 'tree';
+  wall.enemies = [makeEnemy({ id: 'E', kind: 'rook', x: 5, y: 5, awake: true })];
+  meleeMove(wall, wall.enemies[0]);
+  assert.ok(treeHpAt(wall, 6, 5) < 3, 'walled in by timber, it hacks a way through');
+});
+
+test('ensureReachable wrenches the king to the NEAREST safe tile, not a random far one', () => {
+  // The fairness net used to pick a random tile in the exit region — which could fling him a dozen
+  // tiles off (most vividly: leaping into an ice field and marooning himself). Nearest keeps it a nudge.
+  const s = createInitialState('warrior', 'normal');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 12; s.player.y = 12;
+  s.exit = { x: 20, y: 20, locked: false };
+  // Box him into a single tile: walls on all eight neighbours, so he can't reach the exit.
+  for (const [dx, dy] of [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]]) s.terrain[`${12+dx},${12+dy}`] = 'wall';
+  assert.ok(!dangerReachOk(s), 'he is sealed off from the exit (the net should fire)');
+  const moved = ensureReachable(s);
+  assert.ok(moved, 'the net fires');
+  assert.ok(!(s.player.x === 12 && s.player.y === 12), 'and he is moved off his sealed tile');
+  assert.ok(chebyshev(s.player.x, s.player.y, 12, 12) <= 2, 'to the NEAREST open ground (just past the wall), not across the map');
+  assert.ok(dangerReachOk(s), 'and he can now reach the exit');
+});
+
+test('Charge bites timber TWICE, and holds its ground', () => {
+  // The dash must clear both tiles, so timber one step away blocked the card outright — it sat
+  // unusable in a forest. It chops like any other swing: a charge is not a better axe than an axe.
+  for (const t of ['tree', 'gate']) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.enemies = [];
+    const card = { kind: 'doublestep', cooldown: 3, remaining: 0 };
+    s.player.cards = [card];
+    const tx = s.player.x + 1;
+    const ty = s.player.y;
+    s.terrain[`${tx},${ty}`] = t;
+    const m = getCardMoves(s, card).find((q) => q.x === tx && q.y === ty);
+    assert.ok(m, `${t} is offered as a charge target`);
+    assert.ok(m.chop, 'as a CHOP');
+    assert.ok(!m.push, 'not a shove');
+    const fromX = s.player.x;
+    const next = useCard(s, 0, tx, ty);
+    // A charge lands TWICE — weight behind the blow is the Cavalier's whole idea, and it is what
+    // makes the card worth a slot: two of these fell a tree, where an ordinary swing needs three.
+    assert.equal(treeHpAt(next, tx, ty), TREE_HP - 2, `the ${t} takes two wounds from one charge`);
+    assert.equal(next.player.x, fromX, 'and he holds his ground');
+  }
+  // The control: charging a BOULDER still rolls it two tiles, as it always did.
+  const b = createInitialState('warrior', 'hard');
+  b.terrain = {}; b.enemies = [];
+  b.player.cards = [{ kind: 'doublestep', cooldown: 3, remaining: 0 }];
+  const bx = b.player.x + 1;
+  b.terrain[`${bx},${b.player.y}`] = 'boulder';
+  const rolled = useCard(b, 0, bx, b.player.y);
+  assert.equal(terrainAt(rolled, bx, b.player.y), 'normal', 'the boulder left its tile');
+  assert.equal(terrainAt(rolled, bx + 2, b.player.y), 'boulder', 'and rolled a full two tiles');
+});
+
+test('Pierce carries the thrust on into the timber behind the kill', () => {
+  const s = warriorWith('w_fleet', 'w_pierce');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  assert.equal(s.player.meleePierce, true, 'the perk grants it');
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+  s.terrain['12,10'] = 'tree'; // directly behind the foe, along his line of advance
+  const next = movePlayerTo(s, 11, 10); // fell the pawn; the thrust carries on
+  assert.equal(next.enemies.length, 0, 'the pawn falls');
+  assert.equal(treeHpAt(next, 12, 10), TREE_HP - 1, 'and the thrust bites the tree behind it');
+});
+
+test('Cleave prefers a BODY, and only bites timber when it finds none', () => {
+  // It must not spend the sweep on a tree while a piece stands on the other side of the king.
+  const build = (withSecondFoe) => {
+    const s = warriorWith('w_edge', 'w_cleave');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+    const foes = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+    // The sweep radiates from the SLAIN foe's tile (11,10), not the king's — a second pawn beside
+    // the king at (9,10) is two tiles from that origin and would never be swept, which says nothing
+    // about whether bodies come before timber.
+    if (withSecondFoe) foes.push(makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }));
+    s.enemies = foes;
+    s.terrain['10,11'] = 'tree'; // also adjacent to that origin, so both are in the sweep's reach
+    return s;
+  };
+  assert.equal(build(false).player.meleeCleave, true, 'the perk grants it');
+
+  const withFoe = movePlayerTo(build(true), 11, 10);
+  assert.equal(withFoe.enemies.length, 0, 'both pawns fall — the sweep took the second one');
+  assert.equal(treeHpAt(withFoe, 10, 11), TREE_HP, 'and the tree is untouched: bodies come first');
+
+  const alone = movePlayerTo(build(false), 11, 10);
+  assert.equal(alone.enemies.length, 0, 'the lone pawn falls');
+  assert.equal(treeHpAt(alone, 10, 11), TREE_HP - 1, 'and with nothing left to fell, the sweep bites the tree');
+});
+
+test('Mass Confusion catches every foe in SIGHT, and nothing is immune to it', () => {
+  const s = sorcererWith('s_hex', 's_cata', 's_confuse');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const card = s.player.cards.find((c) => c.kind === 'confuse');
+  assert.ok(card, 'the perk grants the card');
+  assert.equal(card.cooldown, 9, 'on a nine-turn cooldown');
+  // One of each thing that can stand on a board: an ordinary piece, a turret, a guardian, a rune.
+  const pawn = makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true });
+  const turret = makeEnemy({ kind: 'rook', x: 9, y: 10, turret: true, hp: 2, maxHp: 2 });
+  const boss = makeEnemy({ kind: 'queen', x: 10, y: 11, boss: true, awake: true, dormant: false, spokeLine: true, hp: 9, maxHp: 9 });
+  boss.bossName = 'the Test'; boss.bossPerks = ['brutal']; boss.bossPerk = 'brutal';
+  const circle = makeEnemy({ kind: 'pawn', x: 10, y: 9, summonCircle: true });
+  s.enemies = [pawn, turret, boss, circle];
+  const idx = s.player.cards.indexOf(card);
+  const next = useCard(s, idx, 10, 10); // self-cast
+  for (const e of next.enemies) {
+    assert.ok(isConfused(e), `the ${e.summonCircle ? 'summoning circle' : e.kind} loses the thread`);
+  }
+  assert.equal(next.player.cards[idx].remaining, 9, 'and it goes on cooldown');
+});
+
+test('Mass Confusion never reaches a foe the king cannot see', () => {
+  // The control: "every foe on the screen" has to MEAN something, or the card is just a board wipe.
+  const s = sorcererWith('s_hex', 's_cata', 's_confuse');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const near = makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true });
+  const far = makeEnemy({ kind: 'pawn', x: 23, y: 23, awake: true }); // well outside his sight
+  s.enemies = [near, far];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'confuse');
+  const next = useCard(s, idx, 10, 10);
+  assert.ok(isConfused(next.enemies[0]), 'the one in front of him is caught');
+  assert.ok(!isConfused(next.enemies[1]), 'the one across the floor is not');
+});
+
+test('a confused piece cuts down its OWN side — friendly fire, with no credit to the king', () => {
+  // The point of the whole mechanic. The king is nowhere near: every blow it can throw is at its
+  // own kind. It must not earn him score or trip his on-kill perks — he only started this.
+  let felled = 0;
+  const N = 400;
+  for (let i = 0; i < N; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 0; s.player.y = 0; s.player.killedEnemy = false;
+    const me = makeEnemy({ kind: 'rook', x: 10, y: 10 });
+    confuse(me);
+    s.enemies = [me, makeEnemy({ kind: 'pawn', x: 12, y: 10 })];
+    const next = moveEnemy(s, me.id);
+    if (next.enemies.length < 2) {
+      felled += 1;
+      assert.ok(!next.player.killedEnemy, 'a foe felling a foe is never scored as the king\'s kill');
+    }
+  }
+  assert.ok(felled > N * 0.3, `it really does cut its own side down (${felled}/${N})`);
+});
+
+test('a confused piece is still deadly to stand next to', () => {
+  // It must not become a free "nothing can hit me" — a confused foe that blunders into the king
+  // still lands a real blow. Otherwise the card is a strictly better Silence.
+  let struck = false;
+  for (let i = 0; i < 60 && !struck; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = []; s.enemies = [];
+    const me = makeEnemy({ kind: 'rook', x: s.player.x + 1, y: s.player.y });
+    confuse(me);
+    s.enemies = [me];
+    const before = s.player.hp;
+    const next = moveEnemy(s, me.id);
+    if (next.player.hp < before) struck = true;
+  }
+  assert.ok(struck, 'a confused foe beside the king does still hit him sometimes');
+});
+
+test('a confused TURRET cannot walk, and fires only every OTHER turn', () => {
+  // A rooted piece has no way to blunder, so its blunder is a wasted swing. Falling back to a
+  // strike would delete the coin for turrets: a confused turret would shoot the room EVERY turn,
+  // making it strictly better for the king than an unconfused one.
+  let fired = 0; let walked = 0;
+  const N = 600;
+  for (let i = 0; i < N; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 0; s.player.y = 0;
+    const t = makeEnemy({ kind: 'rook', x: 10, y: 10, turret: true, hp: 2, maxHp: 2 });
+    confuse(t);
+    s.enemies = [t, makeEnemy({ kind: 'pawn', x: 12, y: 10 })];
+    const next = moveEnemy(s, t.id);
+    const me = next.enemies.find((e) => e.id === t.id);
+    if (next.enemies.length < 2) fired += 1;
+    if (me.x !== 10 || me.y !== 10) walked += 1;
+  }
+  assert.equal(walked, 0, 'a turret never leaves its mounting');
+  const rate = fired / N;
+  assert.ok(rate > 0.35 && rate < 0.65, `and looses a wild shot about half the time (${(100 * rate).toFixed(0)}%)`);
+});
+
+test('the fog lifts ONLY on the coin — a blow will not sober a piece up', () => {
+  // Wearing off is rolled at the END of a confused piece's turn, so a confusion always costs its
+  // victim at least one turn — rolling at the start would let half the room shrug it off before it
+  // ever bit.
+  let lifted = 0;
+  const N = 600;
+  for (let i = 0; i < N; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 0; s.player.y = 0;
+    const me = makeEnemy({ kind: 'rook', x: 10, y: 10 });
+    confuse(me);
+    s.enemies = [me];
+    const next = moveEnemy(s, me.id);
+    if (next.enemies[0] && !isConfused(next.enemies[0])) lifted += 1;
+  }
+  const rate = lifted / N;
+  assert.ok(rate > 0.38 && rate < 0.62, `about every other turn (${(100 * rate).toFixed(0)}%)`);
+
+  // A BLOW no longer clears it. It used to, which made the card fight itself: the Hexer scatters a
+  // room and then cannot touch any of it without sobering up whatever he hits.
+  const t = createInitialState('warrior', 'hard');
+  t.terrain = {}; t.allies = [];
+  t.player.x = 10; t.player.y = 10; t.player.moveRange = 1;
+  const boss = makeEnemy({ kind: 'rook', x: 11, y: 10, boss: true, awake: true, dormant: false, spokeLine: true, hp: 9, maxHp: 9 });
+  boss.bossName = 'the Test'; boss.bossPerks = []; boss.bossPerk = null;
+  confuse(boss);
+  t.enemies = [boss];
+  const hit = movePlayerTo(t, 11, 10);
+  assert.ok(hit.enemies[0].hp < 9, 'it takes the blow and lives');
+  assert.ok(isConfused(hit.enemies[0]), 'and is STILL confused — hitting it is free value');
+});
+
+test('a confused piece has no sense left: it blunders into pits and hacks at trees', () => {
+  // A piece with the thread routes around fire it cannot survive and never walks into a hole.
+  // One that has lost it does both, and the floor collects.
+  let fell = 0;
+  const N = 300;
+  for (let i = 0; i < N; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 0; s.player.y = 0; // far off: this is about the FLOOR, not him
+    // Ring it with pits so any stagger goes over an edge.
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      s.terrain[`${10 + dx},${10 + dy}`] = 'pit';
+    }
+    const me = makeEnemy({ kind: 'king', x: 10, y: 10 });
+    confuse(me);
+    s.enemies = [me];
+    const next = moveEnemy(s, me.id);
+    if (!next.enemies.length) fell += 1;
+  }
+  assert.ok(fell > N * 0.25, `it staggers over the edge when it staggers (${fell}/${N})`);
+
+  // The control: with its wits it would NEVER step into a pit, however boxed in.
+  let sane = 0;
+  for (let i = 0; i < 60; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 13; s.player.y = 10;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      s.terrain[`${10 + dx},${10 + dy}`] = 'pit';
+    }
+    s.enemies = [makeEnemy({ kind: 'king', x: 10, y: 10, awake: true, lastSeen: { x: 13, y: 10 }, lastSeenTtl: 5 })];
+    const next = moveEnemy(s, s.enemies[0].id);
+    if (next.enemies.length) sane += 1;
+  }
+  assert.equal(sane, 60, 'a foe with its wits never steps into a hole');
+
+  // ...and it swings at timber, which is not standable and so is never offered as a move.
+  let chopped = 0;
+  for (let i = 0; i < 200; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 0; s.player.y = 0;
+    s.terrain['11,10'] = 'tree';
+    const me = makeEnemy({ kind: 'rook', x: 10, y: 10 });
+    confuse(me);
+    s.enemies = [me];
+    const next = moveEnemy(s, me.id);
+    if (treeHpAt(next, 11, 10) < TREE_HP) chopped += 1;
+  }
+  assert.ok(chopped > 20, `it hammers the tree beside it sometimes (${chopped}/200)`);
+});
+
+test('the Hex leaves its ferz STARTLED — it loses the turn', () => {
+  // Confusion was tried here and it gutted the perk: a confused piece ACTS at once (the phase makes
+  // it a mover before any surprise is reckoned) and half of what it does is swing at whatever is
+  // nearest — which is him, since the hex only ever reaches something already adjacent. Measured at
+  // 48% hit on the turn it was made, never a gasp, and the bot had a ferz as the Hexer's single
+  // biggest killer. Losing its turn is the whole point of unmaking a foe beside you.
+  const s = sorcererWith('s_hex');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  assert.equal(s.player.hexDemote, true, 'the perk grants it');
+  s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 11, awake: true, lastSeen: { x: 10, y: 10 }, lastSeenTtl: 5 })];
+  passTurn(s);
+  assert.equal(s.enemies[0].kind, 'ferz', 'the foe beside him is warped into a ferz');
+  assert.ok(!isConfused(s.enemies[0]), 'it is NOT confused');
+  // The outcome, not the flag: the phase must refuse to let it swing.
+  const phase = beginEnemyPhase(s);
+  assert.ok(phase.state.enemies[0].surprised, 'it comes to as a ferz, startled');
+  assert.ok(!phase.moverIds.includes(s.enemies[0].id), 'and does not get to act');
+});
+test('Vampiric Edge is a 1-in-3 coin per kill, and turrets are dead metal', () => {
+  const build = () => {
+    const s = warriorWith('w_edge', 'w_cleave', 'w_leech');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+    s.player.maxHp = 10; s.player.hp = 5;
+    s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+    return s;
+  };
+  assert.equal(build().player.meleeLeech, true, 'the perk grants it');
+  let healed = 0;
+  const N = 600;
+  for (let i = 0; i < N; i += 1) {
+    const next = movePlayerTo(build(), 11, 10);
+    if (next.player.hp > 5) healed += 1;
+  }
+  const rate = healed / N;
+  assert.ok(rate > 0.24 && rate < 0.43, `about a third of his kills mend a wound (${(100 * rate).toFixed(0)}%)`);
+
+  // A TURRET has nothing in it to drink — it never feeds him, however many times he breaks one.
+  let fedByMetal = 0;
+  for (let i = 0; i < 200; i += 1) {
+    const s = warriorWith('w_edge', 'w_cleave', 'w_leech');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+    s.player.maxHp = 10; s.player.hp = 5;
+    s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, turret: true, hp: 1, maxHp: 1 })];
+    const next = movePlayerTo(s, 11, 10);
+    if (next.enemies.length === 0 && next.player.hp > 5) fedByMetal += 1;
+  }
+  assert.equal(fedByMetal, 0, 'breaking a turret never mends him');
+
+  // And he is never overhealed past his maximum.
+  const full = build();
+  full.player.hp = full.player.maxHp;
+  const after = movePlayerTo(full, 11, 10);
+  assert.equal(after.player.hp, after.player.maxHp, 'a full king stays exactly full');
+});
+
+test('a dormant guardian ROARS on the very turn its "!" goes up', () => {
+  // It gasped in silence and bellowed a turn LATER, as it advanced. The roar was gated on
+  // `!dormant` — but a guardian is dormant for exactly as long as it holds its stair, which is the
+  // state it is in when the king first walks into view. So the gate fired on nothing but the rare
+  // already-roused boss, and every ordinary guardian shouted a turn late.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const boss = createBoss(3, 12, 10);
+  boss.dormant = true; boss.spokeLine = false; boss.awake = false;
+  s.enemies = [boss];
+  const t1 = beginEnemyPhase(s);
+  const b1 = t1.state.enemies[0];
+  assert.ok(b1.surprised, 'it is startled the turn he comes into view');
+  assert.ok(t1.state.bossShout, 'and it roars on THAT turn, not the next');
+  assert.ok(t1.state.bossLine, 'with a line for the log');
+  assert.ok(!t1.moverIds.includes(b1.id), 'the gasp still costs it the turn');
+  // ...and it never roars twice.
+  const st = t1.state;
+  st.bossShout = null; st.bossLine = null; // the view drains these each turn
+  const t2 = beginEnemyPhase(st);
+  const b2 = t2.state.enemies[0];
+  assert.ok(t2.moverIds.includes(b2.id), 'next turn it acts');
+  const after = moveEnemy(t2.state, b2.id);
+  assert.ok(!after.bossShout, 'and does NOT roar a second time as it advances');
+});
+
+test('Cataclysm startles the foes that are actually HUNTING him', () => {
+  // It only cleared `awake`, leaving each foe's memory of the king intact — and beginEnemyPhase
+  // lets a piece gasp only if it has genuinely lost him. So Cataclysm did nothing whatever to any
+  // foe in pursuit, which is every foe that mattered; it "worked" solely on pieces that had already
+  // lost track of him and had nothing to gasp about.
+  const build = (hunting) => {
+    const s = sorcererWith('s_hex', 's_cata');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    const fodder = makeEnemy({ kind: 'pawn', x: 12, y: 10 }); // ON the bolt's line: makes the cast legal
+    const watcher = makeEnemy({ kind: 'rook', x: 10, y: 13, awake: true }); // OFF it: the one observed
+    if (hunting) { watcher.lastSeen = { x: 10, y: 10 }; watcher.lastSeenTtl = 5; }
+    s.enemies = [fodder, watcher];
+    return s;
+  };
+  assert.equal(build(false).player.spellSurprise, true, 'the perk grants it');
+  for (const hunting of [false, true]) {
+    const s = build(hunting);
+    // A sorcerer's bolt is aimed at the ray's FAR END and is only castable if the line crosses a
+    // foe — aiming at the watcher itself would simply be refused.
+    const aim = getCardMoves(s, s.player.cards[0]).find((m) => m.y === 10 && m.x > 10);
+    assert.ok(aim, 'the bolt has a legal aim point');
+    const next = useCard(s, 0, aim.x, aim.y);
+    const w = next.enemies.find((e) => e.kind === 'rook');
+    const phase = beginEnemyPhase(next);
+    const after = phase.state.enemies.find((e) => e.kind === 'rook');
+    assert.ok(after.surprised, `a foe that ${hunting ? 'IS hunting him' : 'lost him'} is caught out by the cast`);
+    assert.ok(!phase.moverIds.includes(w.id), 'and does not get to swing');
+  }
+});
+
+test('Cataclysm leaves turrets and runes alone — they have no wits to scatter', () => {
+  const s = sorcererWith('s_hex', 's_cata');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const fodder = makeEnemy({ kind: 'pawn', x: 12, y: 10 });
+  const turret = makeEnemy({ kind: 'rook', x: 10, y: 13, turret: true, hp: 3, maxHp: 3, awake: true });
+  const circle = makeEnemy({ kind: 'pawn', x: 13, y: 13, summonCircle: true });
+  s.enemies = [fodder, turret, circle];
+  const aim = getCardMoves(s, s.player.cards[0]).find((m) => m.y === 10 && m.x > 10);
+  const next = useCard(s, 0, aim.x, aim.y);
+  const t = next.enemies.find((e) => e.turret);
+  const c = next.enemies.find((e) => e.summonCircle);
+  assert.ok(t.awake, 'a gun does not gasp');
+  assert.ok(!c.surprised, 'nor does a rune cut into the floor');
+});
+
+test('the Vampiress drinks blood, never oil', () => {
+  const feed = (foe) => {
+    const s = sorcererWith('s_familiar', 's_undead', 's_general');
+    s.terrain = {};
+    s.player.x = 0; s.player.y = 0; // far off — this is the ALLY's blow, not his
+    s.allies = [{ id: 'v1', kind: 'vampiress', x: 10, y: 10, hp: 1, maxHp: 3 }]; // WOUNDED: there is a wound to knit
+    s.enemies = [foe];
+    const next = runAllyPhase(s);
+    return (next.allies || [])[0];
+  };
+  // A turret: she breaks it and mends not at all. (She is sent in WOUNDED, so there is a wound to
+  // knit — at full health a kill would heal nothing and the test would pass for the wrong reason.)
+  let mended = 0;
+  for (let i = 0; i < 40; i += 1) {
+    const v = feed(makeEnemy({ kind: 'rook', x: 11, y: 10, turret: true, hp: 1, maxHp: 1 }));
+    if (v && v.hp > 1) mended += 1;
+  }
+  assert.equal(mended, 0, 'dead metal never feeds her');
+  // The control: a real piece does. Without this the test would pass if she simply stopped feeding.
+  let fed = 0;
+  for (let i = 0; i < 40; i += 1) {
+    const v = feed(makeEnemy({ kind: 'pawn', x: 11, y: 10 }));
+    if (v && v.hp > 1) fed += 1;
+  }
+  assert.ok(fed > 0, `but blood does (${fed}/40)`);
+});
+
+test('his TITLE takes a FULL chain, and then it is his for good', () => {
+  // It flipped at TWO perks, so a king holding two Duellist perks was already captioned "Duellist"
+  // with the third unbought and every other chain still open to him.
+  const cls = CLASSES.warrior;
+  let s = createInitialState('warrior', 'hard');
+  assert.equal(playerTitle(s.player), cls.name, 'he starts as his plain class');
+  s = learnPerk(s, 'w_enpassant'); // Duellist T1
+  assert.equal(playerTitle(s.player), cls.name, 'one perk in a chain is not a subclass');
+  s = learnPerk(s, 'w_flourish'); // Duellist T2 — the exact case reported
+  assert.equal(playerTitle(s.player), cls.name, 'nor two — he has not committed to anything yet');
+  s = learnPerk(s, 'w_rush'); // Duellist T3: the chain is complete
+  assert.equal(playerTitle(s.player), 'Duellist', 'the full chain names him');
+  // PERMANENT: finishing a second chain never renames him.
+  s = learnPerk(s, 'w_edge');
+  s = learnPerk(s, 'w_cleave');
+  s = learnPerk(s, 'w_leech'); // Reaver complete too
+  assert.equal(playerTitle(s.player), 'Duellist', 'the first chain he finished is his for good');
+  assert.equal(committedChain(s.player), 'Duellist', '');
+});
+
+test('a card that cannot be played from here is flagged, but a wading king keeps his abilities', () => {
+  // The view greys a button by cardBlockedReason and useCard refuses by it, so the two cannot drift
+  // into disagreeing about what is playable.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = [];
+  const weapon = s.player.cards[0];
+  assert.equal(cardBlockedReason(s, weapon), null, 'on dry land his weapon is ready');
+  s.terrain[`${s.player.x},${s.player.y}`] = 'water';
+  assert.ok(/wading/.test(cardBlockedReason(s, weapon) || ''), 'wading, he cannot ready it');
+  // A self-cast ability needs no hands.
+  const ability = { kind: 'blink', cooldown: 6, remaining: 0 };
+  assert.equal(cardBlockedReason(s, ability), null, 'but an ability still casts from the water');
+  // Winged Boots carry him over it.
+  s.player.terrainImmune = true;
+  assert.equal(cardBlockedReason(s, weapon), null, 'and Winged Boots lift the whole restriction');
+  // A recharging card is blocked wherever he stands.
+  s.player.terrainImmune = false;
+  s.terrain = {};
+  assert.ok(/recharging/.test(cardBlockedReason(s, { kind: 'knight', cooldown: 3, remaining: 2 }) || ''), 'a spent card is blocked on dry land too');
+});
+
+test('no file SHADOWS a global constant', () => {
+  // renderer.js declared `const DEMON_FLOOR = {dark, light}` inside its IIFE, shadowing the global
+  // `DEMON_FLOOR = 5`. Every `state.floor >= DEMON_FLOOR` in that file then compared a number to an
+  // OBJECT — which is NaN, which is false — so `demonRealm` was false on every floor and the entire
+  // demon realm (ashen ground, blue torches, iron doors, dead trees, withered grass) silently
+  // stopped rendering. Nothing threw, no test failed, and it survived two rounds of review.
+  //
+  // This is the whole class of bug: the shadow is legal JS, the comparison is legal JS, and the
+  // result is a quiet `false`. Names are the only defence, so guard the names.
+  const srcDir = path.join(here, '..', 'src');
+  const constantsSrc = fs.readFileSync(path.join(srcDir, 'constants.js'), 'utf8');
+  // Top-level declarations in constants.js: `const NAME = ...` with no indentation.
+  const globals = new Set();
+  for (const m of constantsSrc.matchAll(/^const ([A-Za-z_$][\w$]*)\s*=/gm)) globals.add(m[1]);
+  assert.ok(globals.has('DEMON_FLOOR'), 'the scan finds the very constant that caused this');
+  assert.ok(globals.size > 10, `and the rest of them (${globals.size} found)`);
+
+  const offenders = [];
+  for (const file of fs.readdirSync(srcDir)) {
+    if (!file.endsWith('.js') || file === 'constants.js') continue;
+    const text = fs.readFileSync(path.join(srcDir, file), 'utf8');
+    for (const m of text.matchAll(/(?:^|[\s;{(])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) {
+      if (globals.has(m[1])) {
+        const line = text.slice(0, m.index).split('\n').length;
+        offenders.push(`${file}:${line} re-declares ${m[1]}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `nothing may shadow a global constant:\n  ${offenders.join('\n  ')}`);
+});
+
+test('the demon realm actually TURNS ON at floor 5', () => {
+  // The comparison the shadow broke, asserted directly against the real constant. It reads a plain
+  // number, so `floor >= DEMON_FLOOR` is a number-to-number test on every floor of the game.
+  assert.equal(typeof DEMON_FLOOR, 'number', 'DEMON_FLOOR is a FLOOR NUMBER, not a palette');
+  assert.equal(DEMON_FLOOR, 5, '');
+  for (const floor of [1, 2, 3, 4]) {
+    assert.equal(floor >= DEMON_FLOOR, false, `floor ${floor} is the mortal world`);
+  }
+  for (const floor of [5, 6, 7, 8]) {
+    assert.equal(floor >= DEMON_FLOOR, true, `floor ${floor} is the demon realm`);
+  }
+});
+
+test('an OPEN stair always reads safe — he can never be hit standing on it', () => {
+  // Step onto an unlocked exit and the floor ends then and there: tryDescend fires on the move, so
+  // there is no enemy phase and nothing on the board gets to swing. Painting it red told him the
+  // one tile he could always run to was the one place he must not go.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.exit = { x: 12, y: 10, discovered: true, portal: false, locked: false };
+  s.key = null;
+  // A rook covering the whole rank, the stair included. It must be inside the king's SIGHT — the
+  // threat map only reckons foes he can actually see, so a rook parked six tiles off produced no
+  // threats whatever and the "control" quietly proved nothing.
+  s.enemies = [makeEnemy({ kind: 'rook', x: 13, y: 10, awake: true })];
+  const open = getThreatenedTiles(s);
+  assert.ok((open.get('11,10') || 0) > 0, 'the rook really does cover this rank (so the test can fail)');
+  assert.equal(open.get('12,10') || 0, 0, 'but the open stair is never marked dangerous');
+  // A LOCKED stair is a tile like any other — he bounces off the seal and stands there taking hits.
+  s.exit.locked = true;
+  const sealed = getThreatenedTiles(s);
+  assert.ok((sealed.get('12,10') || 0) > 0, 'a sealed stair is as deadly as the ground it sits on');
+});
+
+test('a gate into hell stands in a ring of pillars; an ordinary stair does not', () => {
+  // Only a stair that actually opens onto the demon realm (floor 4 onward), and the portal home.
+  // If every stair had columns, none of them would mean anything.
+  const cornersAround = (s) => {
+    let n = 0;
+    for (const [dx, dy] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
+      if (terrainAt(s, s.exit.x + dx, s.exit.y + dy) === 'wall') n += 1;
+    }
+    return n;
+  };
+  const avg = (floor) => {
+    let total = 0;
+    const N = 30;
+    for (let i = 0; i < N; i += 1) total += cornersAround(generateFloor(floor, createPlayer('warrior'), 0));
+    return total / N;
+  };
+  // Floors 1-3 descend to another mortal floor: no precinct. (Some corners will be wall by pure
+  // chance, which is exactly why this compares RATES rather than demanding zero.)
+  const mortal = (avg(1) + avg(2) + avg(3)) / 3;
+  // Floor 4's stair is the descent into hell; 5-7 go deeper; floor 8 is the portal home.
+  const hellish = (avg(4) + avg(5) + avg(6) + avg(7) + avg(8)) / 5;
+  assert.ok(hellish > 3, `a gate into hell is ringed with pillars (${hellish.toFixed(2)}/4 corners)`);
+  assert.ok(mortal < 2, `an ordinary stair is not (${mortal.toFixed(2)}/4 corners)`);
+});
+
+test('the pillars never cage the gate, nor bury the key', () => {
+  for (let i = 0; i < 40; i += 1) {
+    for (const floor of [4, 5, 8]) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      // The ring leaves its four orthogonals open, so the stair is always walkable-to. If it ever
+      // sealed it, connectWalledPockets would smash a corridor through the ring to reach it — and
+      // the colonnade would read as rubble somebody had put a hole in.
+      const reach = playerReachable(s, s.player.x, s.player.y);
+      assert.ok(reach.has(`${s.exit.x},${s.exit.y}`), `floor ${floor}: the king can still reach the gate`);
+      if (s.key && !s.key.collected) {
+        assert.notEqual(terrainAt(s, s.key.x, s.key.y), 'wall', `floor ${floor}: no pillar is dropped on the key`);
+        assert.ok(reach.has(`${s.key.x},${s.key.y}`), `floor ${floor}: and the key is still reachable`);
+      }
+    }
+  }
+});
+
+test('a neutral beast is no doormat — stepping onto it is a BLOW, not a swap', () => {
+  // Walking onto one used to gently trade places with it, which made a truce strictly better than
+  // an empty tile. Its square is now what any other enemy's square is. If he wants it on his side
+  // he walks up BESIDE it and offers his hand.
+  const s = rangerWith('r_wade', 'r_xray');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  s.floor = 3;
+  const beast = makeMiniBoss(s, 'knight', 11, 10);
+  beast.dormant = false; beast.awake = true; beast.spokeLine = true;
+  beast.hp = beast.maxHp = 4;
+  s.enemies = [beast];
+  assert.ok(isNeutralBeast(s, s.enemies[0]), 'it starts neutral');
+  const next = movePlayerTo(s, 11, 10);
+  assert.equal(next.player.x, 10, 'he does not slip through it');
+  assert.ok(next.enemies[0].hp < 4, 'he hits it');
+  assert.ok(!isNeutralBeast(next, next.enemies[0]), 'and the truce is off for good');
+});
+
+test('an AoE that clips a neutral beast turns it hostile', () => {
+  // Every area effect (a fireball burst, the steed's trample, a fire turret's gout, Cleave, Pierce)
+  // lands through attackTile, which routes a boss/mini-boss to damageBoss — and damageBoss sets
+  // provokedBeast on the very first line. So this holds for all of them at once.
+  const s = rangerWith('r_wade', 'r_xray');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.floor = 3;
+  const beast = makeMiniBoss(s, 'knight', 12, 10);
+  beast.dormant = false; beast.awake = true; beast.spokeLine = true;
+  beast.hp = beast.maxHp = 4;
+  s.enemies = [beast];
+  assert.ok(isNeutralBeast(s, s.enemies[0]), 'it starts neutral');
+  attackTile(s, 12, 10); // the shared path every AoE lands through
+  assert.ok(s.enemies[0].hp < 4, 'the blast wounds it');
+  assert.ok(!isNeutralBeast(s, s.enemies[0]), 'and it is hostile from here on');
+});
+
+test('demons doze at the gate to hell — and nowhere else', () => {
+  const atGate = (floor) => {
+    let guards = 0; let asleep = 0; let floors = 0;
+    for (let i = 0; i < 30; i += 1) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      const near = s.enemies.filter((e) => e.kind === 'berolina' && chebyshev(e.x, e.y, s.exit.x, s.exit.y) <= 2);
+      guards += near.length;
+      asleep += near.filter((e) => e.asleep).length;
+      if (near.length) floors += 1;
+    }
+    return { guards, asleep, floors };
+  };
+  // Floors 1-3 descend to another mortal floor: no gate, no demons.
+  for (const floor of [1, 2, 3]) {
+    assert.equal(atGate(floor).guards, 0, `floor ${floor}'s stair is an ordinary stair`);
+  }
+  // Floor 4's stair opens onto the demon realm — that is where they stand.
+  const four = atGate(4);
+  assert.ok(four.floors > 20, `demons keep floor 4's gate (${four.floors}/30 floors)`);
+  assert.equal(four.asleep, four.guards, 'every one of them asleep at its post');
+  assert.ok(four.guards >= four.floors, 'one or two apiece');
+});
+
+test('a sleeping demon wakes when he comes within reach, and gasps as it does', () => {
+  const build = (dist) => {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    const b = makeEnemy({ kind: 'berolina', x: 10 + dist, y: 10 });
+    b.asleep = true; b.awake = false;
+    s.enemies = [b];
+    return s;
+  };
+  // Well clear of it: it sleeps on.
+  const far = beginEnemyPhase(build(4));
+  assert.ok(far.state.enemies[0].asleep, 'it sleeps while he keeps his distance');
+  assert.ok(!far.moverIds.includes(far.state.enemies[0].id), 'and never acts');
+  // Within a tile: it wakes with a start — and the gasp is the turn he bought by finding it asleep.
+  const near = beginEnemyPhase(build(1));
+  assert.ok(!near.state.enemies[0].asleep, 'step beside it and it wakes');
+  assert.ok(near.state.enemies[0].surprised, 'with a start');
+  assert.ok(!near.moverIds.includes(near.state.enemies[0].id), 'so it does not swing on the turn it wakes');
+  // A blow wakes it from any distance.
+  const struck = build(4);
+  struck.enemies[0].provoked = true;
+  const hit = beginEnemyPhase(struck);
+  assert.ok(!hit.state.enemies[0].asleep, 'and a blow wakes it wherever it lies');
+});
+
+test('Silence still holds the room down while he walks straight through it', () => {
+  // The wake-on-approach rule above must not gut Silence: its whole purpose is walking through a
+  // sleeping room. A held hush overrides being disturbed.
+  const s = rangerWith('r_ghost', 'r_camo', 'r_stealth'); // Silence is the capstone: the full chain
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true })];
+  const idx = s.player.cards.findIndex((c) => c.kind === 'silence');
+  assert.ok(idx >= 0, 'the perk grants Silence');
+  const cast = useCard(s, idx, 10, 10);
+  assert.ok(cast.enemies[0].asleep, 'the foe beside him drops');
+  assert.ok(cast.enemies[0].hushed, 'and is marked as the spell\'s doing');
+  const phase = beginEnemyPhase(cast);
+  assert.ok(phase.state.enemies[0].asleep, 'it stays down though he is right beside it');
+  assert.ok(!phase.moverIds.includes(cast.enemies[0].id), 'and never swings');
+});
+
+test('a foe whose trail has gone COLD can be caught out again', () => {
+  // Deliberately NOT permanent memory. A monster should lose track of him eventually; camping for
+  // that already costs him turns against the dread clock, which is what balances it.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const foe = makeEnemy({ kind: 'rook', x: 12, y: 10 });
+  foe.provoked = true;      // he has struck it before
+  foe.awake = false;        // but it has lost him...
+  foe.lastSeen = null;      // ...and the trail is stone cold
+  foe.lastSeenTtl = 0;
+  s.enemies = [foe];
+  const phase = beginEnemyPhase(s);
+  assert.ok(phase.state.enemies[0].surprised, 'finding him again startles it, struck or not');
+  // ...but a foe still holding a LIVE memory re-engages at once. That is the "for a while" part.
+  const hunting = createInitialState('warrior', 'hard');
+  hunting.terrain = {}; hunting.allies = [];
+  hunting.player.x = 10; hunting.player.y = 10;
+  const hunter = makeEnemy({ kind: 'rook', x: 12, y: 10 });
+  hunter.awake = false;
+  hunter.lastSeen = { x: 10, y: 10 };
+  hunter.lastSeenTtl = 4; // mid-pursuit
+  hunting.enemies = [hunter];
+  const p2 = beginEnemyPhase(hunting);
+  assert.ok(!p2.state.enemies[0].surprised, 'a foe mid-hunt is not caught out');
+  assert.ok(p2.moverIds.includes(hunter.id), 'it swings at once');
+});
+
+test('a foe that has not NOTICED him paints no danger — the map must match what pieces do', () => {
+  // The threat map ignored awareness entirely, so an oblivious rook ("?" over its head) painted its
+  // whole lane red. Step into it and the rook GASPS — the surprise costs it the turn — so every one
+  // of those tiles was his for the taking and the map told him the exact opposite.
+  //
+  // Asserted against what the pieces ACTUALLY do, not against the flag: the phase is run and the
+  // blow either lands or it does not. That is the only thing that makes this a real check.
+  const build = (flags) => {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    const r = makeEnemy({ kind: 'rook', x: 13, y: 10 }); // squarely in its lane
+    Object.assign(r, flags);
+    s.enemies = [r];
+    return s;
+  };
+  const reallyHits = (s) => {
+    const before = s.player.hp;
+    const phase = beginEnemyPhase(s);
+    let after = phase.state;
+    for (const id of phase.moverIds) after = moveEnemy(after, id);
+    return after.player.hp < before;
+  };
+  const cases = [
+    ['oblivious', { awake: false, surprised: false, lastSeen: null, lastSeenTtl: 0 }, false],
+    ['gasping now', { awake: true, surprised: true, lastSeen: null, lastSeenTtl: 0 }, true],
+    ['hunting him', { awake: true, surprised: false, lastSeen: { x: 10, y: 10 }, lastSeenTtl: 5 }, true],
+    ['mid-pursuit, no eyes on him', { awake: false, surprised: false, lastSeen: { x: 10, y: 10 }, lastSeenTtl: 4 }, true],
+  ];
+  for (const [label, flags, shouldPaint] of cases) {
+    const painted = (getThreatenedTiles(build(flags)).get('10,10') || 0) > 0;
+    assert.equal(painted, shouldPaint, `${label}: the map says ${shouldPaint ? 'danger' : 'safe'}`);
+    assert.equal(reallyHits(build(flags)), shouldPaint, `${label}: ...and that is what the piece actually does`);
+  }
+});
+
+test('an oblivious foe still paints danger the moment it wakes', () => {
+  // The control: the rule must be about NOTICING him, not about switching the rook off. The very
+  // same piece, in the very same square, is lethal once it has him.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'rook', x: 13, y: 10 })];
+  assert.equal(getThreatenedTiles(s).get('10,10') || 0, 0, 'oblivious: no danger');
+  s.enemies[0].awake = true;
+  assert.ok((getThreatenedTiles(s).get('10,10') || 0) > 0, 'awake: the same rook, the same lane, now lethal');
+});
+
+test('the key he is CARRYING is on the state for the inventory to read', () => {
+  // What the sidebar shelf keys off. Collecting must flip `collected` on the key itself (rather
+  // than removing it), or there would be nothing left to show him.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  s.key = { x: 11, y: 10, collected: false };
+  s.exit = { x: 20, y: 20, discovered: true, portal: false, locked: true };
+  assert.equal(s.key.collected, false, 'he starts empty-handed');
+  const next = movePlayerTo(s, 11, 10);
+  assert.ok(next.key, 'the key survives being picked up...');
+  assert.equal(next.key.collected, true, '...and is marked as his');
+  assert.equal(Boolean(next.key.orb), false, 'an ordinary floor key is not the Orb');
+});
+
+test('the last floor gives him an ORB, not a key', () => {
+  // The Orb is the final floor's key wearing a different hat (`key.orb`), which is exactly why the
+  // shelf can show it for free — and why it must be told apart from a gold key.
+  let sawOrb = 0;
+  for (let i = 0; i < 12; i += 1) {
+    const s = generateFloor(8, createPlayer('warrior'), 0);
+    if (s.key && s.key.orb) sawOrb += 1;
+  }
+  assert.equal(sawOrb, 12, 'the finale always guards an Orb');
+  const mortal = generateFloor(3, createPlayer('warrior'), 0);
+  assert.ok(mortal.key && !mortal.key.orb, 'and an ordinary floor guards an ordinary key');
+});
+
+test('in Animal Form the board is GREEN — because nothing can actually touch him', () => {
+  // Asserted against what the pieces DO, not against the flag. The map claiming "safe" is only
+  // honest if the blow genuinely fails to land, so both are checked at every step of the form.
+  const build = (turns) => {
+    const s = rangerWith('r_wade', 'r_xray', 'r_promo');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+    s.player.hp = 9; s.player.maxHp = 9;
+    s.player.promotion = turns;
+    const foe = makeEnemy({ kind: 'rook', x: 13, y: 10, awake: true });
+    foe.lastSeen = { x: 10, y: 10 }; foe.lastSeenTtl = 5;
+    s.enemies = [foe];
+    return s;
+  };
+  // He must step ALONG the rook's rank — stepping off it means nothing could reach him anyway and
+  // the whole table would read "safe" for a reason that has nothing to do with the form.
+  const takesAHit = (s) => {
+    const st = movePlayerTo(s, 11, 10);
+    const phase = beginEnemyPhase(st);
+    let end = phase.state;
+    for (const id of phase.moverIds) end = moveEnemy(end, id);
+    return end.player.hp < 9;
+  };
+  for (const turns of [3, 2]) {
+    assert.equal(getThreatenedTiles(build(turns)).size, 0, `${turns} turns of form left: the board is green`);
+    assert.equal(takesAHit(build(turns)), false, `${turns} turns left: and nothing lands`);
+  }
+});
+
+test('...except on its LAST turn, when the board goes red before he steps', () => {
+  // passTurn ticks the form down BEFORE the room swings, so acting on the last turn means taking
+  // the blows as a bare king. It is the most dangerous turn of the whole form — he has spent three
+  // turns learning that nothing can touch him — and the map has to say so BEFORE he moves.
+  const build = () => {
+    const s = rangerWith('r_wade', 'r_xray', 'r_promo');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+    s.player.hp = 9; s.player.maxHp = 9;
+    s.player.promotion = 1; // the last turn
+    // The rook rakes the y=11 rank; the king (a unicorn now — bishop + nightrider) steps DIAGONALLY
+    // into it, since an orthogonal step is no longer one of his moves.
+    const foe = makeEnemy({ kind: 'rook', x: 13, y: 11, awake: true });
+    foe.lastSeen = { x: 10, y: 10 }; foe.lastSeenTtl = 5;
+    s.enemies = [foe];
+    return s;
+  };
+  const painted = getThreatenedTiles(build());
+  assert.ok((painted.get('11,11') || 0) > 0, 'the lane he is about to step into reads RED');
+  // ...and it is telling the truth: he really does get hit.
+  const st = movePlayerTo(build(), 11, 11);
+  assert.equal(st.player.promotion, 0, 'the form lapses as he moves');
+  const phase = beginEnemyPhase(st);
+  let end = phase.state;
+  for (const id of phase.moverIds) end = moveEnemy(end, id);
+  assert.ok(end.player.hp < 9, 'and the rook takes him as a bare king');
+});
+
+test('out of the form, the board reads normally again', () => {
+  // The control: the green is the FORM, not the map quietly giving up.
+  const s = rangerWith('r_wade', 'r_xray', 'r_promo');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.player.promotion = 0;
+  s.enemies = [makeEnemy({ kind: 'rook', x: 13, y: 10, awake: true })];
+  assert.ok(getThreatenedTiles(s).size > 0, 'a plain king sees the rook lane painted');
+});
+
+test('a neutral beast ROAMS, openly, even under his nose', () => {
+  // wanderEnemy only accepts tiles the KING CANNOT SEE — a rule for an enemy sneaking about. A
+  // neutral beast is not sneaking, it simply does not care about him; made to cower, one standing
+  // inside his sight window had nowhere it was willing to step and froze solid. Every wild horse
+  // turned into a statue the moment he looked at it.
+  const build = (dist) => {
+    const s = rangerWith('r_wade', 'r_xray');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    s.enemies = [makeEnemy({ kind: 'knight', x: 10 + dist, y: 10 })];
+    return s;
+  };
+  // Two tiles off is DEEP inside his sight — the case that froze. (One tile would be tamed.)
+  for (const dist of [2, 3, 5]) {
+    let moved = 0;
+    const N = 40;
+    for (let i = 0; i < N; i += 1) {
+      const s = build(dist);
+      const next = beginEnemyPhase(s).state;
+      const b = next.enemies[0];
+      assert.ok(b, `dist ${dist}: it is not tamed from there`);
+      if (b.x !== 10 + dist || b.y !== 10) moved += 1;
+    }
+    assert.equal(moved, N, `a beast ${dist} tiles off roams every turn (${moved}/${N})`);
+  }
+  assert.ok(unitInSight(build(2), 12, 10), 'and the king plainly sees it while it does');
+});
+
+test('a roaming beast lays a finger on nothing', () => {
+  // It wanders THROUGH a crowd: the king, an ally and a foe all within reach. It must never strike
+  // any of them, and never end up standing on one.
+  let hits = 0; let collisions = 0; let moved = 0;
+  const N = 200;
+  for (let i = 0; i < N; i += 1) {
+    const s = rangerWith('r_wade', 'r_xray');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 10; s.player.y = 10; s.player.hp = 9; s.player.maxHp = 9;
+    const beast = makeEnemy({ kind: 'knight', x: 12, y: 12 });
+    const foe = makeEnemy({ kind: 'pawn', x: 13, y: 12 });
+    s.enemies = [beast, foe];
+    s.allies = [{ id: 'a1', kind: 'rook', x: 11, y: 12, hp: 2, maxHp: 2 }];
+    const next = beginEnemyPhase(s).state;
+    const b = next.enemies.find((e) => e.id === beast.id);
+    if (!b) continue;
+    if (b.x !== 12 || b.y !== 12) moved += 1;
+    if (next.player.hp < 9) hits += 1;
+    const f = next.enemies.find((e) => e.id === foe.id);
+    const a = (next.allies || [])[0];
+    if (!f || !a) collisions += 1; // it destroyed something
+    if (f && b.x === f.x && b.y === f.y) collisions += 1;
+    if (a && b.x === a.x && b.y === a.y) collisions += 1;
+    if (b.x === next.player.x && b.y === next.player.y) collisions += 1;
+  }
+  assert.ok(moved > N * 0.8, `it really is roaming (${moved}/${N})`);
+  assert.equal(hits, 0, 'it never strikes the king');
+  assert.equal(collisions, 0, 'and never touches or stands on a body');
+});
+
+test('an ordinary unaware foe still keeps out of his eyeline', () => {
+  // The control: `roamFreely` is for BEASTS. An ordinary foe that has not noticed him still prefers
+  // ground he cannot see — that is a real behaviour and must not have been swept away with the fix.
+  let stayedHidden = 0;
+  const N = 60;
+  for (let i = 0; i < N; i += 1) {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10 })]; // unaware, deep in his sight
+    const next = beginEnemyPhase(s).state;
+    const e = next.enemies[0];
+    if (e.x === 12 && e.y === 10) stayedHidden += 1; // nowhere unseen to go: it holds
+  }
+  assert.equal(stayedHidden, N, 'an ordinary unaware foe still refuses to step into the open');
+});
+
+test('a turret shoots the ALLY parked in its lane', () => {
+  // It only ever looked for the king, so a summoned rook could stand in front of a gun and take it
+  // apart at total leisure — it never once shot back.
+  const build = () => {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    // The king must be off its rank, file AND diagonals, or the gun is simply shooting HIM and the
+    // test proves nothing about allies.
+    s.player.x = 17; s.player.y = 21;
+    const t = makeEnemy({ kind: 'rook', x: 10, y: 10, turret: true, hp: 3, maxHp: 3 });
+    s.enemies = [t];
+    s.allies = [{ id: 'a1', kind: 'rook', x: 13, y: 10, hp: 2, maxHp: 2 }]; // dead in its lane
+    return s;
+  };
+  let s = build();
+  const id = s.enemies[0].id;
+  let wounded = false;
+  for (let i = 0; i < 6 && s.allies.length; i += 1) {
+    s = moveEnemy(s, id);
+    if (!s.allies.length || s.allies[0].hp < 2) wounded = true;
+  }
+  assert.ok(wounded, 'the gun swivels onto it and fires');
+  assert.equal(s.allies.length, 0, 'and eventually blows it apart');
+});
+
+test('a turret that can reach the KING never stops to shoot his dog', () => {
+  // The ordering is load-bearing: if an ally could pull a gun's fire, parking one in the lane would
+  // be a way to switch turrets off entirely.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 14; // squarely in its file
+  const t = makeEnemy({ kind: 'rook', x: 10, y: 10, turret: true, hp: 3, maxHp: 3 });
+  t.aiming = true; // already locked on
+  s.enemies = [t];
+  s.allies = [{ id: 'a1', kind: 'rook', x: 13, y: 10, hp: 2, maxHp: 2 }]; // also in its lane
+  const before = s.player.hp;
+  const next = moveEnemy(s, t.id);
+  assert.ok(next.player.hp < before, 'it shoots the KING');
+  assert.equal(next.allies[0].hp, 2, 'and the ally is untouched');
+});
+
+test('an ally in the lane keeps a gun awake even against a camouflaged king', () => {
+  // Camouflage hides the KING. It does not hide his familiar.
+  const s = rangerWith('r_ghost', 'r_camo');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 20; s.player.y = 21; // far off, camouflaged, off every line
+  assert.equal(s.player.camouflage, true, 'the perk grants it');
+  const t = makeEnemy({ kind: 'rook', x: 10, y: 10, turret: true, hp: 3, maxHp: 3 });
+  s.enemies = [t];
+  s.allies = [{ id: 'a1', kind: 'rook', x: 13, y: 10, hp: 2, maxHp: 2 }];
+  const ticked = beginEnemyPhase(s).state;
+  assert.equal(ticked.enemies[0].dozing, false, 'it does not doze with a target in front of it');
+  // ...and with the ally gone it goes back to sleep. The control: this is the ALLY keeping it up.
+  const alone = rangerWith('r_ghost', 'r_camo');
+  alone.terrain = {}; alone.allies = [];
+  alone.player.x = 20; alone.player.y = 21;
+  alone.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 10, turret: true, hp: 3, maxHp: 3 })];
+  assert.equal(beginEnemyPhase(alone).state.enemies[0].dozing, true, 'an empty lane and a hidden king: it dozes');
+});
+
+test('the beast form is attacked, visibly, and takes nothing', () => {
+  // Enemies must keep committing to him while he is untouchable — that is what lets a player use
+  // the form to pull the room into the shape he wants.
+  const s = rangerWith('r_wade', 'r_xray', 'r_promo');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.hp = 9; s.player.maxHp = 9;
+  s.player.promotion = 3;
+  const foe = makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true });
+  foe.lastSeen = { x: 10, y: 10 }; foe.lastSeenTtl = 5;
+  s.enemies = [foe];
+  const next = moveEnemy(s, foe.id);
+  assert.equal(next.player.hp, 9, 'nothing lands on the warhorse');
+  assert.ok(next.player.deflected, 'but the blow is flagged, so the view flashes it');
+  assert.ok(next.strikeBump, 'and the foe visibly lunges at him');
+  // The LOG has to name the foe as the attacker. "The warhorse charges through a rook" made the
+  // KING the actor, so the log never once said he was being attacked.
+  assert.ok(/^A rook hurls itself/.test(next.message || ''), `the foe is the subject: "${next.message}"`);
+});
+
+test('a card the GROUND forbids offers no targets at all', () => {
+  // getCardMoves handed back a full set of targets for a weapon the king was wading and could not
+  // possibly swing — useCard refused every one. The aim overlay lit up tiles the game never meant
+  // to honour, so he could press a hotkey, pick a lit square and be told no. (Measured across 40
+  // bot runs: 2,267 targets offered for cards useCard rejects; every single refusal was this.)
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 11, awake: true })];
+  const weapon = s.player.cards[0];
+  assert.ok(getCardMoves(s, weapon).length > 0, 'on dry land it has targets (so this test can fail)');
+
+  s.terrain[`${s.player.x},${s.player.y}`] = 'water';
+  assert.equal(getCardMoves(s, weapon).length, 0, 'wading, it offers nothing');
+  // ...and the generator agrees with the resolver, which is the whole point.
+  const tried = useCard(s, 0, 11, 11);
+  assert.equal(tried.lastAction, 'blocked', 'and useCard still refuses it');
+  assert.ok(/wading/.test(tried.message || ''), 'with the precise reason, not a vague "cannot reach"');
+
+  // Winged Boots lift it; a self-cast ability never needed hands.
+  s.player.terrainImmune = true;
+  assert.ok(getCardMoves(s, weapon).length > 0, 'Winged Boots carry him over it');
+  s.player.terrainImmune = false;
+  s.player.cards = [{ kind: 'blink', cooldown: 6, remaining: 0 }];
+  assert.ok(getCardMoves(s, s.player.cards[0]).length > 0, 'and an ability still casts from the water');
+});
+
+test('in Animal Form the cards go dark — the view is told, not just the resolver', () => {
+  // "The warhorse wields no cards" was a hardcoded refusal inside useCard that cardBlockedReason
+  // knew nothing about. So for the whole of Animal Form every card button sat there looking ready,
+  // and pressing one just beeped. Same bug as the wading one: the view and the resolver disagreeing.
+  const s = rangerWith('r_wade', 'r_xray', 'r_promo');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 11, awake: true })];
+  const card = s.player.cards.find((c) => c.kind !== 'promotion') || s.player.cards[0];
+  const idx = s.player.cards.indexOf(card);
+
+  assert.equal(cardBlockedReason(s, card), null, 'a plain king may play it');
+  assert.ok(getCardMoves(s, card).length > 0, 'and it has targets (so this test can fail)');
+
+  s.player.promotion = 3; // become the warhorse
+  assert.ok(/warhorse/.test(cardBlockedReason(s, card) || ''), 'the warhorse may not — and the button can now say so');
+  assert.equal(getCardMoves(s, card).length, 0, 'so it offers no targets either');
+  const tried = useCard(s, idx, 11, 11);
+  assert.equal(tried.lastAction, 'blocked', 'and the resolver agrees');
+  assert.ok(/warhorse/.test(tried.message || ''), 'with the same reason the button gives');
+
+  s.player.promotion = 0;
+  assert.equal(cardBlockedReason(s, card), null, 'and it all comes back when the form lapses');
+});
+
+test('an ally walks ROUND a wall instead of pinning itself against it', () => {
+  // allyStepToward only accepted a move that shortened the STRAIGHT LINE to its target, so the
+  // instant anything stood between an ally and the king, no move qualified and it simply stopped.
+  // Measured before the fix: 30 turns against a wall with an open gap four tiles away, ONE tile
+  // moved — and it mirrored the king's every step from where it stood.
+  const s = createInitialState('sorcerer', 'easy');
+  s.terrain = {}; s.enemies = [];
+  s.player.x = 10; s.player.y = 16;
+  for (let x = 0; x < WORLD_SIZE; x += 1) s.terrain[`${x},12`] = 'wall'; // a wall right across...
+  delete s.terrain['3,12']; // ...with ONE gap, far off to the left
+  s.allies = [{ id: 'a1', kind: 'mann', x: 10, y: 8, hp: 3, maxHp: 3, familiar: true }];
+  let st = s;
+  const seen = new Set();
+  for (let t = 0; t < 60; t += 1) {
+    st = runAllyPhase(st);
+    seen.add(`${st.allies[0].x},${st.allies[0].y}`);
+  }
+  const a = st.allies[0];
+  assert.ok(seen.size > 5, `it actually travelled (${seen.size} tiles visited)`);
+  assert.ok(a.y > 12, 'it found the one gap and came through the wall');
+  assert.ok(chebyshev(a.x, a.y, 10, 16) <= 2, `and caught up with the king (${chebyshev(a.x, a.y, 10, 16)} tiles off)`);
+});
+
+test('an ally never paths itself into fire', () => {
+  // The control on the new flood: it must only route over ground the ally could actually stand on.
+  // The king's summons are not fire-proof (moveAlly generates with lavaOk:false), so a lava river
+  // between them has to be walked AROUND, never through.
+  for (let i = 0; i < 25; i += 1) {
+    const s = createInitialState('sorcerer', 'easy');
+    s.terrain = {}; s.enemies = [];
+    s.player.x = 14; s.player.y = 10;
+    for (let y = 8; y <= 12; y += 1) s.terrain[`12,${y}`] = 'lava';
+    s.allies = [{ id: 'a1', kind: 'mann', x: 10, y: 10, hp: 3, maxHp: 3, familiar: true }];
+    let st = s;
+    for (let t = 0; t < 12; t += 1) st = runAllyPhase(st);
+    const a = (st.allies || [])[0];
+    if (a) assert.notEqual(terrainAt(st, a.x, a.y), 'lava', 'it stayed out of the fire');
+  }
+});
+
+test('an ally still keeps up with the king on a real floor', () => {
+  // The point of the whole thing: a familiar that cannot follow him is not an ally.
+  //
+  // Bounded at SIX, not three. Measured over 60 runs of the king wandering at random: median
+  // distance 1, p90 2 — it tracks him tightly — but roughly one run in sixty it is momentarily cut
+  // off and ends up 5 away, which is real and fine. An earlier cut of this demanded 3 every single
+  // run and flaked about one time in eight on nothing but that straggler.
+  const dists = [];
+  for (let i = 0; i < 10; i += 1) {
+    let s = generateFloor(3, createPlayer('sorcerer'), 0);
+    s.player.familiar = true;
+    s.allies = [{ id: 'a1', kind: 'mann', x: s.player.x, y: s.player.y, hp: 3, maxHp: 3, familiar: true }];
+    for (let t = 0; t < 40; t += 1) {
+      const moves = getPlayerMoves(s).filter((m) => !m.chop && !m.push);
+      if (moves.length) { const m = moves[Math.floor(Math.random() * moves.length)]; s = movePlayerTo(s, m.x, m.y); }
+      if (s.gameOver || s.won || s.lastAction === 'exit') break;
+      s = runAllyPhase(s);
+    }
+    const a = (s.allies || [])[0];
+    if (a) dists.push(chebyshev(a.x, a.y, s.player.x, s.player.y));
+  }
+  assert.ok(dists.length > 0, 'the familiar survived to be measured');
+  // Judged on the MEDIAN, not the worst case. Measured over 60 runs of the king wandering at
+  // random: median 1, p90 4, and about one run in thirty it is briefly cut off and ends 7 away —
+  // which is real and fine. Two earlier cuts of this asserted a hard per-run bound (3, then 6) and
+  // both flaked on nothing but that straggler.
+  //
+  // The hard guarantees live in the wall and doorway tests above, which are deterministic and are
+  // what would actually catch the bug this exists for. This one is a smoke test: does it FOLLOW.
+  const sorted = dists.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  assert.ok(median <= 3, `it is normally right at his shoulder (median ${median}, worst ${sorted[sorted.length - 1]})`);
+  for (const d of dists) assert.ok(d <= 12, `and never simply loses him (worst ${sorted[sorted.length - 1]})`);
+});
+
+test('a LICH calls the fallen back up — one a turn, while the body is still fresh', () => {
+  const build = (life) => {
+    const s = createInitialState('warrior', 'hard');
+    s.terrain = {}; s.allies = [];
+    // Off its rank, file AND diagonals — a rook boss sharing his file simply slides down and hits
+    // him, raising first and then overwriting the message with the blow.
+    s.player.x = 14; s.player.y = 15;
+    const boss = makeEnemy({ kind: 'rook', x: 10, y: 10, boss: true, awake: true, dormant: false, spokeLine: true, hp: 9, maxHp: 9 });
+    boss.bossName = 'the Lich'; boss.bossPerks = ['lich']; boss.bossPerk = 'lich'; boss.originalKind = 'rook';
+    s.enemies = [boss];
+    s.corpses = [
+      { x: 11, y: 10, kind: 'pawn', life, max: 72, blood: 0.5 },
+      { x: 9, y: 10, kind: 'pawn', life, max: 72, blood: 0.5 },
+      { x: 10, y: 9, kind: 'pawn', life, max: 72, blood: 0.5 },
+    ];
+    return s;
+  };
+  // FRESH bodies: on a turn it DOES raise (a coin-flip each turn) it calls exactly ONE — a lich, not
+  // a chorus. Force the flip so the per-turn/decay rules test cleanly, apart from the odds themselves.
+  const s = build(72);
+  const old = build(20); // well under half of 72 — too decayed to answer
+  const origRandom = Math.random;
+  Math.random = () => 0.1; // < 0.5 → the coin-flip RAISES; randomInt(n) → 0 picks the first body
+  let t1;
+  let t2;
+  let r;
+  try {
+    t1 = moveEnemy(s, s.enemies[0].id);
+    const t1b = structuredClone(t1);
+    const b1 = t1b.enemies.find((e) => e.boss);
+    b1.x = 10; b1.y = 10; // anchor it back over the bodies (raising is free, so it walked off them)
+    t2 = moveEnemy(t1b, b1.id);
+    r = moveEnemy(old, old.enemies[0].id);
+  } finally { Math.random = origRandom; }
+  assert.equal(t1.enemies.filter((e) => !e.boss).length, 1, 'one body answers');
+  assert.equal(t1.corpses.length, 2, 'and that body is spent');
+  // On the boss LINE, not state.message: raising is free, so the Lich acts straight afterwards and
+  // whatever it does overwrites the message. Without its own line the player would just watch a
+  // pawn appear from nowhere.
+  assert.ok(/calls the fallen/.test(t1.bossLine || ''), `it says so on its own line: "${t1.bossLine}"`);
+  const risen = t1.enemies.find((e) => !e.boss);
+  assert.equal(risen.kind, 'pawn', 'it comes back as what it was');
+  assert.ok(risen.awake, 'and it comes back hunting');
+  assert.equal(t2.enemies.filter((e) => !e.boss).length, 2, 'one more the turn after');
+  assert.equal(t2.corpses.length, 1, 'and a second body spent — exactly one per turn');
+  // DECAYED bodies: past answering. This is the counter-play — draw it off the bodies and they rot.
+  assert.equal(r.enemies.filter((e) => !e.boss).length, 0, 'a body too far gone does not answer');
+  assert.equal(r.corpses.length, 3, 'and is left where it lies');
+
+  // THE ODDS: it raises only on a coin-flip, so over many turns it fires roughly half the time —
+  // never every turn (the old behavior, which refilled a room faster than the king could clear it).
+  let raised = 0;
+  const TRIALS = 200;
+  for (let i = 0; i < TRIALS; i += 1) {
+    const f = build(72);
+    const after = moveEnemy(f, f.enemies[0].id);
+    if (after.enemies.filter((e) => !e.boss).length > 0) raised += 1;
+    assert.ok(after.enemies.filter((e) => !e.boss).length <= 1, 'never more than one in a turn');
+  }
+  assert.ok(raised > TRIALS * 0.3 && raised < TRIALS * 0.7, `~half the turns raise (got ${raised}/${TRIALS})`);
+});
+
+test('a Lich cannot reach a body that is not beside it, and never both raises and swarms', () => {
+  // Range: it calls what is at its feet, not across the room.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 14; s.player.y = 15; // off its rank, file and diagonals
+  const boss = makeEnemy({ kind: 'rook', x: 10, y: 10, boss: true, awake: true, dormant: false, spokeLine: true, hp: 9, maxHp: 9 });
+  boss.bossName = 'the Lich'; boss.bossPerks = ['lich']; boss.bossPerk = 'lich'; boss.originalKind = 'rook';
+  s.enemies = [boss];
+  s.corpses = [{ x: 16, y: 4, kind: 'pawn', life: 72, max: 72, blood: 0.5 }]; // far off, and not on its path to him
+  const r = moveEnemy(s, boss.id);
+  assert.equal(r.enemies.filter((e) => !e.boss).length, 0, 'a body across the room is out of reach');
+
+  // Lich and Summoner are one GROUP: never both on a guardian, or it is a factory.
+  let both = 0;
+  for (let i = 0; i < 500; i += 1) {
+    const perks = rollBossPerks(3, 'rook');
+    if (perks.includes('lich') && perks.includes('summoner')) both += 1;
+  }
+  assert.equal(both, 0, 'a guardian is never both a Lich and a Summoner');
+});
+
+test('nothing is ever buried under the stair or the key', () => {
+  // `place` accepts any STANDABLE tile and a DOOR is standable, so the stair could be set down on a
+  // doorway — and pruneUselessDoors would then judge that door, find it leads nowhere in particular,
+  // and revert it to solid rock with the stair underneath. About 1 floor in 1000: exactly the rate
+  // the pillar test (120 floors a run) had been flaking at, twice reported and twice not found.
+  let n = 0;
+  for (let i = 0; i < 30; i += 1) {
+    for (const floor of [1, 2, 4, 6, 8]) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      n += 1;
+      assert.equal(terrainAt(s, s.exit.x, s.exit.y), 'normal', `floor ${floor}: the stair stands on bare ground`);
+      if (s.key && !s.key.collected) {
+        assert.equal(terrainAt(s, s.key.x, s.key.y), 'normal', `floor ${floor}: and so does the key`);
+      }
+      const reach = playerReachable(s, s.player.x, s.player.y);
+      assert.ok(reach.has(`${s.exit.x},${s.exit.y}`), `floor ${floor}: the king can reach the stair`);
+      if (s.key && !s.key.collected) assert.ok(reach.has(`${s.key.x},${s.key.y}`), `floor ${floor}: and the key`);
+    }
+  }
+  assert.ok(n >= 150, 'a real sample of floors');
+});
+
+test('a gaol keeps its prisoners behind its bars', () => {
+  // pruneUselessDoors re-judges every gate with isDoorwaySpot, which demands >= 6 tiles of open
+  // space on BOTH sides — a rule for doors that RANDOM structure stranded. A cell has ONE tile
+  // behind its bars by design, so every gaol gate was reverted to solid wall and the prisoner
+  // bricked in alive: 0 prisoners across 800 floors.
+  let cells = 0; let floors = 0;
+  for (let i = 0; i < 120; i += 1) {
+    for (const floor of [2, 4, 6]) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      floors += 1;
+      for (const e of s.enemies) {
+        const barred = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => terrainAt(s, e.x + dx, e.y + dy) === 'gate');
+        if (e.asleep && barred) cells += 1;
+      }
+    }
+  }
+  assert.ok(cells > 0, `prisoners actually sit behind gates (${cells} across ${floors} floors)`);
+});
+
+test('the badge ledger tallies kills by every means, not just the sword', () => {
+  // One helper (tallyKill) counts a felling however it happened, so a kill by hand, by card, by
+  // rolled boulder or by shove all reach the same counters. Six call sites; if any one of them
+  // forgot, a badge would quietly never fire.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+  const next = movePlayerTo(s, 11, 10);
+  assert.equal(next.player.killsThisFloor, 1, 'a plain kill counts');
+  assert.equal(next.player.maxKillsInTurn, 1, 'and lands in the per-turn tally');
+  assert.equal(next.player.killsThisTurn, 0, 'which passTurn then wipes for the next action');
+});
+
+test('a rolled boulder gets the credit for what it crushes', () => {
+  // knockbackBoulder — a rock ROLLING at speed (Blast, Recoil, Thundering Charge). Not the same as
+  // a plain shove, which only nudges it one tile and fails outright against anything behind it: a
+  // shove would have proved nothing here.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.terrain['11,10'] = 'boulder';
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true })];
+  assert.ok(!s.player.killedWithBoulder, 'he starts innocent');
+  knockbackBoulder(s, 11, 10, 1, 0); // send it rolling east, over the pawn
+  assert.equal(s.enemies.length, 0, 'the rock flattens it');
+  assert.ok(s.player.killedWithBoulder, 'and the rock gets the credit');
+  assert.equal(s.player.maxKillsOnFloor, 1, 'the kill still counts as a kill');
+});
+
+test('the king knows what killed him', () => {
+  // checkDeath banks TAGS, not one label: the interesting deaths overlap, and a hexed ferz is a
+  // ferz AND confused AND an ordinary piece all at once.
+  const s = createInitialState('warrior', 'hard');
+  s.terrain = {}; s.allies = [];
+  s.player.hp = 1;
+  const foe = makeEnemy({ kind: 'ferz', x: s.player.x + 1, y: s.player.y + 1, awake: true });
+  confuse(foe);
+  foe.lastSeen = { x: s.player.x, y: s.player.y }; foe.lastSeenTtl = 5;
+  s.enemies = [foe];
+  let dead = null;
+  for (let i = 0; i < 40 && !dead; i += 1) {
+    const t = structuredClone(s);
+    const r = moveEnemy(t, t.enemies[0].id);
+    if (r.gameOver) dead = r;
+  }
+  assert.ok(dead, 'the ferz eventually gets him');
+  assert.ok((dead.player.deathTags || []).includes('ferz'), `it knows a ferz did it (${dead.player.deathTags})`);
+  assert.ok((dead.player.deathTags || []).includes('confused'), 'and that it had no idea what it was doing');
+});
+
+test('fire of every kind is remembered', () => {
+  // Lava, a torch and a burning tree are three different code paths that all end in the same fact:
+  // fire touched him. The Cold Blooded badge reads one flag, so all three must set it.
+  const burn = (build) => {
+    const s = createInitialState('sorcerer', 'hard');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.phase = true;
+    build(s);
+    passTurn(s);
+    return s.player;
+  };
+  assert.ok(burn((s) => { s.terrain[`${s.player.x},${s.player.y}`] = 'lava'; }).burnedByFire, 'lava burns');
+  assert.ok(burn((s) => { s.terrain[`${s.player.x},${s.player.y}`] = 'wall'; s.torches = { [`${s.player.x},${s.player.y}`]: true }; }).burnedByFire, 'a torch burns');
+  assert.ok(burn((s) => { s.terrain[`${s.player.x},${s.player.y}`] = 'tree'; s.burningTrees = { [`${s.player.x},${s.player.y}`]: true }; }).burnedByFire, 'a burning tree burns');
+  // The control: a king who walks a dry floor is never marked.
+  assert.ok(!burn(() => {}).burnedByFire, 'and dry ground does not');
+});
+
+test('a king with nowhere to step and nothing to spend has LOST', () => {
+  // The dungeon offers no pass — the inability to simply WAIT is the shape of the whole game — so
+  // sealing yourself in with an empty hand is a loss, not a soft-lock.
+  const box = (build) => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    // Sealed in STONE — a pit would be a dive-escape (see the pit-dive test), and a knight's leap is
+    // caged by the stone shoulders, so this is a genuine dead-end that only a TELEPORT can leave.
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      s.terrain[`${10 + dx},${10 + dy}`] = 'wall';
+    }
+    if (build) build(s);
+    return s;
+  };
+  // A card he can still play is a way out — Blink flickers him clear of the stone.
+  assert.equal(isStalemate(box((s) => { s.player.cards = [{ kind: 'blink', cooldown: 6, remaining: 0 }]; })), false, 'a card he can still play is an out');
+  // Spend it (here: hold only a spent card) and he is genuinely finished.
+  const stuck = box((s) => { s.player.cards[0].remaining = 3; });
+  assert.equal(getPlayerMoves(stuck).length, 0, 'nowhere to step');
+  assert.equal(isStalemate(stuck), true, 'and nothing to spend');
+  const ended = maybeSpawnEnemy(stuck);
+  assert.ok(ended.gameOver, 'the run ends');
+  assert.ok((ended.player.deathTags || []).includes('stalemate'), 'and it knows why');
+
+  // ...and it must be judged BEFORE ensureReachable, which would otherwise wrench him to safety.
+  // That net exists to undo what the DUNGEON did to him, not what he did to himself.
+  assert.ok(!/wrenched|shifting walls/.test(ended.message || ''), `he is not rescued: "${ended.message}"`);
+});
+
+test('a STRANDED king may dive into an adjacent pit and scramble out for a wound', () => {
+  // Walled in on all sides but one PIT: the dive is his only out, offered as a move (never otherwise).
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.hp = 5;
+  s.player.cards[0].remaining = 3; // no card to play
+  for (const [dx, dy] of [[-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) s.terrain[`${10 + dx},${10 + dy}`] = 'wall';
+  s.terrain['11,10'] = 'pit'; // one adjacent pit
+  s.terrain['12,10'] = 'normal'; // ground on the far side of the pit to climb out onto
+  const moves = getPlayerMoves(s);
+  assert.ok(moves.some((m) => m.x === 11 && m.y === 10 && m.pitDive), 'the pit is offered as a DIVE, only because he is stranded');
+  assert.equal(isStalemate(s), false, 'so he is not stalemated after all');
+  const n = movePlayerTo(s, 11, 10);
+  assert.equal(n.player.hp, 4, 'the fall costs one heart');
+  assert.ok(terrainAt(n, n.player.x, n.player.y) !== 'pit', 'and he surfaces on solid ground, not in the hole');
+  assert.ok(n.player.x !== 10 || n.player.y !== 10, 'he is no longer where he was cornered');
+  // Control: with a normal step available, the pit is NOT offered as a dive.
+  const free = createInitialState('warrior', 'easy');
+  free.terrain = {}; free.enemies = []; free.allies = [];
+  free.player.x = 10; free.player.y = 10;
+  free.terrain['11,10'] = 'pit';
+  assert.ok(!getPlayerMoves(free).some((m) => m.pitDive), 'a king with room to move is never offered the dive');
+});
+
+test('stalemate never fires on a king who can still do something', () => {
+  // The controls. Every one of these is a real out and none of them may read as stranded.
+  const island = (build) => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      s.terrain[`${10 + dx},${10 + dy}`] = 'pit';
+    }
+    s.player.cards[0].remaining = 3; // spent, so only `build` can save him
+    if (build) build(s);
+    return s;
+  };
+  assert.equal(isStalemate(island((s) => { s.player.terrainImmune = true; })), false, 'Winged Boots fly him over');
+  // NB: Phase is NOT an out from a pit — it drifts through WALLS, and standableFor rightly asks for
+  // `flying` to stand over a hole. Tested against a ring of STONE, which it actually beats. (A pit
+  // island is never a true stalemate anyway now — he can always dive; see the pit-dive test.)
+  const walled = (build) => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      s.terrain[`${10 + dx},${10 + dy}`] = 'wall';
+    }
+    s.player.cards[0].remaining = 3;
+    if (build) build(s);
+    return s;
+  };
+  assert.equal(isStalemate(walled()), true, 'a plain king bricked into a wall is stranded');
+  assert.equal(isStalemate(walled((s) => { s.player.phase = true; })), false, 'but Phase drifts him straight out of it');
+  assert.equal(isStalemate(island((s) => { s.terrain['11,10'] = 'tree'; })), false, 'a tree to chop is a move');
+  assert.equal(isStalemate(island((s) => { s.terrain['11,10'] = 'boulder'; })), false, 'a boulder to shove is a move');
+  assert.equal(isStalemate(island((s) => { s.player.cards = [{ kind: 'blink', cooldown: 6, remaining: 0 }]; })), false, 'Blink is a way out');
+  // Open ground, obviously.
+  const open = createInitialState('warrior', 'easy');
+  open.terrain = {}; open.enemies = [];
+  assert.equal(isStalemate(open), false, 'a king on open ground is never stranded');
+  // Mid level-up he is not stuck, he is choosing.
+  const choosing = island();
+  choosing.pendingLevelUp = true;
+  assert.equal(isStalemate(choosing), false, 'a king picking a boon has not lost');
+});
+
+test('Double Step is TWO STEPS — it cuts through what it can kill, and doubles up on what it cannot', () => {
+  // It used to demand a destination exactly two tiles off and reject everything else, so a foe at
+  // step ONE deleted the whole direction — the dash could not run it down and come out the far
+  // side, which is the only thing a charge is for. And an adjacent guardian could not be charged at
+  // all, which is precisely the moment the card should be worth its slot.
+  const build = (setup) => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    s.player.cards = [{ kind: 'doublestep', cooldown: 3, remaining: 0 }];
+    if (setup) setup(s);
+    return s;
+  };
+  const boss = (x, y, hp) => {
+    const b = makeEnemy({ kind: 'rook', x, y, boss: true, hp, maxHp: hp, awake: true, dormant: false, spokeLine: true });
+    b.bossName = 'the Test'; b.bossPerks = []; b.bossPerk = null; b.originalKind = 'rook';
+    return b;
+  };
+  // CUT THROUGH: a foe at step one that dies is trampled, and he carries on into step two.
+  const through = build((s) => { s.enemies = [makeEnemy({ kind: 'pawn', x: 9, y: 11 }), makeEnemy({ kind: 'pawn', x: 8, y: 12 })]; });
+  assert.ok(getCardMoves(through, through.player.cards[0]).some((m) => m.x === 8 && m.y === 12), 'the far tile is offered THROUGH the near foe');
+  const cut = useCard(through, 0, 8, 12);
+  assert.equal(cut.enemies.length, 0, 'both fall');
+  assert.deepEqual({ x: cut.player.x, y: cut.player.y }, { x: 8, y: 12 }, 'and he ends where he was going');
+
+  // DOUBLE UP: something that survives a blow halts the charge on its own tile — and eats both.
+  const guarded = build((s) => { s.enemies = [boss(10, 11, 6)]; });
+  assert.ok(getCardMoves(guarded, guarded.player.cards[0]).some((m) => m.x === 10 && m.y === 11), 'an adjacent guardian IS a charge target');
+  const hit = useCard(guarded, 0, 10, 11);
+  assert.equal(hit.enemies.find((e) => e.boss).hp, 4, 'and takes TWO blows, not one');
+
+  // The controls: what shuts a direction, and what changes its nature.
+  const walled = build((s) => { s.terrain['10,11'] = 'wall'; });
+  assert.ok(!getCardMoves(walled, walled.player.cards[0]).some((m) => m.x === 10 && m.y === 12), 'stone at step one shuts the direction');
+  const timber = build((s) => { s.terrain['10,11'] = 'tree'; });
+  assert.ok(getCardMoves(timber, timber.player.cards[0]).some((m) => m.x === 10 && m.y === 11 && m.chop), 'timber is a chop');
+  const rock = build((s) => { s.terrain['10,11'] = 'boulder'; });
+  assert.ok(getCardMoves(rock, rock.player.cards[0]).some((m) => m.x === 10 && m.y === 11 && m.push), 'a boulder is a shove');
+  assert.ok(getCardMoves(build(), build().player.cards[0]).some((m) => m.x === 10 && m.y === 12), 'and open ground is a plain dash');
+});
+
+test('a run never shows the same structure twice', () => {
+  // A structure is a place you RECOGNISE — that is the whole reason they exist — so the second
+  // igloo is worth a fraction of the first. The memory rides on the player, which is the only thing
+  // that survives a descent.
+  let repeats = 0; let total = 0;
+  for (let run = 0; run < 12; run += 1) {
+    // generateFloor COPIES the player, so the run's memory lives on state.player and is carried
+    // down by nextFloor. Reading the object passed IN would read the original, which never learns.
+    let carry = createPlayer('warrior');
+    for (let floor = 1; floor <= 8; floor += 1) {
+      const s = generateFloor(floor, carry, 0);
+      carry = s.player;
+      const seen = carry.seenStructures || [];
+      assert.equal(new Set(seen).size, seen.length, `run ${run}: no structure is shown twice (${seen.join(',')})`);
+      repeats += seen.length - new Set(seen).size;
+    }
+    total += (carry.seenStructures || []).length;
+  }
+  assert.equal(repeats, 0, 'nothing repeated');
+  assert.ok(total / 12 > 6, `and a run still sees plenty of them (${(total / 12).toFixed(1)} per run)`);
+});
+
+test('a sleeper boxed behind bars stirs when the king stands at its door', () => {
+  // A gaol prisoner sits in a one-tile cell walled on three sides with a gate on the fourth: every
+  // neighbour of it is stone or iron, so the king can NEVER stand adjacent to it. A "wake within one
+  // tile" rule left it dozing forever however long he loitered at its bars.
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 13;
+  s.terrain['9,10'] = 'wall'; s.terrain['11,10'] = 'wall'; s.terrain['10,9'] = 'wall';
+  s.terrain['10,11'] = 'gate'; s.terrain['9,11'] = 'wall'; s.terrain['11,11'] = 'wall';
+  const cellmate = makeEnemy({ kind: 'king', x: 10, y: 10, asleep: true, awake: false });
+  s.enemies = [cellmate];
+  // He can never reach chebyshev-1 through the walls.
+  const st = movePlayerTo(s, 10, 12); // stand at the bars (chebyshev 2 to the cell, through the gate)
+  assert.equal(chebyshev(10, 10, st.player.x, st.player.y), 2, 'he is at the bars, not adjacent');
+  const phase = beginEnemyPhase(st);
+  const e = phase.state.enemies[0];
+  assert.ok(!e.asleep, 'the thing in the cell knows he is right there — it wakes');
+  assert.ok(e.surprised, 'with a start');
+  // The control: standing well back does NOT wake it.
+  const back = createInitialState('warrior', 'easy');
+  back.terrain = { '10,11': 'gate', '9,10': 'wall', '11,10': 'wall', '10,9': 'wall', '9,11': 'wall', '11,11': 'wall' };
+  back.allies = []; back.player.x = 10; back.player.y = 16;
+  back.enemies = [makeEnemy({ kind: 'king', x: 10, y: 10, asleep: true, awake: false })];
+  assert.ok(beginEnemyPhase(back).state.enemies[0].asleep, 'from across the room it sleeps on');
+});
+
+test('a leap at a tree bounces off it, landing beside the trunk one tile from the start', () => {
+  // He used to rebound all the way to his start square. Now he comes down BESIDE the tree, the way
+  // a knight rebounds off a boss it cannot move — a single step from where he sprang.
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.player.cards = [{ kind: 'knight', cooldown: 3, remaining: 0 }];
+  s.terrain['12,9'] = 'tree'; // a knight's move: 2 right, 1 up
+  const m = getCardMoves(s, s.player.cards[0]).find((t) => t.x === 12 && t.y === 9);
+  assert.ok(m && m.chop, 'the tree is offered as a chop, not a landing');
+  const next = useCard(s, 0, 12, 9);
+  assert.equal(terrainAt(next, 12, 9), 'tree', 'the tree still stands (one wound)');
+  assert.notEqual(`${next.player.x},${next.player.y}`, '10,10', 'he does NOT rebound all the way home');
+  assert.equal(chebyshev(next.player.x, next.player.y, 12, 9), 1, 'he lands beside the trunk');
+  assert.equal(chebyshev(next.player.x, next.player.y, 10, 10), 1, 'a single tile from his start');
+});
+
+test('the geyser clock: calm, then a warning, then the blast on every third turn', () => {
+  // phase 0 is floor-start (calm — never an eruption, or it would block sight before the king moves);
+  // phase 2/5/8 shows the imminent warning plume; phase 3/6/9 is the eruption itself.
+  assert.ok(!geyserErupting({ geyserPhase: 0 }), 'floor start is calm, not an eruption');
+  assert.ok(!geyserErupting({ geyserPhase: 1 }), 'turn 1 calm');
+  assert.ok(!geyserErupting({ geyserPhase: 2 }), 'turn 2 calm (but warning)');
+  assert.ok(geyserImminent({ geyserPhase: 2 }), 'turn 2 shows the warning plume');
+  assert.ok(geyserErupting({ geyserPhase: 3 }), 'turn 3 erupts');
+  assert.ok(geyserErupting({ geyserPhase: 6 }), 'and every third turn after');
+  assert.ok(geyserImminent({ geyserPhase: 5 }), 'turn 5 warns');
+  assert.ok(!geyserErupting({ geyserPhase: 4 }), 'turn 4 calm again');
+});
+
+test('an erupting geyser scalds the king standing over it — but only on its erupting turn', () => {
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.terrain['10,10'] = 'geyser';
+  const hp0 = s.player.hp;
+  s.geyserPhase = 1; // calm
+  tickGeysers(s);
+  assert.equal(s.player.hp, hp0, 'a calm vent does nothing');
+  s.geyserPhase = 3; // erupting
+  tickGeysers(s);
+  assert.equal(s.player.hp, hp0 - 1, 'the eruption costs the king a heart');
+});
+
+test('an erupting geyser destroys a lesser foe caught over it', () => {
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 3; s.player.y = 3;
+  s.terrain['10,10'] = 'geyser';
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 10, y: 10 })];
+  s.geyserPhase = 3;
+  tickGeysers(s);
+  assert.equal(s.enemies.length, 0, 'the foe standing on the vent is boiled away');
+});
+
+test('geysers block the look while erupting, and are see-through when calm', () => {
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.terrain['5,7'] = 'geyser'; // dead between (5,5) and (5,9)
+  s.geyserPhase = 1;
+  assert.ok(hasLineOfSight(s, 5, 5, 5, 9, false), 'a calm vent is see-through');
+  s.geyserPhase = 3;
+  assert.ok(!hasLineOfSight(s, 5, 5, 5, 9, false), 'the erupting plume blocks the look');
+});
+
+test('a boulder shoved onto a geyser caps it', () => {
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.enemies = []; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.terrain['11,10'] = 'boulder';
+  s.terrain['12,10'] = 'geyser';
+  const moves = getPlayerMoves(s).filter((m) => m.x === 11 && m.y === 10);
+  assert.ok(moves.length, 'he can shove the boulder east');
+  const next = movePlayerTo(s, 11, 10);
+  assert.equal(terrainAt(next, 12, 10), 'boulder', 'the boulder now plugs the vent');
+  assert.notEqual(terrainAt(next, 12, 10), 'geyser', 'the geyser is gone');
+});
+
+test('geysers are laid only on the demon floors of a cycle, and never under a unit or the key', () => {
+  assert.ok(!isDemonRealmFloor(1) && !isDemonRealmFloor(5), 'the mortal floors have no vents');
+  assert.ok(isDemonRealmFloor(6) && isDemonRealmFloor(7) && isDemonRealmFloor(8), 'the demon floors do');
+  assert.ok(isDemonRealmFloor(14), 'and floor 6-of-the-next-cycle too');
+  // Over many demon floors, a vent must never share a tile with an enemy, an ally, the boss, the key,
+  // the stair or the king.
+  let vents = 0;
+  for (let i = 0; i < 12; i += 1) {
+    const s = generateFloor(6, createPlayer('warrior'), 0);
+    const geysers = Object.keys(s.terrain).filter((k) => s.terrain[k] === 'geyser');
+    vents += geysers.length;
+    for (const k of geysers) {
+      assert.ok(!s.enemies.some((e) => `${e.x},${e.y}` === k), 'no foe on a vent');
+      assert.ok(!(s.allies || []).some((a) => `${a.x},${a.y}` === k), 'no ally on a vent');
+      assert.notEqual(k, `${s.player.x},${s.player.y}`, 'not under the king');
+      if (s.key) assert.notEqual(k, `${s.key.x},${s.key.y}`, 'not under the key');
+      if (s.exit) assert.notEqual(k, `${s.exit.x},${s.exit.y}`, 'not under the stair');
+    }
+  }
+  assert.ok(vents > 0, `and the demon floor actually grows some (${vents} across 12 floors)`);
+});
+
+test('an enemy shies off a geyser when it has anywhere drier to step', () => {
+  const s = createInitialState('warrior', 'easy');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 6; s.player.y = 10; // the foe wants to close WEST toward the king
+  // A rook one tile east of a geyser: stepping west lands on the vent; it should slide around instead.
+  s.terrain['9,10'] = 'geyser';
+  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 10, awake: true, asleep: false })];
+  const moved = meleeMove(s, s.enemies[0]);
+  const e = moved.enemies[0];
+  assert.notEqual(`${e.x},${e.y}`, '9,10', 'it did not plant itself on the vent when it had a choice');
+});
+
+test('each class is born with its innate trait: Discipline / Sharpened Senses / Studious', () => {
+  const w = createPlayer('warrior');
+  const r = createPlayer('ranger');
+  const m = createPlayer('sorcerer');
+  // Warrior: Discipline (the skip-turn flag) and nothing the others get.
+  assert.equal(w.discipline, true, 'the Warrior can hold his ground');
+  assert.equal(Boolean(r.discipline), false, 'the Ranger cannot');
+  assert.equal(Boolean(m.discipline), false, 'the Sorcerer cannot');
+  // Ranger: Sharpened Senses — +1 sight RADIUS (a +2 window, kept odd) and +1 card reach.
+  assert.equal(r.vision, createPlayer('warrior').vision + 2, 'the Ranger sees one tile further out');
+  assert.equal(r.vision % 2, 1, 'and the sight window stays ODD (centred)');
+  assert.equal(r.cardReach, 1, 'with a longer reach on his bow');
+  assert.equal(createPlayer('warrior').cardReach, 0, "the Warrior's reach is unchanged");
+  // Sorcerer: Studious (the wider-choice flag).
+  assert.equal(m.studious, true, 'the Sorcerer studies his options');
+  assert.equal(Boolean(w.studious), false, 'the Warrior does not');
+});
+
+test('Discipline: skipping a turn holds the king in place and spends the turn', () => {
+  const s = createInitialState('warrior', 'easy');
+  s.enemies = [];
+  const x0 = s.player.x, y0 = s.player.y, t0 = s.turn;
+  const next = skipTurn(s);
+  assert.equal(next.player.x, x0, 'he does not move...');
+  assert.equal(next.player.y, y0, '...at all');
+  assert.equal(next.turn, t0 + 1, 'but the turn is spent');
+  assert.equal(next.enemyTurn, true, 'and the enemy phase is queued');
+  assert.equal(Boolean(next.player.attacked), false, 'he struck nothing');
+});
+
+test('Discipline while holding raises a Sentinel Parry guard (ending a turn without a blow)', () => {
+  const s = createInitialState('warrior', 'easy');
+  s.enemies = [];
+  s.player.firstHitEachTurn = true; s.player.guardUp = false; // as if Parry were learned
+  const next = skipTurn(s);
+  assert.equal(next.player.guardUp, true, 'holding ground banks the guard');
+});
+
+test('Studious: the Sorcerer is offered THREE level-up perks, the others two', () => {
+  const mage = createPlayer('sorcerer');
+  const warrior = createPlayer('warrior');
+  // With a full fresh pool, the roll returns its target count (default LEVEL_PERK_CHOICES = 2).
+  assert.equal(rollLevelPerks(mage).length, 3, 'Studious widens the choice to three');
+  assert.equal(rollLevelPerks(warrior).length, 2, 'a non-mage gets the usual two');
+});
+
+test('the guarded key and the stair are ALWAYS reachable, whatever chamber/stair variant is rolled', () => {
+  // Chamber styles (walled keep, fire/water moat, timber copse, icy sanctum, boulder-and-pit quarry)
+  // and the dressed-up stair features (grove, cairn, nook, pillars) must never seal the key or the
+  // way out. The connectivity carve guarantees it; this locks that guarantee down across every floor.
+  let bad = 0;
+  for (let floor = 1; floor <= 8; floor += 1) {
+    for (let i = 0; i < 12; i += 1) {
+      const s = generateFloor(floor, createPlayer('warrior'), 0);
+      const reach = playerReachable(s, s.player.x, s.player.y);
+      if (!reach.has(`${s.exit.x},${s.exit.y}`)) bad += 1;
+      if (s.key && !reach.has(`${s.key.x},${s.key.y}`)) bad += 1;
+    }
+  }
+  assert.equal(bad, 0, `every key and stair the king can walk to (${bad} unreachable)`);
+});
+
+test('Pierce drives the thrust through the TWO tiles behind the slain foe', () => {
+  const s = warriorWith('w_fleet', 'w_pierce'); // Cavalier: Pierce
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
+  // A file of three pawns east: step onto the first, the thrust fells the two behind it.
+  s.enemies = [
+    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true }),
+  ];
+  const next = movePlayerTo(s, 11, 10);
+  assert.equal(next.enemies.length, 0, 'all three fall — the kill plus the two pierced behind it');
+  // A fourth, one further back, is out of reach (pierce is exactly two tiles).
+  const s2 = warriorWith('w_fleet', 'w_pierce');
+  s2.terrain = {}; s2.allies = [];
+  s2.player.x = 10; s2.player.y = 10; s2.player.moveRange = 1;
+  s2.enemies = [
+    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }),
+    makeEnemy({ kind: 'pawn', x: 14, y: 10, awake: true }), // three tiles past the kill
+  ];
+  const n2 = movePlayerTo(s2, 11, 10);
+  assert.ok(n2.enemies.some((e) => e.x === 14), 'a foe three tiles back is beyond the thrust');
+});
+
+test('Displacement shockwaves only where the king LANDS, never the tile he left', () => {
+  const s = sorcererWith('s_swap');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  const swapIdx = s.player.cards.findIndex((c) => c.kind === 'swap');
+  const target = makeEnemy({ kind: 'berolina', x: 12, y: 12, awake: true }); // the unit swapped with (in sight)
+  const atOrigin = makeEnemy({ kind: 'pawn', x: 10, y: 11, awake: true }); // beside where he LEFT
+  const atDest = makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }); // beside where he LANDS
+  s.enemies = [target, atOrigin, atDest];
+  const next = useCard(s, swapIdx, 12, 12);
+  const o = next.enemies.find((e) => e.id === atOrigin.id);
+  const d = next.enemies.find((e) => e.id === atDest.id);
+  assert.deepEqual({ x: o.x, y: o.y }, { x: 10, y: 11 }, 'the foe by the tile he LEFT is untouched now');
+  assert.ok(d.x !== 12 || d.y !== 11, 'but the foe by where he LANDS is still hurled back');
+});
+
+test('Animal Form: the king moves as a UNICORN (bishop + nightrider) and rallies wild horses', () => {
+  const s = rangerWith('r_wade', 'r_xray', 'r_promo');
+  s.terrain = {}; s.allies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.enemies = [
+    makeEnemy({ kind: 'knight', x: 14, y: 6, awake: true }), // a wild horse
+    makeEnemy({ kind: 'rook', x: 5, y: 5, awake: true }), // not a horse
+  ];
+  const promoIdx = s.player.cards.findIndex((c) => c.kind === 'promotion');
+  const next = useCard(s, promoIdx, s.player.x, s.player.y); // self-cast
+  assert.ok(next.player.promotion > 0, 'the form is active');
+  assert.ok((next.allies || []).some((a) => a.kind === 'knight'), 'the wild horse rallies to his side');
+  assert.ok(next.enemies.some((e) => e.kind === 'rook'), 'but a rook is no horse — it stays hostile');
+  const moves = getPlayerMoves(next);
+  assert.ok(moves.some((m) => m.x === 11 && m.y === 11), 'it glides diagonally (bishop)');
+  assert.ok(moves.some((m) => m.x === 12 && m.y === 11), 'and rides the knight-bearings (nightrider)');
+  assert.ok(!moves.some((m) => m.x === 11 && m.y === 10), 'but NOT a plain orthogonal step (no queen slide)');
+});
+
+test('Reflect (Sentinel): a foe whose blow the Parry turns aside takes 1 damage', () => {
+  const build = (reflect) => {
+    const ids = reflect ? ['w_waiting', 'w_bulwark', 'w_reflect'] : ['w_waiting', 'w_bulwark'];
+    const t = warriorWith(...ids);
+    t.terrain = {}; t.allies = [];
+    t.player.x = 10; t.player.y = 10; t.player.hp = 6; t.player.maxHp = 6;
+    t.player.guardUp = true; // a quiet turn already banked the guard
+    t.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 11, awake: true, id: 'rk' })]; // adjacent, will strike
+    return t;
+  };
+  assert.equal(build(true).player.reflect, true, 'the capstone grants it');
+  const hit = moveEnemy(build(true), 'rk');
+  assert.equal(hit.player.hp, 6, 'the guard turns the blow aside — no damage to the king');
+  assert.ok(!hit.enemies.some((e) => e.id === 'rk'), 'and the striking rook takes the reflected point and dies');
+  // CONTROL: with Parry but no Reflect, the same parried rook survives untouched.
+  const ctrl = moveEnemy(build(false), 'rk');
+  assert.equal(ctrl.player.hp, 6, 'still parried');
+  assert.ok(ctrl.enemies.some((e) => e.id === 'rk'), 'but without Reflect the rook is unharmed');
+});
+
+test('Waiting: a shove still MOVES the king, it just cannot hurt him', () => {
+  const t = warriorWith('w_waiting');
+  t.terrain = {}; t.allies = [];
+  t.player.x = 10; t.player.y = 10; t.player.hp = 6; t.player.maxHp = 6;
+  t.player.invuln = true; // as if he had just waited
+  const knight = makeEnemy({ kind: 'knight', x: 9, y: 8, awake: true, id: 'kn' }); // a jumper that knocks back
+  t.enemies = [knight];
+  const after = moveEnemy(t, 'kn');
+  assert.equal(after.player.hp, 6, 'the leap does no damage while he waits');
+  assert.ok(after.player.x !== 10 || after.player.y !== 10, 'but the knockback still shoves him off his tile');
+});
+
+test('overstay ramps from max dread to the molten peak, then holds', () => {
+  assert.equal(overstayFraction(MAX_TURNS_SCARY - 10), 0, 'no overstay before max dread');
+  assert.equal(overstayFraction(MAX_TURNS_SCARY), 0, 'zero at the threshold');
+  const mid = overstayFraction(MAX_TURNS_SCARY + (MAX_TURNS_LAVA - MAX_TURNS_SCARY) / 2);
+  assert.ok(mid > 0.4 && mid < 0.6, 'about half-way through the overstay');
+  assert.equal(overstayFraction(MAX_TURNS_LAVA), 1, 'maxed at the molten peak');
+  assert.equal(overstayFraction(MAX_TURNS_LAVA + 999), 1, 'and stays maxed');
+});
+
+test('Waiting shrugs off blows but NOT the ground — lava still burns a waiting king', () => {
+  const s = warriorWith('w_waiting');
+  s.terrain = { '10,10': 'lava' }; s.allies = []; s.enemies = [];
+  s.player.x = 10; s.player.y = 10; s.player.hp = 6; s.player.maxHp = 6;
+  const next = skipTurn(s); // he waits ON lava — invincible to blows, but fire is the ground
+  assert.equal(next.player.invuln, true, 'the halo is up (blows would be shrugged)');
+  assert.ok(next.player.hp < 6, 'yet the lava still sears him');
+});
+
+test('a floor the king will not leave turns MOLTEN — lava wells up under the overstay', () => {
+  let s = generateFloor(1, createPlayer('warrior'), 0); // an open, lava-FREE floor
+  s.enemies = []; s.allies = [];
+  s.turn = MAX_TURNS_LAVA; // peak intensity
+  const lavaCount = (st) => Object.values(st.terrain).filter((t) => t === 'lava').length;
+  const before = lavaCount(s);
+  for (let i = 0; i < 10; i += 1) { s = beginEnemyPhase(s).state; s.turn += 1; }
+  assert.ok(lavaCount(s) > before, `lava wells up from nothing under the overstay (${before} -> ${lavaCount(s)})`);
+});
+
+test('lingering past max dread is FATAL: the molten floor kills even a waiting Sentinel', () => {
+  let s = generateFloor(1, createPlayer('warrior', 'easy'), 0);
+  s.enemies = []; s.allies = [];
+  s.player.hp = 6; s.player.maxHp = 6;
+  s.player.waiting = true; // a Sentinel trying to wait it out
+  s.turn = MAX_TURNS_SCARY; // the molten floor begins
+  for (let i = 0; i < 400 && !s.gameOver; i += 1) {
+    s = skipTurn(s); // his turn: hold ground (passTurn sears any lava that has reached under him)
+    if (s.gameOver) break;
+    s = beginEnemyPhase(s).state; // the floor keeps turning molten
+  }
+  assert.ok(s.gameOver, 'waiting it out is not an escape — the fire finds him');
 });

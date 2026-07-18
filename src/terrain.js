@@ -30,7 +30,9 @@ function blocksSight(type) {
   // Devilgrass grows tall enough to hide what's behind it. ICE is see-through — a frozen
   // pane you can look past but not walk through. A SHUT door blocks the look and any shot; an
   // OPEN one ('dooropen') is a clear passage.
-  return type === 'wall' || type === 'boulder' || type === 'devilgrass' || type === 'door';
+  // NB: no 'gate'. A gate is BARS — it stops you walking through, never looking (or shooting)
+  // through. That is the whole point of it, and the only thing separating it from a tree.
+  return type === 'wall' || type === 'tree' || type === 'boulder' || type === 'devilgrass' || type === 'door';
 }
 
 // Whether a mover may enter/stop on a tile. Walls and BOULDERS stop everyone (a phasing
@@ -40,10 +42,21 @@ function blocksSight(type) {
 function standableFor(type, opts) {
   const o = opts || {};
   if (type === 'door' || type === 'dooropen' || type === 'doorajar') return true; // a door is always walkable — stepping onto a SHUT/closing one (re)opens it (see openDoorsUnderUnits)
+  // A TREE is solid timber; a GATE is solid iron. Both bar the way to everything but a phaser.
+  // They differ in ONE respect, in blocksSight: you can see straight through a gate's bars.
+  if (type === 'tree' || type === 'gate') return Boolean(o.phaseWalls);
   if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // walls, boulders & ice slabs stop everyone but a phasing mover
-  if (type === 'pit') return Boolean(o.flying); // only a FLYING mover (Winged Boots / a flying boss) crosses a pit
+  if (type === 'pit') return Boolean(o.flying || o.pitOk); // a FLYING mover crosses a pit; a BURROWER walks it as solid ground
   if (type === 'lava') return o.lavaOk !== false; // walkable unless a caller explicitly forbids it
   return true; // water & normal are walkable
+}
+
+// SOLID ground: stone, timber, iron. Nothing alights on top of any of them — only a phasing mover
+// gets to be inside one. They must be named in ONE place, because the leapers each carried their own
+// hand-written list of terrain names, and trees and gates were added long after those lists were
+// written: nothing pointed a knight at them, so it would happily perch in a treetop.
+function isSolidBarrier(type) {
+  return type === 'wall' || type === 'tree' || type === 'gate';
 }
 
 // Slow terrain: a mover wades ONE tile of it per move and must stop there — no sliding clean
@@ -85,8 +98,14 @@ function hasLineOfSight(state, x0, y0, x1, y1, seeWalls) {
     if (x === x1 && y === y1) {
       break;
     }
-    if (blocksSight(terrainAt(state, x, y)) && !seeWalls) {
+    const tt = terrainAt(state, x, y);
+    if (blocksSight(tt) && !seeWalls) {
       return false; // walls block the look (unless the looker sees over them)
+    }
+    // A geyser is see-through when dormant, but its erupting plume of gas blocks the look for that
+    // one turn — the same gas that scalds anything over it (see geyserErupting/tickGeysers).
+    if (tt === 'geyser' && typeof geyserErupting === 'function' && geyserErupting(state) && !seeWalls) {
+      return false;
     }
   }
   return true;
@@ -153,7 +172,10 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
     const ny = y + dy;
     if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) break;
     const terrain = terrainAt(state, nx, ny);
-    let blocked = projectile ? blocksSight(terrain) : !standableFor(terrain, o);
+    // A gate is see-through BARS (not in blocksSight) — but a physical bolt still strikes the iron,
+    // so a turret's shot is stopped by a gate even though the eye and the fog are not. Trees already
+    // stop the ray (they block sight); the gate is the one thing sight and shot part ways on.
+    let blocked = projectile ? (blocksSight(terrain) || terrain === 'gate') : !standableFor(terrain, o);
     // A lava-averse phaser (a non-immune Phasing boss) shuns a burning wall-torch, so it reads as
     // solid to that mover even though it could otherwise slip through the wall.
     if (!blocked && o.torchAverse && terrain === 'wall' && hasTorch(state, nx, ny)) blocked = true;
@@ -206,19 +228,26 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
     if (opts && opts.torchAverse && terrain === 'wall' && hasTorch(state, x, y)) {
       continue; // a lava-averse phaser never pounces into a burning wall-torch
     }
-    if (terrain === 'wall') {
-      // Can't land on a wall — UNLESS a phasing leaper is pouncing onto a foe embedded there.
+    if (isSolidBarrier(terrain)) {
+      // Can't land on stone, timber or iron — UNLESS a phasing leaper is pouncing onto a foe
+      // embedded there. A boulder is NOT in this class: the impact crushes it flat, which is a
+      // perfectly good landing (and ice shatters the same way, below).
       if (!(phaseWalls && capHere)) continue;
     } else if (terrain === 'ice') {
       // Empty ice is a fine landing (the leap shatters it). But a foe EMBEDDED in ice may only
       // be pounced on by a leaper that also phases.
       if (capHere && !phaseWalls) continue;
     }
-    if (!phaseWalls && terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall') {
-      continue; // Wall blocks the leap (a phasing leaper ignores the shoulder).
-    }
-    if (!phaseWalls && terrainAt(state, fromX, fromY + Math.sign(dy)) === 'wall') {
-      continue;
+    // A wall CAGES the leap only on its LONG axis — the two-tile direction the knight travels
+    // through first, exactly as a xiangqi horse is hobbled by the piece on its "leg". A wall off the
+    // perpendicular SHORT-axis shoulder does NOT block it: the leap arcs clear of that side. Blocking
+    // on both shoulders caged leaps that plainly had a clear path — the "a nightrider a knight's-move
+    // away can't reach me" bug — and it cages the king's own leap cards the same wrong way.
+    if (!phaseWalls) {
+      const legWall = Math.abs(dx) === 2
+        ? terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall'
+        : terrainAt(state, fromX, fromY + Math.sign(dy)) === 'wall';
+      if (legWall) continue;
     }
     targets.push({ x, y, viaJump: true, capture: capHere });
   }
@@ -242,8 +271,15 @@ function riderLeapTargets(state, fromX, fromY, steps, unitAt, isTarget, opts) {
     let px = fromX;
     let py = fromY;
     for (let leg = 0; leg < WORLD_SIZE; leg += 1) {
-      if (leg === 0 && !phaseWalls && terrainAt(state, px + Math.sign(dx), py) === 'wall') break;
-      if (leg === 0 && !phaseWalls && terrainAt(state, px, py + Math.sign(dy)) === 'wall') break;
+      // Shoulder rule on the LAUNCH leg only, and only on the LONG axis (the xiangqi-horse "leg") —
+      // a wall off the perpendicular short-axis shoulder does not cage the take-off. (Blocking both
+      // shoulders wrongly stranded a nightrider a knight's-move from the king behind a side wall.)
+      if (leg === 0 && !phaseWalls) {
+        const legWall = Math.abs(dx) === 2
+          ? terrainAt(state, px + Math.sign(dx), py) === 'wall'
+          : terrainAt(state, px, py + Math.sign(dy)) === 'wall';
+        if (legWall) break;
+      }
       const x = px + dx;
       const y = py + dy;
       if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) break;
@@ -252,8 +288,8 @@ function riderLeapTargets(state, fromX, fromY, steps, unitAt, isTarget, opts) {
       const unit = unitAt(x, y);
       const capHere = Boolean(unit) && isTarget(x, y);
       if (torchAverse && terrain === 'wall' && hasTorch(state, x, y)) break;
-      if (terrain === 'wall') {
-        if (!(phaseWalls && capHere)) break;
+      if (isSolidBarrier(terrain)) {
+        if (!(phaseWalls && capHere)) break; // stone, timber and iron all halt the ride
       } else if (terrain === 'ice' && capHere && !phaseWalls) {
         break;
       }
@@ -281,8 +317,8 @@ function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (terrain === 'wall' || terrain === 'lava' || terrain === 'pit') {
-      continue; // can't land on a wall, in lava, or in a bottomless pit (a boulder IS landable — a leaper crushes it)
+    if (isSolidBarrier(terrain) || terrain === 'lava' || terrain === 'pit') {
+      continue; // can't land on stone/timber/iron, in lava, or in a bottomless pit (a boulder IS landable — a leaper crushes it)
     }
     const unit = unitAt(x, y);
     if (unit && !isTarget(x, y)) {

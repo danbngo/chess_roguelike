@@ -107,6 +107,88 @@ const ACHIEVEMENTS = (() => {
   add('ice:none', 'Thin Ice', 'Win without breaking or melting a single ice slab.', (p) => !p.brokeIce, { won: true });
   add('water:none', 'Bone Dry', 'Win without ever touching water.', (p) => !p.touchedWater, { won: true });
 
+
+  // --- Devotion: purity and its opposite -----------------------------------
+  // Which chains he actually put perks into, and how many in each.
+  const chainTally = (p) => {
+    const cls = CLASSES[p.className];
+    const out = {};
+    if (!cls) return out;
+    for (const id of p.takenPerks || []) {
+      const perk = (cls.perks || []).find((k) => k.id === id);
+      if (perk && perk.chain) out[perk.chain] = (out[perk.chain] || 0) + 1;
+    }
+    return out;
+  };
+  for (const classKey of Object.keys(CLASSES)) {
+    const cls = CLASSES[classKey];
+    for (const chain of [...new Set(cls.perks.map((perk) => perk.chain))]) {
+      add(
+        `purist:${classKey}:${chain}`,
+        `${chain} Purist`,
+        `Win a run taking perks from the ${chain} chain and NOTHING else.`,
+        // At least one perk, and every one of them from this chain. "Took nothing at all" is not
+        // purity — it is the Pacifist badge's problem, not this one.
+        (p) => {
+          if (p.className !== classKey) return false;
+          const tally = chainTally(p);
+          return (tally[chain] || 0) > 0 && Object.keys(tally).length === 1;
+        },
+        { won: true },
+      );
+    }
+  }
+  add(
+    'jack:4', 'Jack of All Trades', 'Win a run holding at least one perk from four different subclasses.',
+    (p) => Object.keys(chainTally(p)).length >= 4,
+    { won: true },
+  );
+
+  // --- Conduct: the fire ---------------------------------------------------
+  add(
+    'fire:none', 'Cold Blooded', 'Win without fire ever touching you — no lava, no torch, no burning tree, no spellfire.',
+    (p) => !p.burnedByFire,
+    { won: true },
+  );
+
+  // --- Slaughter -----------------------------------------------------------
+  add('kill:floor100', 'Abattoir', 'Fell 100 enemies on a single floor.', (p) => (p.maxKillsOnFloor || 0) >= 100);
+  add('kill:mini10', 'Rogues Gallery', 'Fell 10 mini-bosses on a single floor.', (p) => (p.maxMinisOnFloor || 0) >= 10);
+  add('kill:turret10', 'Scrap Merchant', 'Destroy 10 turrets on a single floor.', (p) => (p.maxTurretsOnFloor || 0) >= 10);
+  add('kill:turn5', 'Five Finger Discount', 'Fell five enemies in a single turn.', (p) => (p.maxKillsInTurn || 0) >= 5);
+  add('kill:turn8', 'Octuple Homicide', 'Fell EIGHT enemies in a single turn.', (p) => (p.maxKillsInTurn || 0) >= 8);
+  add('kill:final', 'Regicide', 'Fell the last guardian of the Demon Castle.', (p) => Boolean(p.killedFinalBoss));
+
+  // --- Slaughter: by means other than the sword ----------------------------
+  add('kill:boulder', 'Between a Rock', 'Kill an enemy with a rolling boulder.', (p) => Boolean(p.killedWithBoulder));
+  add('kill:lava', 'Sending Its Regards', 'Knock an enemy into lava.', (p) => Boolean(p.knockedIntoLava));
+  add('kill:pit', 'Mind the Gap', 'Knock an enemy into a pit.', (p) => Boolean(p.knockedIntoPit));
+  add('kill:foewithfoe', 'Friendly Fire', 'Kill an enemy WITH another enemy.', (p) => Boolean(p.killedFoeWithFoe));
+  add('kill:beast', 'Beast Mode', 'Fell a guardian while running as the warhorse.', (p) => Boolean(p.bossKilledAsBeast));
+
+  // --- Nerve ---------------------------------------------------------------
+  add('nerve:defenestrated', 'Defenestrated', 'Get knocked clean down the stair and into the next floor.', (p) => Boolean(p.defenestrated));
+  add('nerve:pitdive', 'Down the Rabbit Hole', 'Cornered with no move left, dive into a pit and scramble out the far side.', (p) => Boolean(p.pitDived));
+  add('kill:alltraits', 'Trait Collector', 'In a single run, fell guardians bearing EVERY possible trait between them.', (p) => typeof BOSS_PERKS !== 'undefined' && BOSS_PERKS.every((k) => p.slainBossTraits && p.slainBossTraits[k]));
+  add('nerve:floor', 'Hanging by a Thread', 'Take a stair down on your very last heart.', (p) => Boolean(p.finishedFloorOnOneHeart));
+  add('nerve:win', 'Photo Finish', 'Win the run on your very last heart.', (p) => p.hp === 1, { won: true });
+  add('hoard:spells', 'Full Deck', 'Hold five cards at once.', (p) => (p.cards || []).length >= 5);
+  add('win:first', 'The Long Way Down', 'Win. However you managed it.', () => true, { won: true });
+
+  // --- The stranger deaths of the king -------------------------------------
+  // A plain read of the tags checkDeath banked. Only the RARE or the RIDICULOUS ends are worth a
+  // badge — dying to a boss or a turret is a Tuesday, so those earn nothing. These do.
+  const died = (tag) => (p, s) => Boolean(s && s.gameOver) && (p.deathTags || []).includes(tag);
+  add('death:pit', 'The Floor Is Absent', 'Die falling into a pit.', died('pit'));
+  add('death:lava', 'Well Done', 'Die to lava.', died('lava'));
+  add('death:boulder', 'Rock Bottom', 'Die to a rolling boulder.', died('boulder'));
+  add('death:ferz', 'Ferz Degree Murder', 'Die to a ferz. A FERZ.', died('ferz'));
+  add('death:tree', 'Out of the Frying Pan', 'Die to a burning tree.', died('burningtree'));
+  add('death:torch', 'Carrying a Torch', 'Die to a wall-torch.', died('torch'));
+  add('death:confused', 'It Meant to Do That', 'Die to an enemy that had no idea what it was doing.', died('confused'));
+  add('death:orb', 'So Close', 'Die with the Orb of Victory in your hands.', (p, s) => Boolean(s && s.gameOver) && Boolean(p.diedHoldingOrb));
+  add('death:stalemate', 'Painted Into a Corner', 'Strand yourself somewhere with nowhere to step and nothing to spend.', died('stalemate'));
+
   return list;
 })();
 

@@ -36,6 +36,8 @@
   const altarCloseButton = document.getElementById('altar-close');
   const cardBar = document.getElementById('card-bar');
   const cardHint = document.getElementById('card-hint');
+  const invBar = document.getElementById('inv-bar');
+  const invHint = document.getElementById('inv-hint');
   const tilePopover = document.getElementById('tile-popover');
   const tutorialScreen = document.getElementById('tutorial-screen');
   const tutorialTitle = document.getElementById('tutorial-title');
@@ -52,6 +54,7 @@
   const characterCloseButton = document.getElementById('character-close');
 
   const confirmScreen = document.getElementById('confirm-screen');
+  const confirmTitleEl = document.getElementById('confirm-title');
   const confirmText = document.getElementById('confirm-text');
   const confirmYesButton = document.getElementById('confirm-yes');
   const confirmNoButton = document.getElementById('confirm-no');
@@ -84,6 +87,44 @@
 
   // screen: 'title' | 'class' | 'playing' | 'levelup' | 'character' | 'confirm' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
+  let titleHover = null; // which title option the cursor is over (diegetic menu)
+  // The diegetic pre-game scenes (class select + trophy room) share one hovered-id and their own
+  // small bits of state, exactly like the title's `titleHover`.
+  let sceneHover = null;     // the scene tile/king the cursor is over
+  let pickStage = 'class';   // the class-select flow: 'class' then 'difficulty'
+  let pickedClass = null;    // the class chosen, awaiting a difficulty
+  let trophyPage = 0;        // which "room" of the trophy hall is on screen
+  let trophyPages = [[]];    // trophies chunked into rooms of eight (built on open)
+  let trophyTotals = { earned: 0, total: 0 };
+  // The diegetic title menu: each option is a tile on the board (drawn by the renderer), with the
+  // action it fires when clicked. Built fresh each time it is drawn so Continue reflects the save.
+  // The one-line "here is where you left off" under the Continue tile.
+  function lastRunLine() {
+    try {
+      const saved = loadSave();
+      if (!saved || !saved.player) return null;
+      const cls = CLASSES[saved.player.className];
+      const who = (typeof playerTitle === 'function' ? playerTitle(saved.player) : (cls && cls.name)) || 'King';
+      return `Floor ${toRoman(saved.floor || 1)} · ${who}`;
+    } catch {
+      return null;
+    }
+  }
+
+  function titleMenuModel() {
+    return {
+      title: 'Chess Dungeon',
+      subtitle: 'A lone king wanders a hostile board.',
+      hover: titleHover,
+      save: hasSave() ? lastRunLine() : null,
+      options: [
+        { id: 'new', icon: 'stair', label: 'New Game', enabled: true, action: openClassSelect },
+        { id: 'continue', icon: 'key', label: 'Continue', enabled: hasSave(), action: continueGame },
+        { id: 'trophies', icon: 'trophy', label: 'Trophies', enabled: true, action: openTrophies },
+        { id: 'options', icon: 'gear', label: 'Options', enabled: true, action: openOptions },
+      ],
+    };
+  }
   let gameState = null;
 
   // Card targeting: the index of the card currently awaiting a destination, or
@@ -169,6 +210,34 @@
     // Dread rises as the king lingers.
     turnLabel.style.color = scaryColor(Math.min(1, gameState.turn / (gameState.dreadTurns || MAX_TURNS_SCARY)));
     renderCards();
+    renderInventory();
+  }
+
+  /* ----------------------------- inventory ------------------------------ */
+  // What he is CARRYING, as opposed to what he can do. Only the floor key for now — the whole
+  // point is that a player can see at a glance whether the stair is going to open for him, without
+  // hunting for it in the log. Kept deliberately bare: it is a shelf, not a second row of buttons.
+  function renderInventory() {
+    if (!invBar) return;
+    invBar.innerHTML = '';
+    if (invHint) invHint.classList.add('hidden');
+    if (!gameState) return;
+    const held = [];
+    // The Orb of Victory is the last floor's key wearing a different hat (key.orb) — so it lands
+    // here for free, and reads as the run-defining thing it is rather than another gold key.
+    if (gameState.key && gameState.key.collected) {
+      held.push(gameState.key.orb
+        ? { cls: 'orb', glyph: '◉', title: 'Orb of Victory — the portal will open for you' }
+        : { cls: 'key', glyph: '⚷', title: 'Floor key — the stair down is unlocked' });
+    }
+    for (const item of held) {
+      const slot = document.createElement('div');
+      slot.className = `inv-slot ${item.cls}`;
+      slot.textContent = item.glyph;
+      slot.title = item.title;
+      invBar.append(slot);
+    }
+    if (invHint && held.length) invHint.classList.remove('hidden');
   }
 
   /* -------------------------------- log --------------------------------- */
@@ -266,6 +335,15 @@
     if (gameState.player.cards.some((c) => c.remaining === 0)) queueTip('cards');
   }
 
+  // How many turns a card's ONGOING effect still has to run (0 = not currently active). Only cards
+  // that cast a timed field of effect qualify — a plain strike has nothing to show here.
+  function activeEffectTurns(card) {
+    const p = gameState.player;
+    if (card.kind === 'silence') return p.silence || 0;
+    if (card.kind === 'promotion') return p.promotion || 0;
+    return 0;
+  }
+
   function makeCardSlot(card, i) {
     const cat = classCategory(gameState.player.className);
     const slot = document.createElement('button');
@@ -278,12 +356,21 @@
     slot.textContent = getPieceLabel(card.kind);
     slot.title = `[${i + 1}] ${cat} ${card.kind}`;
     const onCooldown = card.remaining > 0;
+    // Charged, but not playable from where he is standing (wading: a weapon needs both hands). Ask
+    // the RULE rather than restating it here — cardBlockedReason is what useCard refuses by, so the
+    // button cannot come to a different conclusion than the game does.
+    const blocked = !onCooldown && typeof cardBlockedReason === 'function' && cardBlockedReason(gameState, card);
     if (cardTargeting === i) {
       slot.classList.add('targeting');
     } else if (onCooldown) {
       slot.classList.add('cooldown');
     } else {
       slot.classList.add('ready');
+      // Translucent, not grey: it IS ready, and its glow says so. It just cannot be played here.
+      if (blocked) {
+        slot.classList.add('unusable');
+        slot.title += ` — ${blocked}`;
+      }
     }
     // A tiny hotkey number in the corner.
     const key = document.createElement('span');
@@ -297,6 +384,19 @@
       badge.className = 'card-cooldown';
       badge.textContent = String(card.remaining);
       slot.append(badge);
+    }
+    // ACTIVE-EFFECT tell: a card whose effect is still RUNNING (Silence hushing the room, Animal Form
+    // held) gets a glowing ring and a small turns-left pip in the TOP-right — deliberately apart from
+    // the cooldown number (bottom), so "the spell is working" reads separately from "recharging". A
+    // card is usually on cooldown WHILE its effect runs, so the two must be legible at once.
+    const active = activeEffectTurns(card);
+    if (active > 0) {
+      slot.classList.add('active');
+      const pip = document.createElement('span');
+      pip.className = 'card-active';
+      pip.textContent = String(active);
+      pip.title = `active — ${active} turn${active === 1 ? '' : 's'} left`;
+      slot.append(pip);
     }
     // NB: not the `disabled` attribute — a disabled button suppresses hover, and we want the
     // description to float even while the card recharges. toggleCardTargeting guards the click.
@@ -333,7 +433,7 @@
     }
     // Can't even AIM a weapon card while wading (Amphibious/Druid lifts this); ability
     // cards (promotion / reload / swap) are exempt, matching useCard's own guard.
-    const isAbilityCard = card.kind === 'promotion' || card.kind === 'reload' || card.kind === 'swap';
+    const isAbilityCard = card.kind === 'promotion' || card.kind === 'reload' || card.kind === 'swap' || card.kind === 'blink' || card.kind === 'silence';
     const p = gameState.player;
     if (!isAbilityCard && !p.terrainImmune && isSlowTerrain(terrainAt(gameState, p.x, p.y))) {
       gameState.message = `You can't ready a weapon while wading through ${terrainAt(gameState, p.x, p.y)}.`;
@@ -390,6 +490,8 @@
       case 'enpassant': return 'Step 1 tile; also strikes one foe you pass (marked ✕).';
       case 'doublestep': return 'Dash the FULL 2 tiles in one direction (capturing at the end).';
       case 'horse': return 'A spectral steed tramples an L-shaped path to an aimed knight tile — you don’t move.';
+      case 'confuse': return 'Self-cast: confirm on your own tile — every foe in sight loses friend from foe.';
+      case 'silence': return 'Self-cast: confirm on your own tile — every foe in sight drops asleep. Free action.';
       default:
         return cat === 'melee' ? 'Strikes by moving onto the foe.'
           : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
@@ -444,7 +546,7 @@
 
     if (card.kind === 'horse') {
       // The phantom steed scorches the whole L-path to the aimed knight tile.
-      for (const t of knightLPath(p.x, p.y, cursor.x - p.x, cursor.y - p.y)) push(t.x, t.y);
+      for (const t of knightLPath(p.x, p.y, cursor.x - p.x, cursor.y - p.y, gameState)) push(t.x, t.y);
     } else {
       // A piercing bolt ALWAYS travels its full range in the aimed direction — preview every tile
       // it scorches, matching the real bolt: ice ends it (thaws), a wall/boulder stops it (unless
@@ -479,8 +581,11 @@
     pit: 'Pit — a bottomless hole: nothing can cross it, but shots (yours OR a turret’s/boss’s) fly right over',
     boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it. Knocked, it ROLLS until it hits something',
     ice: 'Ice — a see-through slab: impassable, but you can look past it. Fire/spells MELT it to water; a leap onto it (or a foe slammed into it) SHATTERS it',
+    geyser: 'Geyser — a demon-realm vent: every 3rd turn ALL geysers blow at once, scalding whatever stands on one for 1 HP (a tall plume warns the turn before). The erupting gas also blocks sight for that turn. Shove a boulder onto it to cap it; enemies shy off them',
     devilgrass: 'Tall grass — blocks sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
     devilgrass_demon: 'Devilgrass — dry, dead husks that still block sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
+    gate: 'Gate — iron bars: they BAR the way but not the view. You can see (and shoot) straight through them, so you can case a room before committing to it. Walk into it to cut it down (3 swings); a rolling boulder buckles it, and a foe slammed into it bends the bars. Iron does not burn — spellfire will not touch it',
+    tree: 'Tree — solid timber: blocks sight & movement, but it can come DOWN. Walk into it to chop (3 swings); a rolling boulder shears it through; a foe slammed into it cracks the trunk. Spellfire sets it ALIGHT — it burns where it stands, then is gone, leaving scorched ground',
     door: 'Door (shut) — blocks sight & fire, but you can walk/leap right onto it; doing so pushes it OPEN',
     dooropen: 'Doorway (open) — a clear, walkable threshold; blocks nothing. Left empty, it starts swinging shut',
     doorajar: 'Door (swinging shut) — still passable and clear, but it will close fully next turn unless something is in it',
@@ -530,6 +635,11 @@
         } else {
           tag = enemy.asleep ? ' (asleep)' : enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
         }
+        // Confusion is true of EVERY kind of piece, so it is appended to whatever tag the branches
+        // above chose rather than being one more case inside them — a confused turret is still a
+        // turret, and the player wants to read both facts.
+        if (enemy.confused) tag += ' — CONFUSED';
+        if (gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)) tag += ' — neutral (step beside it to tame it)';
         lines.push(`Enemy: ${enemy.kind}${tag}`);
       }
     }
@@ -545,6 +655,11 @@
     if (gameState.key && !gameState.key.collected && onBuilding(gameState.key)) {
       lines.push(gameState.key.orb ? 'Orb of Victory — seize it to open the portal (but guardians will converge!)' : 'Floor key — collect it to unlock the stair');
     }
+    // The way he came IN. Cosmetic — but it has to SAY that, or a stair-shaped thing you cannot use
+    // just reads as a bug.
+    if (gameState.upstair && gameState.upstair.x === tx && gameState.upstair.y === ty) {
+      lines.push('Collapsed stairway — the way you came in, caved in behind you. There is no going back; it only marks where this floor began.');
+    }
     return lines.join('\n');
   }
 
@@ -554,6 +669,10 @@
       return;
     }
     const { x, y } = Renderer.screenToTile(canvasX, canvasY);
+    // Ring whoever covers this square. threatenersOf is the SAME reckoning that paints the red tint
+    // (same ghost: his body out of the way, the key gone, doors judged open), so the highlight can
+    // never contradict the colour of the tile the player is pointing at.
+    Renderer.markThreats(gameState ? threatenersOf(gameState, x, y).map((e) => e.id) : []);
     const text = describeTile(x, y);
     if (!text) {
       hideTilePopover();
@@ -566,6 +685,7 @@
   }
 
   function hideTilePopover() {
+    Renderer.markThreats([]); // the cursor is gone — so are the rings
     tilePopover.classList.add('hidden');
     tilePopover.classList.remove('wide'); // reset the class-details widening
   }
@@ -588,6 +708,11 @@
     ferz: 'Steps and captures one tile diagonally — a feeble, dazed piece (what a Hex warps a foe into).',
     enpassant: 'Step one tile in any direction (capturing a foe there), and strike one foe you pass — a piece that was beside your starting tile.',
     doublestep: 'Dash up to two tiles in any one direction, repositioning onto open ground or capturing a foe at the far tile. A nimble on-demand maneuver.',
+    banish: 'Send ANY foe, turret or rogue mini-boss you can see clean out of the world — it is simply gone, leaving a puff of smoke. It is NOT a kill: no boon, no corpse. A floor guardian and a summoning circle cannot be shifted. Cooldown 9.',
+    silence: 'Every foe you can SEE drops into a dead sleep for 3 turns — walk through them, or walk away. A free action; it breaks the instant you strike anything. Cooldown 9.',
+    confuse: 'Every foe you can SEE loses track of which side it is on. A confused piece either strikes whatever is nearest — its OWN kind included — or blunders off at random, an even chance of each. Nothing is immune: turrets, guardians and summoning circles all lose the thread. The fog lifts by itself about every other turn, and ANY blow you land snaps that piece straight out of it. Costs a turn. Cooldown 9.',
+    blink: 'Flicker to a random SAFE tile in sight — one no visible foe threatens. A free action (costs no turn); does nothing if there is no refuge. Cooldown 6.',
+    fireball: 'Hurl a fireball along any queen line. It strikes your target AND washes spellfire over every tile around it — which burns YOU and your allies if you are standing in the ring. Cooldown 7.',
     promotion: 'Become an INVINCIBLE warhorse for 3 turns: leap like a knight (and step a tile), take no damage, use no weapon cards. Free to cast, cooldown 9.',
     reload: 'Spend your turn to recharge every other card at once.',
     swap: 'Trade places with any unit in sight — enemy or turret. No damage.',
@@ -644,15 +769,22 @@
       stats.push(`Cards — ${(p.cards || []).length} ${classCategory(p.className)}`);
       const cls = CLASSES[p.className];
       addExamineBlock(cls ? `${cls.name} King` : 'Your King', stats);
-      if ((p.takenPerks || []).length && cls) {
-        addExamineBlock('Perks', p.takenPerks.map((id) => (cls.perks.find((k) => k.id === id) || { name: id }).name));
+      if (cls && (cls.startPerk || (p.takenPerks || []).length)) {
+        const names = [];
+        if (cls.startPerk) names.push(`${cls.startPerk.name} (innate)`);
+        for (const id of (p.takenPerks || [])) names.push((cls.perks.find((k) => k.id === id) || { name: id }).name);
+        addExamineBlock('Perks', names);
       }
     }
 
     if (visible) {
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
-        const st = enemy.boss && enemy.dormant
+        const st = gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)
+          ? 'Neutral — a wild beast at truce. It roams and takes no interest in you, and nothing else picks a fight with it. Step BESIDE it and it joins you; strike it and the truce is off for good'
+          : enemy.confused
+          ? 'Confused — strikes whatever is nearest, its own side included, or blunders off at random. Any blow you land snaps it out of it'
+          : enemy.boss && enemy.dormant
           ? (gameState.key && gameState.key.orb ? 'Dormant — guarding the Orb (wakes on sight)' : 'Dormant — guarding the key (wakes on sight)')
           : enemy.surprised
             ? 'Surprised — frozen this turn'
@@ -779,6 +911,28 @@
   function applyState(nextState, animate) {
     gameState = nextState;
     updateHud();
+    // Drain the action's SOUND CUES. The logic layer names what happened (a door creaked open, a
+    // boulder started rolling, something went down a pit); the mixer decides what actually sounds —
+    // see the priority/debounce/duck notes in audio.js. Cleared so a cue fires exactly once.
+    const cues = nextState.cues;
+    if (cues && cues.length) {
+      for (const c of cues) GameAudio.play(c);
+      nextState.cues = [];
+    }
+    // Drain the COLLISIONS: anything a shove slammed into something lurches at what it hit, the way
+    // the king's own blows lurch. Drained here rather than in landEnemyMove because a shove comes
+    // from both sides of the board — an enemy's Bulwark blow AND the king's own Blast/Recoil/
+    // Thundering Charge — and this is the one place both of them land.
+    if (nextState.shoveBumps && nextState.shoveBumps.length) {
+      for (const b of nextState.shoveBumps) Renderer.bumpEnemy(b.id, b.dx, b.dy);
+      nextState.shoveBumps = [];
+    }
+    // Drain SMOKE PUFFS: a Warper/Shadowstep/Burrower leaves smoke where it vanished and where it
+    // reappears. Drained here so it fires once, from whichever phase produced it.
+    if (nextState.puffs && nextState.puffs.length) {
+      for (const pf of nextState.puffs) Renderer.puff(pf.x, pf.y);
+      nextState.puffs = [];
+    }
     if (animate) {
       Renderer.sync(nextState);
     } else {
@@ -931,13 +1085,19 @@
 
     const taken = p.takenPerks || [];
     const chainColors = (cls && cls.chains) || {};
-    characterBody.append(characterBlock(`Perks (${taken.length})`, taken.length && cls
-      ? taken.map((id) => {
-          const perk = cls.perks.find((k) => k.id === id) || { name: id, desc: '' };
-          const text = perk.desc ? `${perk.name} — ${perk.desc}` : perk.name;
-          return { text, color: chainColors[perk.chain] || null };
-        })
-      : ['No perks taken yet.']));
+    // The INNATE class trait leads the list, tagged so it reads apart from the perks he CHOSE.
+    const perkRows = [];
+    if (cls && cls.startPerk) {
+      perkRows.push({ text: `${cls.startPerk.name} (innate) — ${cls.startPerk.desc}`, color: cls.color || null });
+    }
+    if (taken.length && cls) {
+      for (const id of taken) {
+        const perk = cls.perks.find((k) => k.id === id) || { name: id, desc: '' };
+        const text = perk.desc ? `${perk.name} — ${perk.desc}` : perk.name;
+        perkRows.push({ text, color: chainColors[perk.chain] || null });
+      }
+    }
+    characterBody.append(characterBlock(`Perks (${perkRows.length})`, perkRows.length ? perkRows : ['No perks taken yet.']));
   }
 
   function openCharacter() {
@@ -970,44 +1130,52 @@
     pendingConfirm = null;
   }
 
-  // The TROPHY ROOM: the whole badge case, earned and unearned, off the title screen. Locked badges
-  // are listed too (greyed, with their condition spelled out) — they double as a to-do list.
-  function renderTrophies() {
-    if (!trophyBody) return;
-    trophyBody.innerHTML = '';
+  // THE TROPHY ROOM, diegetic like the title: the king stands in the middle of a hall, this room's
+  // trophies on the walls around him, doorways ‹ › leading to the next room's worth. Build the whole
+  // collection into "rooms" of eight — best metal first, then the locked ones as a to-do list.
+  const TROPHY_PER_ROOM = 8;
+  function buildTrophyPages() {
     let store = {};
-    try {
-      store = loadAchievements() || {};
-    } catch {
-      store = {};
-    }
+    try { store = loadAchievements() || {}; } catch { store = {}; }
     const all = typeof ACHIEVEMENTS !== 'undefined' ? ACHIEVEMENTS : [];
-    const held = all.filter((a) => store[a.id]);
-    if (trophySub) {
-      trophySub.textContent = `${held.length} of ${all.length} earned`
-        + (held.length ? ` · ${held.filter((a) => store[a.id] === 'gold').length} gold` : '');
-    }
-    const shelf = document.createElement('div');
-    shelf.className = 'badge-shelf trophy-shelf';
-    // Earned first (gold → silver → bronze), then the ones still to win.
-    const rank = (a) => (store[a.id] ? 3 - ['bronze', 'silver', 'gold'].indexOf(store[a.id]) : 9);
-    for (const a of all.slice().sort((x, y) => rank(x) - rank(y))) {
-      const tier = store[a.id];
-      shelf.append(badgeChip(a, tier, '', tier ? 'badge-won' : 'badge-locked'));
-    }
-    trophyBody.append(shelf);
+    const rank = { gold: 0, silver: 1, bronze: 2 };
+    const list = all.map((a) => ({ id: `t_${a.id}`, name: a.name, tier: store[a.id] || null, desc: a.desc }));
+    list.sort((p, q) => (p.tier ? rank[p.tier] : 9) - (q.tier ? rank[q.tier] : 9));
+    const pages = [];
+    for (let i = 0; i < list.length; i += TROPHY_PER_ROOM) pages.push(list.slice(i, i + TROPHY_PER_ROOM));
+    trophyPages = pages.length ? pages : [[]];
+    trophyTotals = { earned: list.filter((t) => t.tier).length, total: list.length };
+  }
+
+  function trophySceneModel() {
+    const pageCount = Math.max(1, trophyPages.length);
+    const page = Math.max(0, Math.min(trophyPage, pageCount - 1));
+    return {
+      hover: sceneHover,
+      page,
+      pageCount,
+      countLine: `${trophyTotals.earned} of ${trophyTotals.total} won · Room ${page + 1} of ${pageCount}`,
+      trophies: trophyPages[page] || [],
+      hasPrev: page > 0,
+      hasNext: page < pageCount - 1,
+    };
   }
 
   function openTrophies() {
-    screenBeforeModal = screen;
     screen = 'trophies';
-    renderTrophies();
-    if (trophyScreen) trophyScreen.classList.remove('hidden');
+    gameState = null;
+    trophyPage = 0;
+    sceneHover = null;
+    buildTrophyPages();
+    document.body.classList.remove('in-game');
+    document.body.classList.add('on-title');
+    hideOverlays(); // the diegetic hall IS the screen — no DOM card
   }
 
-  function closeTrophies() {
-    if (trophyScreen) trophyScreen.classList.add('hidden');
-    screen = screenBeforeModal === 'trophies' ? 'title' : screenBeforeModal;
+  function pageTrophies(delta) {
+    const pageCount = Math.max(1, trophyPages.length);
+    trophyPage = Math.max(0, Math.min(pageCount - 1, trophyPage + delta));
+    sceneHover = null;
   }
 
   function showTitle() {
@@ -1023,9 +1191,9 @@
     document.body.classList.add('on-title');
     hideTilePopover();
     hideOverlays();
-    titleScreen.classList.remove('hidden');
-    continueButton.disabled = !hasSave();
-    renderRunTable(titleRunTable, null);
+    titleScreen.classList.add('hidden'); // the diegetic board IS the title now
+    titleHover = null;
+    canvas.style.cursor = 'default';
     logEl.innerHTML = '';
     lastLogged = null;
   }
@@ -1052,7 +1220,7 @@
     const lines = [cls.name, cls.blurb, ''];
     lines.push(`• All cards are ${cls.category}; starts with a ${cls.start} card`);
     lines.push(`• Every descent, pick one of two ${cls.name} boons (tiered chains):`);
-    cls.perks.forEach((perk) => lines.push(`   – ${perk.name}: ${perk.desc}`));
+    cls.perks.forEach((perk) => lines.push(`   – ${perk.name}: ${perk.short || perk.desc}`));
     return lines.join('\n');
   }
 
@@ -1071,33 +1239,132 @@
 
   // Open the class-select screen (the "New Game" entry point). Each row shows a
   // brief description; hovering reveals full details (kit + each perk).
-  function openClassSelect() {
-    screen = 'class';
-    hideOverlays();
-    classScreen.classList.remove('hidden');
-    classList.innerHTML = '';
-    for (const key of Object.keys(CLASSES)) {
-      const cls = CLASSES[key];
-      const row = document.createElement('li');
-      row.className = 'shop-item class-item';
-      const info = document.createElement('div');
-      info.className = 'shop-info';
-      info.innerHTML =
-        `<span class="shop-name" style="color:${cls.color}">${cls.name}</span>` +
-        `<span class="shop-desc">${cls.blurb}</span>`;
-      const pick = document.createElement('button');
-      pick.type = 'button';
-      pick.textContent = 'Choose';
-      pick.addEventListener('click', () => {
-        hideClassPopover();
-        openDifficultySelect(key);
-      });
-      row.addEventListener('mouseenter', (e) => showClassPopover(key, e));
-      row.addEventListener('mousemove', (e) => showClassPopover(key, e));
-      row.addEventListener('mouseleave', hideClassPopover);
-      row.append(info, pick);
-      classList.append(row);
+  // '#rrggbb' + an alpha 0..1 -> 'rgba(r,g,b,a)', for canvas glows.
+  function hexAlpha(hex, a) {
+    const h = (hex || '#888').replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16) || 0;
+    const g = parseInt(h.slice(2, 4), 16) || 0;
+    const b = parseInt(h.slice(4, 6), 16) || 0;
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+
+  // Dark ink on a light colour, light ink on a dark one — the same choice the in-game king token
+  // makes for its glyph, so the emblem reads the same way the piece will.
+  function inkFor(hex) {
+    const h = (hex || '#888').replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16) || 0;
+    const g = parseInt(h.slice(2, 4), 16) || 0;
+    const b = parseInt(h.slice(4, 6), 16) || 0;
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#17171d' : '#faf6e9';
+  }
+
+  // A small canvas showing HOW THIS CLASS LOOKS: the king token in the class colour, on a soft glow
+  // of that same colour — the exact token the player will command, so the three of them read apart
+  // at a glance. The starting-piece glyph rides in the corner as a hint at the kit.
+  const PIECE_GLYPH = { knight: '♞', bishop: '♝', rook: '♜', king: '♚' };
+  function classEmblem(cls) {
+    const el = document.createElement('canvas');
+    const S = 88;
+    el.width = S; el.height = S;
+    el.className = 'class-emblem';
+    const g = el.getContext('2d');
+    const cx = S / 2;
+    const cy = S / 2;
+    const r = S * 0.3;
+    // The glow.
+    const glow = g.createRadialGradient(cx, cy, r * 0.4, cx, cy, r * 1.7);
+    glow.addColorStop(0, hexAlpha(cls.color, 0.5));
+    glow.addColorStop(1, hexAlpha(cls.color, 0));
+    g.fillStyle = glow;
+    g.beginPath();
+    g.arc(cx, cy, r * 1.7, 0, Math.PI * 2);
+    g.fill();
+    // The token: class-coloured disc, cream ring.
+    g.fillStyle = cls.color;
+    g.beginPath();
+    g.arc(cx, cy, r, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = '#faf6e9';
+    g.lineWidth = Math.max(2, S * 0.03);
+    g.stroke();
+    // The king glyph, in contrasting ink.
+    g.fillStyle = inkFor(cls.color);
+    g.font = `${Math.round(r * 1.5)}px "Segoe UI Symbol", serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(PIECE_GLYPH.king, cx, cy + r * 0.08);
+    // The starting piece as a small corner chip — a nod to the class's opening weapon.
+    const bs = S * 0.28;
+    const bx = S - bs * 0.62;
+    const by = S - bs * 0.62;
+    g.fillStyle = 'rgba(2, 6, 23, 0.85)';
+    g.beginPath();
+    g.arc(bx, by, bs * 0.5, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = cls.color;
+    g.lineWidth = Math.max(1.5, S * 0.02);
+    g.stroke();
+    g.fillStyle = '#f1e5c8';
+    g.font = `${Math.round(bs * 0.7)}px "Segoe UI Symbol", serif`;
+    g.fillText(PIECE_GLYPH[cls.start] || '♟', bx, by + bs * 0.06);
+    return el;
+  }
+
+  // CHARACTER CREATION, diegetic like the title: three kings stand on the board and you pick one,
+  // then the same for the difficulty. No DOM card — just the scene, drawn each frame from this model.
+  const DIFF_MEDAL = { easy: 'bronze', hard: 'silver', nightmare: 'gold' };
+  function classPickModel() {
+    if (pickStage === 'difficulty') {
+      const cls = CLASSES[pickedClass] || {};
+      return {
+        title: 'Choose your trial',
+        subtitle: `${cls.name || 'The king'} — how thick is your skin?`,
+        hover: sceneHover,
+        choices: DIFFICULTIES.map((d) => {
+          const hp = (DIFFICULTY_HP[d.key] || {})[pickedClass];
+          return {
+            id: d.key,
+            color: d.color,
+            label: d.name + (d.recommended ? ' ★' : ''),
+            sublabel: `${hp ? `${hp} HP` : ''} · ${DIFF_MEDAL[d.key] || ''} badges`,
+            desc: d.blurb + (d.recommended ? ' (Recommended)' : ''),
+          };
+        }),
+      };
     }
+    return {
+      title: 'Choose your calling',
+      subtitle: 'A lone king wanders a hostile board — which king are you?',
+      hover: sceneHover,
+      choices: Object.keys(CLASSES).map((k) => {
+        const c = CLASSES[k];
+        return {
+          id: k,
+          color: c.color,
+          label: c.name,
+          sublabel: `${PIECE_GLYPH[c.start] || '♟'} ${c.start} opener`,
+          desc: c.blurb,
+        };
+      }),
+    };
+  }
+
+  // The "New Game" entry point (title, options, Play Again, victory). Gated: if a run is still saved,
+  // confirm before it's wiped. Once confirmed, enterClassSelect actually opens the picker.
+  function openClassSelect() {
+    confirmNewGame(enterClassSelect);
+  }
+  function enterClassSelect() {
+    screen = 'class';
+    // Always the clean title-style board behind the scene, whether we arrived from the title or from
+    // Play Again after a run — otherwise a dead final board (and the game panes) would show through.
+    gameState = null;
+    pickStage = 'class';
+    pickedClass = null;
+    sceneHover = null;
+    document.body.classList.remove('in-game');
+    document.body.classList.add('on-title');
+    hideOverlays(); // the diegetic scene IS the screen now — no DOM card
   }
 
   // After the class, pick a difficulty for the run (reuses the class-select screen).
@@ -1108,6 +1375,41 @@
     { key: 'hard', name: 'Hard', color: '#fbbf24', blurb: 'The standard trial. Badges earn SILVER.', recommended: true },
     { key: 'nightmare', name: 'Nightmare', color: '#ef4444', blurb: 'The same dungeon, met with a thin skin. Badges earn GOLD.' },
   ];
+  // The difficulty as an emblem: a heart in the difficulty's colour with the starting HP inside it.
+  // Difficulty is only ever "how thick your skin is", so a heart carrying the number says it plainly.
+  function difficultyEmblem(diff, hp) {
+    const el = document.createElement('canvas');
+    const S = 88;
+    el.width = S; el.height = S;
+    el.className = 'class-emblem';
+    const g = el.getContext('2d');
+    const cx = S / 2;
+    const cy = S * 0.46;
+    const r = S * 0.3;
+    const glow = g.createRadialGradient(cx, cy, r * 0.3, cx, cy, r * 1.7);
+    glow.addColorStop(0, hexAlpha(diff.color, 0.5));
+    glow.addColorStop(1, hexAlpha(diff.color, 0));
+    g.fillStyle = glow;
+    g.beginPath();
+    g.arc(cx, cy, r * 1.7, 0, Math.PI * 2);
+    g.fill();
+    // A heart in the difficulty colour.
+    g.fillStyle = diff.color;
+    g.beginPath();
+    const t = r * 1.15;
+    g.moveTo(cx, cy + t * 0.5);
+    g.bezierCurveTo(cx - t, cy - t * 0.25, cx - t * 0.5, cy - t * 0.75, cx, cy - t * 0.3);
+    g.bezierCurveTo(cx + t * 0.5, cy - t * 0.75, cx + t, cy - t * 0.25, cx, cy + t * 0.5);
+    g.fill();
+    // The starting HP, stamped into it.
+    g.fillStyle = inkFor(diff.color);
+    g.font = `700 ${Math.round(r * 0.95)}px "Segoe UI", sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    if (hp) g.fillText(String(hp), cx, cy - r * 0.05);
+    return el;
+  }
+
   function openDifficultySelect(classKey) {
     screen = 'class';
     classScreen.classList.remove('hidden');
@@ -1128,7 +1430,7 @@
       pick.type = 'button';
       pick.textContent = 'Begin';
       pick.addEventListener('click', () => newGame(classKey, diff.key));
-      row.append(info, pick);
+      row.append(difficultyEmblem(diff, hp), info, pick);
       classList.append(row);
       if (diff.recommended) defaultBtn = pick;
     }
@@ -1384,7 +1686,7 @@
       const chainColor = chainColors[perk.chain];
       const nameStyle = chainColor ? ` style="color:${chainColor}"` : '';
       const chainTag = perk.chain ? `<span class="shop-desc"${nameStyle}>${perk.chain}</span>` : '';
-      info.innerHTML = `<span class="shop-name"${nameStyle}>${perk.name}</span>${chainTag}<span class="shop-desc">${perk.desc}</span>`;
+      info.innerHTML = `<span class="shop-name"${nameStyle}>${perk.name}</span>${chainTag}<span class="shop-desc">${perk.short || perk.desc}</span>`;
       const take = document.createElement('button');
       take.type = 'button';
       take.textContent = 'Take';
@@ -1438,9 +1740,14 @@
     processPlayerResult(result);
   }
 
-  function openConfirm(text, onYes) {
+  // `opts` (optional) overrides the modal's heading and its confirm-button label; defaults keep the
+  // original descend-past-boss wording so that caller needs no change.
+  function openConfirm(text, onYes, opts) {
+    const o = opts || {};
     pendingConfirm = onYes;
     if (confirmText) confirmText.textContent = text;
+    if (confirmTitleEl) confirmTitleEl.textContent = o.title || 'Descend?';
+    if (confirmYesButton) confirmYesButton.textContent = o.yesLabel || 'Descend anyway';
     screenBeforeModal = screen;
     screen = 'confirm';
     if (confirmScreen) confirmScreen.classList.remove('hidden');
@@ -1449,13 +1756,33 @@
   function closeConfirm() {
     pendingConfirm = null;
     if (confirmScreen) confirmScreen.classList.add('hidden');
-    screen = 'playing';
+    // Return to whatever raised the modal — the game (descend-past-boss), the title, or the options
+    // menu (a new-game confirm). It used to hardcode 'playing', which was fine when only the in-game
+    // descend prompt used it; a confirm raised from the title would have dumped the player into a
+    // dead 'playing' screen with no gameState.
+    screen = screenBeforeModal;
+  }
+
+  // Starting a fresh run WIPES the single save slot. If a run is in progress, make the player confirm
+  // before it is gone; with nothing saved there is nothing to lose, so go straight through.
+  function confirmNewGame(proceed) {
+    if (typeof hasSave === 'function' && hasSave()) {
+      openConfirm('Starting a new game will erase your current run — this cannot be undone.', proceed,
+        { title: 'New Game?', yesLabel: 'Erase & start over' });
+    } else {
+      proceed();
+    }
   }
 
   function processPlayerResult(nextState) {
     if (nextState.lastAction === 'blocked') {
-      // A blocked action (card recharging, no target, etc.) changes no positions — just surface
-      // its message. Do NOT reset the renderer/camera (that caused the move-and-snap-back).
+      // A blocked action (card recharging, no target, weapon while wading, nothing to swap with,
+      // nothing to banish, nowhere to blink...) changes no positions — just surface its message.
+      // Do NOT reset the renderer/camera (that caused the move-and-snap-back).
+      //
+      // The BEEP is here rather than at each refusal because every one of them sets this same flag:
+      // one sound, one place, and any refusal added later gets it for free.
+      GameAudio.play('nope');
       gameState = nextState;
       updateHud();
       return;
@@ -1478,8 +1805,16 @@
   function resolveCommitted(nextState) {
     const prevEnemies = gameState ? gameState.enemies.length : 0;
     const hadKey = Boolean(gameState && gameState.key && gameState.key.collected);
+    const hpBefore = gameState ? gameState.player.hp : nextState.player.hp;
 
     applyState(nextState, true);
+    // BANISH: the foe is already gone from the state — all that is left to show is the smoke where
+    // it stood. Cleared so it fires exactly once.
+    if (gameState.banished) {
+      Renderer.puff(gameState.banished.x, gameState.banished.y);
+      GameAudio.play('unsummon');
+      gameState.banished = null;
+    }
     maybeShowLockedExitTip(nextState); // explain the seal ONLY if he just stepped onto the locked stair
     Renderer.centerOn(nextState.player.x, nextState.player.y); // keep the king in view after a move
     // The king struck a survivor and bounced off it: pounce onto its tile, then ease to where he
@@ -1493,6 +1828,17 @@
     if (nextState.key && nextState.key.collected && !hadKey) {
       Renderer.effect('key');
       GameAudio.play('buy');
+    }
+
+    // BLOOD HE SPILLS HIMSELF. Only landEnemyMove compared HP, so a wound taken on the king's OWN
+    // turn — wading into lava, phasing into a wall-torch — cost him a heart in total silence: no
+    // flash, no shake, no sound, just a number quietly ticking down while he strolled across a lake
+    // of fire. Every source is caught here rather than at each one, so anything self-inflicted added
+    // later gets the same feedback for free.
+    if (nextState.player.hp < hpBefore) {
+      Renderer.effect(nextState.gameOver ? 'death' : 'hit');
+      GameAudio.play(nextState.gameOver ? 'death' : 'hit');
+      flashHealth();
     }
 
     const felled = prevEnemies - nextState.enemies.length; // captures this action
@@ -1542,6 +1888,15 @@
     }
     // Quick weapons / Bloodrush kills cost no turn — no enemy phase.
     if (nextState.enemyTurn === false || nextState.lastAction === 'card-free' || nextState.lastAction === 'move-free') {
+      // A free action hands control STRAIGHT back to him, so this is a moment he has to be able to
+      // act — and the enemy phase (where stalemate is normally judged) never runs. Blinking onto an
+      // island of pits is exactly the move that does this, and without the check here the game would
+      // simply sit there waiting for an input he cannot give.
+      if (typeof checkStalemate === 'function' && checkStalemate(gameState)) {
+        applyState(gameState, true);
+        onGameOver();
+        return;
+      }
       maybeOpenLevelUp(); // a free-action boss kill still earns its boon
       return;
     }
@@ -1561,6 +1916,10 @@
     // Pieces newly in view freeze in surprise; the rest get to move.
     const phase = beginEnemyPhase(gameState);
     applyState(phase.state, true);
+    // A guardian STARTLED this phase roars now — on the same turn its "!" goes up. That shout is
+    // raised by the phase itself, not by a mover (a gasping boss doesn't act), so nothing in the
+    // per-mover path would ever show it.
+    showBossShout();
     enemyQueue = phase.moverIds;
     animTimer = PLAYER_MOVE_TIME;
     scanVisibleTips(phase.state);
@@ -1569,12 +1928,28 @@
   // Everything that happens once an enemy's move has actually LANDED: apply it and react to the
   // blow. Split out so a projectile can defer all of it until its arrow arrives. Returns true if
   // the queue must stop here (the king died).
+  // A guardian's first-sighting ROAR: the log line, the speech bubble over its head, and the blare.
+  // Shared by the phase (a boss startled into a gasp) and the per-mover path (one that wakes already
+  // hunting), so a roar looks and sounds the same however it is triggered. Cleared so it fires once.
+  function showBossShout() {
+    if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
+    if (gameState.bossShout) {
+      Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text, gameState.bossShout.demon);
+      GameAudio.play('roar');
+      gameState.bossShout = null;
+    }
+  }
+
   function landEnemyMove(next, hpBefore) {
     applyState(next, true);
-    // A boss's first-sighting ROAR is logged separately so it doesn't cost the boss its action.
-    if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
-    // ...and pops a short speech bubble over its head for a beat (only on this scream turn).
-    if (gameState.bossShout) { Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text, gameState.bossShout.demon); gameState.bossShout = null; }
+    showBossShout();
+    // A foe that swung at the king lunges at him and recoils. AFTER applyState, because sync()
+    // retargets every token — it leaves render.x alone, which is exactly what lets the nudge ride
+    // on top and ease back on its own.
+    if (gameState.strikeBump) {
+      Renderer.bumpEnemy(gameState.strikeBump.id, gameState.strikeBump.dx, gameState.strikeBump.dy);
+      gameState.strikeBump = null;
+    }
     if (gameState.player.hp < hpBefore) {
       Renderer.effect(gameState.gameOver ? 'death' : 'hit');
       GameAudio.play(gameState.gameOver ? 'death' : 'hit');
@@ -1618,6 +1993,26 @@
         animTimer = SHOT_LEAD_TIME;
         return;
       }
+      // DEFENESTRATED: a knockback (or a Warper's swap) bowled the king onto the open stair and he
+      // tumbled down. Descend exactly as a stepped exit does, and stop the queue here — the rest of it
+      // belongs to a floor that is about to be replaced.
+      if (next.lastAction === 'exit') {
+        applyState(next, true);
+        GameAudio.play('descend');
+        enemyQueue = [];
+        pendingAction = 'floor';
+        animTimer = PLAYER_MOVE_TIME;
+        return;
+      }
+      // A piece that did NOTHING you can see — a turret sweeping an empty lane, a circle groping
+      // for a camouflaged king, a guardian sitting on its key — must not cost a beat of animation.
+      // Otherwise the game stutters between the king's turns in proportion to how many idle guns
+      // happen to be on screen, which is worst exactly when he is playing well and staying out of
+      // their lanes. Apply it and move straight on to the next mover.
+      if (next.lastAction === 'idle') {
+        applyState(next, true);
+        continue;
+      }
       if (landEnemyMove(next, hpBefore)) return;
       animTimer = ENEMY_MOVE_TIME;
       return;
@@ -1654,7 +2049,9 @@
     }
     if (result.lastAction === 'blocked') {
       // Walked into a wall / impassable tile: a lean-and-bounce BUMP that spends no turn and,
-      // crucially, does NOT reset the renderer — so the camera never snaps (the old bug).
+      // crucially, does NOT reset the renderer — so the camera never snaps (the old bug). The beep
+      // says "that did nothing, and it cost you nothing" — the bump alone was easy to miss.
+      GameAudio.play('nope');
       gameState = result;
       updateHud();
       Renderer.bump(dx, dy);
@@ -1769,7 +2166,13 @@
     if (screen === 'title' || screen === 'class') GameAudio.setTrack('title');
     else if (screen === 'gameover') GameAudio.setTrack('death');
     else if (screen === 'levelup' || screen === 'victory') GameAudio.setTrack('altar');
-    else if (screen === 'playing') GameAudio.setTrack('explore');
+    // The demon realm gets its own loop — the same wandering shape, dragged down into the pit. An
+    // OVERWORLD floor gone molten in the overstay switches to it too: once the lava wells up, the
+    // dread is hell's, and so is the score.
+    else if (screen === 'playing') {
+      const hellish = gameState && ((gameState.floor || 1) >= DEMON_FLOOR || (gameState.turn || 0) >= MAX_TURNS_SCARY);
+      GameAudio.setTrack(hellish ? 'hell' : 'explore');
+    }
 
     // The exploring score HURRIES a gear at a time as the floor's dread climbs (so the pressure to
     // get off the floor is audible), and darkens to the tense progression past the danger line.
@@ -1782,11 +2185,27 @@
     GameAudio.setTension(inDanger);
 
     Renderer.update(delta);
-    // While aiming a card, show its reachable tiles instead of moves.
-    const aiming = cardTargeting !== null;
-    const targets = aiming ? cardTargets : null;
-    const aoe = aiming ? spellAoeTiles(gameState, cardTargeting, cardCursor) : null;
-    Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null, aoe);
+    if (screen === 'title') {
+      // The whole title screen is the board now — the menu options are tiles on it.
+      Renderer.drawTitle(titleMenuModel());
+    } else if (screen === 'class' && !gameState && typeof Renderer.drawPickScene === 'function') {
+      // CHARACTER CREATION: three kings on the board, one per class (then per difficulty) — pick one.
+      Renderer.drawPickScene(classPickModel());
+    } else if (screen === 'trophies' && !gameState && typeof Renderer.drawTrophyScene === 'function') {
+      // THE TROPHY ROOM: the king in a hall, this room's trophies around him, doorways to the rest.
+      Renderer.drawTrophyScene(trophySceneModel());
+    } else if (!gameState) {
+      // A pre-game screen with no board of its own (options opened from the title): show the living
+      // board behind the card rather than a black void. Screens with a gameState (gameover, victory,
+      // and modals opened mid-run) fall through and keep their board.
+      Renderer.drawBoardBackdrop();
+    } else {
+      // While aiming a card, show its reachable tiles instead of moves.
+      const aiming = cardTargeting !== null;
+      const targets = aiming ? cardTargets : null;
+      const aoe = aiming ? spellAoeTiles(gameState, cardTargeting, cardCursor) : null;
+      Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null, aoe);
+    }
     requestAnimationFrame(step);
   }
 
@@ -1820,6 +2239,21 @@
       } else if (event.key === 'Escape') {
         event.preventDefault();
         closeConfirm();
+      }
+      return;
+    }
+
+    // The diegetic pre-game scenes: arrow keys WALK the trophy rooms; Escape steps back a level
+    // (difficulty → class → title, or out of the trophy hall). No other key acts on them.
+    if (screen === 'class' || screen === 'trophies') {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (screen === 'class' && pickStage === 'difficulty') { pickStage = 'class'; sceneHover = null; } else showTitle();
+        return;
+      }
+      if (screen === 'trophies' && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        event.preventDefault();
+        pageTrophies(event.key === 'ArrowRight' ? 1 : -1);
       }
       return;
     }
@@ -1864,11 +2298,6 @@
 
     // Not aiming and not in a confirm: Escape toggles the Options menu.
     if (event.key === 'Escape') {
-      if (screen === 'trophies') {
-        event.preventDefault();
-        closeTrophies();
-        return;
-      }
       if (screen === 'options') {
         event.preventDefault();
         closeOptions();
@@ -1886,6 +2315,16 @@
     if (cardKey) {
       event.preventDefault();
       toggleCardTargeting(Number(cardKey[1]) - 1);
+      return;
+    }
+
+    // DISCIPLINE (Warrior's innate): Space / '.' / numpad-5 holds the ground — a spent turn with no
+    // move, so foes come to him. Only when he actually has the trait; otherwise these keys fall
+    // through (Space does nothing while playing, numpad-5 is not a direction).
+    if (screen === 'playing' && gameState && gameState.player.discipline
+        && (event.key === ' ' || event.code === 'Space' || event.key === '.' || event.code === 'Period' || event.code === 'Numpad5')) {
+      event.preventDefault();
+      if (isIdle()) commitMove(skipTurn(gameState));
       return;
     }
 
@@ -1917,8 +2356,46 @@
       suppressClick = false; // this "click" was the end of a drag
       return;
     }
+    if (screen === 'title') {
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      const id = Renderer.titleOptionAt((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
+      if (id) {
+        const opt = titleMenuModel().options.find((o) => o.id === id);
+        if (opt && opt.enabled && opt.action) opt.action();
+      }
+      return;
+    }
+    if (screen === 'class' || screen === 'trophies') {
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      const id = Renderer.sceneOptionAt((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
+      if (id) handleSceneClick(id);
+      return;
+    }
     handleClick(event);
   });
+
+  // A click on the diegetic class-select or trophy scene, by the hit-rect id the renderer reported.
+  function handleSceneClick(id) {
+    if (id === 'back') {
+      if (screen === 'class' && pickStage === 'difficulty') { pickStage = 'class'; sceneHover = null; } else showTitle();
+      return;
+    }
+    if (screen === 'trophies') {
+      if (id === 'prev') pageTrophies(-1);
+      else if (id === 'next') pageTrophies(1);
+      return; // trophy medallions themselves only ever HOVER (to show their condition)
+    }
+    // Class select: a king was chosen. First the class, then the difficulty, then the run begins.
+    // Validate the id against the CURRENT stage — a click landing a frame before the scene redraws
+    // could otherwise pass a class key where a difficulty is expected (and vice-versa).
+    if (pickStage === 'class') {
+      if (CLASSES[id]) { pickedClass = id; pickStage = 'difficulty'; sceneHover = null; }
+    } else if (DIFFICULTY_HP[id]) {
+      newGame(pickedClass, id);
+    }
+  }
 
   // Mouse wheel zooms toward / away.
   canvas.addEventListener(
@@ -1967,6 +2444,29 @@
       dragLast = { x: event.clientX, y: event.clientY };
     }
 
+    if (screen === 'title') {
+      titleHover = Renderer.titleOptionAt(x * scale, y * scale);
+      canvas.style.cursor = titleHover ? 'pointer' : 'default';
+      return; // the popover is a play-screen thing
+    }
+    if (screen === 'class' || screen === 'trophies') {
+      sceneHover = Renderer.sceneOptionAt(x * scale, y * scale);
+      // On class select every king (and Back) is clickable; in the trophy room only the doorways and
+      // Back are — a hovered medallion just shows its condition, so it gets no pointer cursor.
+      const clickable = screen === 'class'
+        ? Boolean(sceneHover)
+        : sceneHover === 'back' || sceneHover === 'prev' || sceneHover === 'next';
+      canvas.style.cursor = clickable ? 'pointer' : 'default';
+      return;
+    }
+    // While AIMING, hovering a valid target moves the aim cursor there — so the AoE / spell-path
+    // preview follows the MOUSE, not only the keyboard. This is what makes the Spectral Steed show its
+    // whole L-path to wherever you point (it only ever tracked the keyboard cursor before).
+    if (screen === 'playing' && cardTargeting !== null && cardTargets.length && typeof Renderer.screenToTile === 'function') {
+      const tile = Renderer.screenToTile(x * scale, y * scale);
+      const t = cardTargets.find((c) => c.x === tile.x && c.y === tile.y);
+      if (t) cardCursor = { x: t.x, y: t.y };
+    }
     showTilePopover(event, x * scale, y * scale);
   });
 
@@ -2045,7 +2545,7 @@
   continueButton.addEventListener('click', continueGame);
   titleOptionsButton.addEventListener('click', openOptions);
   if (trophyButton) trophyButton.addEventListener('click', openTrophies);
-  if (trophyCloseButton) trophyCloseButton.addEventListener('click', closeTrophies);
+  if (trophyCloseButton) trophyCloseButton.addEventListener('click', showTitle); // DOM back button (the trophy room is diegetic now; this is a harmless fallback)
   playAgainButton.addEventListener('click', openClassSelect);
   toTitleButton.addEventListener('click', showTitle);
   victoryContinueButton.addEventListener('click', continueAfterVictory);
@@ -2090,7 +2590,7 @@
     });
   }
   restartButton.addEventListener('click', () => {
-    newGame(); // lives in the options menu now; starts a fresh run
+    confirmNewGame(newGame); // "Restart Run" in the options menu — confirm before wiping the current one
   });
 
   showTitle();
