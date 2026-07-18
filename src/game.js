@@ -2966,11 +2966,10 @@ function smashBoulder(state, x, y) {
   delete state.terrain[`${x},${y}`];
   addRubble(state, x, y);
 }
-// A leaper that lands on a boulder crushes it (leaving rubble); landing on an ice slab
-// shatters it (a leap is a valid way onto ice).
+// A leaper that lands on a BOULDER crushes it (leaving rubble). ICE it does NOT break — a jumper
+// PERCHES on the intact slab (a leap is a valid way onto ice; walkers still can't set foot on it).
 function crushBoulderUnder(state, unit) {
   smashBoulder(state, unit.x, unit.y);
-  smashIce(state, unit.x, unit.y);
 }
 // Collapse a wall to open floor, leaving a fading pile of rubble (cosmetic) — the same remains a
 // crushed boulder leaves. Used wherever a wall is destroyed in play (e.g. a cave-in).
@@ -3068,9 +3067,9 @@ function applyArrival(next, x, y, embedded) {
   // other enemy's tile is: a blow, which breaks the truce for good (damageBoss sets provokedBeast).
   // If he wants it on his side he has to walk up BESIDE it and offer his hand (see charmBeasts).
 
-  // Leapt onto a boulder? He crushes it to rubble as he lands. Onto an ice slab? It shatters.
+  // Leapt onto a boulder? He crushes it to rubble as he lands. Onto an ice slab? He simply perches on
+  // it — a leap lands ON ice without breaking it (only fire thaws it, or a slam shatters it).
   smashBoulder(next, x, y);
-  if (smashIce(next, x, y)) next.player.brokeIce = true; // badge ledger
 
   // A boss soaks HP (it has a bar). The KILLING blow strides onto its tile (grabbing any guarded
   // key); a survived hit lands the king BESIDE it (nearest his origin) rather than freezing him.
@@ -3925,9 +3924,9 @@ function useCard(state, cardIndex, x, y) {
         if (isKillablePiece(trampled)) realKill = true;
       }
     }
-    // A leap card that lands on a boulder crushes it to rubble (the king ends up there);
-    // landing on an ice slab shatters it.
-    if (isLeap) { smashBoulder(next, x, y); if (smashIce(next, x, y)) p.brokeIce = true; } // badge ledger
+    // A leap card that lands on a boulder crushes it to rubble (the king ends up there); landing on
+    // an ice slab does NOT break it — he perches on the intact slab.
+    if (isLeap) smashBoulder(next, x, y);
     if (move.chop) {
       // He sprang at TIMBER or IRON. There is no landing on it: the blade goes in and he BOUNCES
       // OFF — coming down on the nearest tile beside the trunk, the way a knight rebounds off a boss

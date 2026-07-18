@@ -24,19 +24,24 @@ const DIFFICULTY_HP = {
 // was so gradual it BOILED THE FROG — you never felt the moment it turned, you only slowly noticed.
 // Short steps mean a player moving at a decent clip is off the floor inside the grace and never
 // meets it at all, while one who dawdles gets urgency that ARRIVES rather than creeps.
-const DREAD_STEP_TURNS = 20;
-const DREAD_GRACE_STEPS = 3; // the quiet opening — nothing stirs
+// Softened so a MODESTLY-skilled clear (~120 turns) still finishes inside the grace: a long quiet
+// opening, then dread climbs across the middle, then — for a king who WILL NOT leave — the molten
+// overstay. Each of the three phases is 120 turns: grace 0-120 (first danger tick at 120), dread ramp
+// 120-240 (max dread + first lava at 240), lava ramp 240-360 (molten peak at 360). The grace holds 5
+// steps and the ramp 5 (fixed by the audio's HURRY gears), so a step is 24 turns.
+const DREAD_STEP_TURNS = 24;
+const DREAD_GRACE_STEPS = 5; // the quiet opening — nothing stirs (5 * 24 = 120 turns)
 const DREAD_RAMP_STEPS = 5; // must match HURRY.length in audio.js
-const DREAD_TOTAL_STEPS = DREAD_GRACE_STEPS + DREAD_RAMP_STEPS; // 8 — the chess theme
-const DREAD_GRACE_TURNS = DREAD_STEP_TURNS * DREAD_GRACE_STEPS; // 60
-const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 160 — dread maxes here (the 8th tick)
-// PAST max dread, a floor the king WILL NOT LEAVE turns lethal: five more OVERSTAY steps (ticks 9-13)
-// over which LAVA wells up and closes in (tickLavaEncroachment) and the swarm runs unbounded. It all
-// peaks at tick 13 — by then the molten floor and the horde together kill any build. See
+const DREAD_TOTAL_STEPS = DREAD_GRACE_STEPS + DREAD_RAMP_STEPS; // 10
+const DREAD_GRACE_TURNS = DREAD_STEP_TURNS * DREAD_GRACE_STEPS; // 120 — the first danger tick lands here
+const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 240 — dread maxes, and the first lava wells up
+// PAST max dread, a floor the king WILL NOT LEAVE turns lethal: five more OVERSTAY steps (turns
+// 240-360) over which LAVA wells up and closes in (tickLavaEncroachment) and the swarm runs unbounded.
+// It peaks at turn 360 — by then the molten floor and the horde together kill any build. See
 // overstayFraction. (Fairy Wings crosses the fire but not the horde; Waiting shrugs the horde but not
 // the fire; no class can hold both, so lingering is always fatal in the end.)
 const DREAD_OVERSTAY_STEPS = 5;
-const MAX_TURNS_LAVA = MAX_TURNS_SCARY + DREAD_STEP_TURNS * DREAD_OVERSTAY_STEPS; // 260 — the molten floor peaks here
+const MAX_TURNS_LAVA = MAX_TURNS_SCARY + DREAD_STEP_TURNS * DREAD_OVERSTAY_STEPS; // 360 — the molten floor peaks here
 // Which HURRY gear a dread fraction sits in. Gear 0 is the GRACE; 1..DREAD_RAMP_STEPS are the
 // climbing steps.
 //

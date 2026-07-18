@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, tickGeysers, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, tickGeysers, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -30,7 +30,7 @@ const {
   playerTitle, cardBlockedReason, committedChain, attackTile, isStalemate, knightLPath, BOSS_PERKS,
   fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards,
   tickGeysers, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
-  overstayFraction, MAX_TURNS_LAVA,
+  overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -900,7 +900,7 @@ test('boulder: the king shoves it; into a pit it fills the hole', () => {
   assert.equal(terrainAt(r, 10, 8), 'normal', 'and filled the pit');
 });
 
-test('a leaping enemy that PURSUES onto ice (or a boulder) shatters it, just like a hunting leap', () => {
+test('a leaping enemy that PURSUES onto ice PERCHES on it (a boulder it still crushes)', () => {
   // A knight OUT of the king's awareness hunts his last-seen tile via pursueLastSeen — a path that
   // used to move the piece without crushing whatever it leapt onto.
   const leapPursuitOnto = (terrain) => {
@@ -915,8 +915,8 @@ test('a leaping enemy that PURSUES onto ice (or a boulder) shatters it, just lik
   };
   const onIce = leapPursuitOnto('ice');
   assert.deepEqual({ x: onIce.enemies[0].x, y: onIce.enemies[0].y }, { x: 6, y: 5 }, 'the knight leaps toward the king, onto the ice');
-  assert.equal(terrainAt(onIce, 6, 5), 'normal', 'the ice slab it pounced onto is shattered to open floor');
-  assert.ok((onIce.iceShards || []).some((sh) => sh.x === 6 && sh.y === 5), 'and leaves frosted shards');
+  assert.equal(terrainAt(onIce, 6, 5), 'ice', 'the slab is UNBROKEN — a leap perches on ice, it does not shatter it');
+  assert.ok(!(onIce.iceShards || []).some((sh) => sh.x === 6 && sh.y === 5), 'no shards — nothing broke');
   const onBoulder = leapPursuitOnto('boulder');
   assert.deepEqual({ x: onBoulder.enemies[0].x, y: onBoulder.enemies[0].y }, { x: 6, y: 5 }, 'the knight leaps onto the boulder');
   assert.equal(terrainAt(onBoulder, 6, 5), 'normal', 'the boulder it landed on is crushed to rubble');
@@ -1280,20 +1280,21 @@ test('a chasing foe will not immolate itself — it enters only fire it can surv
   assert.equal(run(true), true, 'control: one that SURVIVES fire still wades straight in');
 });
 
-test('the dread cycle opens with a GRACE: three quiet steps, then five climbing ones', () => {
-  // Derived, not hardcoded: the STEP has been re-paced once already (40 -> 20 turns) and these went
-  // stale. What matters is the SHAPE — 3 quiet steps then 5 climbing ones — not the wall-clock.
+test('the dread cycle opens with a GRACE: five quiet steps, then five climbing ones', () => {
+  // Derived, not hardcoded: the STEP has been re-paced (40 -> 20 -> 24) and the grace widened (3 -> 5
+  // steps) to soften the clock, so these read off the constants. What matters is the SHAPE — a grace,
+  // then a five-step climb to max dread.
   const M = MAX_TURNS_SCARY;
-  const step = DREAD_GRACE_TURNS / 3;
-  assert.equal(M, step * 8, 'eight steps — an 8x8 board’s worth');
-  assert.equal(DREAD_GRACE_TURNS, step * 3, 'the first three steps are grace');
+  const step = DREAD_GRACE_TURNS / 5;
+  assert.equal(M, step * 10, 'ten steps to max dread — five grace, five climbing');
+  assert.equal(DREAD_GRACE_TURNS, step * 5, 'the first five steps are grace');
   // Nothing stirs through the grace...
-  for (const t of [0, step, step * 2, DREAD_GRACE_TURNS - 1]) {
+  for (const t of [0, step, step * 3, DREAD_GRACE_TURNS - 1]) {
     assert.ok(inDreadGrace(t, M), `turn ${t} is still grace`);
     assert.equal(dreadFraction(t, M), 0, `turn ${t} carries no dread at all`);
   }
   // ...then dread climbs cleanly to full by the end of the cycle.
-  assert.ok(!inDreadGrace(DREAD_GRACE_TURNS, M), 'grace lifts when the third step ends');
+  assert.ok(!inDreadGrace(DREAD_GRACE_TURNS, M), 'grace lifts when the fifth step ends');
   assert.ok(dreadFraction(DREAD_GRACE_TURNS + 1, M) > 0, 'and dread starts the moment it does');
   assert.equal(dreadFraction(DREAD_GRACE_TURNS + step * 2.5, M), 0.5, 'halfway through the CLIMB, not the cycle');
   assert.equal(dreadFraction(M, M), 1, 'maxed at the end of the cycle');
@@ -1681,16 +1682,19 @@ test('ice: impassable but see-through; a spell MELTS it to water', () => {
   assert.equal(terrainAt(s, 11, 10), 'water', 'the struck slab thaws to water');
 });
 
-test('ice SHATTERS when a leaper lands on it', () => {
+test('a leaper PERCHES on ice without breaking it (only fire thaws it)', () => {
   const s = warriorWith('w_fleet');
   const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
   s.player.x = 10; s.player.y = 10;
   s.terrain = { '12,11': 'ice' }; // a knight's-move target
   s.enemies = [];
   const r = useCard(s, idx, 12, 11);
-  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 11 }, 'the king leaps onto the ice');
-  assert.equal(terrainAt(r, 12, 11), 'normal', 'the slab shattered under him');
-  assert.ok((r.iceShards || []).some((sh) => sh.x === 12 && sh.y === 11), 'leaving pale shards');
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 12, y: 11 }, 'the king leaps ONTO the ice');
+  assert.equal(terrainAt(r, 12, 11), 'ice', 'the slab is UNBROKEN — a leap lands on ice, it does not shatter it');
+  assert.ok(!(r.iceShards || []).some((sh) => sh.x === 12 && sh.y === 11), 'no shards — nothing broke');
+  // A walker still cannot set foot on the slab — only a leap (or Phase) reaches it.
+  assert.equal(standableFor('ice', {}), false, 'ice stays impassable to walkers');
+  assert.equal(standableFor('ice', { phaseWalls: true }), true, 'a phaser may enter it');
 });
 
 test('devilgrass blocks sight but not movement; a rolling boulder flattens it', () => {
@@ -5957,4 +5961,23 @@ test('lingering past max dread is FATAL: the molten floor kills even a waiting S
     s = beginEnemyPhase(s).state; // the floor keeps turning molten
   }
   assert.ok(s.gameOver, 'waiting it out is not an escape — the fire finds him');
+});
+
+test('a molten overworld floor counts as HELL: demon spawns, and it registers as hell', () => {
+  assert.equal(isHellNow({ floor: 1, turn: 0 }), false, 'a fresh overworld floor is not hell');
+  assert.equal(isHellNow({ floor: 1, turn: MAX_TURNS_LAVA }), true, 'but a molten one is');
+  assert.equal(isHellNow({ floor: 6, turn: 0 }), true, 'a real demon floor always is');
+  // Molten spawns are DEMON kinds (lava-immune) on an overworld floor — mortals would just burn.
+  const DEMON = new Set(['berolina', 'archbishop', 'chancellor', 'nightrider', 'amazon']);
+  let mortal = 0; let demon = 0;
+  for (let i = 0; i < 60; i += 1) {
+    const k = spawnKindForFloor({ floor: 1, turn: MAX_TURNS_LAVA });
+    if (DEMON.has(k)) demon += 1; else mortal += 1;
+  }
+  assert.equal(mortal, 0, 'never a mortal spawn once the floor is molten');
+  assert.ok(demon > 0, 'always a demon spawn');
+  // ...but BEFORE the molten phase, the same overworld floor still spawns mortals.
+  let earlyDemon = 0;
+  for (let i = 0; i < 60; i += 1) if (DEMON.has(spawnKindForFloor({ floor: 1, turn: 0 }))) earlyDemon += 1;
+  assert.equal(earlyDemon, 0, 'a non-molten overworld floor spawns only mortals');
 });

@@ -234,8 +234,8 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
       // perfectly good landing (and ice shatters the same way, below).
       if (!(phaseWalls && capHere)) continue;
     } else if (terrain === 'ice') {
-      // Empty ice is a fine landing (the leap shatters it). But a foe EMBEDDED in ice may only
-      // be pounced on by a leaper that also phases.
+      // Empty ice is a fine landing — a jumper PERCHES on the slab without breaking it (only fire
+      // thaws it, a slam shatters it). But a foe EMBEDDED in ice may only be pounced on by a phaser.
       if (capHere && !phaseWalls) continue;
     }
     // A wall CAGES the leap only on its LONG axis — the two-tile direction the knight travels

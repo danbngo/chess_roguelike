@@ -580,7 +580,7 @@
     water: 'Water — slow (cross one per move); no cards while wading',
     pit: 'Pit — a bottomless hole: nothing can cross it, but shots (yours OR a turret’s/boss’s) fly right over',
     boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it. Knocked, it ROLLS until it hits something',
-    ice: 'Ice — a see-through slab: impassable, but you can look past it. Fire/spells MELT it to water; a leap onto it (or a foe slammed into it) SHATTERS it',
+    ice: 'Ice — a see-through slab: impassable to walkers (but a JUMPER can perch on it), and you can look past it. Fire/spells MELT it to water; a foe SLAMMED into it shatters it — but a leap onto it leaves it intact',
     geyser: 'Geyser — a demon-realm vent: every 3rd turn ALL geysers blow at once, scalding whatever stands on one for 1 HP (a tall plume warns the turn before). The erupting gas also blocks sight for that turn. Shove a boulder onto it to cap it; enemies shy off them',
     devilgrass: 'Tall grass — blocks sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
     devilgrass_demon: 'Devilgrass — dry, dead husks that still block sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
