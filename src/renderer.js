@@ -9,6 +9,7 @@ const Renderer = (function () {
   let miniCtx = null;
   let miniGeom = null; // last-drawn minimap geometry {cell, ox, oy, world} — maps a minimap pixel to a tile
   let demonRealm = false; // floor >= DEMON_FLOOR: the ground turns to dark RED MARBLE
+  let undeadRealm = false; // a New Game+ undead floor: blacker still (see UNDEAD_GROUND)
   // Per-frame handles on the tree state, so drawTexture can size a canopy to its wounds and set it
   // ablaze. Set in draw(), exactly like demonRealm — drawTexture is called per tile and has no
   // route to `state` of its own.
@@ -918,6 +919,10 @@ const Renderer = (function () {
       drawStatusMark(tileX, tileY, '๑', '#c084fc');
     } else if (mainState === 'surprised') {
       drawStatusMark(tileX, tileY, '!', '#ffd400');
+    } else if (mainState === 'inert') {
+      drawStatusMark(tileX, tileY, '⏻', '#f59e0b'); // a POWER glyph: switched off, and counting down
+    } else if (mainState === 'broken') {
+      drawStatusMark(tileX, tileY, '☠', '#d4d4d8'); // a heap of bones, knitting itself back together
     } else if (mainState === 'asleep') {
       drawStatusMark(tileX, tileY, 'z', '#93c5fd'); // a soft-blue "z" for a slumbering foe
     } else if (mainState === 'unaware') {
@@ -1635,6 +1640,39 @@ const Renderer = (function () {
 
   // The victory PORTAL (floor 8): a swirling ring of arcane light where a stair would be. It
   // lies dark and barred until the Orb of Victory is taken, then blazes open.
+  // A DEAD portal: the ring still stands, the light in it does not. Drawn cold and static — no turn,
+  // no glow — so a room of them reads at a glance as a list of places already spent.
+  function drawCollapsedPortal(tileX, tileY) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const r = tileSize * 0.34;
+    ctx.save();
+    // The dark inside it — a hole, not a doorway.
+    ctx.fillStyle = 'rgba(10, 8, 14, 0.9)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    // A broken ring: arcs with gaps, so it reads as fallen rather than merely unlit.
+    ctx.strokeStyle = '#4b4453';
+    ctx.lineWidth = Math.max(1.5, tileSize * 0.07);
+    ctx.lineCap = 'butt';
+    for (const [from, to] of [[0.15, 1.25], [1.6, 2.7], [3.2, 4.4], [4.9, 5.8]]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, from, to);
+      ctx.stroke();
+    }
+    // Rubble at its foot.
+    ctx.fillStyle = 'rgba(70, 64, 78, 0.85)';
+    for (let i = 0; i < 5; i += 1) {
+      const a = tileHash(tileX + i, tileY) * Math.PI * 2;
+      const d = r * (0.9 + 0.5 * tileHash(tileX, tileY + i));
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d * 0.45, tileSize * 0.05, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawPortal(tileX, tileY, faded, locked) {
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
@@ -2272,6 +2310,11 @@ const Renderer = (function () {
   // the iron doors, the dead trees, the withered grass) silently stopped rendering, and nothing threw.
   // GROUND, not FLOOR: a floor is a number here, and the two must never be confusable again.
   const DEMON_GROUND = { dark: '#3a2c40', light: '#54415c' };
+  // THE UNDEAD REALM is BLACKER than hell. The demon realm is violet-lit and warm-ish — it burns.
+  // This place does not: it is cold ash and old bone, nearly lightless, and the only colour in it is
+  // the sick green of the river. Deliberately the darkest ground in the game, so a player who has
+  // seen the demon floors immediately reads this as somewhere worse.
+  const UNDEAD_GROUND = { dark: '#15151a', light: '#232329' };
 
   function terrainColor(type, isDark) {
     switch (type) {
@@ -2279,13 +2322,36 @@ const Renderer = (function () {
         // BRIGHT, saturated red-orange, and deliberately the loudest thing on the floor: this is the
         // only terrain that wounds you for merely standing on it, so it must never read as decor.
         return isDark ? '#c02a0a' : '#e8460f'; // molten rock, glowing (drawTexture pulses it)
+      case 'deathwater':
+        // THE RIVER OF DEATH. A sickly, luminous GREEN — nothing else on any floor is this colour,
+        // because nothing else does what it does: it drinks at anything still alive. It has to read
+        // as "wrong water" at a glance, not as a teal pond with a filter over it.
+        return isDark ? '#123d1e' : '#1e6b31';
       case 'water':
         // In the demon realm the water is fouled — BRACKISH SLUDGE: a murky olive-brown, so it reads
         // as poisoned muck rather than clean teal (the same "same terrain, hellish look" trick the
         // withered grass and dead trees use). Mechanically it is still just slow water.
         if (demonRealm) return isDark ? '#33371f' : '#565b34';
         return isDark ? '#1b5a5f' : '#2f8f8c'; // deep water — nudged TEAL/green so it reads apart from ice
+      // ---- THE WORKSHOP'S FITTINGS ----
+      case 'wire':
+        // A cable set flush IN the floor: the ground colour, with the run itself drawn on top by
+        // drawTexture. Keeping the base as floor is what lets a long run read as a LINE across the
+        // room rather than a stripe of a different material.
+        return isDark ? '#2a2a31' : '#3a3a43';
+      case 'switch':
+        return isDark ? '#33301f' : '#4a4529'; // a brass plate, dull and inviting
+      case 'generator':
+        return isDark ? '#1d2a33' : '#2a3d4a'; // cold machine-blue: this thing is not stone
+      case 'metaldoor':
+      case 'metalgate':
+      case 'metaldooropen':
+      case 'metalgateopen':
+        return isDark ? '#3f434b' : '#565b66'; // gunmetal plate
       case 'wall':
+        // In the undead realm even the masonry is drained — near-black basalt, barely lighter than
+        // the ground it stands on, so the whole floor reads as one cold dark mass.
+        if (undeadRealm) return isDark ? '#2c2c33' : '#3b3b44';
         return isDark ? '#54535a' : '#6a696f'; // neutral grey stone (cool, desaturated)
       case 'pit':
         return isDark ? '#0b0b12' : '#15151d'; // a dark void
@@ -2293,12 +2359,14 @@ const Renderer = (function () {
         // The slab is drawn as a translucent inset CUBE by drawTexture, so the tile's BASE is the
         // native floor — it shows around the cube's edges, rather than a pane of ice filling the
         // whole square.
+        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
         if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
         return isDark ? '#71481d' : '#e8c589';
       case 'geyser':
         // A vent in the hellfloor: the tile's BASE is the realm's own ground (drawTexture lays the
         // crusted rim and the gas plume over it), so it reads as a hole in the floor, not a tile of
         // its own colour. Geysers only occur in the demon realm; the fallback is just defensive.
+        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
         if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
         return isDark ? '#3a2c40' : '#54415c';
       case 'devilgrass':
@@ -2310,6 +2378,7 @@ const Renderer = (function () {
         // The bars sit on the NATIVE FLOOR of the realm — sepia ground up top, ashen violet in
         // hell — so the floor shows between them, exactly like the room they guard. (drawTexture
         // lays the ironwork over the top.) It used to be a slab of dark slate all its own.
+        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
         if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
         return isDark ? '#71481d' : '#e8c589';
       case 'tree':
@@ -2326,12 +2395,14 @@ const Renderer = (function () {
         // An OPEN / half-closing doorway: the floor of the threshold shows through (a leaf/frame is
         // drawn over it). It used to hand back sunny sepia on EVERY floor, which is why an open
         // doorway in hell glowed like a patch of daylight in the middle of the red marble.
+        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
         if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
         return isDark ? '#71481d' : '#e8c589';
       default:
         // boulder + normal both sit on ground (the boulder rock is drawn over it). In the DEMON
         // REALM (floor 5+) that ground is dark RED MARBLE instead of the upper floors' warm sepia —
         // and since a pit lays this same floor before sinking its shaft, pit rims turn to marble too.
+        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
         if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light; // ashen hellfloor
         return isDark ? '#71481d' : '#e8c589'; // warm SEPIA ground (so fogged floor never reads as wall)
     }
@@ -2369,6 +2440,114 @@ const Renderer = (function () {
         }
         break;
       }
+      case 'wire': {
+        // The cable itself: a dark channel with a live copper line down it. It PULSES on the shared
+        // generator beat, so a player can see the current coming before it arrives — the whole
+        // realm is about reading a circuit, and a dead-looking wire would hide the one fact that
+        // matters. Drawn along whichever axis its neighbours run, so runs join up rather than
+        // reading as a row of unconnected dashes.
+        const horiz = terrainAt(state, x - 1, y) === 'wire' || terrainAt(state, x + 1, y) === 'wire';
+        const live = 0.5 + 0.5 * Math.sin(clock * 2.2 + (x + y) * 0.4);
+        ctx.strokeStyle = 'rgba(12, 14, 18, 0.9)';
+        ctx.lineWidth = Math.max(2, tileSize * 0.16);
+        ctx.beginPath();
+        if (horiz) { ctx.moveTo(px, py + tileSize / 2); ctx.lineTo(px + tileSize, py + tileSize / 2); }
+        else { ctx.moveTo(px + tileSize / 2, py); ctx.lineTo(px + tileSize / 2, py + tileSize); }
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(120, 200, 255, ${(0.35 + 0.35 * live).toFixed(3)})`;
+        ctx.lineWidth = Math.max(1, tileSize * 0.06);
+        ctx.stroke();
+        break;
+      }
+      case 'switch': {
+        // A pressure plate: a recessed square with a bevel, so it reads as something you STAND on
+        // rather than something you walk round.
+        const inset = tileSize * 0.18;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+        ctx.fillRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)';
+        ctx.lineWidth = Math.max(1, tileSize * 0.035);
+        ctx.strokeRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.5)';
+        ctx.fillRect(px + tileSize * 0.42, py + tileSize * 0.3, tileSize * 0.16, tileSize * 0.4);
+        break;
+      }
+      case 'generator': {
+        // A squat machine with a coil on top, humming brighter as its beat approaches — the warning
+        // IS the tell, exactly as the geysers' plume is.
+        const cx = px + tileSize / 2;
+        const cy = py + tileSize / 2;
+        const imminent = typeof generatorImminent === 'function' && generatorImminent(state);
+        const hum = 0.5 + 0.5 * Math.sin(clock * (imminent ? 6 : 2));
+        ctx.fillStyle = '#28323c';
+        ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.28, tileSize * 0.6, tileSize * 0.5);
+        ctx.strokeStyle = '#6b7d8c';
+        ctx.lineWidth = Math.max(1, tileSize * 0.03);
+        ctx.strokeRect(px + tileSize * 0.2, py + tileSize * 0.28, tileSize * 0.6, tileSize * 0.5);
+        // The coil: brightens on the beat, and brighter still the turn before it lets go.
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(cx, cy - tileSize * 0.06, 0, cx, cy - tileSize * 0.06, tileSize * (imminent ? 0.62 : 0.4));
+        g.addColorStop(0, `rgba(150, 220, 255, ${(0.28 + 0.4 * hum).toFixed(3)})`);
+        g.addColorStop(1, 'rgba(80, 160, 255, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy - tileSize * 0.06, tileSize * (imminent ? 0.62 : 0.4), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'metaldoor':
+      case 'metalgate':
+      case 'metaldooropen':
+      case 'metalgateopen': {
+        const open = type === 'metaldooropen' || type === 'metalgateopen';
+        const isGate = type === 'metalgate' || type === 'metalgateopen';
+        if (open) {
+          // OPEN: the leaf is retracted into the jamb — a thick post on either side and clear ground
+          // between, so "you may walk here" is unmistakable.
+          ctx.fillStyle = '#5b626e';
+          ctx.fillRect(px, py, tileSize * 0.16, tileSize);
+          ctx.fillRect(px + tileSize * 0.84, py, tileSize * 0.16, tileSize);
+          break;
+        }
+        // SHUT. A gate shows BARS (see-through, and you can tell at a glance you cannot cut them);
+        // a door shows solid riveted plate.
+        if (isGate) {
+          ctx.strokeStyle = '#8a93a3';
+          ctx.lineWidth = Math.max(1.5, tileSize * 0.07);
+          for (let i = 1; i <= 3; i += 1) {
+            const bx = px + (tileSize * i) / 4;
+            ctx.beginPath();
+            ctx.moveTo(bx, py + tileSize * 0.06);
+            ctx.lineTo(bx, py + tileSize * 0.94);
+            ctx.stroke();
+          }
+          ctx.lineWidth = Math.max(1, tileSize * 0.05);
+          for (const fy of [0.14, 0.86]) {
+            ctx.beginPath();
+            ctx.moveTo(px + tileSize * 0.04, py + tileSize * fy);
+            ctx.lineTo(px + tileSize * 0.96, py + tileSize * fy);
+            ctx.stroke();
+          }
+        } else {
+          ctx.fillStyle = '#4a4f59';
+          ctx.fillRect(px + tileSize * 0.06, py + tileSize * 0.06, tileSize * 0.88, tileSize * 0.88);
+          ctx.strokeStyle = '#79808d';
+          ctx.lineWidth = Math.max(1, tileSize * 0.035);
+          ctx.strokeRect(px + tileSize * 0.06, py + tileSize * 0.06, tileSize * 0.88, tileSize * 0.88);
+          ctx.fillStyle = '#9aa2b0'; // rivets
+          for (const rx of [0.2, 0.8]) {
+            for (const ry of [0.2, 0.8]) {
+              ctx.beginPath();
+              ctx.arc(px + tileSize * rx, py + tileSize * ry, tileSize * 0.045, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        break;
+      }
+      case 'deathwater':
       case 'water': {
         // Several SHORT wavelets, fainter and staggered across the tile, rather than two big lines
         // spanning the whole square — so a lake reads as rippled water instead of ruled paper.
@@ -2378,10 +2557,13 @@ const Renderer = (function () {
           const wy = py + tileSize * (0.16 + 0.16 * i + 0.04 * tileHash(x * 3 + i, y));
           const wx = px + tileSize * (0.1 + 0.35 * tileHash(x, y * 3 + i)); // start point wanders
           const wlen = tileSize * (0.24 + 0.2 * tileHash(x * 5 + i, y * 2));
-          // Clean water catches WHITE glints; brackish sludge only shows a dull, sickly scum sheen.
-          ctx.strokeStyle = demonRealm
-            ? `rgba(150, 170, 90, ${(0.1 + 0.07 * tileHash(x + i, y - i)).toFixed(3)})`
-            : `rgba(255, 255, 255, ${(0.12 + 0.08 * tileHash(x + i, y - i)).toFixed(3)})`;
+          // Clean water catches WHITE glints; brackish sludge only shows a dull, sickly scum sheen;
+          // the river of death glows a pale, cold green from underneath, as if lit from below.
+          ctx.strokeStyle = type === 'deathwater'
+            ? `rgba(150, 255, 170, ${(0.16 + 0.12 * tileHash(x + i, y - i)).toFixed(3)})`
+            : demonRealm
+              ? `rgba(150, 170, 90, ${(0.1 + 0.07 * tileHash(x + i, y - i)).toFixed(3)})`
+              : `rgba(255, 255, 255, ${(0.12 + 0.08 * tileHash(x + i, y - i)).toFixed(3)})`;
           ctx.beginPath();
           ctx.moveTo(wx, wy);
           ctx.quadraticCurveTo(wx + wlen * 0.5, wy - tileSize * 0.035, wx + wlen, wy);
@@ -3373,6 +3555,7 @@ const Renderer = (function () {
     const L = titleLayout();
     tileSize = L.tile;     // drawPiece/drawExit/drawKey/drawTorch read this
     demonRealm = false;    // the splash is the warm mortal board, never hell
+    undeadRealm = false;
     treeHp = null;
     burnTrees = null;
     ctx.fillStyle = '#020617';
@@ -3993,7 +4176,8 @@ const Renderer = (function () {
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    demonRealm = (state.floor || 1) >= DEMON_FLOOR; // the demon realm is floored in ash, and burns blue
+    undeadRealm = (state.realm === 'undead');
+    demonRealm = !undeadRealm && (state.floor || 1) >= DEMON_FLOOR; // the demon realm is floored in ash, and burns blue
     treeHp = state.treeHp || null;
     burnTrees = state.burningTrees || null;
     geyserStage = (typeof geyserErupting === 'function' && geyserErupting(state)) ? 'erupting'
@@ -4269,6 +4453,7 @@ const Renderer = (function () {
       const seen = lit(state.exit.x, state.exit.y);
       if (seen || state.exit.discovered) {
         if (state.exit.portal) drawPortal(state.exit.x, state.exit.y, !seen, state.exit.locked);
+        // (the portal-room gates are drawn separately, below — that room has no `exit` at all)
         else drawExit(state.exit.x, state.exit.y, !seen, state.exit.locked, isHellmouth(state));
         // Key in hand, the way out becomes the thing to go for — so the arrow moves here. Keyed off
         // `locked` rather than the key itself, so it is the STAIR's own state that decides: a
@@ -4276,6 +4461,108 @@ const Renderer = (function () {
         if (!state.exit.locked) {
           drawObjectiveArrow(state.exit.x, state.exit.y, state.exit.portal ? '#c084fc' : '#38bdf8');
         }
+      }
+    }
+
+    // THE ARC. Every tile the last discharge ran through, lit at once — because that is exactly what
+    // happened: electricity here hits a NETWORK, not a tile, and if the player cannot see the shape
+    // of the circuit that just bit him he has no way to learn where not to stand. Drawn additively
+    // and fading on its own clock, so it reads as a flash rather than as terrain.
+    if (state.arc && state.arc.length) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const flick = 0.55 + 0.45 * Math.sin(clock * 22);
+      for (const t of state.arc) {
+        const cx = t.x * tileSize + tileSize / 2;
+        const cy = t.y * tileSize + tileSize / 2;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, tileSize * 0.62);
+        g.addColorStop(0, `rgba(200, 240, 255, ${(0.5 * flick).toFixed(3)})`);
+        g.addColorStop(0.5, `rgba(120, 190, 255, ${(0.3 * flick).toFixed(3)})`);
+        g.addColorStop(1, 'rgba(60, 120, 255, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy, tileSize * 0.62, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // A jagged spine through the network, so it reads as a bolt and not as a row of lamps.
+      ctx.strokeStyle = `rgba(225, 245, 255, ${(0.75 * flick).toFixed(3)})`;
+      ctx.lineWidth = Math.max(1, tileSize * 0.05);
+      ctx.beginPath();
+      state.arc.forEach((t, i) => {
+        const jx = (tileHash(t.x, t.y) - 0.5) * tileSize * 0.3;
+        const jy = (tileHash(t.y, t.x) - 0.5) * tileSize * 0.3;
+        const cx = t.x * tileSize + tileSize / 2 + jx;
+        const cy = t.y * tileSize + tileSize / 2 + jy;
+        if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+      });
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // AN ALTAR (New Game+ floors). A low block of stone with a violet glow standing off it — the
+    // same arcane violet the summoning circles and the sacrifice overlay use, so "something magical
+    // wants something from you" reads consistently wherever it turns up. Goes dark once spent.
+    if (state.altar && (state.altar.discovered || lit(state.altar.x, state.altar.y))) {
+      const a = state.altar;
+      const cx = a.x * tileSize + tileSize / 2;
+      const cy = a.y * tileSize + tileSize / 2;
+      ctx.save();
+      if (!a.used) {
+        ctx.globalCompositeOperation = 'lighter';
+        const pulse = 0.5 + 0.5 * Math.sin(clock * 1.6 + tileHash(a.x, a.y) * 6.28);
+        const glow = ctx.createRadialGradient(cx, cy - tileSize * 0.1, 0, cx, cy - tileSize * 0.1, tileSize * 0.6);
+        glow.addColorStop(0, `rgba(232, 121, 249, ${(0.22 + 0.14 * pulse).toFixed(3)})`);
+        glow.addColorStop(1, 'rgba(168, 85, 247, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(cx, cy - tileSize * 0.1, tileSize * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // The stone itself: a squat plinth, drawn dull once it has been spent.
+      const spent = a.used;
+      ctx.fillStyle = spent ? '#3a3540' : '#4a4152';
+      ctx.strokeStyle = spent ? '#241f2a' : '#c084fc';
+      ctx.lineWidth = Math.max(1, tileSize * 0.03);
+      const w = tileSize * 0.5;
+      const h = tileSize * 0.34;
+      ctx.beginPath();
+      ctx.rect(cx - w / 2, cy - h / 2 + tileSize * 0.06, w, h);
+      ctx.fill();
+      ctx.stroke();
+      // A groove across the top — where whatever it takes is meant to run.
+      ctx.strokeStyle = spent ? '#2a2530' : 'rgba(232, 121, 249, 0.8)';
+      ctx.lineWidth = Math.max(1, tileSize * 0.025);
+      ctx.beginPath();
+      ctx.moveTo(cx - w * 0.34, cy - h / 2 + tileSize * 0.12);
+      ctx.lineTo(cx + w * 0.34, cy - h / 2 + tileSize * 0.12);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // THE ROOM BETWEEN REALMS. Its gates are drawn where an ordinary floor draws its stair: a live
+    // portal turns and glows, a COLLAPSED one is a dead ring of rubble — a place he has already been
+    // and cannot go back to. The way home (`accept`) is drawn gold rather than violet, because it is
+    // the one door on the board that ends things rather than opening them.
+    for (const gate of (state.portalGates || [])) {
+      if (gate.collapsed) {
+        drawCollapsedPortal(gate.x, gate.y);
+        continue;
+      }
+      drawPortal(gate.x, gate.y, false, false);
+      if (gate.accept) {
+        const cx = gate.x * tileSize + tileSize / 2;
+        const cy = gate.y * tileSize + tileSize / 2;
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, tileSize * 0.7);
+        glow.addColorStop(0, `rgba(255, 236, 170, ${(0.30 + 0.12 * Math.sin(clock * 2)).toFixed(3)})`);
+        glow.addColorStop(1, 'rgba(255, 200, 90, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(cx, cy, tileSize * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
     }
 
@@ -4451,7 +4738,10 @@ const Renderer = (function () {
         // the snapshot), so a just-hushed foe kept showing its stale "?" wander icon instead of the
         // sleep "z". `live` is the current truth, exactly as the confused/recovering branches use.
         const st = live || enemy;
-        const mainState = st.asleep ? 'asleep' : st.surprised ? 'surprised' : st.frustrated ? 'frustrated' : st.awake ? 'hostile' : 'unaware';
+        // A switched-off GOLEM outranks every other state — it is not asleep, unaware or hunting,
+        // it is SCRAP with a clock running, and the one thing the player needs to read off it is
+        // how long he has before it stands up again.
+        const mainState = st.inert ? 'inert' : st.broken ? 'broken' : st.asleep ? 'asleep' : st.surprised ? 'surprised' : st.frustrated ? 'frustrated' : st.awake ? 'hostile' : 'unaware';
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }
     }

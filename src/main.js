@@ -38,6 +38,8 @@
   const cardHint = document.getElementById('card-hint');
   const invBar = document.getElementById('inv-bar');
   const invHint = document.getElementById('inv-hint');
+  const orbBar = document.getElementById('orb-bar');
+  const orbHint = document.getElementById('orb-hint');
   const tilePopover = document.getElementById('tile-popover');
   const tutorialScreen = document.getElementById('tutorial-screen');
   const tutorialTitle = document.getElementById('tutorial-title');
@@ -183,16 +185,22 @@
   }
 
   // Character level as a row of small star badges.
-  function renderLevelBadges(level) {
+  function renderLevelBadges(level, boons) {
     if (!levelLabel) return;
     levelLabel.innerHTML = '';
+    // MAXED. Once he holds every boon a run can pay out, the stars stop being a progress bar and
+    // become a statement: they burn gold. Without this the panel looks identical whether the next
+    // guardian will teach him something or not, which is exactly when he most wants to know.
+    const maxed = typeof MAX_BOONS === 'number' && (boons || 0) >= MAX_BOONS;
     for (let i = 0; i < level; i += 1) {
       const b = document.createElement('span');
-      b.className = 'badge';
-      b.textContent = '★';
+      b.className = maxed ? 'badge maxed' : 'badge';
+      b.textContent = maxed ? '✦' : '★';
       levelLabel.append(b);
     }
-    levelLabel.title = `Level ${level}`;
+    levelLabel.title = maxed
+      ? `Level ${level} — you have learned all you can (${MAX_BOONS} boons)`
+      : `Level ${level}`;
   }
 
   function updateHud() {
@@ -201,10 +209,10 @@
     }
     const p = gameState.player;
     floorLabel.textContent = `Floor ${toRoman(gameState.floor)} · ${playerTitle(p)}`; // subclass name once committed
-    if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor);
+    if (floorNameLabel) floorNameLabel.textContent = floorName(gameState.floor, gameState.realm);
     turnLabel.textContent = `Turn ${gameState.turn}${p.promotion > 0 ? ` · ♛ Beast Form ${p.promotion}` : ''}`;
     renderHearts(p.hp, p.maxHp);
-    renderLevelBadges(p.level || 1);
+    renderLevelBadges(p.level || 1, p.boonsTaken || 0);
     logMessage(gameState.message);
 
     // Dread rises as the king lingers.
@@ -226,8 +234,9 @@
     // The Orb of Victory is the last floor's key wearing a different hat (key.orb) — so it lands
     // here for free, and reads as the run-defining thing it is rather than another gold key.
     if (gameState.key && gameState.key.collected) {
+      const realmOrb = (realmDef(gameState.realm).orb) || {};
       held.push(gameState.key.orb
-        ? { cls: 'orb', glyph: '◉', title: 'Orb of Victory — the portal will open for you' }
+        ? { cls: 'orb', glyph: '◉', title: `${realmOrb.name || 'Orb of Victory'} — the portal will open for you` }
         : { cls: 'key', glyph: '⚷', title: 'Floor key — the stair down is unlocked' });
     }
     for (const item of held) {
@@ -238,6 +247,35 @@
       invBar.append(slot);
     }
     if (invHint && held.length) invHint.classList.remove('hidden');
+    renderOrbs();
+  }
+
+  // THE ORB SHELF. One per realm he has finished, kept for good. Nothing on it does anything — that
+  // is deliberate: a realm he was never required to enter can only honestly reward him with the fact
+  // of having done it, and a shelf of trophies says that better than a stat would.
+  function renderOrbs() {
+    if (!orbBar) return;
+    orbBar.innerHTML = '';
+    if (orbHint) orbHint.classList.add('hidden');
+    const won = (gameState && gameState.player && gameState.player.orbs) || [];
+    if (!won.length) return;
+    // Look each one up by name so the shelf shows its realm's own glyph and colour.
+    const byName = {};
+    for (const key of Object.keys(REALMS)) {
+      const o = REALMS[key].orb;
+      if (o) byName[o.name] = o;
+    }
+    for (const name of won) {
+      const o = byName[name] || { glyph: '◉', color: '#fbbf24', short: name };
+      const slot = document.createElement('div');
+      slot.className = 'inv-slot orb';
+      slot.textContent = o.glyph;
+      slot.style.color = o.color;
+      slot.style.borderColor = o.color;
+      slot.title = `${name} — carried out of ${o.short}`;
+      orbBar.append(slot);
+    }
+    if (orbHint) orbHint.classList.remove('hidden');
   }
 
   /* -------------------------------- log --------------------------------- */
@@ -1826,19 +1864,31 @@
     renderRunTable(victoryRunTable, entry.id);
     hideOverlays();
     victoryScreen.classList.remove('hidden');
-    // queueTip('newGamePlus'); // DISABLED with New Game + (see index.html)
+    // NEW GAME+ : the door onward, and only after the hardest clear.
+    if (victoryContinueButton) victoryContinueButton.classList.toggle('hidden', !newGamePlusUnlocked());
   }
 
   // New Game + : having won, press on into the endless depths, build intact.
   // DISABLED for now — its button is commented out in index.html and the listener below is too. The
   // function is kept intact so restoring the mode is just un-commenting those three places.
-  function continueAfterVictory() { // eslint-disable-line no-unused-vars
+  // NEW GAME+ : having won on NIGHTMARE, press on — not into a floor 9, but into the room BETWEEN
+  // realms, where he chooses which worse place to walk into next (or takes the win and stops).
+  // Nightmare only, on purpose: this is the reward for the hardest clear, not for any clear.
+  function continueAfterVictory() {
     screen = 'playing';
     gameState.won = false;
     document.body.classList.add('in-game');
     document.body.classList.remove('on-title');
     hideOverlays();
-    goNextFloor();
+    applyState(buildPortalRoom(gameState.player, gameState.score || 0, gameState.player.clearedRealms), false);
+    enemyQueue = [];
+    animTimer = 0;
+    pendingAction = null;
+    saveGame(gameState);
+  }
+  // Whether that door is open to him at all.
+  function newGamePlusUnlocked() {
+    return Boolean(gameState && gameState.player && gameState.player.difficulty === 'nightmare');
   }
 
   /* ------------------------------ level up ------------------------------- */
@@ -1873,6 +1923,58 @@
       row.append(info, take);
       altarList.append(row);
     }
+  }
+
+  // THE ALTAR. Reuses the boon overlay, because it is the same shape of moment — a short list, one
+  // choice, and (unlike a level-up) a Skip that is always the safe answer. Every row here COSTS him
+  // something, so the wording leads with what is given up rather than what is gained.
+  function renderAltar() {
+    if (altarMessage) altarMessage.textContent = 'An altar. It names its price — or you may walk away.';
+    altarList.innerHTML = '';
+    // The offers were rolled the moment he stepped on it and are held on the state, so what is on
+    // screen is exactly what he gets. Naming both ends is the whole point: this is a decision about
+    // the build he is holding, not a coin-flip with flavour text on it.
+    (gameState.altarOffers || []).forEach((offer, i) => {
+      const row = document.createElement('li');
+      row.className = 'shop-item';
+      const info = document.createElement('div');
+      info.className = 'shop-info';
+      info.innerHTML = `<span class="shop-name" style="color:#e879f9">${offer.name}</span>`
+        + `<span class="shop-desc">${offer.desc}</span>`;
+      const take = document.createElement('button');
+      take.type = 'button';
+      take.textContent = 'Offer';
+      take.addEventListener('click', () => {
+        applyState(useAltar(gameState, i), false);
+        Renderer.effect('powerup', '#e879f9');
+        GameAudio.play('buy');
+        closeAltar();
+      });
+      row.append(info, take);
+      altarList.append(row);
+    });
+  }
+  function openAltar() {
+    screen = 'altar';
+    renderAltar();
+    altarScreen.classList.remove('hidden');
+  }
+  function closeAltar() {
+    // Walking away is always allowed, and always spends the altar — it is a decision, not a shop.
+    if (gameState && gameState.pendingAltar) {
+      gameState.pendingAltar = false;
+      gameState.altarOffers = null;
+      if (gameState.altar) gameState.altar.used = true;
+      logMessage('You leave the altar as you found it.');
+    }
+    altarScreen.classList.add('hidden');
+    screen = 'playing';
+    updateHud();
+    saveGame(gameState);
+  }
+  // Raised once the turn has fully resolved, exactly as the boon screen is.
+  function maybeOpenAltar() {
+    if (gameState && screen === 'playing' && gameState.pendingAltar) openAltar();
   }
 
   function openLevelUp() {
@@ -2039,6 +2141,20 @@
       animTimer = PLAYER_MOVE_TIME;
       return;
     }
+    // A NEW GAME+ realm is finished: back to the room between realms, that door dark behind him.
+    if (nextState.lastAction === 'realm-cleared') {
+      GameAudio.play('win');
+      pendingAction = 'portalroom';
+      animTimer = PLAYER_MOVE_TIME;
+      return;
+    }
+    // He stepped onto a portal IN that room — into a realm, or into the light.
+    if (nextState.lastAction === 'portal-enter' || nextState.lastAction === 'portal-accept') {
+      GameAudio.play(nextState.lastAction === 'portal-accept' ? 'win' : 'descend');
+      pendingAction = nextState.lastAction === 'portal-accept' ? 'accept-victory' : 'enter-realm';
+      animTimer = PLAYER_MOVE_TIME;
+      return;
+    }
     // A strike either felled a piece (kill) or merely chipped it (attack) — but shattering a
     // summoning circle by stepping on it is a hollow SWOOSH / power-down, not a combat hit.
     if (nextState.message && nextState.message.indexOf('summoning circle') !== -1) GameAudio.play('unsummon');
@@ -2073,6 +2189,7 @@
         return;
       }
       maybeOpenLevelUp(); // a free-action boss kill still earns its boon
+      maybeOpenAltar();
       return;
     }
 
@@ -2238,6 +2355,7 @@
     }
     saveGame(gameState);
     maybeOpenLevelUp(); // if this turn slew the boss, offer the boon now
+    maybeOpenAltar(); // ...and if he ended it standing on an altar, raise its offer
   }
 
   function handleStep(dx, dy) {
@@ -2341,6 +2459,22 @@
         } else if (pendingAction === 'floor') {
           pendingAction = null;
           goNextFloor();
+        } else if (pendingAction === 'portalroom') {
+          pendingAction = null;
+          applyState(returnToPortalRoom(gameState), false);
+          enemyQueue = []; animTimer = 0;
+          saveGame(gameState);
+        } else if (pendingAction === 'enter-realm') {
+          pendingAction = null;
+          applyState(enterRealm(gameState, gameState.enteringRealm), false);
+          enemyQueue = []; animTimer = 0;
+          saveGame(gameState);
+          scanVisibleTips(gameState);
+        } else if (pendingAction === 'accept-victory') {
+          // He has chosen to be done. The victory was already his; this just closes the book.
+          pendingAction = null;
+          gameState.won = true;
+          onVictory();
         } else if (pendingAction === 'gameover') {
           pendingAction = null;
           onGameOver();
@@ -2818,10 +2952,11 @@
   if (trophyCloseButton) trophyCloseButton.addEventListener('click', showTitle); // DOM back button (the trophy room is diegetic now; this is a harmless fallback)
   playAgainButton.addEventListener('click', openClassSelect);
   toTitleButton.addEventListener('click', showTitle);
-  // victoryContinueButton.addEventListener('click', continueAfterVictory); // DISABLED with New Game +
+  if (victoryContinueButton) victoryContinueButton.addEventListener('click', continueAfterVictory);
   victoryAgainButton.addEventListener('click', openClassSelect);
   victoryTitleButton.addEventListener('click', showTitle);
-  if (altarCloseButton) altarCloseButton.addEventListener('click', closeLevelUp);
+  // ONE overlay, TWO uses — the Skip button has to know which moment it is closing.
+  if (altarCloseButton) altarCloseButton.addEventListener('click', () => (screen === 'altar' ? closeAltar() : closeLevelUp()));
   tutorialOkButton.addEventListener('click', dismissTip);
   tutorialDisableButton.addEventListener('click', disableTipsFromModal);
   optionsButton.addEventListener('click', openOptions);

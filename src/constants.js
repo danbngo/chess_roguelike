@@ -153,20 +153,55 @@ const LEVELS = [
   { name: 'The Demon Castle', recipe: { wall: 4, rooms: 5, lava: 3, grass: 1 }, boss: { hp: 7 } }, // the FINALE: three perks (see createBoss). Its HP is just the curve's next step — no bonus on top; the perks ARE its escalation
 ];
 
-function levelForFloor(floor) {
-  return LEVELS[((floor - 1) % FINAL_FLOOR + FINAL_FLOOR) % FINAL_FLOOR] || null;
-}
+// ---- REALMS -----------------------------------------------------------------------------------
+// A REALM is a self-contained run of floors with its own level table, its own chamber anchors, its
+// own roster and its own rules. The OVERWORLD is the original eight-floor descent (floors 1-6 mortal,
+// 6-8 the demon realm at its foot). New Game+ realms are shorter, harder places reached through the
+// portal room, and each is DATA rather than code: adding a third realm should mean adding an entry
+// here, not touching the floor arithmetic.
+//
+// The floor number restarts at 1 inside each realm, so `(floor - 1) % FINAL_FLOOR` — which the whole
+// engine used to be built on — is now `(floor - 1) % realmFinalFloor(realm)`.
+const NG_PLUS_REALMS = ['undead', 'workshop'];
 
-function floorName(floor) {
-  const level = levelForFloor(floor);
-  const base = level ? level.name : `Floor ${floor}`;
-  const cycle = Math.floor((floor - 1) / FINAL_FLOOR);
-  return cycle > 0 ? `${base} +${cycle}` : base;
-}
-
-// Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of
-// the king's central start and spread around the board's edges.
-const CHAMBER_ANCHORS = [
+// THE WORKSHOP. Somebody's forge, still running long after they stopped. Half the usual population,
+// because every one of them is a GOLEM that cannot be killed — only switched off — and a room of
+// four things that keep getting back up is worth more than eight that stay down. Its hazards are
+// mechanical rather than natural: current in the floor, doors that shut on you, guns wired to
+// switches. Nothing here is alive, so nothing here can be reasoned with or burned.
+const WORKSHOP_LEVELS = [
+  { name: 'The Assembly Floor', recipe: { wall: 4, rooms: 5 }, boss: { hp: 7 } },
+  { name: 'The Wire Gallery', recipe: { wall: 5, rooms: 6 }, boss: { hp: 7 } },
+  { name: 'The Furnace Line', recipe: { wall: 4, rooms: 5, lava: 3 }, boss: { hp: 7 } },
+  { name: 'The Machinist', recipe: { wall: 6, rooms: 6 }, boss: { hp: 7 } },
+];
+const WORKSHOP_ANCHORS = [
+  { x: 20, y: 4 },
+  { x: 4, y: 20 },
+  { x: 20, y: 20 },
+  { x: 4, y: 4 },
+];
+// The most BOONS a king can ever hold. An ordinary run fells seven guardians before the last, so
+const UNDEAD_LEVELS = [
+  // A BONEYARD: open ash and cairns, nothing green, nothing burning.
+  { name: 'The Boneyard', recipe: { wall: 2, rooms: 2 }, boss: { hp: 7 } },
+  // FLOODED CATACOMBS: black water standing in stone galleries.
+  { name: 'The Drowned Catacombs', recipe: { wall: 4, rooms: 5, water: 5 }, boss: { hp: 7 } },
+  // The CHARNEL WARRENS: rooms upon rooms, and the dead in all of them.
+  { name: 'The Charnel Warrens', recipe: { wall: 6, rooms: 6 }, boss: { hp: 7 } },
+  // The PALE THRONE: where whatever is running this sits.
+  { name: 'The Pale Throne', recipe: { wall: 4, rooms: 4, water: 2 }, boss: { hp: 7 } },
+];
+const UNDEAD_ANCHORS = [
+  { x: 20, y: 20 },
+  { x: 4, y: 4 },
+  { x: 20, y: 4 },
+  { x: 4, y: 20 },
+];
+// Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of the king's central
+// start and spread around the board's edges. Declared HERE, above REALMS, because the realm registry
+// holds a reference to it — a `const` below its use would be a temporal-dead-zone error at load.
+const CHAMBER_ANCHORS_OVERWORLD = [
   { x: 20, y: 20 },
   { x: 4, y: 4 },
   { x: 20, y: 4 },
@@ -176,8 +211,85 @@ const CHAMBER_ANCHORS = [
   { x: 12, y: 20 },
   { x: 12, y: 4 },
 ];
-function chamberAnchorForFloor(floor) {
-  return CHAMBER_ANCHORS[((floor - 1) % FINAL_FLOOR + FINAL_FLOOR) % FINAL_FLOOR];
+
+const REALMS = {
+  overworld: {
+    name: 'The Overworld',
+    levels: LEVELS,
+    anchors: CHAMBER_ANCHORS_OVERWORLD,
+    finalFloor: 8,
+    demonFrom: 6, // floors 6-8 are the demon realm at the overworld's foot
+    newGamePlus: false,
+    // EVERY realm ends on an ORB. The overworld's is the one the whole base game is about; the New
+    // Game+ realms each have their own, and they are pure COLLECTIBLES — no power, no stat, nothing
+    // but a shelf of them under his pack proving where he has been. That is the point: the reward
+    // for clearing a realm you did not have to enter is the fact of having done it.
+    orb: { name: 'Orb of Victory', short: 'Victory', glyph: '◈', color: '#fbbf24' },
+  },
+  undead: {
+    name: 'The Undead Realm',
+    levels: UNDEAD_LEVELS,
+    anchors: UNDEAD_ANCHORS,
+    finalFloor: 4,
+    demonFrom: 0, // NEVER. The undead realm has its own roster and no demon floors.
+    noLava: true, // nothing burns here — see generateTerrain
+    undeadRoster: true, // every native is a zombie / skeleton / vampire (see makeUndead)
+    deathWater: true, // its water is the RIVER OF DEATH: green, and it eats the living
+    theme: 'undead', // the view renders it blacker than the demon realm
+    orb: { name: 'Orb of the Grave', short: 'Grave', glyph: '☾', color: '#7dd3a0' },
+    newGamePlus: true,
+  },
+  workshop: {
+    name: 'The Workshop',
+    levels: WORKSHOP_LEVELS,
+    anchors: WORKSHOP_ANCHORS,
+    finalFloor: 4,
+    demonFrom: 0,
+    golemRoster: true, // every native is a GOLEM: switched off, never killed (see makeGolem)
+    halfPopulation: true, // ...so there are half as many of them
+    doubleTurrets: true, // and twice the usual number of guns
+    metalDoors: true, // its doors are METAL: opened at will, they never swing shut again
+    theme: 'workshop',
+    orb: { name: 'Orb of Making', short: 'Making', glyph: '⚙', color: '#7dd3fc' },
+    newGamePlus: true,
+  },
+};
+const DEFAULT_REALM = 'overworld';
+// The realms a New Game+ king may actually walk into, in the order the portal room lists them. The
+// overworld and the demon realm are NOT here: he has already been through both, and their portals
+// stand collapsed in the room as a record of it.
+// seven is what the base game hands out — and New Game+ must not quietly raise that ceiling. Its
+// realms are extra places to go, not extra power to bank: a king walking into the undead realm is as
+// strong as he will ever be, and the difficulty there has to be met with what he already has.
+const MAX_BOONS = 7;
+function realmDef(realm) {
+  return REALMS[realm] || REALMS[DEFAULT_REALM];
+}
+function realmFinalFloor(realm) {
+  return realmDef(realm).finalFloor;
+}
+
+function levelForFloor(floor, realm) {
+  const def = realmDef(realm);
+  const n = def.levels.length;
+  return def.levels[((floor - 1) % n + n) % n] || null;
+}
+
+function floorName(floor, realm) {
+  const level = levelForFloor(floor, realm);
+  const base = level ? level.name : `Floor ${floor}`;
+  const cycle = Math.floor((floor - 1) / realmFinalFloor(realm));
+  return cycle > 0 ? `${base} +${cycle}` : base;
+}
+
+// Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of
+// the king's central start and spread around the board's edges.
+// Kept as an alias: plenty of code (and tests) refer to the overworld's anchors by the old name.
+const CHAMBER_ANCHORS = CHAMBER_ANCHORS_OVERWORLD;
+function chamberAnchorForFloor(floor, realm) {
+  const anchors = realmDef(realm).anchors;
+  const n = anchors.length;
+  return anchors[((floor - 1) % n + n) % n];
 }
 
 // Terrain unlock floors (only walls, water, lava exist now).

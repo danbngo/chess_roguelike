@@ -27,6 +27,10 @@
             <div id="card-bar" class="card-bar"></div>
             <p id="inv-hint" class="card-hint hidden">Carrying</p>
             <div id="inv-bar" class="inv-bar"></div>
+            <!-- ORBS: one per realm cleared, kept for their own sake. Sits under the pack because it
+                 is a trophy shelf, not equipment — nothing here does anything. -->
+            <p id="orb-hint" class="card-hint hidden">Orbs</p>
+            <div id="orb-bar" class="inv-bar"></div>
             <div class="log-wrap">
               <button id="log-toggle" type="button" class="log-toggle" aria-expanded="false">▸ Log</button>
               <div id="log" class="log short"></div>
@@ -71,13 +75,11 @@
               <p id="victory-stats" class="overlay-sub"></p>
               <div id="victory-badges" class="badge-shelf"></div>
               <div id="victory-runtable" class="run-table"></div>
-              <!-- NEW GAME + is DISABLED for now (too much content for this stage of development).
-                   To restore: un-comment this button AND the two commented blocks in main.js
-                   (`victoryContinueButton` listener and the `queueTip('newGamePlus')` call).
+              <!-- NEW GAME + : shown only after a NIGHTMARE clear (main.js reveals it in onVictory).
+                   It does not build a floor 9 — it opens the room BETWEEN realms. -->
               <div class="overlay-buttons">
-                <button id="victory-continue" type="button">New Game +</button>
+                <button id="victory-continue" type="button" class="hidden">Press on &hellip;</button>
               </div>
-              -->
               <div class="overlay-buttons">
                 <button id="victory-again" type="button">Play Again</button>
                 <button id="victory-title" type="button">Title Screen</button>

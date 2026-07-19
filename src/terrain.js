@@ -32,7 +32,10 @@ function blocksSight(type) {
   // OPEN one ('dooropen') is a clear passage.
   // NB: no 'gate'. A gate is BARS — it stops you walking through, never looking (or shooting)
   // through. That is the whole point of it, and the only thing separating it from a tree.
-  return type === 'wall' || type === 'tree' || type === 'boulder' || type === 'devilgrass' || type === 'door';
+  // A METAL DOOR is a slab of plate — it blocks the look exactly as a wooden one does. A metal GATE
+  // is still bars, so you can see (but not walk or shoot) through it, same as ordinary iron.
+  return type === 'wall' || type === 'tree' || type === 'boulder' || type === 'devilgrass'
+    || type === 'door' || type === 'metaldoor';
 }
 
 // What stops a SHOT, as opposed to what stops the LOOK. The two are not the same thing, and the
@@ -55,7 +58,7 @@ function blocksArrow(type) {
 // lane does not thread a gate's bars or a hedge the way a man with a bow does. The asymmetry between
 // this and blocksArrow is deliberate and long-standing — do not collapse them into one predicate.
 function blocksShot(type) {
-  return blocksSight(type) || type === 'gate' || type === 'ice';
+  return blocksSight(type) || type === 'gate' || type === 'metalgate' || type === 'ice';
 }
 
 // SOFT cover: sight-blockers that are only a haze — tall grass and (handled separately) the
@@ -79,6 +82,16 @@ function standableFor(type, opts) {
   // NB: the BORDER STONE that rings the map is 'wall' terrain too, and nothing may enter it — not
   // even a phaser. That is enforced by coordinate, not by type (see isBorderStone / blockedAt), since
   // this function only ever sees the type.
+  // WIRE is a cable laid IN the floor — you walk over it like any ground. It is only special to the
+  // current that runs down it (see conductsAt).
+  if (type === 'wire') return true;
+  // A SWITCH is a housing, not a plate: nobody stands on one. It is STRUCK to work it (see throwSwitch).
+  if (type === 'switch') return false;
+  if (type === 'generator') return false; // a lump of machinery: solid, and SHOVED rather than walked past
+  // METAL: an OPEN door or gate is a clear passage. A SHUT one admits nobody at all — not even a
+  // phaser, and unlike ordinary iron it cannot be cut, so there is nothing to be gained by trying.
+  if (type === 'metaldooropen' || type === 'metalgateopen') return true;
+  if (type === 'metaldoor' || type === 'metalgate') return false;
   if (type === 'tree') return Boolean(o.pathfinder); // solid timber — only Pathfinder walks through it
   if (type === 'gate') return Boolean(o.phaseWalls); // barred iron — only Phase slips the bars (see-through, though; see blocksSight)
   if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // stone, rock & ice slabs — only a phasing mover
@@ -117,7 +130,7 @@ function isSolidBarrier(type) {
 // the same way water does, on top of searing whatever ends its turn in it. (Projectiles are exempt
 // — a bolt still flies over both; see slideStops' `projectile`.)
 function isSlowTerrain(type) {
-  return type === 'water' || type === 'lava';
+  return type === 'water' || type === 'deathwater' || type === 'lava';
 }
 
 // Context-free standability (used for placement / spawns): a plain walker who avoids

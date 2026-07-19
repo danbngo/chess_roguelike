@@ -479,6 +479,12 @@ body.in-game canvas {
   color: #fbbf24;
   text-shadow: 0 0 3px rgba(251, 191, 36, 0.5);
 }
+/* MAXED OUT: every boon a run can pay out is his. The stars stop reading as a progress bar and burn
+   gold-white instead, so "the next guardian has nothing to teach me" is legible at a glance. */
+.level-badges .badge.maxed {
+  color: #fff7d6;
+  text-shadow: 0 0 6px rgba(251, 191, 36, 0.95), 0 0 12px rgba(251, 191, 36, 0.55);
+}
 
 /* Collapsible message log (pinned to the bottom of the pane). */
 .log-wrap {

@@ -26,6 +26,431 @@ function createEnemy(type, x, y) {
   };
 }
 
+// ---- THE UNDEAD ---------------------------------------------------------------------------------
+// The undead realm does NOT introduce new piece kinds. Its natives are the ordinary chess pieces you
+// already know how to read — a rook still moves like a rook — wearing one of three afflictions. That
+// is the whole design: you never have to relearn a movement pattern, only what it takes to put one
+// down and keep it down.
+//
+//   ZOMBIE   — three wounds deep and SLOW (it recovers a turn after every exertion, like a guardian),
+//              but bears no traits at all. Fire hurts it double: rotten flesh goes up.
+//   SKELETON — the first blow that would fell it only BREAKS it. Leave it lying and it knits itself
+//              back together after three turns; hit it again while it is down and it is finished.
+//   VAMPIRE  — struck, it bursts into a BAT rather than dying. (Fire is the exception: fire ends a
+//              vampire outright, with no bat.)
+const UNDEAD_TYPES = ['zombie', 'skeleton', 'vampire'];
+const ZOMBIE_HP = 3;
+const SKELETON_REKNIT_TURNS = 3;
+const BAT_REFORM_CHANCE = 0.5;
+
+function isUndead(unit) {
+  return Boolean(unit && unit.undeadType);
+}
+// Give a freshly-made piece its affliction. Structures are exempt — a turret is a machine and a
+// summoning circle is a rune, and neither has flesh to rot or bones to break.
+function makeUndead(enemy, type) {
+  if (!enemy || enemy.turret || enemy.summonCircle) return enemy;
+  const kind = type || UNDEAD_TYPES[randomInt(UNDEAD_TYPES.length)];
+  enemy.undeadType = kind;
+  if (kind === 'zombie') {
+    enemy.hp = ZOMBIE_HP;
+    enemy.maxHp = ZOMBIE_HP;
+    enemy.slow = true; // it lumbers: a recovery turn after every exertion (see moveEnemy)
+  }
+  return enemy;
+}
+
+// ---- GOLEMS -------------------------------------------------------------------------------------
+// The Workshop's natives. A golem is not alive, so it cannot be killed: a killing blow DEACTIVATES
+// it, and five turns later it stands back up exactly where it fell. The only way to be rid of one
+// for good is to put it somewhere it cannot get out of — down a PIT.
+//
+// That single rule is what the whole realm is built on. Fighting is no longer about clearing a room,
+// because the room does not stay clear; it is about geography, and about the switches that turn
+// things off wholesale. Half the usual population, because four things that keep getting up are
+// worth more than eight that stay down.
+const GOLEM_RESTART_TURNS = 5;
+
+function isGolem(unit) {
+  return Boolean(unit && unit.golem);
+}
+function makeGolem(enemy) {
+  if (!enemy || enemy.turret || enemy.summonCircle) return enemy;
+  enemy.golem = true;
+  return enemy;
+}
+// Switch one off. `permanent` is the pit: gone for good, no restart.
+function deactivateGolem(state, golem, reason) {
+  golem.inert = true;
+  golem.restart = GOLEM_RESTART_TURNS;
+  golem.awake = false;
+  golem.surprised = false;
+  golem.lastSeen = null;
+  golem.lastSeenTtl = 0;
+  cue(state, 'crush');
+  if (inLineOfSight(state, golem.x, golem.y)) {
+    state.message = reason || `The ${golem.kind} golem shudders and goes still.`;
+  }
+  return golem;
+}
+// Their clock, run once an enemy phase.
+function tickGolems(state) {
+  for (const g of state.enemies) {
+    if (!isGolem(g) || !g.inert) continue;
+    g.restart = (g.restart || 0) - 1;
+    if (g.restart <= 0) {
+      g.inert = false;
+      g.restart = 0;
+      g.awake = true;
+      g.provoked = true;
+      cue(state, 'crush');
+      if (inLineOfSight(state, g.x, g.y)) {
+        state.message = state.message
+          ? `${state.message} The ${g.kind} golem grinds back into motion!`
+          : `The ${g.kind} golem grinds back into motion!`;
+      }
+    }
+  }
+}
+
+// ---- METAL DOORS AND GATES ----------------------------------------------------------------------
+// The Workshop's ironmongery, and the reason its floor plan is a machine rather than a map.
+//
+//   METAL GATE — bars you cannot cut. An ordinary gate is three swings of an axe; this one is a WALL
+//                for as long as it is shut, and walking into it costs nothing at all (no turn spent
+//                hacking at something that will never give). Only current or a switch moves it.
+//   METAL DOOR — opened at will, like any door — but it never swings shut again on its own. What
+//                you open STAYS open, which is what makes opening one a real decision.
+//
+// Both CONDUCT, and both TOGGLE on current or a switch. A closing one is not polite about it: it
+// deals a wound to whatever is standing in the doorway and shoves the survivor clear.
+function isMetalShut(t) { return t === 'metaldoor' || t === 'metalgate'; }
+function isMetalOpen(t) { return t === 'metaldooropen' || t === 'metalgateopen'; }
+function isMetal(t) { return isMetalShut(t) || isMetalOpen(t); }
+
+// Flip one metal fitting. Shut → open is free; open → SHUT crushes whatever is in the way.
+function toggleMetalAt(state, x, y) {
+  const t = terrainAt(state, x, y);
+  if (!isMetal(t)) return false;
+  const key = `${x},${y}`;
+  if (isMetalShut(t)) {
+    state.terrain[key] = t === 'metaldoor' ? 'metaldooropen' : 'metalgateopen';
+    return true;
+  }
+  // IT CLOSES. Anything standing in the doorway takes a wound and is shoved clear; if there is
+  // nowhere to shove it, the iron simply does not finish closing — better a stuck door than a piece
+  // deleted by geometry it could not have read.
+  const p = state.player;
+  const occupant = (p.x === x && p.y === y) ? 'player'
+    : state.enemies.find((e) => e.x === x && e.y === y)
+      || allyAt(state, x, y)
+      || null;
+  if (occupant) {
+    const spots = [];
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!standableAt(state, nx, ny, {})) continue;
+      if (state.enemies.some((e) => e.x === nx && e.y === ny) || allyAt(state, nx, ny)) continue;
+      if (p.x === nx && p.y === ny) continue;
+      spots.push({ x: nx, y: ny });
+    }
+    if (!spots.length) return false; // jammed on whatever is in it
+    const to = spots[randomInt(spots.length)];
+    if (occupant === 'player') {
+      const mit = rollMitigation(state, null);
+      if (!mit) { hurtBy(state, 'crush'); p.hp -= 1; p.wasHit = true; p.hitThisFloor = true; checkDeath(state); }
+      p.x = to.x; p.y = to.y;
+    } else if (occupant.turret || isGolem(occupant)) {
+      // A machine in the doorway is simply shoved — the iron does not damage its own kind.
+      occupant.x = to.x; occupant.y = to.y;
+    } else if (occupant.boss) {
+      damageBoss(state, occupant, 1, { ground: true, cause: 'crush' });
+      occupant.x = to.x; occupant.y = to.y;
+    } else if (state.enemies.includes(occupant)) {
+      addSpatter(state, x, y, 0, 0, isDemonKind(occupant.kind));
+      tallyKill(state, occupant);
+      state.enemies = state.enemies.filter((e) => e.id !== occupant.id);
+    } else {
+      damageAlly(state, occupant, 1);
+    }
+    cue(state, 'crush');
+  }
+  state.terrain[key] = t === 'metaldooropen' ? 'metaldoor' : 'metalgate';
+  return true;
+}
+
+// ---- ELECTRICITY --------------------------------------------------------------------------------
+// The Workshop's signature hazard, and the one system in the game that CHAINS. An arc does not hit a
+// tile — it hits a NETWORK. Starting wherever it was struck, it runs through everything that
+// conducts, and everything the network touches is hit at once:
+//
+//   CONDUCTORS: wire, metal doors and gates, generators, and BODIES — any unit at all, machine or
+//               otherwise. A row of golems is a cable.
+//   IMMUNE:     golems and turrets. They carry the current and do not care about it, which is what
+//               makes them so dangerous to stand near: the machine that shrugs it off is the same
+//               machine that delivers it to you. Current also does NOT switch a golem on or off —
+//               only a blow or a SWITCH does that, so the arc can never accidentally clear a room.
+//   ACTIVATES:  metal doors and gates (they flip), and other GENERATORS (which chain).
+//   HURT:       the king, his allies, and any living foe. Bosses and mini-bosses too, on these
+//               floors — the user's explicit call, flagged as possibly revisited.
+//
+// The payoff is that the player is not dodging a bolt, he is reading a CIRCUIT: where the wires run,
+// what is standing on them, and which side of the network he is on.
+const ELECTRIC_DAMAGE = 1;
+
+// Does this tile pass current on? Terrain first, then whatever is standing on it.
+function conductsAt(state, x, y) {
+  const t = terrainAt(state, x, y);
+  if (t === 'wire' || t === 'metaldoor' || t === 'metaldooropen' || t === 'metalgate' || t === 'metalgateopen') return true;
+  if (t === 'generator') return true;
+  if (state.enemies.some((e) => e.x === x && e.y === y)) return true; // a body is a cable
+  if (allyAt(state, x, y)) return true;
+  if (state.player.x === x && state.player.y === y) return true;
+  return false;
+}
+
+// Is this unit hurt by current, or does it merely carry it?
+function shocksUnit(unit) {
+  if (!unit) return false;
+  return !(isGolem(unit) || unit.turret); // machines conduct and shrug; everything else pays
+}
+
+// THE ARC. Floods outward from (x,y) across every connected conductor, then hits everything on the
+// network at once. `opts.skipOrigin` leaves the tile it came from alone (a turret does not shoot
+// itself). Returns the set of charged tile keys, so the view can draw the whole circuit lighting up.
+function dischargeElectricity(state, x, y, opts) {
+  const o = opts || {};
+  // RANGE. A circuit does not run the length of the floor — the arc reaches only as far as the king
+  // can plainly see (his STANDARD window, never the Oracle's one-way band, which is sight he is not
+  // supposed to be able to act through). Without this a single wire run could reach him from a room
+  // he has never entered, which is not a hazard so much as a random tax.
+  const bounds = getAwarenessBounds(state);
+  const inRange = (tx, ty) => tx >= bounds.x && ty >= bounds.y
+    && tx < bounds.x + bounds.width && ty < bounds.y + bounds.height;
+  const charged = new Set();
+  const queue = [{ x, y }];
+  const seen = new Set([`${x},${y}`]);
+  while (queue.length) {
+    const cur = queue.shift();
+    charged.add(`${cur.x},${cur.y}`);
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const nx = cur.x + dx;
+      const ny = cur.y + dy;
+      const key = `${nx},${ny}`;
+      if (seen.has(key)) continue;
+      if (nx < 1 || ny < 1 || nx >= WORLD_SIZE - 1 || ny >= WORLD_SIZE - 1) continue;
+      if (!inRange(nx, ny)) continue;
+      if (!conductsAt(state, nx, ny)) continue;
+      seen.add(key);
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  if (o.skipOrigin) charged.delete(`${x},${y}`);
+  // ONCE PER TURN, per thing. Several generators on one network would otherwise each bill the king
+  // separately for the same instant of current — four machines on a beat could take four hearts off
+  // him with no decision in between. The ledger is cleared at the top of each enemy phase.
+  if (!state.shockedThisTurn) state.shockedThisTurn = {};
+  const ledger = state.shockedThisTurn;
+  // ...and now everything the network touches pays for it, all in the same instant.
+  let bit = false;
+  for (const key of charged) {
+    const [cx, cy] = key.split(',').map(Number);
+    // METAL swings: current is one of the two things that works a metal door or gate (a switch is
+    // the other). Toggling on a live circuit is how a player opens a wing of the floor at once.
+    toggleMetalAt(state, cx, cy);
+    const p = state.player;
+    if (p.x === cx && p.y === cy && !ledger.king) {
+      ledger.king = true;
+      const mit = rollMitigation(state, null); // the GROUND, near enough: no guard turns a circuit aside
+      if (!mit) {
+        hurtBy(state, 'shock');
+        p.hp -= ELECTRIC_DAMAGE;
+        p.wasHit = true; p.hitThisFloor = true;
+        bit = true;
+        checkDeath(state);
+      }
+    }
+    const ally = allyAt(state, cx, cy);
+    if (ally && shocksUnit(ally) && !ledger[ally.id]) { ledger[ally.id] = true; damageAlly(state, ally, ELECTRIC_DAMAGE); bit = true; }
+    const foe = state.enemies.find((e) => e.x === cx && e.y === cy);
+    if (foe && shocksUnit(foe) && !ledger[foe.id]) {
+      ledger[foe.id] = true;
+      bit = true;
+      if (foe.boss) damageBoss(state, foe, ELECTRIC_DAMAGE, { ground: true, cause: 'shock' });
+      else { addSpatter(state, cx, cy, 0, 0, isDemonKind(foe.kind)); tallyKill(state, foe); state.enemies = state.enemies.filter((e) => e.id !== foe.id); }
+    }
+  }
+  if (charged.size) {
+    state.arc = [...charged].map((k) => { const [ax, ay] = k.split(',').map(Number); return { x: ax, y: ay }; });
+    cue(state, bit ? 'hit' : 'deflect');
+  }
+  return charged;
+}
+
+// ---- GENERATORS ---------------------------------------------------------------------------------
+// A humming lump of machinery you can SHOVE, exactly like a boulder — and every fourth turn it lets
+// go, arcing into everything around it. That makes it the one hazard in the game the player can pick
+// up and aim: shove it into a crowd, stand back, and let the floor do the work. It is also a
+// conductor, so a generator sitting on a wire electrifies the whole run of it.
+const GENERATOR_PERIOD = 4;
+
+// Generators are TERRAIN, not a side list — which is what makes them shove like boulders, fill a pit
+// like boulders, and survive every existing terrain path without a single special case.
+function generatorTiles(state) {
+  const out = [];
+  for (const k of Object.keys(state.terrain || {})) {
+    if (state.terrain[k] === 'generator') {
+      const [x, y] = k.split(',').map(Number);
+      out.push({ x, y });
+    }
+  }
+  return out;
+}
+// Their clock. Shared, like the geysers': they all let go on the same beat, so the player can learn
+// ONE rhythm rather than tracking a private timer per machine.
+function tickGenerators(state) {
+  const gens = generatorTiles(state);
+  if (!gens.length) return;
+  state.generatorPhase = (state.generatorPhase || 0) + 1;
+  if (state.generatorPhase % GENERATOR_PERIOD !== 0) return;
+  for (const g of gens) {
+    // The arc starts AT the machine and runs the network from there. `skipOrigin` because the
+    // generator is the source, not a casualty.
+    dischargeElectricity(state, g.x, g.y, { skipOrigin: true });
+  }
+  state.message = state.message
+    ? `${state.message} The generators let go — the floor cracks with current!`
+    : 'The generators let go — the floor cracks with current!';
+}
+
+// Hang the Workshop's ironmongery, once the floor is otherwise finished. Two jobs: convert the
+// timber, then make sure the conversion has not sealed the floor shut.
+function fitOutWorkshop(state) {
+  for (const k of Object.keys(state.terrain)) {
+    const t = state.terrain[k];
+    // EVERY door is metal here — this place has no timber in it. Doors start OPEN (a workshop is
+    // somewhere people walked through) and, being metal, never swing shut again on their own.
+    if (t === 'door' || t === 'dooropen' || t === 'doorajar') state.terrain[k] = 'metaldooropen';
+    // HALF the gates are metal, and those start SHUT — they are the ones he needs current or a
+    // switch to get past. The other half stay ordinary iron he can simply cut through.
+    else if (t === 'gate' && Math.random() < 0.5) state.terrain[k] = 'metalgate';
+  }
+  openMetalUntilReachable(state);
+}
+
+// A metal gate CANNOT be cut. So unlike every other barrier on a floor, one dropped across the only
+// approach to the stair does not cost the player a few turns with an axe — it makes the floor
+// unwinnable. Measured at 1 floor in 60 before this existed.
+//
+// The repair: flood out from the king treating shut metal as PASSABLE. If the exit (or the key) is
+// only reachable that way, open the metal gates on the route until it is honestly reachable. It
+// leaves the floor's ironmongery intact everywhere it was not load-bearing.
+function openMetalUntilReachable(state) {
+  const targets = [];
+  if (state.exit) targets.push(state.exit);
+  if (state.key && !state.key.collected) targets.push(state.key);
+  if (!targets.length) return;
+  for (let pass = 0; pass < 12; pass += 1) {
+    const reach = playerReachable(state, state.player.x, state.player.y);
+    const stranded = targets.filter((t) => !reach.has(`${t.x},${t.y}`));
+    if (!stranded.length) return;
+    // Flood again, this time allowed through shut metal, remembering how we got to each tile.
+    const from = new Map();
+    const queue = [{ x: state.player.x, y: state.player.y }];
+    const seen = new Set([`${state.player.x},${state.player.y}`]);
+    while (queue.length) {
+      const cur = queue.shift();
+      for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+        const nx = cur.x + dx;
+        const ny = cur.y + dy;
+        const key = `${nx},${ny}`;
+        if (seen.has(key) || nx < 1 || ny < 1 || nx >= WORLD_SIZE - 1 || ny >= WORLD_SIZE - 1) continue;
+        const t = terrainAt(state, nx, ny);
+        // Treat every one of the Workshop's IMPASSABLE fittings as notionally passable while we look
+        // for a route: a switch housing and a generator seal a one-wide corridor exactly as a metal
+        // gate does, and none of the three can be cut through.
+        if (!isStandable(t) && !isMetalShut(t) && t !== 'switch' && t !== 'generator') continue;
+        seen.add(key);
+        from.set(key, `${cur.x},${cur.y}`);
+        queue.push({ x: nx, y: ny });
+      }
+    }
+    // Walk the route back from the first stranded target, opening every metal fitting on it.
+    const goal = stranded[0];
+    let cursor = `${goal.x},${goal.y}`;
+    if (!from.has(cursor) && cursor !== `${state.player.x},${state.player.y}`) return; // truly walled off — not our doing
+    let opened = 0;
+    while (cursor && from.has(cursor)) {
+      const [cx, cy] = cursor.split(',').map(Number);
+      const t = terrainAt(state, cx, cy);
+      if (isMetalShut(t)) {
+        state.terrain[cursor] = t === 'metaldoor' ? 'metaldooropen' : 'metalgateopen';
+        opened += 1;
+      } else if (t === 'switch' || t === 'generator') {
+        // LOAD-BEARING machinery. A switch cannot be destroyed and a generator can only be shoved
+        // (which needs room the corridor does not have), so one of either across the only approach
+        // is as final as a metal gate. Clear it back to floor — the floor being crossable outranks
+        // the fitting being there.
+        delete state.terrain[cursor];
+        opened += 1;
+      }
+      cursor = from.get(cursor);
+    }
+    if (!opened) return; // nothing left to clear — the blockage is not ours
+  }
+}
+
+// ---- SWITCHES -----------------------------------------------------------------------------------
+// A plate in the floor. He STANDS on it and the neighbourhood answers: every metal fitting nearby
+// flips, every golem nearby toggles, every gun nearby toggles. It is the only thing in the game that
+// can switch a TURRET off — and, being a toggle, the only thing that can switch one back on. That
+// double edge is deliberate: a switch is a lever, not a button, and pulling it is always a gamble on
+// what else is in range.
+// A switch reaches as far as the king can PLAINLY see — his standard window, never the Oracle's
+// one-way band (that is sight he is not meant to be able to act through). So its reach grows with his
+// sight perks, which makes it a lever whose size he can read off the screen rather than guess.
+//
+// It is STRUCK, not stood on: a switch tile admits nobody. Anything that can land a blow on it works
+// it — his own weapon, an archer's arrow, a hexed foe lashing out — with the deliberate exception of
+// SPELLFIRE, which washes over it. It has no HP and can never be destroyed.
+//
+// It is NOT worked by electricity, and NOT by another switch. If it were, one arc across a wired
+// floor would flip every fitting on it at once and the whole machine would resolve itself.
+function throwSwitch(state, x, y) {
+  const bounds = getAwarenessBounds(state);
+  let touched = 0;
+  for (let ny = bounds.y; ny < bounds.y + bounds.height; ny += 1) {
+    for (let nx = bounds.x; nx < bounds.x + bounds.width; nx += 1) {
+      if (nx < 1 || ny < 1 || nx >= WORLD_SIZE - 1 || ny >= WORLD_SIZE - 1) continue;
+      if (toggleMetalAt(state, nx, ny)) touched += 1;
+      const unit = state.enemies.find((e) => e.x === nx && e.y === ny);
+      if (!unit) continue;
+      // A GOLEM answers a switch (and a blow) — but never the current. See dischargeElectricity.
+      if (isGolem(unit)) {
+        touched += 1;
+        if (unit.inert) { unit.inert = false; unit.restart = 0; unit.awake = true; }
+        else deactivateGolem(state, unit, '');
+      } else if (unit.turret) {
+        // A switch is the ONLY thing that stops a gun — and, being a toggle, the only thing that
+        // starts one again.
+        touched += 1;
+        if (unit.inert) { unit.inert = false; unit.restart = 0; }
+        else { unit.inert = true; unit.restart = GOLEM_RESTART_TURNS; unit.aiming = false; }
+      }
+    }
+  }
+  cue(state, touched ? 'crush' : 'nope');
+  state.message = touched
+    ? 'The switch throws — iron grinds, and the machines answer.'
+    : 'The switch throws. Nothing in sight answers it.';
+  return touched;
+}
+// One beat out from firing, so the view can warn.
+function generatorImminent(state) {
+  return ((state.generatorPhase || 0) + 1) % GENERATOR_PERIOD === 0;
+}
+
 // The single role a piece carries (or 'normal'), for display / icons.
 function enemyRole(enemy) {
   if (enemy.boss) return 'boss';
@@ -169,6 +594,10 @@ function moltenActive(state) {
   return overstayFraction(state.turn || 0) > 0;
 }
 function isHellNow(state) {
+  // A New Game+ realm is NOT hell, however nasty it is — it has its own roster and (for the undead)
+  // no fire at all, so the hell-flavoured dread events and demon spawns have no business firing
+  // there. Only the overworld's own molten descent counts.
+  if (realmDef(realmOf(state)).newGamePlus) return false;
   return (state.floor || 1) >= DEMON_FLOOR || moltenActive(state);
 }
 function spawnKindForFloor(state) {
@@ -185,16 +614,29 @@ function randomStructureKind(floor) {
 // A turret is a fixed gun whose "movement" IS its firing lane, and the demon pieces all leap or
 // capture off-line (archbishop / chancellor / amazon jump; a berolina takes on a different axis than
 // it steps), which reads as nonsense for a line of fire. So none are ever built.
-function randomTurretKind(floor) {
-  const pool = ENEMY_UNLOCKS.filter((e) => floor >= e.floor && STANDARD_KINDS.includes(e.kind)).map((e) => e.kind);
+function randomTurretKind(floor, realm) {
+  // NEW GAME+ guns come out of the box at FULL strength: the whole standard roster from the first
+  // floor, no gentle queens-come-later curve. The unit roster still ramps as usual there — it is the
+  // emplacements specifically that skip the tutorial, because by now he knows what a queen's lane is.
+  const maxed = realmDef(realm).newGamePlus;
+  const pool = ENEMY_UNLOCKS
+    .filter((e) => (maxed || floor >= e.floor) && STANDARD_KINDS.includes(e.kind))
+    .map((e) => e.kind);
   return pool.length ? pool[randomInt(pool.length)] : 'rook';
 }
 
 // Floor 8 is the ABSOLUTE last floor — there is no descent past it. Instead of a stair it
 // holds a portal, and instead of a key an Orb of Victory; grabbing the orb opens the portal
 // (and rouses the finale's boss-rush), and stepping into the portal wins the run.
-function isFinalFloor(floor) {
-  return floor >= FINAL_FLOOR;
+// The LAST floor of the realm you are standing in. The overworld runs eight; a New Game+ realm runs
+// four. Both end the same way: the guardian holds the Orb, and the portal past it is the way out.
+function isFinalFloor(floor, realm) {
+  return floor >= realmFinalFloor(realm);
+}
+// The realm a state is in. Everything defaults to the overworld, so an old save (and every existing
+// call site that never heard of realms) keeps behaving exactly as it did.
+function realmOf(state) {
+  return (state && state.realm) || DEFAULT_REALM;
 }
 
 // Does this guardian bear `perk`? Guardians can carry SEVERAL now (see rollBossPerks), so never
@@ -242,14 +684,136 @@ function rollBossPerks(count, kind) {
   return picked;
 }
 
+// ---- THE PORTAL ROOM ----------------------------------------------------------------------------
+// Between realms. A small walled chamber with no enemies, no dread clock and nothing to fight — the
+// one room in the game that is purely a DECISION. It holds:
+//   * two COLLAPSED portals, the overworld and the demon realm, dead and dark: places he has already
+//     been and cannot go back to. They are scenery, and they are the point — the room is a record.
+//   * one live portal per realm still open to him.
+//   * one WAY OUT: accept the victory he already holds and end the run here.
+// Built by hand rather than generated, because every tile of it is doing a job.
+const PORTAL_ROOM_W = 15;
+const PORTAL_ROOM_H = 11;
+
+function buildPortalRoom(carryPlayer, score, cleared) {
+  const player = { ...carryPlayer };
+  const done = new Set(cleared || player.clearedRealms || []);
+  const terrain = {};
+  // A walled chamber, floated in the middle of the board.
+  const bx = Math.floor((WORLD_SIZE - PORTAL_ROOM_W) / 2);
+  const by = Math.floor((WORLD_SIZE - PORTAL_ROOM_H) / 2);
+  for (let x = 0; x < WORLD_SIZE; x += 1) {
+    for (let y = 0; y < WORLD_SIZE; y += 1) {
+      const inside = x > bx && x < bx + PORTAL_ROOM_W - 1 && y > by && y < by + PORTAL_ROOM_H - 1;
+      if (!inside) terrain[`${x},${y}`] = 'wall';
+    }
+  }
+  player.x = bx + Math.floor(PORTAL_ROOM_W / 2);
+  player.y = by + PORTAL_ROOM_H - 2; // he arrives at the near wall, facing the portals
+  // The dead ones, along the back: where he has already been.
+  const gates = [];
+  const backY = by + 2;
+  gates.push({ x: bx + 3, y: backY, realm: 'overworld', collapsed: true });
+  gates.push({ x: bx + PORTAL_ROOM_W - 4, y: backY, realm: 'demon', collapsed: true });
+  // The live ones, across the middle — plus any NG+ realm he has already finished, now dark too.
+  const midY = by + 5;
+  const open = NG_PLUS_REALMS;
+  const span = PORTAL_ROOM_W - 6;
+  open.forEach((realm, i) => {
+    const x = bx + 3 + Math.round(((i + 1) / (open.length + 1)) * span);
+    gates.push({ x, y: midY, realm, collapsed: done.has(realm) });
+  });
+  // ...and the door home, at his feet.
+  gates.push({ x: player.x, y: by + PORTAL_ROOM_H - 4, realm: null, accept: true, collapsed: false });
+
+  const state = {
+    worldSize: WORLD_SIZE,
+    viewSize: player.vision,
+    realm: 'portalroom',
+    portalRoom: true, // the turn loop reads this: no dread, no spawns, no enemy phase worth running
+    player,
+    terrain,
+    fixedDoors: new Set(),
+    explored: {},
+    enemies: [],
+    allies: [],
+    spatters: [],
+    corpses: [],
+    ashes: [],
+    rubble: [],
+    scraps: [],
+    iceShards: [],
+    scorches: [],
+    scars: [],
+    boulders: [],
+    puffs: [],
+    fog: {},
+    torches: {},
+    burningTrees: {},
+    treeHp: {},
+    portalGates: gates,
+    key: null,
+    exit: null,
+    upstair: null,
+    floor: 0,
+    turn: 0,
+    score: score || 0,
+    message: 'Between realms. Step into a portal — or into the light, and be done.',
+    pendingLevelUp: false,
+    gameOver: false,
+    won: false,
+  };
+  updateDiscovery(state);
+  return state;
+}
+
+// Stepping onto a portal in the portal room. Returns the tile's gate, or null.
+function portalGateUnderKing(state) {
+  if (!state.portalRoom) return null;
+  const p = state.player;
+  return (state.portalGates || []).find((g) => g.x === p.x && g.y === p.y) || null;
+}
+
+// ENTER a realm from the portal room: floor 1 of that realm, build intact. The king keeps everything
+// — perks, cards, level, the lot — because New Game+ is not a fresh run, it is the same king walking
+// somewhere worse. His HEARTS are refilled, exactly as they are on any descent.
+function enterRealm(state, realm) {
+  const player = { ...state.player, hp: state.player.maxHp };
+  player.clearedRealms = [...(state.player.clearedRealms || [])];
+  const next = generateFloor(1, player, state.score || 0, realm);
+  next.message = `You step through. ${realmDef(realm).name} closes around you.`;
+  return next;
+}
+
+// LEAVE a realm, back to the room between them — with the door he just came out of now dark.
+function returnToPortalRoom(state) {
+  const player = { ...state.player, hp: state.player.maxHp };
+  const cleared = new Set(player.clearedRealms || []);
+  const from = realmOf(state);
+  if (realmDef(from).newGamePlus) cleared.add(from);
+  player.clearedRealms = [...cleared];
+  const next = buildPortalRoom(player, state.score || 0, cleared);
+  next.message = `Between realms. ${realmDef(from).name} is spent — its portal is dark.`;
+  return next;
+}
+
 // Build the floor's boss at (x, y): a high-mobility piece with a HP pool.
 // The kinds a floor's guardian may be rolled from: a sliding window over its tier, so the pool
 // advances AND stays plural. Position 0 in a tier draws from its weakest two, position 3 from its
 // strongest two — a floor-1 guardian can never be a queen, and a floor-4 one is never a knight.
 // The demon tier (floor 5+) restarts the same window with its own four kinds.
-function bossPoolForFloor(floor) {
-  const tier = floor >= DEMON_FLOOR ? BOSS_TIER_DEMON : BOSS_TIER_MORTAL;
-  const t = Math.max(0, Math.min(tier.length - 1, (floor - 1) % tier.length));
+function bossPoolForFloor(floor, realm) {
+  // NEW GAME+ guardians come from ABOVE the floor's usual window. The realm's wound pools are flat,
+  // so a fourth-floor guardian cannot out-tough a first-floor one — the escalation has to be in what
+  // it IS. Shifting the window up by two puts the strongest pieces on the table straight away and
+  // has it topping out at the tier's heaviest by the last floor.
+  const ngPlus = realmDef(realm).newGamePlus;
+  const tier = ngPlus || floor < DEMON_FLOOR ? BOSS_TIER_MORTAL : BOSS_TIER_DEMON;
+  // NG+ CLAMPS rather than wraps: the window walks up the tier and STOPS at the top, so floor 3 and
+  // floor 4 both draw from the heaviest pieces instead of rolling back round to pawns.
+  const t = ngPlus
+    ? Math.min(tier.length - 1, (floor - 1) + 2)
+    : Math.max(0, Math.min(tier.length - 1, (floor - 1) % tier.length));
   const lo = Math.max(0, t - 1);
   const hi = Math.min(tier.length - 1, t + 1);
   return tier.slice(lo, hi + 1);
@@ -268,9 +832,9 @@ function bossNameFor(kind, perks) {
   return epithet ? `the ${epithet} ${noun}` : `the ${noun}`;
 }
 
-function createBoss(floor, x, y) {
-  const spec = (levelForFloor(floor) || { boss: { hp: 4 } }).boss;
-  const pool = bossPoolForFloor(floor);
+function createBoss(floor, x, y, realm) {
+  const spec = (levelForFloor(floor, realm) || { boss: { hp: 4 } }).boss;
+  const pool = bossPoolForFloor(floor, realm);
   const kind = pool[randomInt(pool.length)];
   const boss = createEnemy(kind, x, y);
   boss.boss = true;
@@ -278,8 +842,12 @@ function createBoss(floor, x, y) {
   boss.originalKind = kind; // a Shifting boss never grows stronger than this
   // The DEMON REALM's guardians are doubly cursed — two perks each. The FINAL guardian wears three
   // and is a thing apart (see finalBoss: its own black-and-fire livery and worse threats).
-  boss.finalBoss = isFinalFloor(floor);
-  const perkCount = boss.finalBoss ? 3 : (floor >= DEMON_FLOOR ? 2 : 1);
+  boss.finalBoss = isFinalFloor(floor, realm);
+  // NEW GAME+ guardians are ALL three-perk monsters. Their wound pools are flat across the realm
+  // (see the level table), so traits are the whole of the escalation down here — the fourth-floor
+  // guardian is not tougher than the first, it is nastier.
+  const ngPlus = realmDef(realm).newGamePlus;
+  const perkCount = ngPlus ? 3 : (boss.finalBoss ? 3 : (floor >= DEMON_FLOOR ? 2 : 1));
   boss.bossPerks = rollBossPerks(perkCount, kind);
   boss.bossPerk = boss.bossPerks[0]; // the PRIMARY — drives its crown, epithet and one-line summary
   boss.bossName = bossNameFor(kind, boss.bossPerks); // named for what it is, once its traits are known
@@ -550,6 +1118,15 @@ function isDemonKind(kind) {
 // foes cheerfully charged into lava and immolated themselves reaching the king.
 function isLavaSafe(unit) {
   if (!unit) return false;
+  // A BAT is a cloud of wings a foot off the ground. Nothing the FLOOR does can reach it — fire,
+  // steam, the river, a hole — which is the whole reason a struck vampire becomes one: for a few
+  // turns it is somewhere you simply cannot follow it.
+  if (unit.bat) return true;
+  // A FIRE turret is a furnace bolted to the floor — fire is the one thing that cannot hurt it, and
+  // it is the only machine that belongs in a lava field. An ORDINARY turret is just a machine, and
+  // it cooks like anything else (see tickLavaDamage): guns used to be flatly exempt, which made a
+  // lava field the safest place on the floor to build an emplacement.
+  if (unit.turret) return Boolean(unit.fire);
   return Boolean(unit.lavaImmune) || isDemonKind(unit.kind) || bossHas(unit, 'flying');
 }
 function isDemonBoss(boss) {
@@ -673,7 +1250,10 @@ function makeTurret(state, kind, x, y) {
   t.maxHp = TURRET_HP;
   // Once fire turrets exist at all (floor 5), the two kinds are an EVEN split — a gun you meet is as
   // likely to be one as the other, so neither reads as the "special" case after the introduction.
-  if ((state.floor || 1) >= 5 && Math.random() < 0.5) t.fire = true;
+  // A realm may forbid fire outright (`noLava`): the undead realm is cold, black and drowned, and a
+  // furnace gun standing in it would be the one warm thing for four floors.
+  const cold = realmDef(realmOf(state)).noLava;
+  if (!cold && (state.floor || 1) >= 5 && Math.random() < 0.5) t.fire = true;
   return t;
 }
 
@@ -725,11 +1305,20 @@ function defeatBoss(state, boss) {
   p.bossesSlain = (p.bossesSlain || 0) + 1; // a floor GUARDIAN felled (badge ledger)
   tallyKill(state, boss);
   if (p.promotion > 0) p.bossKilledAsBeast = true; // felled it while running as the warhorse
-  if (isFinalFloor(state.floor) && boss.finalBoss) p.killedFinalBoss = true;
+  if (isFinalFloor(state.floor, realmOf(state)) && boss.finalBoss) p.killedFinalBoss = true;
+  // THE CEILING. Seven boons is what a full ordinary run pays out, and New Game+ does not raise it —
+  // its realms are more places to go, not more power to bank. A guardian felled past the cap still
+  // dies and still opens the way; it simply has nothing left to teach him, and the log says so
+  // rather than silently skipping the boon screen (which reads as a bug).
+  const boons = (p.boonsTaken || 0);
+  if (boons >= MAX_BOONS) {
+    state.message = `The guardian falls! But you have learned all you can — nothing more it knew is of any use to you.`;
+    return;
+  }
   p.level = (p.level || 1) + 1;
   state.pendingLevelUp = true;
   state.levelPerks = rollLevelPerks(p, LEVEL_PERK_CHOICES);
-  const tail = isFinalFloor(state.floor) ? 'choose a boon.' : 'choose a boon, then take the stair.';
+  const tail = isFinalFloor(state.floor, realmOf(state)) ? 'choose a boon.' : 'choose a boon, then take the stair.';
   state.message = `The guardian falls! You reach level ${p.level} — ${tail}`;
 }
 
@@ -1058,6 +1647,266 @@ function createPlayer(classKey) {
   return player;
 }
 
+// ---- ALTARS -------------------------------------------------------------------------------------
+// A New Game+ floor may hold ONE altar. It offers a SACRIFICE — never a gift: every option costs him
+// something he already has. He may always walk away.
+//
+// Perks are held in `takenPerks`, and everything they grant (flags, stats, cards, colours) is derived
+// from that list by `applyPerk`. There is no un-apply, and writing one would be a bug farm — a perk
+// that grants a card and a stat and a flag would need three separate reversals kept in step forever.
+// So a sacrifice REBUILDS the king from a fresh base and the new perk list, then copies his run
+// history back over. That way the derived state can never drift from the list that defines it.
+//
+// The class's INNATE trait is untouchable by construction: `createPlayer` applies it WITHOUT putting
+// it in `takenPerks` (see there), so nothing here can ever see it, swap it away, or hand it back.
+const ALTAR_CHANCE = 0.5;
+
+// Every perk in a class's pool, and every perk in the game — the two pools the swaps draw from.
+function classPerkPool(className) {
+  const cls = CLASSES[className] || CLASSES.warrior;
+  return cls.perks.slice();
+}
+function allPerkPool() {
+  const out = [];
+  for (const key of Object.keys(CLASSES)) {
+    for (const perk of (CLASSES[key].perks || [])) out.push(perk);
+  }
+  return out;
+}
+
+// Rebuild `player` so that his perks are exactly `perkIds`. Run history (kills, badges, ledgers,
+// position, the boon tally) rides along; everything a perk decides is recomputed from scratch.
+function rebuildWithPerks(player, perkIds) {
+  const fresh = createPlayer(player.className);
+  // DIFFICULTY sets the starting pool, and `createPlayer` knows nothing about it — that is done by
+  // `createInitialState`. Rebuilding without re-applying it silently handed a Nightmare warrior the
+  // easy-mode body: measured, 5/5 became 9/9 the first time he touched an altar, on every rite.
+  fresh.difficulty = player.difficulty || 'hard';
+  fresh.maxHp = startingHpFor(fresh.className, fresh.difficulty);
+  fresh.hp = fresh.maxHp;
+  const cls = CLASSES[player.className] || CLASSES.warrior;
+  const kept = [];
+  for (const id of perkIds) {
+    const perk = cls.perks.find((k) => k.id === id) || allPerkPool().find((k) => k.id === id);
+    if (!perk) continue;
+    applyPerk(fresh, { ...perk.grants }, chainColorFor(player.className, perk.chain));
+    kept.push(id);
+  }
+  fresh.takenPerks = kept;
+  // HISTORY. Anything that is a record of the run rather than a consequence of his perks. Missing one
+  // here costs a badge or a statistic; putting a perk-derived field in here would corrupt the build,
+  // which is why the split is this way round and not the other.
+  const LEDGER = ['x', 'y', 'level', 'boonsTaken', 'totalTurns', 'difficulty', 'clearedRealms',
+    'seenStructures', 'seenTerrain', 'seenTurret', 'killStreak', 'bestKillStreak', 'killsThisFloor',
+    'killsThisTurn', 'maxKillsInTurn', 'bossesSlain', 'miniBossesSlain', 'miniBossesSpawned',
+    'turretsDestroyed', 'turretsThisFloor', 'maxTurretsOnFloor', 'minisThisFloor', 'slainBossTraits',
+    'killedFinalBoss', 'bossKilledAsBeast', 'hitThisFloor', 'extraLifeUsed', 'lastTileX', 'lastTileY'];
+  for (const field of LEDGER) {
+    if (player[field] !== undefined) fresh[field] = player[field];
+  }
+  // His WOUNDS carry over as a fraction of the pool, so trading a heart away actually costs blood
+  // rather than being laundered into a free top-up.
+  const lost = Math.max(0, (player.maxHp || 1) - (player.hp || 0));
+  fresh.hp = Math.max(1, Math.min(fresh.maxHp, fresh.maxHp - lost));
+  return fresh;
+}
+
+// ---- THE OFFER ----------------------------------------------------------------------------------
+// An altar shows him EXACTLY what it wants and exactly what it will give, before he decides. Rolling
+// the perks inside the rite — "give up something, receive something" and find out afterwards — makes
+// the choice a coin-flip with flavour text on it. Naming both ends turns it into an actual decision:
+// this specific boon, for that specific one, and is that trade good for the build I am holding?
+//
+// It offers TWO, never all four, so there is a real cost to walking away.
+const ALTAR_OFFERS_SHOWN = 2;
+
+// A perk id → its authored record, from any class.
+function perkById(id) {
+  for (const key of Object.keys(CLASSES)) {
+    const found = (CLASSES[key].perks || []).find((p) => p.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Build the concrete bargains this altar is offering THIS TIME. Each one names its own perks up
+// front; `apply` then does exactly what the text said, with nothing left to chance.
+function rollAltarOffers(state) {
+  const p = state.player;
+  const held = (p.takenPerks || []).slice();
+  const pick = (list) => (list.length ? list[randomInt(list.length)] : null);
+  const offers = [];
+
+  const dropId = pick(held);
+  const drop = dropId ? perkById(dropId) : null;
+  const remaining = held.filter((id) => id !== dropId);
+
+  if (drop) {
+    // RECAST WITHIN HIS CALLING — a known perk of his own class, named.
+    const ownPool = classPerkPool(p.className).filter((k) => !remaining.includes(k.id) && k.id !== dropId);
+    const gain = pick(ownPool);
+    if (gain) {
+      offers.push({
+        id: 'swap-class',
+        name: `Trade ${drop.name} for ${gain.name}`,
+        desc: `Give up ${drop.name}. Receive ${gain.name} — ${gain.short || gain.desc}`,
+        dropId, gainId: gain.id, hearts: 0,
+      });
+    }
+    // RECAST BLINDLY — a perk from ANY calling, still named. The wild one, but not a mystery.
+    const anyPool = allPerkPool().filter((k) => !remaining.includes(k.id) && k.id !== dropId);
+    const wild = pick(anyPool);
+    if (wild) {
+      offers.push({
+        id: 'swap-any',
+        name: `Trade ${drop.name} for ${wild.name}`,
+        desc: `Give up ${drop.name}. Receive ${wild.name} — ${wild.short || wild.desc} (not of your calling)`,
+        dropId, gainId: wild.id, hearts: 0,
+      });
+    }
+    // KNOWLEDGE FOR BLOOD.
+    offers.push({
+      id: 'perk-for-heart',
+      name: `Trade ${drop.name} for a heart`,
+      desc: `Give up ${drop.name}. Your wounds close and your heart-pool grows by one, for good.`,
+      dropId, gainId: null, hearts: +1,
+    });
+  }
+  // BLOOD FOR KNOWLEDGE.
+  if ((p.maxHp || 1) > 1) {
+    const buyPool = classPerkPool(p.className).filter((k) => !held.includes(k.id));
+    const bought = pick(buyPool);
+    if (bought) {
+      offers.push({
+        id: 'heart-for-perk',
+        name: `Trade a heart for ${bought.name}`,
+        desc: `Give up a heart, permanently. Receive ${bought.name} — ${bought.short || bought.desc}`,
+        dropId: null, gainId: bought.id, hearts: -1,
+      });
+    }
+  }
+  // Shuffle, then show only a couple — walking away has to cost him something real.
+  for (let i = offers.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [offers[i], offers[j]] = [offers[j], offers[i]]; }
+  return offers.slice(0, ALTAR_OFFERS_SHOWN);
+}
+
+// Strike the named bargain. Does exactly what its text promised — no second roll.
+function takeAltarOffer(state, offer) {
+  if (!offer) return '';
+  const p = state.player;
+  const held = (p.takenPerks || []).filter((id) => id !== offer.dropId);
+  if (offer.gainId) held.push(offer.gainId);
+  const rebuilt = rebuildWithPerks(p, held);
+  if (offer.hearts) {
+    rebuilt.maxHp = Math.max(1, rebuilt.maxHp + offer.hearts);
+    rebuilt.hp = Math.min(rebuilt.maxHp, offer.hearts > 0 ? rebuilt.hp + offer.hearts : rebuilt.hp);
+  }
+  state.player = rebuilt;
+  const gained = offer.gainId ? perkById(offer.gainId) : null;
+  if (offer.hearts > 0) return 'Something is taken out of you, and the hollow fills with blood.';
+  if (offer.hearts < 0) return `You open a vein on the stone. It closes over, and you know ${gained ? gained.name : 'something new'}.`;
+  return `The altar takes one gift and returns another — you now bear ${gained ? gained.name : 'something else'}.`;
+}
+
+// The four bargains. Each returns a message, or '' if it simply cannot be struck (no perks to give
+// up, no perk left to hand him, a single heart he cannot spare).
+const ALTAR_RITES = [
+  {
+    id: 'swap-class',
+    name: 'Recast a gift',
+    desc: 'Give up one of your boons, chosen by the altar — and receive another from your own calling.',
+    run(state) {
+      const p = state.player;
+      const held = p.takenPerks || [];
+      if (!held.length) return '';
+      const drop = held[randomInt(held.length)];
+      const remaining = held.filter((id) => id !== drop);
+      const pool = classPerkPool(p.className).filter((k) => !remaining.includes(k.id) && k.id !== drop);
+      if (!pool.length) return '';
+      const gain = pool[randomInt(pool.length)];
+      state.player = rebuildWithPerks(p, [...remaining, gain.id]);
+      return `The altar takes one gift and returns another — you now bear ${gain.name}.`;
+    },
+  },
+  {
+    id: 'swap-any',
+    name: 'Recast blindly',
+    desc: 'Give up one of your boons — and receive one from ANY calling, whatever it may be.',
+    run(state) {
+      const p = state.player;
+      const held = p.takenPerks || [];
+      if (!held.length) return '';
+      const drop = held[randomInt(held.length)];
+      const remaining = held.filter((id) => id !== drop);
+      const pool = allPerkPool().filter((k) => !remaining.includes(k.id) && k.id !== drop);
+      if (!pool.length) return '';
+      const gain = pool[randomInt(pool.length)];
+      state.player = rebuildWithPerks(p, [...remaining, gain.id]);
+      return `Something not of your calling answers — you now bear ${gain.name}.`;
+    },
+  },
+  {
+    id: 'heart-for-perk',
+    name: 'Blood for knowledge',
+    desc: 'Give up a heart, permanently — and receive a boon.',
+    run(state) {
+      const p = state.player;
+      if ((p.maxHp || 1) <= 1) return ''; // it will not take his last one
+      const held = p.takenPerks || [];
+      const pool = classPerkPool(p.className).filter((k) => !held.includes(k.id));
+      if (!pool.length) return '';
+      const gain = pool[randomInt(pool.length)];
+      const rebuilt = rebuildWithPerks(p, [...held, gain.id]);
+      rebuilt.maxHp = Math.max(1, rebuilt.maxHp - 1);
+      rebuilt.hp = Math.min(rebuilt.hp, rebuilt.maxHp);
+      state.player = rebuilt;
+      return `You open a vein on the stone. It closes over, and you know ${gain.name}.`;
+    },
+  },
+  {
+    id: 'perk-for-heart',
+    name: 'Knowledge for blood',
+    desc: 'Give up one of your boons, chosen by the altar — and be made whole by a heart.',
+    run(state) {
+      const p = state.player;
+      const held = p.takenPerks || [];
+      if (!held.length) return '';
+      const drop = held[randomInt(held.length)];
+      const rebuilt = rebuildWithPerks(p, held.filter((id) => id !== drop));
+      rebuilt.maxHp += 1;
+      rebuilt.hp = Math.min(rebuilt.maxHp, rebuilt.hp + 1);
+      state.player = rebuilt;
+      return 'Something is taken out of you, and the hollow fills with blood.';
+    },
+  },
+];
+
+// The rites this altar can actually strike right now, in a stable order.
+function altarOptions(state) {
+  return ALTAR_RITES.filter((rite) => {
+    const probe = structuredClone(state);
+    return rite.run(probe) !== '';
+  });
+}
+
+// Strike a bargain by id. Returns the state (mutated in place, like the other card/perk paths).
+// Take one of the offers this altar actually made (by index into `state.altarOffers`). Anything else
+// — including no argument at all — is walking away.
+function useAltar(state, index) {
+  const next = structuredClone(state);
+  const offers = next.altarOffers || [];
+  const offer = typeof index === 'number' ? offers[index] : null;
+  next.pendingAltar = false;
+  next.altarOffers = null;
+  if (next.altar) next.altar.used = true;
+  if (!offer) {
+    next.message = 'You leave the altar as you found it.';
+    return next;
+  }
+  next.message = takeAltarOffer(next, offer) || 'The altar has nothing to offer you.';
+  return next;
+}
+
 // Is a perk offerable right now? Not already taken, and its prerequisite (if any)
 // has been taken — so tier-2/3 chain perks only surface once their tier below is in.
 function perkAvailable(player, perk) {
@@ -1091,6 +1940,10 @@ function learnPerk(state, perkId) {
   }
   applyPerk(p, { ...perk.grants }, chainColorFor(p.className, perk.chain));
   p.takenPerks.push(perkId);
+  // The BOON tally. Kept as its own counter rather than read off `takenPerks.length`, because an
+  // ALTAR swaps perks around without any of them being a boon a guardian paid out — the ceiling is
+  // about how much he has been GIVEN, not how many he happens to be holding.
+  p.boonsTaken = (p.boonsTaken || 0) + 1;
   // Necromancy: the familiar joins at once; the General upgrade re-forges any living one.
   if (p.generalForm) {
     for (const a of next.allies || []) {
@@ -1468,7 +2321,7 @@ function pruneUselessDoors(state) {
 // open space on BOTH sides — a rule for doors that RANDOM structure stranded. A gaol cell has one
 // tile behind its bars by design, so every one of them was being reverted to solid wall and the
 // prisoner bricked in alive. A hand-built structure knows what it meant; the prune does not.
-function generateTerrain(floor, player, garrison, keepDoors) {
+function generateTerrain(floor, player, garrison, keepDoors, realm) {
   const terrain = {};
   const nearStart = (x, y) => chebyshev(x, y, player.x, player.y) <= 2;
   // Tiles the SET-PIECES own. Everything generated afterwards flows around them: the noise passes
@@ -2275,8 +3128,8 @@ function generateTerrain(floor, player, garrison, keepDoors) {
   const door1 = (x, y) => { terrain[`${x},${y}`] = 'door'; if (keepDoors) keepDoors.add(`${x},${y}`); };
   // On-brand casting. A stable full of pawns is a missed joke; a stable full of horses is the room
   // telling you what it is before you have read a word of it.
-  const HORSEKIND = () => (isDemonRealmFloor(floor) ? 'nightrider' : 'knight');
-  const RUNT = () => (isDemonRealmFloor(floor) ? 'berolina' : 'ferz');
+  const HORSEKIND = () => (isDemonRealmFloor(floor, realm) ? 'nightrider' : 'knight');
+  const RUNT = () => (isDemonRealmFloor(floor, realm) ? 'berolina' : 'ferz');
 
   // A HOTEL: a corridor, and doors off it into rooms you cannot see into. Some are empty. The point
   // is that you never know which until it is open, and every one costs a turn to find out.
@@ -2414,7 +3267,7 @@ function generateTerrain(floor, player, garrison, keepDoors) {
     for (const wx of [1, 7]) window1(bx + wx, by); // clerestory windows at the altar end
     // A BISHOP, obviously. In the realm the nearest thing to one is the archbishop — still a bishop
     // by its moves, and a native, which the realm rule requires of anything living down there.
-    if (garrison) garrison.push({ kind: 'beast', species: isDemonRealmFloor(floor) ? 'archbishop' : 'bishop', x: bx + 4, y: by + 1 });
+    if (garrison) garrison.push({ kind: 'beast', species: isDemonRealmFloor(floor, realm) ? 'archbishop' : 'bishop', x: bx + 4, y: by + 1 });
   });
 
   // A CHESSBOARD. An eight-by-eight board with a full army drawn up on the far rank, exactly where
@@ -2426,10 +3279,10 @@ function generateTerrain(floor, player, garrison, keepDoors) {
     // Down in the realm the army is drawn from the DEMON roster instead — only structures may be
     // mortal there, and a mortal back rank would smuggle a whole vanilla army into hell. It is still
     // a proper array: heavy on the wings, the amazon where the queen belongs.
-    const backRank = isDemonRealmFloor(floor)
+    const backRank = isDemonRealmFloor(floor, realm)
       ? ['chancellor', 'nightrider', 'archbishop', 'amazon', 'amazon', 'archbishop', 'nightrider', 'chancellor']
       : ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
-    const pawnKind = isDemonRealmFloor(floor) ? 'berolina' : 'pawn';
+    const pawnKind = isDemonRealmFloor(floor, realm) ? 'berolina' : 'pawn';
     if (garrison) {
       for (let i = 0; i < 8; i += 1) {
         garrison.push({ kind: 'beast', species: backRank[i], caged: true, x: bx + 1 + i, y: by + 1 });
@@ -2456,7 +3309,7 @@ function generateTerrain(floor, player, garrison, keepDoors) {
   // spans a floor that has lava to span. Left ungated, these quietly put a hedge maze in the
   // Whispering Crypt and a fire pond in the Old Forest, which is precisely what the recipes exist
   // to prevent. Masonry, water and ice are at home anywhere.
-  const floorRecipe = (levelForFloor(floor) || {}).recipe || {};
+  const floorRecipe = (levelForFloor(floor, realm) || {}).recipe || {};
   const SET_PIECES = [
     ['storeroom', storeroom], ['fountain', fountain], ['garden', garden], ['pond', pond],
     ['igloo', igloo], ['gaol', gaol], ['battery', battery],
@@ -2483,7 +3336,7 @@ function generateTerrain(floor, player, garrison, keepDoors) {
   // GEYSERS are a demon-realm feature (see scatterGeysers) — a vent has no business bubbling up in
   // the Old Forest, and a room built around one would be a room built around nothing. The MUSEUM
   // exhibits one of everything, a vent included, so it waits for the realm that has them.
-  if (isDemonRealmFloor(floor)) {
+  if (isDemonRealmFloor(floor, realm)) {
     SET_PIECES.push(['bathhouse', bathhouse], ['hotspring', hotspring], ['funhouse', funhouse],
       ['museum', museum], ['sauna', sauna]);
   }
@@ -2550,13 +3403,18 @@ function generateTerrain(floor, player, garrison, keepDoors) {
     }
   };
 
-  const level = levelForFloor(floor);
+  const level = levelForFloor(floor, realm);
   const recipe = (level && level.recipe) || {};
   const cycle = Math.floor((floor - 1) / FINAL_FLOOR);
   const scale = (1 + cycle * 0.5) * (WORLD_SIZE / 20); // more seeds for the bigger board
   const seeds = (type) => Math.round((recipe[type] || 0) * scale);
-  if (seeds('water')) blob('water', 2 * seeds('water'), 5);
-  if (seeds('lava')) blob('lava', 2 * seeds('lava'), 5);
+  // The undead realm has no ordinary water. What stands in its galleries is the RIVER OF DEATH —
+  // the same slow, wading terrain, but a sickly green, and it eats anything still alive.
+  if (seeds('water')) blob(realmDef(realm).deathWater ? 'deathwater' : 'water', 2 * seeds('water'), 5);
+  // A realm may forbid FIRE outright (the undead realm has none: it is cold, black and drowned, and
+  // its whole roster is built around that). The recipes there ask for no lava anyway — this is the
+  // belt-and-braces, so a shared set-piece or a stray recipe edit can never light one.
+  if (seeds('lava') && !realmDef(realm).noLava) blob('lava', 2 * seeds('lava'), 5);
   if (seeds('wall')) wallLine(3 * seeds('wall'), 5);
   // ROOMS are part of the RECIPE now. They used to be a flat 3-5 on every floor, whatever the
   // recipe said — which is why every floor came out 23-36% stone: the Battlefield had more wall
@@ -2682,6 +3540,68 @@ function generateTerrain(floor, player, garrison, keepDoors) {
   const formations = 2 + randomInt(2); // 2-3 colonnade attempts (open floors get more; cramped ones fewer)
   for (let i = 0; i < formations; i += 1) colonnade();
 
+  // ---- THE WORKSHOP'S FITTINGS ------------------------------------------------------------------
+  // Laid LAST, over whatever the floor turned out to be, for the same reason the undead realm's water
+  // is converted here: set-pieces write their own doors and gates by the dozen, and patching each of
+  // them would leave the ones added next month untouched.
+  if (realmDef(realm).metalDoors) {
+    // NB: the door/gate CONVERSION does not happen here. It is done at the end of generateFloor
+    // (`fitOutWorkshop`), because the chamber, the stair dressing and the reachability carve all
+    // write doors AFTER this function returns — converting here left ~1 timber door per floor
+    // standing in a realm that has no timber in it (measured).
+    // WIRE RUNS. Straight cables laid across open ground — the veins of the place. They are what
+    // turn a discharge from "one tile" into "that whole side of the room", so they are laid long and
+    // deliberately crossing, not scattered as confetti.
+    const runs = 5 + randomInt(4);
+    for (let r = 0; r < runs; r += 1) {
+      const horizontal = Math.random() < 0.5;
+      const len = 5 + randomInt(7);
+      let x = 2 + randomInt(WORLD_SIZE - 4);
+      let y = 2 + randomInt(WORLD_SIZE - 4);
+      for (let i = 0; i < len; i += 1) {
+        if (x > 0 && y > 0 && x < WORLD_SIZE - 1 && y < WORLD_SIZE - 1 && atT(x, y) === 'normal' && !nearStart(x, y)) {
+          terrain[`${x},${y}`] = 'wire';
+        }
+        if (horizontal) x += 1; else y += 1;
+      }
+    }
+    // SWITCHES. Few and deliberate: each one is a lever over a whole neighbourhood, and a floor
+    // littered with them would make the machinery trivial rather than tactical.
+    for (let i = 0; i < 3 + randomInt(3); i += 1) {
+      for (let tries = 0; tries < 40; tries += 1) {
+        const sx = 2 + randomInt(WORLD_SIZE - 4);
+        const sy = 2 + randomInt(WORLD_SIZE - 4);
+        if (atT(sx, sy) !== 'normal' || nearStart(sx, sy)) continue;
+        terrain[`${sx},${sy}`] = 'switch';
+        break;
+      }
+    }
+    // GENERATORS. Placed ON or beside a wire wherever possible, because a generator wired into a run
+    // is a threat with REACH — the beat lands the whole length of the cable rather than in a puddle
+    // round the machine. That is the difference between scenery and a thing worth shoving.
+    for (let i = 0; i < 2 + randomInt(3); i += 1) {
+      let placed = false;
+      for (let tries = 0; tries < 60 && !placed; tries += 1) {
+        const gx = 2 + randomInt(WORLD_SIZE - 4);
+        const gy = 2 + randomInt(WORLD_SIZE - 4);
+        if (atT(gx, gy) !== 'normal' || nearStart(gx, gy)) continue;
+        const nextToWire = [...ORTHO, ...DIAG].some(([dx, dy]) => atT(gx + dx, gy + dy) === 'wire');
+        if (tries < 40 && !nextToWire) continue; // hold out for a wired spot, then take what is going
+        terrain[`${gx},${gy}`] = 'generator';
+        placed = true;
+      }
+    }
+  }
+
+  // A FINAL SWEEP for realms whose water is not water. Set-pieces lay their own ponds, baths, wash-ups
+  // and dunk tanks directly, and the recipe pass is only one of a dozen places 'water' is written —
+  // so converting at the source meant the undead realm came out with 393 tiles of perfectly ordinary
+  // water in it (measured). Doing it once, here, at the end, catches every source there will ever be.
+  if (realmDef(realm).deathWater) {
+    for (const k of Object.keys(terrain)) {
+      if (terrain[k] === 'water') terrain[k] = 'deathwater';
+    }
+  }
   return terrain;
 }
 
@@ -2774,8 +3694,8 @@ function buildChamber(state, cx, cy, style, toward) {
 // and a safe distance from the floor's guarded chamber, so he never spawns inside the boss court.
 // Everything downstream reads his ACTUAL position (terrain-clearing, the chamber doorway's facing,
 // the exit's distance checks), so the whole floor arranges itself around wherever he lands.
-function randomizedStart(floor) {
-  const anchor = chamberAnchorForFloor(floor);
+function randomizedStart(floor, realm) {
+  const anchor = chamberAnchorForFloor(floor, realm);
   const clamp = (v) => Math.max(4, Math.min(WORLD_SIZE - 5, v));
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const x = clamp(PLAYER_START.x + randomInt(13) - 6); // centre +/- 6
@@ -2786,9 +3706,9 @@ function randomizedStart(floor) {
 }
 
 // Build (or rebuild) a floor. Carries the player's stats forward between floors.
-function generateFloor(floor, carryPlayer, score) {
+function generateFloor(floor, carryPlayer, score, realm) {
   const player = carryPlayer ? { ...carryPlayer } : createPlayer('warrior');
-  const start = randomizedStart(floor);
+  const start = randomizedStart(floor, realm);
   player.x = start.x;
   player.y = start.y;
 
@@ -2799,8 +3719,12 @@ function generateFloor(floor, carryPlayer, score) {
   const state = {
     worldSize: WORLD_SIZE,
     viewSize: player.vision,
+    // WHICH PLACE this is. Everything realm-dependent reads it from here: the level table, the
+    // chamber anchor, whether there are demon floors, whether lava exists, what the view paints.
+    // It defaults to the overworld, so a save written before realms existed loads unchanged.
+    realm: realm || DEFAULT_REALM,
     player,
-    terrain: generateTerrain(floor, player, garrison, keepDoors),
+    terrain: generateTerrain(floor, player, garrison, keepDoors, realm),
     fixedDoors: keepDoors,
     explored: {},
     enemies: [],
@@ -2859,6 +3783,10 @@ function generateFloor(floor, carryPlayer, score) {
   function addMobileEnemy(type, x, y, surprised) {
     const enemy = createEnemy(type, x, y);
     enemy.surprised = Boolean(surprised);
+    // In an UNDEAD realm every native wears an affliction — the pieces are the ones you already know,
+    // it is what it takes to put them down that changed. In the WORKSHOP they are all machines.
+    if (realmDef(realm).undeadRoster) makeUndead(enemy);
+    if (realmDef(realm).golemRoster) makeGolem(enemy);
     // EVERYTHING seeded with the floor starts ASLEEP — posted where it was placed, holding its ground,
     // doing nothing until the king is seen or lands a blow. That is what makes the initial population
     // read as a garrison: foes guarding the ground they were put on. Only reinforcements (dread events,
@@ -2894,7 +3822,7 @@ function generateFloor(floor, carryPlayer, score) {
       // played worse: the slab is destructible cover, so shattering it left a gun apparently floating
       // in a puddle. If a room's own dressing has put ice under a gun post, clear it back to floor.
       if (terrainAt(state, post.x, post.y) === 'ice') delete state.terrain[`${post.x},${post.y}`];
-      state.enemies.push(makeTurret(state, randomTurretKind(floor), post.x, post.y));
+      state.enemies.push(makeTurret(state, randomTurretKind(floor, realm), post.x, post.y));
     } else if (post.kind === 'circle') {
       const k = randomStructureKind(floor);
       const c = createEnemy(k, post.x, post.y);
@@ -2910,7 +3838,7 @@ function generateFloor(floor, carryPlayer, score) {
     } else if (post.kind === 'blood') {
       // DRESSING. A room that has plainly seen something happen in it reads as a place with a past —
       // the back of the kitchen, the far end of a firing range. Pure decoration: no unit, no clock.
-      addSpatter(state, post.x, post.y, 0, 0, isDemonRealmFloor(floor));
+      addSpatter(state, post.x, post.y, 0, 0, isDemonRealmFloor(floor, realm));
     } else if (post.kind === 'miniboss') {
       // THE ONE IN CHARGE. A room with a named occupant at the heart of it — the shopkeeper, the
       // chef, the thing in the outhouse — is a room with a POINT, not just a shape with foes in it.
@@ -2959,7 +3887,11 @@ function generateFloor(floor, carryPlayer, score) {
   }
 
   // Every initial cohort is scaled to 0.75x for a gentler starting population.
-  const initCount = (n) => Math.round(n * 0.75);
+  // Every initial cohort is scaled to 0.75x for a gentler starting population — and HALVED again in
+  // a realm whose natives get back up (the Workshop). Four golems that keep standing up is a harder
+  // room than eight ordinary pieces, and a floor of eight golems is simply a floor you cannot cross.
+  const popScale = realmDef(realm).halfPopulation ? 0.5 : 1;
+  const initCount = (n) => Math.max(1, Math.round(n * 0.75 * popScale));
 
   // The floor's standing garrison — posted off-screen and asleep at their stations, growing with depth.
   const offscreenCount = Math.min(initCount(8 + floor * 4), MAX_ENEMIES);
@@ -2976,11 +3908,11 @@ function generateFloor(floor, carryPlayer, score) {
   // a wall (or lava/water moat) with a doorway facing the king, plus a backup cohort. The EXIT is
   // placed SEPARATELY near the king's start (below) — he spawns beside the way out and must
   // journey to the guarded key and back to leave.
-  const level = levelForFloor(floor);
-  const anchor = chamberAnchorForFloor(floor);
+  const level = levelForFloor(floor, realm);
+  const anchor = chamberAnchorForFloor(floor, realm);
   const ax = Math.max(3, Math.min(WORLD_SIZE - 4, anchor.x)); // clamped so the larger 7x7 chamber fits
   const ay = Math.max(3, Math.min(WORLD_SIZE - 4, anchor.y));
-  const portalFloor = isFinalFloor(floor);
+  const portalFloor = isFinalFloor(floor, realm);
   state.isPortalFloor = portalFloor;
   occupied.add(`${ax},${ay}`);
   // ONE chamber style per floor — a moat of fire/water, a walled keep, a timber copse, an icy
@@ -3016,7 +3948,7 @@ function generateFloor(floor, carryPlayer, score) {
   // guardian (and the key beneath it) sit alone.
   state.key = { x: ax, y: ay, collected: false, discovered: false, orb: portalFloor };
   state.enemies = state.enemies.filter((e) => !(e.x === ax && e.y === ay));
-  const boss = createBoss(floor, ax, ay);
+  const boss = createBoss(floor, ax, ay, realm);
   state.enemies.push(boss);
   // Belt and braces: a jumper penned by a barrier ring (wall, timber, ice) that somehow has no move
   // once roused gets its ring flooded to water, so any piece can wade out. (The cleared court almost
@@ -3105,7 +4037,7 @@ function generateFloor(floor, carryPlayer, score) {
   // that never moves and now the only thing he starts out knowing.
   state.upstair = { x: player.x, y: player.y };
   state.message = portalFloor
-    ? 'The final floor. Seize the Orb of Victory, then reach the portal to escape!'
+    ? `The final floor. Seize the ${(realmDef(realm).orb || {}).name || 'Orb of Victory'}, then reach the portal!`
     : 'A new floor. You start by the stair — find the floor key to unlock it.';
 
   const nearChamber = (x, y) => standable(x, y) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 7 && chebyshev(x, y, player.x, player.y) >= 3 && !seen(x, y);
@@ -3142,9 +4074,13 @@ function generateFloor(floor, carryPlayer, score) {
   };
   // Turrets (from floor 3) — placed ONLY where they cover real ground (never boxed into hitting
   // no/few tiles) and never plugging a hallway.
-  if (floor >= 3) {
-    for (let i = 0; i < initCount(5 + Math.floor(floor / 2)); i += 1) {
-      const kind = randomTurretKind(floor); // a turret is a mortal gun — never a leaping demon
+  // The WORKSHOP is an armoury: TWICE the guns, and they are the realm's real threat — the golems
+  // between them cannot be cleared, so the emplacements are what he actually plans around. (Its guns
+  // are exempt from the floor-3 introduction: this is not a place that eases anyone in.)
+  const gunScale = realmDef(realm).doubleTurrets ? 2 : 1;
+  if (floor >= 3 || realmDef(realm).doubleTurrets) {
+    for (let i = 0; i < initCount(5 + Math.floor(floor / 2)) * gunScale; i += 1) {
+      const kind = randomTurretKind(floor, realm); // a turret is a mortal gun — never a leaping demon
       const spot = structureSpot((x, y) => turretCoverage(state, kind, x, y) >= 4 && !turretBlocksHallway(state, x, y));
       if (spot) state.enemies.push(makeTurret(state, kind, spot.x, spot.y));
     }
@@ -3271,8 +4207,46 @@ function generateFloor(floor, carryPlayer, score) {
   // The Necromancer's familiar rejoins him on each fresh floor (undead do not follow down).
   if (player.familiar) spawnFamiliar(state);
 
-  scatterGeysers(state, floor, occupied); // demon-realm vents (floors 6+), laid LAST so nothing sits on one
+  scatterGeysers(state, floor, occupied, realm); // demon-realm vents (floors 6+), laid LAST so nothing sits on one
   scatterTorches(state, floor); // bracket wall-torches, thicker the deeper he goes
+  // AFFLICT THE WHOLE ROSTER, in one pass at the end. Pieces reach a floor by a dozen routes — the
+  // off-screen garrison, the chamber guards, every set-piece's own occupants, the seeded mini-bosses —
+  // and doing this at the spawn sites left roughly one in seven natives merely alive (measured).
+  // Bosses are deliberately excluded: a guardian down here has its own identity and its own rules.
+  if (realmDef(realm).undeadRoster) {
+    for (const e of state.enemies) {
+      if (e.turret || e.summonCircle || e.boss) continue;
+      if (!e.undeadType) makeUndead(e);
+    }
+  }
+  // The same sweep for the WORKSHOP, and for the same reason: pieces reach a floor by a dozen routes
+  // and patching the spawn sites leaves roughly one in seven untouched (measured, on the undead pass).
+  if (realmDef(realm).golemRoster) {
+    for (const e of state.enemies) {
+      if (e.turret || e.summonCircle || e.boss) continue;
+      if (!e.golem) makeGolem(e);
+    }
+  }
+  // ONE ALTAR, half the time, on a New Game+ floor. Placed well clear of his arrival so finding it is
+  // a thing he does rather than a thing that happens to him, and never on the key or the way out.
+  if (realmDef(realm).newGamePlus && Math.random() < ALTAR_CHANCE) {
+    const spot = place((x, y) => standable(x, y)
+      && chebyshev(x, y, player.x, player.y) >= 5
+      && !keyTileAt(state, x, y)
+      && !(state.exit && x === state.exit.x && y === state.exit.y));
+    if (spot) state.altar = { x: spot.x, y: spot.y, used: false, discovered: false };
+  }
+  // The Workshop's ironmongery goes on LAST of all — after the chamber, the stair dressing and the
+  // reachability carve have each written their own doors.
+  if (realmDef(realm).metalDoors) fitOutWorkshop(state);
+  // ...and the same sweep for the WATER, here at the very end. generateTerrain has its own pass, but
+  // plenty is written after it returns — the boss chamber's moat, the stair dressing, the pocket
+  // connector. Measured: the terrain-side pass alone still left 251 tiles of ordinary water.
+  if (realmDef(realm).deathWater) {
+    for (const k of Object.keys(state.terrain)) {
+      if (state.terrain[k] === 'water') state.terrain[k] = 'deathwater';
+    }
+  }
   updateDiscovery(state);
   return state;
 }
@@ -3282,11 +4256,16 @@ function generateFloor(floor, carryPlayer, score) {
 // clock (tickGeysers / geyserErupting). Scattered singly on OPEN ground, laid last of all so no unit,
 // structure, key, stair or upstair ever sits on one — the user's rule: never spawn a foe/circle/boss
 // on a vent. Placed on plain floor only; a vent over water or lava would make no sense.
-function isDemonRealmFloor(floor) {
-  return (((floor - 1) % FINAL_FLOOR) + 1) >= 6;
+// The DEMON floors at the foot of a realm. In the overworld that is floors 6-8 of each eight-floor
+// cycle. A New Game+ realm has `demonFrom: 0` — it is not the demon realm's antechamber, it is its
+// own place with its own roster, so nothing in it is ever "a demon floor".
+function isDemonRealmFloor(floor, realm) {
+  const def = realmDef(realm);
+  if (!def.demonFrom) return false;
+  return (((floor - 1) % def.finalFloor) + 1) >= def.demonFrom;
 }
-function scatterGeysers(state, floor, occupied) {
-  if (!isDemonRealmFloor(floor)) return;
+function scatterGeysers(state, floor, occupied, realm) {
+  if (!isDemonRealmFloor(floor, realm)) return;
   const taken = new Set(occupied || []);
   for (const e of state.enemies) taken.add(`${e.x},${e.y}`);
   for (const a of (state.allies || [])) taken.add(`${a.x},${a.y}`);
@@ -3400,7 +4379,10 @@ function nextFloor(state) {
   healed.killsThisFloor = 0;
   healed.minisThisFloor = 0;
   healed.turretsThisFloor = 0;
-  const next = generateFloor(state.floor + 1, healed, state.score);
+  // You descend WITHIN a realm — the stair never carries you out of one. Leaving is done through a
+  // portal (see the portal room), which is what makes the last floor of a realm feel like a door
+  // rather than one more step down.
+  const next = generateFloor(state.floor + 1, healed, state.score, realmOf(state));
   next.pendingLevelUp = false;
   next.message = 'You descend the stair to the next floor.';
   return next;
@@ -3746,7 +4728,7 @@ function getPlayerMoves(state) {
     // NB: this rebuilds the move rather than passing it through, so EVERY flag a caller sets must
     // be listed here or it is silently dropped — which is exactly what happened to `chop`: the tile
     // was offered as a plain move and the king walked into the tree.
-    moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture), push: Boolean(tile.push), chop: Boolean(tile.chop), embedded: Boolean(tile.embedded), pitDive: Boolean(tile.pitDive) });
+    moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture), push: Boolean(tile.push), chop: Boolean(tile.chop), embedded: Boolean(tile.embedded), pitDive: Boolean(tile.pitDive), hitSwitch: Boolean(tile.hitSwitch), openDoor: Boolean(tile.openDoor) });
   };
   if (p.promotion > 0) {
     // Animal Form (Druid): the king becomes a swift UNICORN — it glides like a bishop AND rides like a
@@ -3777,11 +4759,22 @@ function getPlayerMoves(state) {
     // king shoves in vain and merely wastes the turn (see resolveBoulderPush).
     const bx = p.x + dx;
     const by = p.y + dy;
-    if (terrainAt(state, bx, by) === 'boulder') add({ x: bx, y: by, push: true });
+    // A GENERATOR shoves exactly like a boulder — that is the whole point of it. It is the one hazard
+    // in the game he can pick up and aim: heave it into a crowd, step back, and let the beat land.
+    if (isShovable(terrainAt(state, bx, by))) add({ x: bx, y: by, push: true });
     // CHOP: an adjacent TREE is a valid action too. A tree is not standable, so it would otherwise
     // never appear as a move at all — the king would simply have no way to cut one down by hand.
     // He hacks at it for a wound and stays put; it takes TREE_HP swings to bring one down.
     if (isChoppable(terrainAt(state, bx, by))) add({ x: bx, y: by, chop: true });
+    // THROW A SWITCH. Like a chop, this is an action against a tile he cannot stand on — he strikes
+    // the housing and stays put. It has no HP and can never be destroyed, so the only thing a blow
+    // does is work it.
+    if (terrainAt(state, bx, by) === 'switch') add({ x: bx, y: by, hitSwitch: true });
+    // HEAVE A METAL DOOR. A door is a door: he can put his hands on one and open it whenever he
+    // likes, which is the whole difference between a metal DOOR and a metal GATE. The gate needs
+    // current or a switch; the door only needs him. (It never swings shut again afterwards — that is
+    // what makes opening one a decision rather than a formality.)
+    if (terrainAt(state, bx, by) === 'metaldoor') add({ x: bx, y: by, openDoor: true });
   }
   // PIT DIVE — a last resort offered ONLY when he is otherwise STRANDED (not one other move on the
   // board): he scrambles down into an adjacent pit and hauls himself out the nearest side for a
@@ -3798,10 +4791,24 @@ function getPlayerMoves(state) {
 
 // The floor's DOWNSTAIR — a boulder must never be shoved onto it (it would bury the way out, and a
 // boulder can't be pushed off an exit tile cleanly). The uncollected key is guarded the same way.
-function boulderBlockedTile(state, x, y) {
-  if (keyTileAt(state, x, y)) return true; // never bury the floor key
-  if (state.exit && x === state.exit.x && y === state.exit.y) return true; // never bury the downstair
+// The OBJECTIVE TILES. Nothing may be shoved onto one of these, and nothing may change the ground
+// under one — they are the four places on a floor whose meaning must never be in doubt. A boulder
+// parked on the stair, or a lava flow over the altar, turns a landmark into a puzzle the player was
+// never offered the tools to solve.
+function isObjectiveTile(state, x, y) {
+  if (keyTileAt(state, x, y)) return true; // the floor key / Orb
+  if (state.exit && x === state.exit.x && y === state.exit.y) return true; // the downstair or portal
+  if (state.upstair && x === state.upstair.x && y === state.upstair.y) return true; // the way he came in
+  if (state.altar && x === state.altar.x && y === state.altar.y) return true; // an altar's offer
   return false;
+}
+function boulderBlockedTile(state, x, y) {
+  return isObjectiveTile(state, x, y);
+}
+// Guard for every path that WRITES terrain (lava flows, freezes, fissures, cave-ins). The ground
+// under an objective is always plain floor and stays that way.
+function terrainLocked(state, x, y) {
+  return isObjectiveTile(state, x, y);
 }
 // Can the king shove the boulder at (bx,by) one step in (dx,dy)? The tile beyond must be
 // on-board, not a wall/boulder, hold no unit, and not the floor key or the downstair.
@@ -3819,17 +4826,24 @@ function canPushBoulder(state, bx, by, dx, dy) {
 // Shove the boulder at (bx,by) one step. Driven into a PIT / LAVA / WATER it FILLS the
 // hazard (both tiles become open floor); onto open ground it simply rolls one tile. The
 // king follows into the vacated tile.
+// What a shoulder will move. A GENERATOR shoves like a boulder in every respect — including being
+// swallowed by a pit or a lava field, which is the safe way to be rid of one.
+function isShovable(t) {
+  return t === 'boulder' || t === 'generator';
+}
+
 function pushBoulder(state, bx, by, dx, dy) {
   state.player.pushedBoulder = true; // badge ledger: the king put his shoulder to a rock
   const tx = bx + dx;
   const ty = by + dy;
   const t = terrainAt(state, tx, ty);
+  const what = terrainAt(state, bx, by); // boulder, or the Workshop's machinery
   delete state.terrain[`${bx},${by}`]; // the boulder leaves its tile
-  if (t === 'pit' || t === 'lava' || t === 'water') {
+  if (t === 'pit' || t === 'lava' || t === 'water' || t === 'deathwater') {
     cueHazardFill(state, t, tx, ty);
     delete state.terrain[`${tx},${ty}`]; // hazard filled, boulder consumed
   } else {
-    state.terrain[`${tx},${ty}`] = 'boulder';
+    state.terrain[`${tx},${ty}`] = what;
   }
   state.player.x = bx;
   state.player.y = by;
@@ -3885,6 +4899,10 @@ function pushBoulderFar(state, bx, by, dx, dy, dist) {
 // A GATE is a tree made of iron: same 3 wounds, same chopping, same debris — it simply does not
 // block the look. Everything below treats the two as one thing so they can never drift apart.
 function isChoppable(t) {
+  // NB: no 'metalgate'. Ordinary iron gives to three swings of an axe; the Workshop's does not give
+  // at all, so it is never offered as a chop. Walking into one therefore costs NOTHING — the move is
+  // simply not generated, exactly as it is not against a wall. Offering a swing that can never land
+  // would be the worst of both: a turn spent, and nothing to show for it.
   return t === 'tree' || t === 'gate';
 }
 function treeHpAt(state, x, y) {
@@ -4289,6 +5307,144 @@ function tallyKill(state, enemy) {
   if (enemy.boss && enemy.mini) { p.minisThisFloor = (p.minisThisFloor || 0) + 1; p.maxMinisOnFloor = Math.max(p.maxMinisOnFloor || 0, p.minisThisFloor); }
 }
 
+// A killing blow landing on an AFFLICTED piece. Returns `null` if the blow should fall through and
+// kill it normally, or a boolean for resolveKill to hand straight back (true = something died,
+// false = it is still standing and no on-kill should fire).
+function resolveUndeadBlow(state, enemy, byFire, opts) {
+  const kind = enemy.undeadType;
+
+  // ZOMBIE: a wound pool, not a life. Fire counts DOUBLE — rotten flesh goes up — which is what
+  // makes a torch worth carrying into a realm that grows none of its own.
+  if (kind === 'zombie') {
+    enemy.hp = (enemy.hp || ZOMBIE_HP) - (byFire ? 2 : 1);
+    if (enemy.hp > 0) {
+      enemy.awake = true;
+      enemy.provoked = true;
+      enemy.asleep = false;
+      bloody(enemy, BLOOD_HIT);
+      addSpatter(state, enemy.x, enemy.y, 0, 0, false);
+      state.message = byFire
+        ? `The zombie ${enemy.kind} BURNS (${enemy.hp}/${enemy.maxHp}) — fire tears through dead flesh!`
+        : `The zombie ${enemy.kind} shrugs off the blow (${enemy.hp}/${enemy.maxHp}).`;
+      state.lastAction = 'combat';
+      return false; // still standing
+    }
+    return null; // the pool is spent — let it die properly
+  }
+
+  // SKELETON: the first killing blow only BREAKS it. It lies there knitting itself back together
+  // and is up again in three turns — unless he spends a second blow finishing it while it is down.
+  // Fire is no shortcut here: bones do not burn. (`broken` is what the view draws as a heap.)
+  if (kind === 'skeleton') {
+    if (!enemy.broken) {
+      enemy.broken = true;
+      enemy.reknit = SKELETON_REKNIT_TURNS;
+      enemy.awake = true;
+      enemy.provoked = true;
+      enemy.asleep = false;
+      cue(state, 'crush'); // the clatter of a body coming apart
+      addSpatter(state, enemy.x, enemy.y, 0, 0, false);
+      state.message = `The skeleton ${enemy.kind} clatters apart — but the bones are already stirring!`;
+      state.lastAction = 'combat';
+      return false; // it is DOWN, not dead: no on-kill, no boon
+    }
+    return null; // struck again while broken — that finishes it
+  }
+
+  // VAMPIRE: struck, it bursts into a BAT rather than dying — except by FIRE, which ends it where it
+  // stands. The bat flits away IMMEDIATELY (see becomeBat), so the blow that made it never lands on it.
+  if (kind === 'vampire') {
+    if (byFire) {
+      state.message = `The vampire ${enemy.kind} shrieks and burns away — no time to take wing!`;
+      return null; // fire is the answer: it dies here
+    }
+    becomeBat(state, enemy);
+    return false;
+  }
+  return null;
+}
+
+// A struck vampire bursts apart into a BAT: a thing that ignores terrain entirely, flits to a random
+// tile in the 3x3 around it, and re-forms into a vampire about half the time. It teleports the
+// INSTANT it is made, so the king never gets a free second swing at the tile he just struck.
+function becomeBat(state, vamp) {
+  vamp.bat = true;
+  vamp.awake = true;
+  vamp.provoked = true;
+  vamp.asleep = false;
+  vamp.surprised = false;
+  addSpatter(state, vamp.x, vamp.y, 0, 0, false);
+  state.message = `The vampire ${vamp.kind} bursts into a cloud of bats!`;
+  state.lastAction = 'combat';
+  batFlit(state, vamp); // away at once — the blow that made it does not get to land twice
+  return vamp;
+}
+
+// The undead clock, run once an enemy phase. Broken skeletons count down and get up; bats flit and
+// (about half the time) settle back into vampires. Both are deliberately LOUD in the log — a thing
+// standing up again behind you is the single most important event in this realm.
+function tickUndead(state) {
+  for (const e of state.enemies) {
+    if (!isUndead(e)) continue;
+    if (e.broken) {
+      e.reknit = (e.reknit || 0) - 1;
+      if (e.reknit <= 0) {
+        e.broken = false;
+        e.reknit = 0;
+        e.awake = true;
+        e.provoked = true;
+        cue(state, 'crush');
+        if (inLineOfSight(state, e.x, e.y)) {
+          state.message = state.message
+            ? `${state.message} The skeleton ${e.kind} pulls itself back together!`
+            : `The skeleton ${e.kind} pulls itself back together!`;
+        }
+      }
+      continue; // a heap of bones does nothing else this turn
+    }
+    if (e.bat) {
+      // It settles about half the time; otherwise it flits on. Either way it has spent its turn —
+      // a bat that both moved AND re-formed into a vampire on the same turn would be a free attack.
+      if (Math.random() < BAT_REFORM_CHANCE) {
+        e.bat = false;
+        if (inLineOfSight(state, e.x, e.y)) {
+          state.message = state.message
+            ? `${state.message} The bats settle back into a vampire ${e.kind}!`
+            : `The bats settle back into a vampire ${e.kind}!`;
+        }
+      } else {
+        batFlit(state, e);
+      }
+    }
+  }
+}
+
+// A bat's move: anywhere in the 3x3 around it. Terrain is no object (it is flying) and so is anything
+// standing there — except that it will not share a tile with another piece, the king, or the key.
+function batFlit(state, bat) {
+  const spots = [];
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dy = -1; dy <= 1; dy += 1) {
+      if (!dx && !dy) continue; // NEVER its own tile: the whole point is that it is GONE from the
+      // square he just struck. Leaving (0,0) in the candidate list meant one flit in nine went
+      // nowhere at all, handing him a free second swing at the thing he had just burst.
+      const x = bat.x + dx;
+      const y = bat.y + dy;
+      if (x < 1 || y < 1 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) continue;
+      if (x === state.player.x && y === state.player.y) continue;
+      if (keyTileAt(state, x, y)) continue;
+      if (allyAt(state, x, y)) continue;
+      if (state.enemies.some((e) => e.id !== bat.id && e.x === x && e.y === y)) continue;
+      spots.push({ x, y });
+    }
+  }
+  if (!spots.length) return false;
+  const t = spots[randomInt(spots.length)];
+  bat.x = t.x;
+  bat.y = t.y;
+  return true;
+}
+
 function resolveKill(state, enemy, opts) {
   if (enemy.boss) {
     damageBoss(state, enemy, 1);
@@ -4307,6 +5463,23 @@ function resolveKill(state, enemy, opts) {
     state.message = `The ${enemy.kind} parries the blow — its guard drops!`;
     state.lastAction = 'combat';
     return false;
+  }
+  // THE UNDEAD do not simply fall over. Each affliction has its own answer to a killing blow, and
+  // this is the one place all three are resolved — every path that fells a common piece comes
+  // through here, so putting them anywhere else would mean a zombie that dies to a boulder but not
+  // to a sword. `opts.fire` marks spellfire, a burning tree, lava: fire is the counter to two of
+  // the three, and the reason to carry a torch into a realm that has none of its own.
+  const byFire = Boolean(opts && (opts.fire || opts.ash));
+  if (isUndead(enemy)) {
+    const undeadOutcome = resolveUndeadBlow(state, enemy, byFire, opts);
+    if (undeadOutcome !== null) return undeadOutcome;
+  }
+  // A GOLEM cannot be killed by a blow at all — it is switched off, and it will get up again. Only a
+  // PIT is final (`opts.pit`, passed by the fall paths), because a hole is the one thing a machine
+  // cannot climb out of. Everything else — sword, spell, boulder, lava — just stops it for five turns.
+  if (isGolem(enemy) && !(opts && opts.pit)) {
+    if (!enemy.inert) deactivateGolem(state, enemy);
+    return false; // nothing died: no on-kill, no boon, no corpse
   }
   state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
   const p = state.player;
@@ -4645,15 +5818,45 @@ function applyOnKill(state, ox, oy, dx, dy) {
 // descent so the controller drops to the next floor. Returns true when it fires.
 function tryDescend(next) {
   if (next.won || next.gameOver) return false;
+  // IN THE PORTAL ROOM the floor is nothing but doors. Stepping onto one is the whole interaction —
+  // there is no stair here, and no key.
+  if (next.portalRoom) {
+    const gate = portalGateUnderKing(next);
+    if (!gate) return false;
+    if (gate.collapsed) {
+      next.message = gate.realm
+        ? `${realmDef(gate.realm).name || 'That realm'} is spent — its portal is dark and cold.`
+        : 'Nothing but dead stone.';
+      return false;
+    }
+    if (gate.accept) {
+      next.lastAction = 'portal-accept';
+      next.message = 'You step into the light, and let it be finished.';
+      return true;
+    }
+    next.lastAction = 'portal-enter';
+    next.enteringRealm = gate.realm;
+    next.message = `The portal takes you.`;
+    return true;
+  }
   if (next.exit && next.player.x === next.exit.x && next.player.y === next.exit.y) {
     if (next.exit.locked) {
       // The king reached the exit but it is sealed until he holds the key / Orb.
       next.message = next.exit.portal
-        ? 'The portal lies dormant — seize the Orb of Victory first.'
+        ? `The portal lies dormant — seize the ${(realmDef(realmOf(next)).orb || {}).name || 'Orb'} first.`
         : 'The stair is sealed — find the floor key first.';
       return false;
     }
     if (next.exit.portal) {
+      // A NEW GAME+ realm's portal does not end the run — it takes him BACK to the room between
+      // realms, with the way he just came now dark behind him. That is what makes each realm feel
+      // like a door rather than a second ending: the victory he is carrying is already banked, and
+      // this is simply one more place he has finished with.
+      if (realmDef(realmOf(next)).newGamePlus) {
+        next.lastAction = 'realm-cleared';
+        next.message = `You step back through the portal. ${realmDef(realmOf(next)).name} is behind you now.`;
+        return true;
+      }
       // The FINALE: stepping into the open portal, Orb in hand, wins the run outright. Flag it
       // as 'win' (not 'exit') so no caller tries to generate a floor 9 — there is none.
       next.won = true;
@@ -4734,9 +5937,32 @@ function blinkToSafety(state) {
 }
 
 // Collect the floor key when the king stands on it: the stair unlocks for good.
+// Standing on the altar raises its offer. `pendingAltar` freezes the turn exactly as a level-up does,
+// so the choice is made before the world moves again — an altar you had to fight over would not be a
+// decision, it would be a distraction.
+function touchAltarIfHere(next) {
+  const a = next.altar;
+  const p = next.player;
+  if (!a || a.used || p.x !== a.x || p.y !== a.y) return false;
+  a.discovered = true;
+  // Roll the two CONCRETE bargains now, and keep them on the state — so what the overlay shows him
+  // is what he gets. Rolling at the moment he clicks would make the named perks a lie.
+  const offers = rollAltarOffers(next);
+  if (!offers.length) {
+    a.used = true;
+    next.message = 'The altar is silent. There is nothing it wants from you.';
+    return false;
+  }
+  next.altarOffers = offers;
+  next.pendingAltar = true;
+  next.message = 'An altar. It names its price.';
+  return true;
+}
+
 function collectKeyIfHere(next) {
   const k = next.key;
   const p = next.player;
+  touchAltarIfHere(next);
   if (k && !k.collected && p.x === k.x && p.y === k.y) {
     k.collected = true;
     k.discovered = true;
@@ -4746,7 +5972,18 @@ function collectKeyIfHere(next) {
       // maybeSpawnEnemy / spawnBossRush). From here it's a fighting retreat to the portal.
       next.orbTaken = true;
       next.bossRushTimer = 0;
-      next.message = 'You seize the Orb of Victory — the portal roars open, and guardians converge!';
+      // EVERY realm ends on an orb of its own, and he KEEPS them. They do nothing — no power, no
+      // stat — they are a shelf of proof of where he has been, which is the only reward a realm he
+      // did not have to enter can honestly offer. Kept on the player so they ride the descent, the
+      // portal room and the save alike.
+      const orb = realmDef(realmOf(next)).orb;
+      if (orb) {
+        if (!Array.isArray(next.player.orbs)) next.player.orbs = [];
+        if (!next.player.orbs.includes(orb.name)) next.player.orbs.push(orb.name);
+        next.message = `You seize the ${orb.name} — the portal roars open, and guardians converge!`;
+      } else {
+        next.message = 'You seize the Orb of Victory — the portal roars open, and guardians converge!';
+      }
     } else {
       next.message = 'You seize the floor key — the stair unlocks!';
     }
@@ -5431,6 +6668,21 @@ function movePlayerTo(state, x, y) {
   }
   if (move.push) return resolveBoulderPush(next, x, y); // shove the boulder standing there
   if (move.chop) return resolveTreeChop(next, x, y); // hack at the tree standing there
+  if (move.openDoor) { // haul the metal door open — he stays put, and it stays open
+    next.terrain[`${x},${y}`] = 'metaldooropen';
+    cue(next, 'crush');
+    next.message = 'You haul the metal door open. It stays that way.';
+    passTurn(next);
+    next.lastAction = 'move';
+    return next;
+  }
+  if (move.hitSwitch) { // strike the switch: it throws, he holds his ground, the turn is spent
+    throwSwitch(next, x, y);
+    next.player.attacked = true;
+    passTurn(next);
+    next.lastAction = 'combat';
+    return next;
+  }
   if (move.pitDive) return resolvePitDive(next, x, y); // stranded: drop into the pit and scramble out
   return applyArrival(next, x, y, move.embedded);
 }
@@ -6070,6 +7322,41 @@ function isStationary(enemy) {
 // knockback). Demon-kind pieces are immune; the king's own lava is handled in passTurn; a boss
 // takes its lava wound in bossMove. Ordinary pieces carry no HP pool, so one hit removes them
 // (burned to ash). Called once per turn from beginEnemyPhase.
+// THE RIVER OF DEATH. It looks like water and wades like water, and it eats anything still alive.
+// The realm's own natives are past caring, and a turret has nothing for it to take — but the king,
+// his allies, and any living thing that wanders in all lose a heart a turn standing in it.
+//
+// Bosses and mini-bosses are NOT exempt: whatever else a guardian is down here, it is not undead.
+// (The user has flagged this as something they may revisit.)
+function tickDeathWater(state) {
+  const inRiver = (u) => terrainAt(state, u.x, u.y) === 'deathwater';
+  const p = state.player;
+  let took = false;
+  if (inRiver(p)) {
+    hurtBy(state, 'deathwater');
+    p.hp -= 1;
+    p.wasHit = true; p.hitThisFloor = true;
+    addSpatter(state, p.x, p.y);
+    took = true;
+    state.message = state.message
+      ? `${state.message} The river of death drinks at the king!`
+      : 'The river of death drinks at the king!';
+    checkDeath(state);
+  }
+  for (const e of state.enemies.filter((f) => !f.summonCircle && !f.turret && !f.bat && !isUndead(f) && inRiver(f))) {
+    took = true;
+    if (e.boss) { damageBoss(state, e, 1, { ground: true, cause: 'deathwater' }); continue; }
+    addSpatter(state, e.x, e.y, 0, 0, isDemonKind(e.kind));
+    tallyKill(state, e);
+    state.enemies = state.enemies.filter((o) => o.id !== e.id);
+  }
+  for (const a of (state.allies || []).filter((al) => !al.undead && inRiver(al))) {
+    took = true;
+    damageAlly(state, a, 1);
+  }
+  if (took) cue(state, 'splash');
+}
+
 function tickLavaDamage(state) {
   // Lava OR a wall-torch a creature is embedded in (only a phaser can be) burns any non-demon.
   const burns = (u) => (terrainAt(state, u.x, u.y) === 'lava' || hasTorch(state, u.x, u.y)) && !isLavaSafe(u);
@@ -6079,6 +7366,21 @@ function tickLavaDamage(state) {
   const doomedAllies = (state.allies || []).filter((a) => burns(a));
   for (const a of doomedAllies) { addAsh(state, a.x, a.y); addSmoke(state, a.x, a.y); }
   if (doomedAllies.length) state.allies = state.allies.filter((a) => !doomedAllies.includes(a));
+  // TURRETS have a wound pool rather than a life, so the fire WHITTLES them the way it whittles a
+  // guardian — one a turn — instead of flashing them to ash. A fire turret is exempt (isLavaSafe).
+  for (const gun of state.enemies.filter((e) => e.turret && burns(e))) {
+    addSmoke(state, gun.x, gun.y);
+    damageTurret(state, gun, 1);
+  }
+  // ...and the mirror image: a FIRE turret standing in WATER is a furnace being quenched. It takes a
+  // wound a turn and throws up a bank of scalding steam doing it — which is a real tactical handle on
+  // the nastiest gun in the game, and a reason to shove one into a pond rather than trade shots.
+  for (const gun of state.enemies.filter((e) => e.turret && e.fire && terrainAt(state, e.x, e.y) === 'water')) {
+    addFog(state, gun.x, gun.y, FOG_TURNS);
+    addSmoke(state, gun.x, gun.y);
+    cue(state, 'hiss');
+    damageTurret(state, gun, 1);
+  }
 }
 
 // SAFETY NET: no ordinary (non-phasing) piece should ever end a turn standing INSIDE a wall, boulder,
@@ -6095,7 +7397,7 @@ function dislodgeWalledEnemies(state) {
   // hauling a lava-immune demon off the fire it is meant to be standing in.
   const entombing = (t) => t === 'wall' || t === 'boulder' || t === 'ice' || t === 'tree' || t === 'gate';
   for (const e of state.enemies) {
-    if (e.summonCircle || e.turret || bossHas(e, 'phasing')) continue;
+    if (e.summonCircle || e.turret || e.bat || bossHas(e, 'phasing')) continue; // a BAT belongs anywhere — it is flying
     if (!entombing(terrainAt(state, e.x, e.y))) continue;
     let moved = false;
     for (let r = 1; r <= 4 && !moved; r += 1) {
@@ -6122,9 +7424,20 @@ function dislodgeWalledEnemies(state) {
 // mirror of the lava tick, so a CONFUSED foe that blunders onto a pit dies just as one that blunders
 // onto lava burns (it used to perch on the hole, harmless). A shove already drops them elsewhere.
 function tickPitFalls(state) {
-  const falls = (u) => terrainAt(state, u.x, u.y) === 'pit' && !bossHas(u, 'flying') && !bossHas(u, 'burrower') && !u.pathfinder;
+  // A BAT is airborne: the ground has nothing to say to it. Same exemption as a flying guardian.
+  const falls = (u) => terrainAt(state, u.x, u.y) === 'pit' && !u.bat && !bossHas(u, 'flying') && !bossHas(u, 'burrower') && !u.pathfinder;
   const doomedFoes = state.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle && falls(e));
-  if (doomedFoes.length) { cue(state, 'fall'); state.enemies = state.enemies.filter((e) => !doomedFoes.includes(e)); }
+  if (doomedFoes.length) {
+    cue(state, 'fall');
+    // A GOLEM shoved into a hole is the ONE way to be rid of one for good — say so, because the whole
+    // realm is built on the player working that out.
+    for (const g of doomedFoes) {
+      if (isGolem(g) && inLineOfSight(state, g.x, g.y)) {
+        state.message = `The ${g.kind} golem topples into the pit — that one is not getting up.`;
+      }
+    }
+    state.enemies = state.enemies.filter((e) => !doomedFoes.includes(e));
+  }
   const doomedAllies = (state.allies || []).filter((a) => falls(a));
   if (doomedAllies.length) { cue(state, 'fall'); state.allies = state.allies.filter((a) => !doomedAllies.includes(a)); }
 }
@@ -6181,7 +7494,11 @@ function tickFogDamage(state) {
     state.message = state.message ? `${state.message} The scalding steam sears the king!` : 'The scalding steam sears the king!';
     checkDeath(state);
   }
-  const caughtFoes = state.enemies.filter((e) => !e.summonCircle && inFog(e));
+  // A TURRET is a machine bolted to the floor. Steam scalds FLESH; it does nothing to a gun, and a
+  // gun cannot step out of the cloud the way anything alive would — so scalding one just meant every
+  // vent slowly dismantled the emplacements around it while you watched. (Circles are exempt for the
+  // same reason: a rune cut into stone does not blister.)
+  const caughtFoes = state.enemies.filter((e) => !e.summonCircle && !e.turret && !e.bat && inFog(e));
   for (const e of caughtFoes) {
     addSmoke(state, e.x, e.y);
     scalded = true;
@@ -6208,8 +7525,12 @@ function tickLavaEncroachment(state) {
   // Only the way OUT and the key he still needs are spared — escape must stay possible. The collapsed
   // UPSTAIR is dead scenery (no going back), so the fire takes it like anything else: a king who camps
   // on his entry tile burns there just the same.
-  const spared = (x, y) => (state.exit && state.exit.x === x && state.exit.y === y)
-    || (state.key && !state.key.collected && state.key.x === x && state.key.y === y);
+  // The objective tiles are spared the fire — EXCEPT the upstair. That exception is load-bearing:
+  // the king ARRIVES standing on the upstair, so sparing it would hand him one tile the molten floor
+  // can never reach, and the whole anti-camp mechanic is that no such tile exists. It is dead
+  // scenery he cannot use anyway; the fire takes it like anything else.
+  const spared = (x, y) => terrainLocked(state, x, y)
+    && !(state.upstair && state.upstair.x === x && state.upstair.y === y);
   // Where fresh lava may well up or creep: open ground, water, grass — or the king's own tile.
   const molten = (x, y) => {
     if (x < 1 || x >= WORLD_SIZE - 1 || y < 1 || y >= WORLD_SIZE - 1) return false;
@@ -6248,8 +7569,13 @@ function tickLavaEncroachment(state) {
 }
 
 function beginEnemyPhase(state) {
+  // THE PORTAL ROOM is not a floor — it has no foes, no dread and no clock. Running the phase there
+  // would tick the dread meter and start welling up lava in the one room that is purely a decision.
+  if (state.portalRoom) return { state: structuredClone(state), moverIds: [] };
   const next = structuredClone(state);
   let moverIds = [];
+  next.shockedThisTurn = {}; // a fresh turn: everything may be shocked once again (see dischargeElectricity)
+  next.arc = null; // last turn's circuit flash is spent
   const p = next.player;
   // WHICH WAY HE IS GOING. Worked out once, here, because this is the one function that runs exactly
   // once per turn — deriving it inside the movement code would mean touching all dozen paths that
@@ -6267,6 +7593,10 @@ function beginEnemyPhase(state) {
   tickGeysers(next); // on the third turn, every geyser vents a gout of 1-turn STEAM (fog) over itself
   tickFogDamage(next); // steam/fog SCALDS whatever stands in it — geyser vents, spellfire steam, a Steamweaver's murk
   tickFog(next); // ...and only THEN thins by a turn, so every bank burns for its full advertised life
+  tickDeathWater(next); // the river of death drinks at anything still alive standing in it
+  tickUndead(next); // broken skeletons knit themselves back together; bats settle back into vampires
+  tickGolems(next); // ...and switched-off golems count down and grind back into motion
+  tickGenerators(next); // every fourth turn the Workshop's machinery lets go into the network
   tickLavaEncroachment(next); // past max dread: the floor turns molten and closes in on a lingering king
   dislodgeWalledEnemies(next); // SAFETY NET: nudge any ordinary piece a terrain change closed a wall over
   tickTurrets(next); // every turret re-scans: no target in its lane → it idles and drops its lock
@@ -6274,6 +7604,17 @@ function beginEnemyPhase(state) {
   applySilence(next); // Silence: while the hush holds, everything in view stays down
 
   for (const enemy of next.enemies) {
+    // A heap of BONES does nothing until it has knitted itself back together, and a BAT has already
+    // spent its turn flitting (or settling) in tickUndead. Both are handled above; neither is a
+    // mover, and neither should fall through into the awareness reckoning and start hunting.
+    // A switched-off GOLEM is likewise so much scrap until its clock runs out.
+    if (enemy.broken || enemy.bat || enemy.inert) continue;
+    // A ZOMBIE LUMBERS. Like a guardian, the turn after it exerts itself it only recovers — which is
+    // what makes a three-wound piece fair to be in a room with.
+    if (enemy.slow && enemy.recovering) {
+      enemy.recovering = false;
+      continue;
+    }
     if (enemy.asleep) {
       // ASLEEP is the GUARD state: a foe posted somewhere, holding its ground, doing nothing at all
       // until the king turns up. It rouses on exactly the same terms a wanderer notices him — it SEES
@@ -7679,7 +9020,7 @@ function bossBuildTurret(state, boss) {
   }
   if (!spots.length) return false;
   const s = spots[randomInt(spots.length)];
-  state.enemies.push(makeTurret(state, randomTurretKind(state.floor), s.x, s.y));
+  state.enemies.push(makeTurret(state, randomTurretKind(state.floor, realmOf(state)), s.x, s.y));
   cue(state, 'thrum');
   state.message = `${bossTitle(boss)} bolts together a turret!`;
   state.lastAction = 'enemy';
@@ -8004,6 +9345,12 @@ function moveEnemy(state, enemyId) {
   else if (enemy.turret) result = fireTurret(next, enemy);
   else if (enemy.summonCircle) result = summonCircleTurn(next, enemy);
   else result = meleeMove(next, enemy);
+  // A ZOMBIE must catch its breath after every exertion — set here, on the way out, so it covers
+  // whatever it actually did (a step, a blow, a shove) rather than only the melee path.
+  if (enemy.slow) {
+    const acted = result.enemies.find((e) => e.id === enemyId);
+    if (acted) acted.recovering = true;
+  }
   openDoorsUnderUnits(result); // the foe may have stepped onto (and thus opened) a shut door
   return result;
 }
@@ -8080,8 +9427,7 @@ function scatterTerrain(next, type, count) {
   // never the exit/key/a unit.
   const ok = (x, y) => terrainAt(next, x, y) === 'normal'
     && chebyshev(x, y, p.x, p.y) >= 2
-    && !(next.exit && x === next.exit.x && y === next.exit.y)
-    && !(next.key && !next.key.collected && x === next.key.x && y === next.key.y)
+    && !terrainLocked(next, x, y) // never the key, the stair, the upstair or an altar
     && !next.enemies.some((e) => e.x === x && e.y === y) && !allyAt(next, x, y);
   const drop = (requireVisible) => {
     for (let tries = 0; tries < 300; tries += 1) {
@@ -8113,8 +9459,7 @@ function freezeTerrain(next, count) {
     const t = terrainAt(next, x, y);
     if (t !== 'normal' && t !== 'pit' && t !== 'water') return false; // floor / pit / water only
     return chebyshev(x, y, p.x, p.y) >= 2
-      && !(next.exit && x === next.exit.x && y === next.exit.y)
-      && !(next.key && !next.key.collected && x === next.key.x && y === next.key.y)
+      && !terrainLocked(next, x, y) // never the key, the stair, the upstair or an altar
       && !next.enemies.some((e) => e.x === x && e.y === y) && !allyAt(next, x, y);
   };
   const drop = (requireVisible) => {
@@ -8214,7 +9559,9 @@ function makeMiniBoss(next, kind, x, y) {
   // the old rate (was floor/3, topping out at 4). A rogue piece should be a nasty surprise, not a
   // second boss fight — and at the old rate a late-game mini outlasted an early guardian.
   b.maxHp = 2 + Math.floor(next.floor / 6); // clearly fewer wounds than a floor guardian
-  b.bossPerks = rollBossPerks(1, kind); // a mini stays lesser: ONE perk, and never the Hardened +3
+  // A mini stays LESSER — one perk, never the Hardened bonus. In a New Game+ realm it carries TWO:
+  // still short of a full guardian's three, but no longer a speed bump on floors this hostile.
+  b.bossPerks = rollBossPerks(realmDef(realmOf(next)).newGamePlus ? 2 : 1, kind);
   b.bossPerk = b.bossPerks[0];
   b.hp = b.maxHp;
   b.lavaImmune = isDemonKind(kind);
@@ -8291,7 +9638,7 @@ function dropTurrets(next) {
   let placed = 0;
   const want = 2 + randomInt(2);
   const drop = (pred) => {
-    const kind = randomTurretKind(next.floor); // a turret is a mortal gun — never a leaping demon
+    const kind = randomTurretKind(next.floor, realmOf(next)); // a turret is a mortal gun — never a leaping demon
     const tile = findFreeTile(occupied, (x, y) => pred(x, y) && isStandable(terrainAt(next, x, y))
       && !keyTileAt(next, x, y) && !allyAt(next, x, y) && turretCoverage(next, kind, x, y) >= 4
       && !turretBlocksHallway(next, x, y));
@@ -8347,6 +9694,222 @@ function collapseWalls(next, count) {
   return done;
 }
 
+// ---- LATE-DREAD EVENTS ------------------------------------------------------------------------
+// These are the floor turning on him in ways that are not just "more foes" or "more lava". Each
+// stamps `dreadStamp` when it actually lands, because fireDangerEvent decides whether an event
+// FIZZLED by watching the piece and terrain counts — and several of these change the world without
+// changing either (converting a foe, swapping water for lava, lighting a tree). Without the stamp
+// they would be judged as having done nothing and silently re-rolled.
+function dreadLanded(next) { next.dreadStamp = (next.dreadStamp || 0) + 1; }
+
+// Tiles the king can currently SEE, minus his own and anything already occupied.
+function visibleFreeTiles(next, opts) {
+  const o = opts || {};
+  const out = [];
+  const b = getVisibleBounds(next);
+  for (let y = b.y; y < b.y + b.height; y += 1) {
+    for (let x = b.x; x < b.x + b.width; x += 1) {
+      if (x < 1 || y < 1 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) continue;
+      if (x === next.player.x && y === next.player.y) continue;
+      if (!inLineOfSight(next, x, y)) continue;
+      if (o.free && (next.enemies.some((e) => e.x === x && e.y === y) || allyAt(next, x, y))) continue;
+      if (o.standable && !isStandable(terrainAt(next, x, y))) continue;
+      if (keyTileAt(next, x, y)) continue;
+      if (next.exit && x === next.exit.x && y === next.exit.y) continue;
+      out.push({ x, y });
+    }
+  }
+  return out;
+}
+
+// THE DUNGEON SHUTS ITS DOORS. Bars slam down across the gaps in view — and every door in sight is
+// swapped for a gate, so a room you could have closed behind you becomes one you can see through and
+// have to cut your way out of. It takes away RETREAT rather than dealing damage, which is the one
+// thing the pure-hazard events never do.
+function barTheChokes(next) {
+  const doors = [];
+  const chokes = [];
+  for (const t of visibleFreeTiles(next, { free: true })) {
+    const type = terrainAt(next, t.x, t.y);
+    if (type === 'door' || type === 'dooropen' || type === 'doorajar') { doors.push(t); continue; }
+    if (type !== 'normal') continue;
+    // A CHOKEPOINT: open ground pinched between two walls. Gating one of these actually costs him a
+    // route; gating the middle of a room costs him nothing and just litters the floor with iron.
+    const solid = (x, y) => isSolidBarrier(terrainAt(next, x, y)) || terrainAt(next, x, y) === 'boulder';
+    const pinchedH = solid(t.x, t.y - 1) && solid(t.x, t.y + 1);
+    const pinchedV = solid(t.x - 1, t.y) && solid(t.x + 1, t.y);
+    if (pinchedH || pinchedV) chokes.push(t);
+  }
+  let laid = 0;
+  for (const d of doors) { next.terrain[`${d.x},${d.y}`] = 'gate'; laid += 1; }
+  for (let i = 0; i < chokes.length && laid < 6; i += 1) {
+    if (Math.random() < 0.7) { next.terrain[`${chokes[i].x},${chokes[i].y}`] = 'gate'; laid += 1; }
+  }
+  if (!laid) return '';
+  dreadLanded(next);
+  cue(next, 'crush');
+  return 'Iron grinds down from the ceiling — the ways out are barred!';
+}
+
+// THE FLOOR PRESSES FOES INTO SERVICE. Ordinary pieces in view seize up and become GUNS: rooted,
+// but now covering a whole lane. It is not straightforwardly worse for him — a turret cannot chase —
+// so it reshapes the fight rather than simply adding to it.
+function enemiesToTurrets(next) {
+  const marks = next.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle
+    && isStandable(terrainAt(next, e.x, e.y)) && inLineOfSight(next, e.x, e.y)
+    && chebyshev(e.x, e.y, next.player.x, next.player.y) > 1); // never one already at his throat
+  if (!marks.length) return '';
+  const want = Math.min(marks.length, 1 + randomInt(3));
+  for (let i = 0; i < want; i += 1) {
+    const victim = marks[randomInt(marks.length)];
+    if (victim.turret) continue;
+    const gun = makeTurret(next, victim.kind, victim.x, victim.y);
+    gun.id = victim.id; // keep its identity so the view glides rather than popping
+    next.enemies = next.enemies.map((e) => (e.id === victim.id ? gun : e));
+  }
+  dreadLanded(next);
+  return 'The dungeon seizes its own — foes root to the spot and open fire!';
+}
+
+// SCALDING VAPOUR wells up out of the stone. Steam blinds AND burns, so this is the one hazard that
+// punishes standing still as hard as it punishes moving.
+function steamBurst(next) {
+  const spots = visibleFreeTiles(next, { standable: true });
+  if (!spots.length) return '';
+  const want = Math.min(spots.length, 4 + randomInt(6));
+  for (let i = 0; i < want; i += 1) {
+    const t = spots[randomInt(spots.length)];
+    addFog(next, t.x, t.y, FOG_TURNS);
+  }
+  dreadLanded(next);
+  cue(next, 'vent');
+  return 'Scalding steam boils up through the floor!';
+}
+
+// RUNES OPEN AT HIS FEET. Three to five circles, right beside him — they wind up in plain sight and
+// he has a few turns to break them before the room fills. Deliberately the nastiest of these.
+function circlesAtHand(next) {
+  const p = next.player;
+  const spots = [];
+  for (let dx = -2; dx <= 2; dx += 1) {
+    for (let dy = -2; dy <= 2; dy += 1) {
+      const x = p.x + dx;
+      const y = p.y + dy;
+      if (!dx && !dy) continue;
+      if (x < 1 || y < 1 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) continue;
+      if (!isStandable(terrainAt(next, x, y))) continue;
+      if (next.enemies.some((e) => e.x === x && e.y === y) || allyAt(next, x, y)) continue;
+      if (keyTileAt(next, x, y) || (next.exit && x === next.exit.x && y === next.exit.y)) continue;
+      spots.push({ x, y });
+    }
+  }
+  if (!spots.length) return '';
+  for (let i = spots.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [spots[i], spots[j]] = [spots[j], spots[i]]; }
+  const want = Math.min(spots.length, 3 + randomInt(3));
+  for (let i = 0; i < want; i += 1) {
+    const c = createEnemy(randomStructureKind(next.floor), spots[i].x, spots[i].y);
+    c.summonCircle = true;
+    c.awake = true;
+    next.enemies.push(c);
+  }
+  dreadLanded(next);
+  return 'The stone around you splits into summoning runes!';
+}
+
+// THE REALM REACHES UP. Ordinary pieces near him are remade as demon-kin — the same board position,
+// suddenly played by much better pieces. Overworld only: down in the realm they already are.
+function demoniseNearby(next) {
+  if (isHellNow(next)) return '';
+  const marks = next.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle
+    && !isDemonKind(e.kind) && chebyshev(e.x, e.y, next.player.x, next.player.y) <= 6);
+  if (!marks.length) return '';
+  const want = Math.min(marks.length, 2 + randomInt(3));
+  for (let i = 0; i < want; i += 1) {
+    const victim = marks[i];
+    if (!victim) continue;
+    victim.kind = DEMON_KINDS[randomInt(DEMON_KINDS.length)];
+    victim.lavaImmune = true;
+    victim.awake = true;
+    victim.asleep = false;
+    addSmoke(next, victim.x, victim.y);
+  }
+  dreadLanded(next);
+  return 'The realm reaches up — the pieces around you are remade as demons!';
+}
+
+// HELL COMES UP TO MEET HIM. Every pond becomes a lava field, every thicket burns, every tree is
+// lit. The whole floor changes character in one turn. Overworld only — down below it is already true.
+function hellscape(next) {
+  if (isHellNow(next)) return '';
+  let changed = 0;
+  for (const k of Object.keys(next.terrain)) {
+    const t = next.terrain[k];
+    const [x, y] = k.split(',').map(Number);
+    if (x === next.player.x && y === next.player.y) continue; // never under his own feet
+    if (t === 'water') { next.terrain[k] = 'lava'; changed += 1; }
+    else if (t === 'devilgrass') { delete next.terrain[k]; changed += 1; }
+    else if (t === 'tree') { igniteTree(next, x, y); changed += 1; }
+  }
+  if (!changed) return '';
+  dreadLanded(next);
+  cue(next, 'hiss');
+  return 'The water boils to fire and the forest goes up — hell rises through the floor!';
+}
+
+// FISSURES tear across the floor in LINES, and anything standing on one goes into it. His own tile is
+// spared — this is a hazard to be caught out by, not an instant death with no decision in it.
+function openFissures(next) {
+  const p = next.player;
+  let opened = 0;
+  const lines = 2 + randomInt(2);
+  for (let l = 0; l < lines; l += 1) {
+    const horizontal = Math.random() < 0.5;
+    const len = 4 + randomInt(5);
+    let x = 1 + randomInt(WORLD_SIZE - 2);
+    let y = 1 + randomInt(WORLD_SIZE - 2);
+    for (let i = 0; i < len; i += 1) {
+      if (x >= 1 && y >= 1 && x < WORLD_SIZE - 1 && y < WORLD_SIZE - 1
+          && !(x === p.x && y === p.y)
+          && !terrainLocked(next, x, y) // the key, the stair, the upstair, an altar: ground never changes
+          && terrainAt(next, x, y) !== 'wall') {
+        next.terrain[`${x},${y}`] = 'pit';
+        opened += 1;
+        // Anything standing where the ground just went is IN the fissure.
+        const foe = next.enemies.find((e) => e.x === x && e.y === y && !e.turret && !e.summonCircle);
+        if (foe && !bossHas(foe, 'flying')) {
+          addSpatter(next, x, y, 0, 0, isDemonKind(foe.kind));
+          tallyKill(next, foe);
+          next.enemies = next.enemies.filter((o) => o.id !== foe.id);
+        }
+        const pal = allyAt(next, x, y);
+        if (pal) damageAlly(next, pal, 99);
+      }
+      if (horizontal) x += 1; else y += 1;
+    }
+  }
+  if (!opened) return '';
+  dreadLanded(next);
+  cue(next, 'crush');
+  return 'The floor tears open — fissures rip across the room!';
+}
+
+// SOMETHING CLIMBS OUT. A demon-kind mini-boss, on a floor that has no business hosting one.
+function demonIntruder(next) {
+  if (isHellNow(next)) return '';
+  const p = next.player;
+  const spots = visibleFreeTiles(next, { free: true, standable: true })
+    .filter((t) => chebyshev(t.x, t.y, p.x, p.y) >= 3);
+  if (!spots.length) return '';
+  const t = spots[randomInt(spots.length)];
+  const kind = DEMON_KINDS[randomInt(DEMON_KINDS.length)];
+  const mb = makeMiniBoss(next, kind, t.x, t.y);
+  mb.awake = true;
+  next.enemies.push(mb);
+  addSmoke(next, t.x, t.y);
+  dreadLanded(next);
+  return `Something claws its way up through the floor — a rogue ${kind}!`;
+}
+
 function fireDangerEvent(next, ramp) {
   // Only unleash a hazard the king has ALREADY encountered, so danger events keep pace with
   // the game's normal progression (no lava/pits/boulders/turrets before he's met one).
@@ -8375,6 +9938,21 @@ function fireDangerEvent(next, ramp) {
   if (seen.includes('pit')) pool.push('pits');
   if (seen.includes('boulder')) pool.push('caveIn');
   if (seen.includes('ice')) pool.push('freeze');
+  // LATE DREAD. These are the floor turning on him in kind, not just in quantity, so they are held
+  // back until dread is genuinely up — at low ramp the ordinary hazards are quite enough. Each is
+  // one entry, like the terrain rolls: they are the punctuation, not the sentence.
+  if (dread >= 0.35) {
+    pool.push('barChokes', 'circles');
+    if (next.player.seenTurret) pool.push('conscript');
+    if (seen.includes('pit')) pool.push('fissures');
+    if (seen.includes('lava') || isHellNow(next)) pool.push('steam');
+    // The three that drag HELL up onto an overworld floor. Meaningless in the realm itself, where
+    // all of it is already true — so they are simply not in the pool down there.
+    if (!isHellNow(next)) {
+      pool.push('demonise', 'demonMini');
+      if (seen.includes('lava')) pool.push('hellscape');
+    }
+  }
   // NB: no 'devilgrass' event. Grass blocks SIGHT but not movement, so a floor full of it is
   // COVER — it makes the king harder to see and easier to break away from. Every other entry in
   // this pool costs him something; that one was a gift wearing a hazard's name.
@@ -8388,6 +9966,14 @@ function fireDangerEvent(next, ramp) {
       case 'flood': return scatterTerrain(next, 'water', hazardCount(next, 0.05, 4, 14)) ? 'Water floods across the floor!' : 'A damp chill spreads.';
       case 'pits': return scatterTerrain(next, 'pit', hazardCount(next, 0.04, 2, 11)) ? 'The ground gives way — pits yawn open across the floor!' : 'The ground shudders.';
       case 'freeze': return freezeTerrain(next, hazardCount(next, 0.04, 3, 12)) ? 'A killing frost sweeps in — ice sheets over the floor!' : 'Your breath fogs in a sudden chill.';
+      case 'barChokes': return barTheChokes(next);
+      case 'conscript': return enemiesToTurrets(next);
+      case 'steam': return steamBurst(next);
+      case 'circles': return circlesAtHand(next);
+      case 'demonise': return demoniseNearby(next);
+      case 'hellscape': return hellscape(next);
+      case 'fissures': return openFissures(next);
+      case 'demonMini': return demonIntruder(next);
       case 'caveIn':
         scatterTerrain(next, 'boulder', hazardCount(next, 0.035, 2, 9));
         scatterTerrain(next, 'wall', hazardCount(next, 0.02, 1, 5));
@@ -8406,7 +9992,11 @@ function fireDangerEvent(next, ramp) {
   // footprint is deliberately crude (piece count + terrain count) rather than a per-event success
   // flag — every event either adds a piece or writes terrain, and this cannot rot when a new event
   // is added and someone forgets to return a flag.
-  const footprint = () => next.enemies.length * 1000 + Object.keys(next.terrain).length;
+  // `dreadStamp` is in here because several of the late events change the world WITHOUT changing
+  // either count — conscripting a foe into a turret, swapping water for lava, lighting a standing
+  // tree, barring a door. Judged on counts alone every one of those reads as a fizzle and gets
+  // silently re-rolled, so they would have been the rarest events in the game by accident.
+  const footprint = () => next.enemies.length * 1000 + Object.keys(next.terrain).length + (next.dreadStamp || 0) * 1000000;
   let kind = null;
   let msg = '';
   let choices = pool.slice();
@@ -8453,6 +10043,7 @@ function fireDangerEvent(next, ramp) {
 // Once per turn: tick the danger timer and, at ever-shorter intervals as dread climbs,
 // unleash one random hostile event. This is the game's escalating pressure now.
 function maybeSpawnEnemy(state) {
+  if (state.portalRoom) return state; // nothing spawns between realms
   const next = structuredClone(state);
   next.dangerEvent = null; // cleared each turn; set below only when an event fires
   // The FINALE: once the Orb is taken on the portal floor, the realm's guardians converge —
