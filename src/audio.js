@@ -207,6 +207,15 @@ const GameAudio = (function () {
       noise(t, 0.45, 0.09, { filter: 'highpass', freq: 1400, sweepTo: 3800, hold: true });
       tone(2200, t, 0.2, { type: 'sine', gain: 0.015, slideTo: 3000 });
     },
+    // A GEYSER venting: a soft, low breath of steam — deliberately NOT the `hiss` of fire on flesh.
+    // Vents blow every third turn for a whole floor, so this is the most frequent sound in the game:
+    // it is short, quiet and LOWPASSED (dull rather than bright), sitting under the mix instead of
+    // competing with it. Paired with the lowest priority and a long debounce (see below), a field of
+    // vents reads as one soft exhale rather than a wall of hissing.
+    vent(t) {
+      noise(t, 0.22, 0.032, { filter: 'lowpass', freq: 1000, sweepTo: 420 });
+      tone(300, t, 0.13, { type: 'sine', gain: 0.011, slideTo: 200, attack: 0.035 });
+    },
     // Pushing through tall grass — soft, brief, high.
     swish(t) {
       noise(t, 0.16, 0.05, { filter: 'highpass', freq: 2200, sweepTo: 900 });
@@ -299,10 +308,12 @@ const GameAudio = (function () {
     deflect: 7, kill: 6, cast: 6, alarm: 6, fall: 6, unsummon: 5, thrum: 5,
     attack: 5, quaff: 5, pickup: 5, buy: 5, crush: 4, rumble: 4,
     timber: 6, splash: 3, hiss: 3, creak: 3, bonk: 3, chop: 3, nope: 2, swish: 1,
+    vent: 1, // a geyser: the most frequent sound on a demon floor — it yields to everything else
   };
   // Milliseconds a cue must wait before it may sound again.
   const DEBOUNCE = {
     bonk: 110, swish: 160, splash: 130, hiss: 130, creak: 160, rumble: 170,
+    vent: 400, // a whole FIELD of vents blowing at once is one soft exhale, never a stack of them
     crush: 90, thrum: 110, fall: 110, alarm: 140, nope: 220, attack: 40, chop: 60, timber: 200,
   };
   const WINDOW = 0.09; // seconds counted as "the same instant"

@@ -109,7 +109,9 @@ const ACHIEVEMENTS = (() => {
   add('attack:none', 'Never Lifted a Finger', 'Win without ever landing a plain attack.', (p) => !p.usedNormalAttack, { won: true });
   add('door:none', 'No Doors Were Opened', 'Win without opening a single door.', (p) => !p.openedDoor, { won: true });
   add('boulder:none', 'Immovable', 'Win without pushing a single boulder.', (p) => !p.pushedBoulder, { won: true });
-  add('ice:none', 'Thin Ice', 'Win without breaking or melting a single ice slab.', (p) => !p.brokeIce, { won: true });
+  // (REMOVED: 'ice:none' / "Thin Ice" — win without breaking an ice slab. Far too easy to earn by
+  // simply never bothering with ice, so it read as a participation badge rather than a feat. The
+  // `brokeIce` ledger flag is still tracked in game.js in case a sterner ice trophy wants it later.)
   add('water:none', 'Bone Dry', 'Win without ever touching water.', (p) => !p.touchedWater, { won: true });
 
 

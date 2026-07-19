@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -28,7 +28,7 @@ const {
   isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor,
   isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies,
   playerTitle, cardBlockedReason, committedChain, attackTile, isStalemate, knightLPath, BOSS_PERKS,
-  fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards,
+  fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss,
   tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
   overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow,
 } = api;
@@ -126,6 +126,40 @@ test('a FIRE turret pierces a body to blast the king, on a 3-turn cycle; fire tu
   assert.equal(T(n).recovering, true, 'it must now recover');
   n = moveEnemy(n, T(n).id); // turn 3: RECOVER (no shot)
   assert.equal(n.player.hp, 3, 'it vents this turn — no shot');
+});
+
+test('from floor 3 a floor is SEEDED with rogue mini-bosses, well clear of the king’s start', () => {
+  const seeded = (floor) => {
+    const base = createInitialState('warrior');
+    const s = generateFloor(floor, base.player, 0);
+    const minis = s.enemies.filter((e) => e.boss && e.mini && !e.rush);
+    return { n: minis.length, nearest: minis.reduce((a, m) => Math.min(a, chebyshev(m.x, m.y, s.player.x, s.player.y)), 99) };
+  };
+  assert.equal(seeded(1).n, 0, 'the first floors are rank-and-file');
+  assert.equal(seeded(2).n, 0, 'still none on floor 2');
+  assert.ok(seeded(3).n >= 1, 'from floor 3 at least one lesser guardian already prowls');
+  assert.ok(seeded(7).n >= seeded(3).n, 'and the cohort grows with depth');
+  // Never dumped on his doorstep — meeting one must be a discovery, not an opening ambush.
+  for (const f of [3, 5, 8]) {
+    const s = seeded(f);
+    if (s.n) assert.ok(s.nearest >= 6, `floor ${f}: seeded minis start well clear of the king (got ${s.nearest})`);
+  }
+});
+
+test('fire and plain turrets are an EVEN split once fire turrets appear (floor 5+), and none before', () => {
+  const rate = (floor) => {
+    const s = createInitialState('warrior');
+    s.floor = floor;
+    let fire = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i += 1) if (makeTurret(s, 'rook', 5, 5).fire) fire += 1;
+    return fire / N;
+  };
+  assert.equal(rate(4), 0, 'before floor 5 every turret is a plain one');
+  const r = rate(6);
+  // n=2000 at p=0.5 has SD ~0.011, so this band is ~4.5 SD wide — safe from flaking, but a return to
+  // the old 40% (or any other lopsided rate) falls well outside it.
+  assert.ok(r > 0.45 && r < 0.55, `fire turrets are half of all turrets once introduced (got ${r.toFixed(3)})`);
 });
 
 test('a recovering (winded) boss threatens no tiles that turn', () => {
@@ -1046,32 +1080,47 @@ test('Silence drops every foe in SIGHT, and HOLDS as he strikes — only the foe
   assert.equal(t.enemies.find((e) => e.id === 'near')?.asleep, true, 'but the OTHER hushed foe sleeps on');
 });
 
-test('Waiting (Sentinel): skipping a turn makes the king invincible until his next turn', () => {
-  const build = () => {
+test('Waiting (Sentinel): holding still turns aside fire from AFAR — but not a blow struck up close', () => {
+  // It used to blank EVERY attack, which made the hold a free turn in any melee. Now it is a read on
+  // incoming fire: shots from across the room bounce, a foe standing next to him lands its blow.
+  const build = (place) => {
     const t = warriorWith('w_waiting');
     t.terrain = {}; t.allies = [];
     t.player.x = 10; t.player.y = 10; t.player.hp = 6; t.player.maxHp = 6;
-    t.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 11, awake: true, id: 'rk' })]; // adjacent, poised to strike
+    t.enemies = [place()];
     return t;
   };
-  assert.equal(build().player.waiting, true, 'the perk grants it');
-  // WAIT: he goes invincible, and the rook's blow does nothing.
-  let s = skipTurn(build());
-  assert.equal(s.player.invuln, true, 'holding his ground turns him invincible');
-  const hp0 = s.player.hp;
-  s = moveEnemy(s, 'rk');
-  assert.equal(s.player.hp, hp0, 'the blow lands but does no damage while he waits');
-  // CONTROL: without the perk, the same skipped turn leaves him mortal and the rook wounds him.
-  let ctrl = build();
+  const melee = () => makeEnemy({ kind: 'rook', x: 10, y: 11, awake: true, id: 'rk' }); // adjacent, poised to strike
+  const gun = () => makeEnemy({ kind: 'rook', x: 10, y: 12, turret: true, hp: 3, maxHp: 3, awake: true, id: 'rk' }); // covers the column, two tiles off — in sight, out of reach
+  assert.equal(build(melee).player.waiting, true, 'the perk grants it');
+  const volley = (st) => moveEnemy(moveEnemy(st, 'rk'), 'rk'); // a turret LOCKS ON, then fires
+
+  // RANGED: he reads the bolt and it does nothing.
+  let s = skipTurn(build(gun));
+  assert.equal(s.player.invuln, true, 'holding his ground raises the read');
+  const g0 = s.player.hp;
+  s = volley(s);
+  assert.equal(s.player.hp, g0, 'the turret fires and the shot is turned aside');
+
+  // MELEE: the same hold does NOT stop a mace swung by something standing next to him.
+  let m = skipTurn(build(melee));
+  assert.equal(m.player.invuln, true, 'the read is up all the same');
+  const m0 = m.player.hp;
+  m = moveEnemy(m, 'rk');
+  assert.ok(m.player.hp < m0, 'but an adjacent foe strikes home regardless');
+
+  // CONTROL: without the perk the turret's shot lands for real.
+  let ctrl = build(gun);
   ctrl.player.waiting = false;
   ctrl = skipTurn(ctrl);
-  assert.equal(Boolean(ctrl.player.invuln), false, 'no perk, no invincibility');
+  assert.equal(Boolean(ctrl.player.invuln), false, 'no perk, no read');
   const c0 = ctrl.player.hp;
-  ctrl = moveEnemy(ctrl, 'rk');
-  assert.ok(ctrl.player.hp < c0, 'and the blow lands for real');
+  ctrl = volley(ctrl);
+  assert.ok(ctrl.player.hp < c0, 'and the bolt bites');
+
   // The window is ONE turn: settleTurn (run by maybeSpawnEnemy) lifts it before his next turn.
   const after = maybeSpawnEnemy(s);
-  assert.equal(after.player.invuln, false, 'invincibility lifts by his next turn');
+  assert.equal(after.player.invuln, false, 'the read lifts by his next turn');
 });
 
 test('Parry is a guard you RAISE and SPEND — banked by a quiet turn, kept through the fight', () => {
@@ -2179,6 +2228,25 @@ test('Animal Form: a cast that COSTS a turn, becomes a UNICORN (fast, not invinc
   const step = getPlayerMoves(beast).find((m) => !m.viaJump);
   const after = movePlayerTo(beast, step.x, step.y);
   assert.equal(after.player.promotion, 2, 'the timer counts down each turn');
+});
+
+test('Animal Form: the unicorn ranges only as far as NATURAL sight — Oracle’s one-way band buys no ground', () => {
+  // The beast's raw bishop glide is unbounded, so it is capped to the king's AWARENESS window (his
+  // two-way sight). That cap EXCLUDES `visionOneWay`, so Hawk Eyes' extended one-way band lets him SEE
+  // further without letting him GO further — he can never step onto ground he could not have reached
+  // without those perks.
+  const beast = (perks) => {
+    const s = rangerWith(...perks);
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    s.player.x = 12; s.player.y = 12; s.player.promotion = 3;
+    const m = getPlayerMoves(s);
+    return { far: Math.max(...m.map((t) => chebyshev(t.x, t.y, 12, 12))), keys: m.map((t) => `${t.x},${t.y}`).sort().join(' ') };
+  };
+  const plain = beast(['r_wade', 'r_xray', 'r_promo']);
+  const eagleEyed = beast(['r_wade', 'r_xray', 'r_promo', 'r_eagle', 'r_reach', 'r_eyes2']); // +4 sight (one-way), +2 reach
+  assert.equal(plain.far, 4, 'the Ranger’s natural sight caps the glide at 4 — not the whole diagonal');
+  assert.equal(eagleEyed.far, 4, 'and the full Oracle stack does NOT extend it');
+  assert.equal(eagleEyed.keys, plain.keys, 'tile for tile, the reachable set is identical');
 });
 
 test('Charge: EVERY kill-move is free — chain them as long as you keep killing', () => {
@@ -4052,6 +4120,24 @@ test('a gaol always seats its prisoners (they are not pruned as frozen pieces)',
   assert.ok(gaols >= 1, 'the run produced at least one gaol to check');
 });
 
+test('a caged prisoner WATCHES through its gate — it wakes at sight range, but an open-field sleeper does not', () => {
+  const caged = (ky) => {
+    const s = createInitialState('warrior');
+    s.terrain = { '10,11': 'gate' }; // the cell door, between the rook and the king below
+    s.player.x = 10; s.player.y = ky;
+    s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 10, asleep: true, awake: false, id: 'r' })];
+    return !beginEnemyPhase(s).state.enemies.find((e) => e.id === 'r').asleep;
+  };
+  assert.ok(caged(13), 'through the bars it spots the king three tiles off and rouses');
+  assert.ok(caged(12), 'and closer, of course');
+  // CONTROL: no gate between them — an ordinary sleeper dozes until he is nearly on top of it.
+  const s = createInitialState('warrior');
+  s.terrain = {};
+  s.player.x = 10; s.player.y = 13;
+  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 10, asleep: true, awake: false, id: 'o' })];
+  assert.equal(beginEnemyPhase(s).state.enemies.find((e) => e.id === 'o').asleep, true, 'the open-field sleeper is unroused (you can sneak it)');
+});
+
 test('land ringed by lava gets a DRY bridge — never a marooned island', () => {
   // carveWallPathTo routes around lava and gives up on a lava-locked pocket; the fallback lays a
   // corridor straight across (lava -> floor). Every patch of ground must have a dry way on and off it.
@@ -4101,6 +4187,36 @@ test('a GUARDIAN wards only ONE foe beside it, not its whole retinue', () => {
   const warded = s.enemies.filter((e) => e.parry);
   assert.equal(warded.length, 1, 'exactly one retainer is warded, however many crowd the guardian');
   assert.ok(chebyshev(warded[0].x, warded[0].y, 5, 8) === 2, 'and it is one of the foes nearest the king');
+});
+
+test('WARY guardian: raises its guard whenever it ends a turn away from the king — but never toe to toe', () => {
+  const wary = (bx, by) => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = {}; s.allies = [];
+    s.player.x = 10; s.player.y = 10;
+    const b = createBoss(3, bx, by);
+    b.bossPerks = ['wary']; b.bossPerk = 'wary';
+    b.dormant = false; b.awake = true; b.asleep = false; b.hp = 5; b.maxHp = 5;
+    s.enemies = [b];
+    tickGuardianWards(s);
+    return { s, b };
+  };
+  assert.equal(wary(13, 10).b.parry, true, 'out of reach, it sets itself');
+  assert.ok(!wary(11, 10).b.parry, 'standing beside him it has no time to — close and its guard is down');
+
+  // A BLOW is turned aside and SPENDS the guard; the next one wounds.
+  const { s, b } = wary(13, 10);
+  assert.equal(damageBoss(s, b, 1), 'hurt', 'the warded blow does not fell it');
+  assert.equal(b.hp, 5, 'and draws no blood');
+  assert.equal(b.parry, false, 'the guard is spent');
+  damageBoss(s, b, 1);
+  assert.equal(b.hp, 4, 'the follow-up lands');
+
+  // The GROUND is never parried — lava and steam ignore a raised guard, as they ignore the king's.
+  const g = wary(13, 10);
+  damageBoss(g.s, g.b, 1, { ground: true });
+  assert.equal(g.b.hp, 4, 'steam/lava wounds it through the guard');
+  assert.equal(g.b.parry, true, 'and does not even spend it');
 });
 
 test('the king is immune to being STUMBLED into by a knocked-back foe; a boulder still needs a guard', () => {
@@ -5908,9 +6024,15 @@ test('each class is born with its innate trait: Discipline / Sharpened Senses / 
   assert.equal(Boolean(w.studious), false, 'the Warrior does not');
 });
 
+// Holding your ground REQUIRES a foe in sight (see skipTurn), so every wait test seats one.
+const withFoeInSight = (s) => {
+  s.terrain = {};
+  s.enemies = [makeEnemy({ kind: 'pawn', x: s.player.x + 2, y: s.player.y, awake: true })];
+  return s;
+};
+
 test('Discipline: skipping a turn holds the king in place and spends the turn', () => {
-  const s = createInitialState('warrior', 'easy');
-  s.enemies = [];
+  const s = withFoeInSight(createInitialState('warrior', 'easy'));
   const x0 = s.player.x, y0 = s.player.y, t0 = s.turn;
   const next = skipTurn(s);
   assert.equal(next.player.x, x0, 'he does not move...');
@@ -5920,9 +6042,21 @@ test('Discipline: skipping a turn holds the king in place and spends the turn', 
   assert.equal(Boolean(next.player.attacked), false, 'he struck nothing');
 });
 
-test('Discipline while holding raises a Sentinel Parry guard (ending a turn without a blow)', () => {
+test('holding your ground is REFUSED when nothing is in sight (no turn burned)', () => {
+  // It was far too easy to lean on the wait key and lose a dozen turns — and the dread they cost —
+  // to an empty screen. With no foe in view the hold is a blocked action: it says why and costs nothing.
   const s = createInitialState('warrior', 'easy');
-  s.enemies = [];
+  s.terrain = {}; s.enemies = [];
+  const t0 = s.turn;
+  const next = skipTurn(s);
+  assert.equal(next.lastAction, 'blocked', 'the hold is refused');
+  assert.equal(next.turn, t0, 'and no turn is spent');
+  assert.equal(next.enemyTurn, false, 'so no enemy phase runs');
+  assert.ok(/nothing in sight/i.test(next.message || ''), `and it says why: "${next.message}"`);
+});
+
+test('Discipline while holding raises a Sentinel Parry guard (ending a turn without a blow)', () => {
+  const s = withFoeInSight(createInitialState('warrior', 'easy'));
   s.player.firstHitEachTurn = true; s.player.guardUp = false; // as if Parry were learned
   const next = skipTurn(s);
   assert.equal(next.player.guardUp, true, 'holding ground banks the guard');
@@ -6011,7 +6145,7 @@ test('Animal Form: the king moves as a UNICORN (bishop + nightrider) and rallies
   assert.ok(!moves.some((m) => m.x === 11 && m.y === 10), 'but NOT a plain orthogonal step (no queen slide)');
 });
 
-test('Riposte (Sentinel): a foe that strikes and ENDS adjacent is cut down — parry or no parry', () => {
+test('Riposte (Sentinel): the counter comes off the GUARD — an unparried blow earns nothing', () => {
   const build = (reflect, guard) => {
     const ids = reflect ? ['w_waiting', 'w_bulwark', 'w_reflect'] : ['w_waiting', 'w_bulwark'];
     const t = warriorWith(...ids);
@@ -6022,29 +6156,30 @@ test('Riposte (Sentinel): a foe that strikes and ENDS adjacent is cut down — p
     return t;
   };
   assert.equal(build(true).player.reflect, true, 'the capstone grants it');
-  // A blow that LANDS (no parry) still earns the riposte: the king takes the hit, then cuts it down.
-  const landed = moveEnemy(build(true, false), 'rk');
-  assert.equal(landed.player.hp, 5, 'the unparried blow lands');
-  assert.ok(!landed.enemies.some((e) => e.id === 'rk'), 'but the rook that ended adjacent is riposted and dies');
-  assert.ok(landed.reflectAt, 'and the counter is flagged for the view');
-  // A PARRIED blow earns it too (no damage, foe still dies).
+  // A PARRIED blow earns the counter: the guard turns it aside, the rook dies for having closed.
   const parried = moveEnemy(build(true, true), 'rk');
   assert.equal(parried.player.hp, 6, 'the guard turns the blow aside');
-  assert.ok(!parried.enemies.some((e) => e.id === 'rk'), 'and the rook is still riposted');
-  // CONTROL: no Reflect, the adjacent striker survives.
-  const ctrl = moveEnemy(build(false, false), 'rk');
+  assert.ok(!parried.enemies.some((e) => e.id === 'rk'), 'and the rook that ended adjacent is riposted and dies');
+  assert.ok(parried.reflectAt, 'and the counter is flagged for the view');
+  // A blow that LANDS with no guard up earns NOTHING — the riposte is what the Parry buys.
+  const landed = moveEnemy(build(true, false), 'rk');
+  assert.equal(landed.player.hp, 5, 'the unparried blow lands');
+  assert.ok(landed.enemies.some((e) => e.id === 'rk'), 'and the rook walks away — no guard, no counter');
+  // CONTROL: no Reflect, a parried striker survives.
+  const ctrl = moveEnemy(build(false, true), 'rk');
   assert.ok(ctrl.enemies.some((e) => e.id === 'rk'), 'without Reflect the rook is unharmed');
-  // A RANGED striker across the room is out of reach — no riposte.
+  // A RANGED striker across the room is out of reach — parried or not, no riposte.
   const far = warriorWith('w_waiting', 'w_bulwark', 'w_reflect');
   far.terrain = {}; far.allies = [];
   far.player.x = 10; far.player.y = 10; far.player.hp = 6; far.player.maxHp = 6;
+  far.player.guardUp = true;
   far.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 8, turret: true, hp: 3, maxHp: 3, awake: true, id: 'tur' })];
   const shot = moveEnemy(far, 'tur');
   const tur = shot.enemies.find((e) => e.id === 'tur');
   assert.ok(tur && tur.hp === 3, 'a turret two tiles off takes no riposte (it never came adjacent)');
 });
 
-test('Waiting: a shove still MOVES the king, it just cannot hurt him', () => {
+test('Waiting: a knight that LEAPS onto him both wounds and shoves — the read is no answer to melee', () => {
   const t = warriorWith('w_waiting');
   t.terrain = {}; t.allies = [];
   t.player.x = 10; t.player.y = 10; t.player.hp = 6; t.player.maxHp = 6;
@@ -6052,8 +6187,10 @@ test('Waiting: a shove still MOVES the king, it just cannot hurt him', () => {
   const knight = makeEnemy({ kind: 'knight', x: 9, y: 8, awake: true, id: 'kn' }); // a jumper that knocks back
   t.enemies = [knight];
   const after = moveEnemy(t, 'kn');
-  assert.equal(after.player.hp, 6, 'the leap does no damage while he waits');
-  assert.ok(after.player.x !== 10 || after.player.y !== 10, 'but the knockback still shoves him off his tile');
+  // Waiting reads incoming FIRE. A knight that lands on top of him is toe to toe, so it gets through:
+  // both the wound and the shove land. This is the whole point of the nerf — the hold is not a bunker.
+  assert.ok(after.player.hp < 6, 'the leap wounds him despite the hold');
+  assert.ok(after.player.x !== 10 || after.player.y !== 10, 'and the knockback still shoves him off his tile');
 });
 
 test('overstay ramps from max dread to the molten peak, then holds', () => {
@@ -6067,8 +6204,9 @@ test('overstay ramps from max dread to the molten peak, then holds', () => {
 
 test('Waiting shrugs off blows but NOT the ground — lava still burns a waiting king', () => {
   const s = warriorWith('w_waiting');
-  s.terrain = { '10,10': 'lava' }; s.allies = []; s.enemies = [];
+  s.terrain = { '10,10': 'lava' }; s.allies = [];
   s.player.x = 10; s.player.y = 10; s.player.hp = 6; s.player.maxHp = 6;
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true })]; // a foe in sight, so the hold is legal
   const next = skipTurn(s); // he waits ON lava — invincible to blows, but fire is the ground
   assert.equal(next.player.invuln, true, 'the halo is up (blows would be shrugged)');
   assert.ok(next.player.hp < 6, 'yet the lava still sears him');
@@ -6086,9 +6224,13 @@ test('a floor the king will not leave turns MOLTEN — lava wells up under the o
 
 test('lingering past max dread is FATAL: the molten floor kills even a waiting Sentinel', () => {
   let s = generateFloor(1, createPlayer('warrior', 'easy'), 0);
-  s.enemies = []; s.allies = [];
+  s.allies = [];
   s.player.hp = 6; s.player.maxHp = 6;
   s.player.waiting = true; // a Sentinel trying to wait it out
+  // Holding your ground needs a foe IN SIGHT. A rook turret set diagonally never gets a firing line on
+  // him and never burns (structures are exempt from the lava tick), so it keeps the hold legal for the
+  // whole vigil without ever landing a blow — leaving the FIRE as the only thing that can kill him.
+  s.enemies = [makeEnemy({ kind: 'rook', x: s.player.x + 2, y: s.player.y + 2, turret: true, hp: 3, maxHp: 3, awake: true })];
   s.turn = MAX_TURNS_SCARY; // the molten floor begins
   for (let i = 0; i < 400 && !s.gameOver; i += 1) {
     s = skipTurn(s); // his turn: hold ground (passTurn sears any lava that has reached under him)

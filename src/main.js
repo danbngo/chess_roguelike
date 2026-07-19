@@ -1786,11 +1786,13 @@
     renderRunTable(victoryRunTable, entry.id);
     hideOverlays();
     victoryScreen.classList.remove('hidden');
-    queueTip('newGamePlus');
+    // queueTip('newGamePlus'); // DISABLED with New Game + (see index.html)
   }
 
   // New Game + : having won, press on into the endless depths, build intact.
-  function continueAfterVictory() {
+  // DISABLED for now — its button is commented out in index.html and the listener below is too. The
+  // function is kept intact so restoring the mode is just un-commenting those three places.
+  function continueAfterVictory() { // eslint-disable-line no-unused-vars
     screen = 'playing';
     gameState.won = false;
     document.body.classList.add('in-game');
@@ -2047,8 +2049,18 @@
       GameAudio.play('kill');
     }
     // Pieces newly in view freeze in surprise; the rest get to move.
+    const hpBeforePhase = gameState.player.hp;
     const phase = beginEnemyPhase(gameState);
     applyState(phase.state, true);
+    // THE FLOOR'S OWN BLOW. Damage dealt at the START of the enemy phase — scalding geyser steam, a
+    // burning tree, the molten floor — lands inside beginEnemyPhase, so neither the self-inflicted
+    // check (the king's own turn) nor landEnemyMove (a per-mover blow) ever saw it, and a geyser could
+    // take a heart in total silence. Environmental damage now flashes and shakes like any other hit.
+    if (gameState.player.hp < hpBeforePhase && !gameState.gameOver) {
+      Renderer.effect('hit');
+      GameAudio.play('hit');
+      flashHealth();
+    }
     // A guardian STARTLED this phase roars now — on the same turn its "!" goes up. That shout is
     // raised by the phase itself, not by a mover (a gasping boss doesn't act), so nothing in the
     // per-mover path would ever show it.
@@ -2764,7 +2776,7 @@
   if (trophyCloseButton) trophyCloseButton.addEventListener('click', showTitle); // DOM back button (the trophy room is diegetic now; this is a harmless fallback)
   playAgainButton.addEventListener('click', openClassSelect);
   toTitleButton.addEventListener('click', showTitle);
-  victoryContinueButton.addEventListener('click', continueAfterVictory);
+  // victoryContinueButton.addEventListener('click', continueAfterVictory); // DISABLED with New Game +
   victoryAgainButton.addEventListener('click', openClassSelect);
   victoryTitleButton.addEventListener('click', showTitle);
   if (altarCloseButton) altarCloseButton.addEventListener('click', closeLevelUp);

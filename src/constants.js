@@ -209,7 +209,7 @@ const VAMPIRESS_HP = 3;
 
 // Each floor guardian rolls ONE of these boss perks at creation, making every boss
 // fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
-const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen', 'lich', 'warper', 'guardian', 'mechanic', 'hotblooded', 'icygrasp', 'shadowstep', 'anchored', 'gardener', 'petowner', 'hasty', 'burrower', 'fogweaver'];
+const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen', 'lich', 'warper', 'guardian', 'mechanic', 'hotblooded', 'icygrasp', 'shadowstep', 'anchored', 'gardener', 'petowner', 'hasty', 'burrower', 'fogweaver', 'wary'];
 // Traits keyed to a REALM: some only demon-kind guardians may roll, some only mortal ones.
 const DEMON_ONLY_PERKS = ['hotblooded', 'icygrasp', 'shadowstep'];
 const MORTAL_ONLY_PERKS = ['gardener'];
@@ -239,6 +239,7 @@ const BOSS_PERK_LABELS = {
   hasty: 'Hasty — moves a second time in a turn, so long as neither step draws blood',
   burrower: 'Burrower — walks on the void unharmed, and tears open a fresh pit to lunge from',
   fogweaver: 'Fogweaver — breathes out banks of fog around itself each turn, blinding you to the room (Premonition sees through it)',
+  wary: 'Wary — any turn it does NOT end beside you it raises its guard, and the next blow is turned aside. Close with it and it has no time to set itself (lava and steam ignore the guard)',
 };
 // A guardian has NO unique powers — it is simply a piece kind plus rolled BOSS_PERKS, so the player
 // only ever has to learn that one list. Its KIND is rolled too, from a sliding window over its tier
@@ -310,12 +311,12 @@ const CLASSES = {
     // Each subclass chain has its own colour; the class colour is the starter card's.
     chains: { Sentinel: '#3b82f6', Reaver: '#b91c1c', Cavalier: '#f59e0b', Duellist: '#ec4899' },
     // INNATE trait, granted at creation (never rolled): a quality-of-life boon shown on the sheet.
-    startPerk: { id: 'w_discipline', name: 'Discipline', short: 'Skip a turn (Space / “.” / numpad-5) to let foes come to you', desc: 'Hold your ground — press Space, “.” or numpad-5 to skip a turn and let foes come to you. A plainer boon than the others: the Warrior is strong enough already.', grants: { discipline: true } },
+    startPerk: { id: 'w_discipline', name: 'Discipline', short: 'Skip a turn (Space / “.” / numpad-5) to let a foe in sight come to you', desc: 'Hold your ground — press Space, “.” or numpad-5 to skip a turn and let foes come to you. Only works while at least one foe is IN SIGHT: with an empty screen there is nothing to wait for, and the hold is refused rather than quietly burning your turns. A plainer boon than the others: the Warrior is strong enough already.', grants: { discipline: true } },
     perks: [
       // ⛨ Sentinel — the immovable bastion: wait out a blow untouched, guard the next, punish the rest.
-      { id: 'w_waiting', chain: 'Sentinel', tier: 1, name: 'Waiting', short: 'Skip a turn to shrug off all enemy attacks until your next turn', desc: 'Skip a turn (Discipline) and no enemy attack or collision can hurt you until your next turn — though knockback still shoves you. The GROUND still can: lava, torches, and a fall into a pit all burn as ever. A halo marks you while it holds.', grants: { waiting: true } },
+      { id: 'w_waiting', chain: 'Sentinel', tier: 1, name: 'Waiting', short: 'Skip a turn to turn aside attacks from AFAR until your next turn', desc: 'Skip a turn (Discipline) and you read incoming fire: no RANGED attack — a turret’s bolt, a guardian’s volley — can hurt you until your next turn, though knockback still shoves you. A foe standing NEXT to you strikes home regardless; holding still does not stop a mace. The GROUND still bites too: lava, torches, steam and a fall into a pit burn as ever. A halo marks you while it holds.', grants: { waiting: true } },
       { id: 'w_bulwark', chain: 'Sentinel', tier: 2, requires: 'w_waiting', name: 'Parry', short: 'End a turn without attacking to block the next hit', desc: 'End a turn without striking and you RAISE your guard (a shield shows over your token). The next blow that would land is turned aside, and the guard drops — whatever you did in between. Bank it, then take the fight to them', grants: { firstHitEachTurn: true } },
-      { id: 'w_reflect', chain: 'Sentinel', tier: 3, requires: 'w_bulwark', name: 'Riposte', short: 'A foe that strikes you and ends adjacent is cut down in return', desc: 'Any foe that lands (or attempts) a blow and ENDS its turn next to you is struck down where it stands — a counter-blow out of turn, whether or not you parried. A common foe dies to it; a boss or turret soaks 1. Ranged attackers across the room are out of reach.', grants: { reflect: true } },
+      { id: 'w_reflect', chain: 'Sentinel', tier: 3, requires: 'w_bulwark', name: 'Riposte', short: 'A foe your PARRY turns aside, still adjacent, is cut down in return', desc: 'When your raised guard (Parry) turns a blow aside and that foe ENDS its turn next to you, it is struck down where it stands — a counter-blow out of turn. The riposte comes off the guard, so it costs a banked Parry each time; a blow that simply lands earns nothing. A common foe dies to it; a boss or turret soaks 1. Ranged attackers across the room are out of reach.', grants: { reflect: true } },
       // ⚔ Reaver — the bloodletter: kills fuel more kills.
       { id: 'w_edge', chain: 'Reaver', tier: 1, name: 'Keen Edge', short: 'A card kill halves that card’s cooldown', desc: "A card kill cuts that card's cooldown IN HALF (rounded down)", grants: { meleeRefund: true } },
       { id: 'w_cleave', chain: 'Reaver', tier: 2, requires: 'w_edge', name: 'Cleave', short: 'A kill also fells one adjacent foe (or tree/gate)', desc: 'When you fell a foe, one adjacent foe dies too — or, finding no second body, the sweep bites into an adjacent tree or gate', grants: { meleeCleave: true } },

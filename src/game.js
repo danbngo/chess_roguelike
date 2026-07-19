@@ -375,6 +375,17 @@ function bossSeenAndHunting(state, boss) {
 // the ward (see resolveKill) — fire, pits and lava cut straight through, which is its counter-play.
 function tickGuardianWards(state) {
   for (const e of state.enemies) if (e.warded === 'guardian') { e.parry = false; e.warded = null; }
+  // WARY: a guardian that ends the turn OUT of the king's reach has time to set itself, and raises its
+  // own guard for his turn. Toe to toe it never gets the chance. Refreshed here, from FINAL positions,
+  // so what the board shows going into his turn is exactly what his blow will meet.
+  for (const e of state.enemies) if (e.warded === 'wary') { e.parry = false; e.warded = null; }
+  for (const b of state.enemies) {
+    if (!b.boss || !bossHas(b, 'wary') || b.parry) continue;
+    if (!bossSeenAndHunting(state, b)) continue; // not in the fight / not on screen — no stance to take
+    if (chebyshev(b.x, b.y, state.player.x, state.player.y) <= 1) continue; // beside him: no time to set itself
+    b.parry = true;
+    b.warded = 'wary';
+  }
   const guardians = state.enemies.filter((b) => b.boss && bossHas(b, 'guardian') && bossSeenAndHunting(state, b));
   if (!guardians.length) return;
   const king = state.player;
@@ -584,8 +595,25 @@ function bossShoutLine(boss) {
 // Deal `amount` damage to a boss. Returns 'slain' if it fell, else 'hurt'.
 // A boss perk's short name, for the log ("Brutal — its blows land twice as hard" -> "Brutal").
 
-function damageBoss(state, boss, amount) {
+function damageBoss(state, boss, amount, opts) {
   boss.provokedBeast = true; // a struck beast (Wild Empathy) turns hostile for good
+  // A RAISED GUARD (the Wary trait, or a Guardian's ward) turns the blow aside — the guard is SPENT and
+  // no wound lands. It still rouses the thing: you hit it, it knows. The GROUND is exempt, exactly as
+  // the king's own Parry never stops lava or steam — callers pass `{ ground: true }` for those.
+  if (boss.parry && !(opts && opts.ground)) {
+    boss.parry = false;
+    boss.warded = null;
+    boss.provoked = true;
+    boss.awake = true;
+    boss.surprised = false;
+    boss.asleep = false;
+    boss.hushed = false;
+    rememberKing(state, boss);
+    cue(state, 'deflect');
+    state.message = `${boss.bossName || `The ${boss.kind} guardian`} turns the blow aside!`;
+    state.lastAction = 'combat';
+    return 'hurt'; // it is still standing — callers land beside it exactly as for a survived hit
+  }
   boss.hp -= amount;
   if (boss.hp > 0) {
     // Struck and still standing — it now HUNTS the king, seeing through Silent's veil. A foe you
@@ -624,7 +652,9 @@ function makeTurret(state, kind, x, y) {
   t.turret = true;
   t.hp = TURRET_HP;
   t.maxHp = TURRET_HP;
-  if ((state.floor || 1) >= 5 && Math.random() < 0.4) t.fire = true;
+  // Once fire turrets exist at all (floor 5), the two kinds are an EVEN split — a gun you meet is as
+  // likely to be one as the other, so neither reads as the "special" case after the introduction.
+  if ((state.floor || 1) >= 5 && Math.random() < 0.5) t.fire = true;
   return t;
 }
 
@@ -751,11 +781,25 @@ function checkDeath(state) {
 // Resolve whether an incoming hit is shrugged off: a Bulwark ward (first hit each
 // turn), or a Parry ward from a strike last turn. Null means the hit lands. When a
 // hit IS deflected, `player.deflected` is flagged so the view can flash a block.
+// WAITING only turns aside a shot from AFAR. A blow struck by something standing next to him lands
+// however still he holds — the stance is about reading a missile in flight, not shrugging off a mace.
+// So it covers turrets and a guardian's bolt/volley (and anything else that reaches him without
+// closing), and nothing that is toe to toe. A null attacker is the GROUND (lava, steam, a fall), which
+// nothing has ever stopped.
+function waitingCovers(state, attacker) {
+  if (!attacker) return false; // the ground is not an attack
+  if (attacker.turret) return true; // a gun, always at range — even a knight-pattern one
+  // A JUMPER launches its blow from two tiles off, but the leap CLOSES that distance: it lands on top
+  // of him. That is melee however the arithmetic reads, so the hold does not answer it.
+  if (isJumperKind(attacker.kind)) return false;
+  return chebyshev(attacker.x, attacker.y, state.player.x, state.player.y) > 1; // it struck without closing
+}
+
 function rollMitigation(state, attacker) {
   const player = state.player;
   let mit = null;
-  if (player.invuln) {
-    mit = 'invuln'; // a Sentinel WAITING out the turn takes no damage (Animal Form no longer does — it is fast, not invulnerable)
+  if (player.invuln && waitingCovers(state, attacker)) {
+    mit = 'invuln'; // a Sentinel WAITING out the turn reads a shot from afar and turns it aside
   } else if (player.warded) {
     mit = 'parry';
   } else if (player.firstHitEachTurn && player.guardUp) {
@@ -775,12 +819,14 @@ function rollMitigation(state, attacker) {
   return mit;
 }
 
-// REFLECT (Sentinel T3): the king RIPOSTES. ANY foe that strikes him and ENDS its turn adjacent is cut
-// down where it stands — a counter-blow struck out of turn, whether or not the blow was parried. A
-// lesser piece dies to it; a boss or turret soaks 1. Ranged attackers (a turret or bolt-boss across
-// the room) are never adjacent, so they are safe. Sets `reflectAt` so the view can play the counter.
-function applyReflect(state, attacker) {
+// RIPOSTE (Sentinel T3): the counter comes off the GUARD. Only a foe whose blow his raised Parry
+// turned aside — and which ENDS its turn adjacent — is cut down where it stands, out of turn. A blow
+// that simply lands earns nothing: the riposte is what the guard buys, not a passive thorns aura, so
+// it costs a banked Parry every time. A lesser piece dies to it; a boss or turret soaks 1. Ranged
+// attackers are never adjacent, so they are safe. Sets `reflectAt` so the view can play the counter.
+function applyReflect(state, attacker, mit) {
   if (!state.player.reflect || !attacker || attacker.summonCircle || state.gameOver || state.won) return;
+  if (mit !== 'ward' && mit !== 'parry') return; // only a blow the GUARD turned aside is answered
   if (chebyshev(attacker.x, attacker.y, state.player.x, state.player.y) > 1) return;
   if (!state.enemies.some((e) => e.id === attacker.id)) return; // already gone (e.g. its own blow felled it)
   state.reflectAt = { x: attacker.x, y: attacker.y };
@@ -2146,6 +2192,7 @@ function generateFloor(floor, carryPlayer, score) {
   }
 
 
+
   // The floor KEY (or the Orb of Victory on the last floor) sits GUARDED in a walled chamber at
   // the floor's fixed anchor: the boss stands ON it, dormant, until it spies the king, ringed by
   // a wall (or lava/water moat) with a doorway facing the king, plus a backup cohort. The EXIT is
@@ -2335,6 +2382,52 @@ function generateFloor(floor, carryPlayer, score) {
         c.summonCircle = true;
         state.enemies.push(c);
       }
+    }
+  }
+
+  // ROGUE MINI-BOSSES already lairing on the floor, from floor 3 down. Before this a lesser guardian
+  // only ever appeared because a danger event conjured one, so a floor was rank-and-file until the
+  // clock said otherwise. Seeding a few at generation gives the floor teeth to FIND.
+  //
+  // They are laid LAST, so the boss chamber, the stair and every set-piece already exist to aim at —
+  // a rogue guardian belongs at something WORTH guarding (a unique room, the way down, the court by
+  // the boss), not dropped on random floor. Each picks an anchor, tries to lair within a few tiles of
+  // it, and only falls back to open ground if that anchor is crowded out.
+  //
+  // ASLEEP, like the gaol prisoners and the demons at the gate: finding one dozing at its post is a
+  // decision (cut it down now, or slip past and leave it behind you), where one already prowling is
+  // just an ambush you did not get to see coming.
+  if (floor >= 3) {
+    const miniCount = Math.min(3, 1 + Math.floor((floor - 3) / 2)); // 1 from floor 3, up to 3 by the finale
+    // Places worth guarding, best first: the boss's court, the stair down, then each set-piece room.
+    const lairs = [{ x: ax, y: ay }, { x: exx, y: exy }];
+    for (const post of garrison) {
+      if (post.kind === 'bones' || post.kind === 'torch') continue; // scenery, not a room worth holding
+      lairs.push({ x: post.x, y: post.y });
+    }
+    // Shuffle ALL of them, boss court and stair included — so which landmarks are held varies floor to
+    // floor. Always guarding the same two would make "walled court = rogue guardian" a rule you learn
+    // once and never think about again.
+    for (let i = lairs.length - 1; i > 0; i -= 1) {
+      const j = randomInt(i + 1);
+      [lairs[i], lairs[j]] = [lairs[j], lairs[i]];
+    }
+    for (let i = 0; i < miniCount; i += 1) {
+      const kind = randomEnemyKind(floor);
+      const fits = (x, y) => standable(x, y) && terrainAt(state, x, y) !== 'geyser'
+        && chebyshev(x, y, player.x, player.y) >= 6 // never lairing on his doorstep
+        && !keyTileAt(state, x, y) && !(state.exit && x === state.exit.x && y === state.exit.y)
+        && kindCanMove(state, kind, x, y); // never seat one walled in where it cannot act
+      let tile = null;
+      for (const lair of lairs) { // near something worth guarding, if any such spot is free
+        tile = place((x, y) => fits(x, y) && chebyshev(x, y, lair.x, lair.y) >= 2 && chebyshev(x, y, lair.x, lair.y) <= 4);
+        if (tile) break;
+      }
+      if (!tile) tile = place((x, y) => fits(x, y) && !seen(x, y)); // nowhere interesting left — anywhere off-screen
+      if (!tile) break;
+      const mb = makeMiniBoss(state, kind, tile.x, tile.y);
+      mb.asleep = true; // dozing at its post until he strikes it or blunders within a tile
+      state.enemies.push(mb);
     }
   }
 
@@ -2860,11 +2953,20 @@ function getPlayerMoves(state) {
     moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture), push: Boolean(tile.push), chop: Boolean(tile.chop), embedded: Boolean(tile.embedded), pitDive: Boolean(tile.pitDive) });
   };
   if (p.promotion > 0) {
-    // Animal Form (Druid): the king becomes a swift UNICORN — it glides like a bishop AND
-    // rides like a nightrider for a few turns, taking no damage and playing no cards. Click/target
-    // any reachable tile.
+    // Animal Form (Druid): the king becomes a swift UNICORN — it glides like a bishop AND rides like a
+    // nightrider for a few turns, taking no damage and playing no cards.
+    //
+    // Its reach is CAPPED to his AWARENESS window — how far he can naturally, two-way see. The beast's
+    // raw bishop glide is unbounded, which let it cross half the board in a step; worse, it let him
+    // move INTO the one-way Oracle band (Hawk Eyes' extended sight), so sight perks were quietly
+    // buying movement. Awareness is the right cap because it EXCLUDES `visionOneWay`: the Ranger's own
+    // Sharpened Senses (two-way) does widen the beast's range, while Oracle's one-way band never does.
+    // He can never step onto ground he could not have reached without those perks.
     const opts = { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) };
-    for (const t of generateMoves('unicorn', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
+    const reach = getAwarenessBounds(state);
+    for (const t of generateMoves('unicorn', state, p.x, p.y, enemyAt, isEnemy, opts)) {
+      if (isWithinBounds(reach, t.x, t.y)) add(t);
+    }
     return moves;
   }
   const opts = { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) };
@@ -4636,6 +4738,18 @@ function movePlayer(state, dx, dy) {
 // cooldown, or (ending a turn without a blow) bank a Sentinel's Parry guard. Only ever reached when
 // the king actually has the trait; the input layer gates it.
 function skipTurn(state) {
+  // NOTHING TO WAIT FOR. Holding your ground with an empty screen burns turns — and the dread clock —
+  // for no gain, and it is far too easy to lean on the key and lose a dozen of them without noticing.
+  // So the hold is refused outright unless at least one foe is actually in sight; "let them come to
+  // you" only means anything once there is a them. Refused as a `blocked` action: it costs no turn,
+  // beeps, and says why.
+  if (typeof getVisibleEnemies === 'function' && getVisibleEnemies(state).length === 0) {
+    const blocked = structuredClone(state);
+    blocked.message = 'Nothing in sight to hold your ground against — you only wait when a foe is coming.';
+    blocked.lastAction = 'blocked';
+    blocked.enemyTurn = false;
+    return blocked;
+  }
   const next = structuredClone(state);
   const p = next.player;
   p.attacked = false; // he swung at nothing — passTurn raises a Parry guard on this
@@ -5196,7 +5310,9 @@ function tickGeysers(state) {
     addFog(state, Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 1); // 1-turn steam
     blew = true;
   }
-  if (blew) cue(state, 'hiss');
+  // Its OWN cue, not the lava/fire `hiss` — a vent blows every third turn all floor long, so it gets a
+  // soft, dull exhale that yields to every other sound rather than the sharp hiss of fire on flesh.
+  if (blew) cue(state, 'vent');
 }
 
 // FOG/STEAM SCALDS. Any unit standing in fog takes 1 damage as its side of the turn comes up — the
@@ -5207,23 +5323,30 @@ function tickFogDamage(state) {
   if (!state.fog) return;
   const inFog = (u) => fogAt(state, u.x, u.y);
   const p = state.player;
+  let scalded = false; // did the steam actually BURN anything this turn?
   if (inFog(p)) {
     hurtBy(state, 'steam');
     p.hp -= 1;
     p.wasHit = true; p.hitThisFloor = true;
     addSpatter(state, p.x, p.y);
     addSmoke(state, p.x, p.y);
+    scalded = true;
     state.message = state.message ? `${state.message} The scalding steam sears the king!` : 'The scalding steam sears the king!';
     checkDeath(state);
   }
   const caughtFoes = state.enemies.filter((e) => !e.summonCircle && inFog(e));
   for (const e of caughtFoes) {
     addSmoke(state, e.x, e.y);
-    if (e.boss) damageBoss(state, e, 1);
+    scalded = true;
+    if (e.boss) damageBoss(state, e, 1, { ground: true }); // steam is the GROUND — no guard turns it aside
     else if (e.turret) damageTurret(state, e, 1);
     else { addSpatter(state, e.x, e.y, 0, 0, isDemonKind(e.kind)); tallyKill(state, e); state.enemies = state.enemies.filter((o) => o.id !== e.id); }
   }
-  for (const a of (state.allies || []).filter((al) => inFog(al))) { addSmoke(state, a.x, a.y); damageAlly(state, a, 1); }
+  for (const a of (state.allies || []).filter((al) => inFog(al))) { addSmoke(state, a.x, a.y); damageAlly(state, a, 1); scalded = true; }
+  // Steam BITING flesh is the same sound as lava biting flesh — a sharp HISS. It fires only when the
+  // scald actually lands; a vent merely blowing off with nobody in it keeps its soft `vent` breath.
+  // (That separation is the fix for the constant hissing: the eruption itself used to cue the hiss.)
+  if (scalded) cue(state, 'hiss');
 }
 
 // PAST max dread, a floor the king refuses to leave turns MOLTEN. From MAX_TURNS_SCARY onward, fresh
@@ -5907,7 +6030,7 @@ function bossHit(state, boss, hitMsg) {
     state.message = `The king withstands ${boss.bossName || `the ${boss.kind} guardian`}!`;
     state.lastAction = 'enemy';
   }
-  applyReflect(state, boss); // Reflect (Sentinel): the guardian's own blow earns it a riposte (soaks 1)
+  applyReflect(state, boss, mit); // Riposte (Sentinel): only if his GUARD turned the blow aside (soaks 1)
   return state;
 }
 
@@ -6362,7 +6485,7 @@ function knockbackKing(state, enemy) {
   }
   if (!state.gameOver) collectKeyIfHere(state); // shoved onto the key? he grabs it
   if (!state.gameOver && pushed) checkDefenestration(state); // bowled onto the open stair? he tumbles down
-  applyReflect(state, enemy); // Reflect (Sentinel): a jumper that lands its leap adjacent is cut down in riposte
+  applyReflect(state, enemy, mit); // Riposte (Sentinel): only a leap his GUARD turned aside is answered
   updateDiscovery(state);
   return state;
 }
@@ -6568,7 +6691,7 @@ function strikeKing(state, enemy) {
     state.message = mitigationMessage(mit, enemy.kind);
     state.lastAction = 'enemy';
   }
-  applyReflect(state, enemy); // Reflect (Sentinel): a foe that ends its blow adjacent is cut down in riposte
+  applyReflect(state, enemy, mit); // Riposte (Sentinel): only a blow his GUARD turned aside is answered
   return state;
 }
 
@@ -6874,12 +6997,12 @@ function bossMove(state, boss) {
   // vanilla-type boss into a lava field to whittle it down. Demon-floor guardians are immune.
   if (!boss.lavaImmune && terrainAt(state, boss.x, boss.y) === 'lava') {
     addSmoke(state, boss.x, boss.y);
-    if (damageBoss(state, boss, 1) === 'slain') { state.lastAction = 'combat'; return state; }
+    if (damageBoss(state, boss, 1, { ground: true }) === 'slain') { state.lastAction = 'combat'; return state; }
   }
   // Likewise a non-immune Phasing guardian embedded in a wall-torch sears — so its own wall-hiding
   // can be turned against it near a torch (it normally routes around them — see pieceTerrainOpts).
   if (!boss.lavaImmune && hasTorch(state, boss.x, boss.y)) {
-    if (damageBoss(state, boss, 1) === 'slain') { state.lastAction = 'combat'; return state; }
+    if (damageBoss(state, boss, 1, { ground: true }) === 'slain') { state.lastAction = 'combat'; return state; }
   }
   // Regenerating: it knits one wound shut every fourth turn (ticked whether it acts or recovers).
   if (bossHas(boss, 'regen')) {

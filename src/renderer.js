@@ -843,6 +843,7 @@ const Renderer = (function () {
     hasty: { color: '#facc15', mark: '»' }, // twin chevrons of speed
     burrower: { color: '#7c5b3a', mark: '⧗' }, // a bored shaft
     fogweaver: { color: '#cbd5e1', mark: '☁' }, // a pale storm cloud
+    wary: { color: '#94a3b8', mark: '⛨' }, // a raised steel guard (matches the ward's steel border)
   };
   function drawBossTraitHat(tileX, tileY, perk, rush) {
     const spec = BOSS_TRAIT_HAT[perk];
@@ -1397,10 +1398,13 @@ const Renderer = (function () {
     ctx.quadraticCurveTo(cx, top + h * 1.2, cx, top + h);
     ctx.quadraticCurveTo(cx, top + h * 1.2, cx - w / 2, top + h * 0.55);
     ctx.closePath();
-    ctx.fillStyle = 'rgba(56, 189, 248, 0.92)';
+    // The SAME steel shield the KING's own Parry wears (drawGuardMark) — one symbol for "a guard is up,
+    // the next blow is turned aside", whoever is holding it. It used to be cyan to read as a magic
+    // ward, which just meant the player had two different marks to learn for one mechanic.
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.95)';
     ctx.fill();
     ctx.lineWidth = Math.max(1, tileSize * 0.02);
-    ctx.strokeStyle = '#0c4a6e';
+    ctx.strokeStyle = '#1e293b';
     ctx.stroke();
     ctx.restore();
   }
@@ -1779,14 +1783,16 @@ const Renderer = (function () {
   }
 
   // A violet marker on tiles a card being aimed can reach (ring = capture).
-  function drawCardHint(tileX, tileY, capture) {
+  function drawCardHint(tileX, tileY, capture, warded) {
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
     if (capture) {
       ctx.beginPath();
       ctx.arc(cx, cy, tileSize * 0.42, 0, Math.PI * 2);
       ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(216, 180, 254, 0.95)';
+      // A WARDED foe rings STEEL instead of violet — the shot lands but its guard turns it aside, so
+      // it reads apart from a target the shot would actually fell.
+      ctx.strokeStyle = warded ? 'rgba(148, 163, 184, 0.95)' : 'rgba(216, 180, 254, 0.95)';
       ctx.stroke();
       return;
     }
@@ -3942,6 +3948,11 @@ const Renderer = (function () {
     // boulder SHOVE is deliberately NOT here: it is a push, not an attack. Its border reads WHITE so
     // the player can tell "I will hit something" from "I will step onto empty ground" (green).
     const attackKeys = new Set(playerMoves.filter((m) => m.capture || m.chop).map((m) => `${m.x},${m.y}`));
+    // A WARDED target (a Guardian's retinue, `parry`) turns the first blow aside — striking it costs a
+    // turn and does not kill. Its border reads STEEL rather than white, matching the shield the ward is
+    // drawn with, so "this one soaks a hit" is legible BEFORE you commit the swing.
+    const wardedAt = (x, y) => (state.enemies || []).some((e) => e.x === x && e.y === y && e.parry);
+    const parryKeys = new Set(playerMoves.filter((m) => m.capture && wardedAt(m.x, m.y)).map((m) => `${m.x},${m.y}`));
     // A move onto ground that BITES — lava, a burning wall-torch, or a tree ablaze (all only reachable
     // by wading or phasing). Its border reads YELLOW: safe from foes, but the floor itself will hurt.
     const harmfulKeys = new Set();
@@ -4039,6 +4050,10 @@ const Renderer = (function () {
             // counts. Danger outranks the white/yellow tells: a strike or a lava tile that ALSO
             // exposes him to a foe reads red, so "safe attack" (white) really means safe.
             tileOutline(px, py, '#ef4444', threatCount);
+          } else if (canMove && parryKeys.has(key)) {
+            // STEEL — a strike that will be WARDED: the blow lands but is turned aside, so it costs the
+            // turn without felling. Dimmer than the white "this kills it" tell, on purpose.
+            tileOutline(px, py, '#94a3b8', 1);
           } else if (canMove && attackKeys.has(key)) {
             // WHITE — moving here STRIKES (a capture, or a chop) rather than merely steps.
             tileOutline(px, py, '#f5f5f5', 1);
@@ -4192,7 +4207,7 @@ const Renderer = (function () {
     }
     if (cardTargets) {
       for (const target of cardTargets) {
-        drawCardHint(target.x, target.y, target.capture);
+        drawCardHint(target.x, target.y, target.capture, wardedAt(target.x, target.y));
         // En-passant dashes carry the two flank tiles they strike — mark them so the
         // hit area is obvious before the dash is committed.
         if (target.flanks) {
