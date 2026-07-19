@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -34,9 +34,10 @@ const {
   barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot,
   realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, MAX_BOONS,
   makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls,
-  buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES,
+  buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById,
   makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt,
   isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder,
+  electricTurretAim, damageTurret,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -1253,9 +1254,15 @@ test('a storeroom is a ROOM, never a sealed block of stone', () => {
   // The trap: pruneUselessDoors re-judges every door with isDoorwaySpot, which needs the door's wall
   // to run two tiles either side AND >= 6 tiles of space on both. A 3x3/4x4 box fails, its door
   // reverts to rock, and the room becomes solid. Storerooms must be odd and >= 5 a side.
+  // SEEK, don't hope. The geometry below only matches a storeroom whose whole outline survived the
+  // floor around it — about one per twenty floors — so a fixed 60-floor sample found none about 5%
+  // of runs and failed on `rooms > 0` rather than on anything real. (Measured: 20 rooms / 400 floors,
+  // 0 of them ever sealed.) Keep drawing until a handful have been examined, then stop.
   let rooms = 0; let unreachable = 0;
-  for (let i = 0; i < 60; i += 1) {
+  const WANT_ROOMS = 4;
+  for (let i = 0; i < 400 && rooms < WANT_ROOMS; i += 1) {
     const s = generateFloor(4, createPlayer('warrior'), 0);
+    if (!(s.player.seenStructures || []).includes('storeroom')) continue; // no storeroom on this one
     const at = (x, y) => terrainAt(s, x, y);
     const walk = playerReachable(s, s.player.x, s.player.y);
     for (let bx = 2; bx < WORLD_SIZE - 6; bx += 1) {
@@ -1283,22 +1290,26 @@ test('a storeroom is a ROOM, never a sealed block of stone', () => {
       }
     }
   }
-  assert.ok(rooms > 0, `the sample produced storerooms (${rooms})`);
+  assert.ok(rooms > 0, `the search turned up storerooms to examine (${rooms})`);
   assert.equal(unreachable, 0, `every storeroom can be walked into (${unreachable} of ${rooms} sealed)`);
 });
 
 test('Ghost makes the king hard to FIX ON — half the turns beyond a tile, always when adjacent', () => {
   // Ghost used to be noChase (foes gave up when you broke sight), which stopped you luring one foe
   // off a pack. It now slows the NOTICE instead, so you can peel them off one at a time.
+  // NB: the floor is built ONCE and reused. `beginEnemyPhase` clones the state it is given, so the
+  // base is never mutated and every trial is independent — but generating a fresh floor per trial
+  // meant 2400 full level generations for a coin-flip measurement, and made this the single slowest
+  // test in the suite by a factor of two. The statistics are identical; only the setup is cheap now.
   const noticeRate = (elusive, dist) => {
     let n = 0;
     const N = 600;
+    const base = createInitialState('warrior');
+    base.floor = 3; base.allies = []; base.terrain = {};
+    base.player.x = 10; base.player.y = 10; base.player.elusive = elusive;
     for (let i = 0; i < N; i += 1) {
-      const s = createInitialState('warrior');
-      s.floor = 3; s.allies = []; s.terrain = {};
-      s.player.x = 10; s.player.y = 10; s.player.elusive = elusive;
-      s.enemies = [makeEnemy({ kind: 'rook', x: 10 + dist, y: 10, awake: false, lastSeen: null, lastSeenTtl: 0 })];
-      if (beginEnemyPhase(s).state.enemies[0].awake) n += 1;
+      base.enemies = [makeEnemy({ kind: 'rook', x: 10 + dist, y: 10, awake: false, lastSeen: null, lastSeenTtl: 0 })];
+      if (beginEnemyPhase(base).state.enemies[0].awake) n += 1;
     }
     return n / N;
   };
@@ -3997,25 +4008,31 @@ test('hell wells up LAVA where the mortal floors would flood', () => {
   // Read dangerEvent.kind, not the prose: fireDangerEvent returns nothing at all (it mutates the
   // state), so an earlier cut of this test matched a regex against `undefined` and reported zero
   // floods everywhere — which looked exactly like a pass for the demon half.
+  // `fireDangerEvent` MUTATES, so each trial genuinely needs its own state — but a structuredClone of
+  // a pre-built floor is far cheaper than generating a fresh one, and 800 level generations to count
+  // event kinds was thirteen seconds of the suite. 150 trials is ample: a flood is roughly 1 roll in
+  // 15, so the "it can still happen up top" control expects ~10 and misses with probability ~1e-5.
+  const seed = createInitialState('warrior', 'hard');
+  seed.player.seenTerrain = ['water', 'lava'];
   const roll = (floor) => {
-    const s = createInitialState('warrior', 'hard');
+    const s = structuredClone(seed);
     s.floor = floor;
-    s.player.seenTerrain = ['water', 'lava'];
     fireDangerEvent(s, 1);
     return s.dangerEvent.kind;
   };
+  const TRIALS = 150;
   let hellFloods = 0;
   let hellLava = 0;
   let mortalFloods = 0;
-  for (let i = 0; i < 400; i += 1) {
+  for (let i = 0; i < TRIALS; i += 1) {
     const h = roll(DEMON_FLOOR);
     if (h === 'flood') hellFloods += 1;
     if (h === 'lavaSpread' || h === 'wallsToLava') hellLava += 1;
     if (roll(2) === 'flood') mortalFloods += 1;
   }
   assert.equal(hellFloods, 0, 'no flood ever rises in hell');
-  assert.ok(hellLava > 0, `and hell still wells lava instead (${hellLava}/400)`);
-  assert.ok(mortalFloods > 0, `but water still floods up top, so this test can fail (${mortalFloods}/400)`);
+  assert.ok(hellLava > 0, `and hell still wells lava instead (${hellLava}/${TRIALS})`);
+  assert.ok(mortalFloods > 0, `but water still floods up top, so this test can fail (${mortalFloods}/${TRIALS})`);
 });
 
 test('nothing alights on top of a TREE or a GATE — but a boulder still crushes', () => {
@@ -4717,10 +4734,12 @@ test('a confused TURRET cannot walk, and fires only every OTHER turn', () => {
   // making it strictly better for the king than an unconfused one.
   let fired = 0; let walked = 0;
   const N = 600;
+  // Floor built ONCE — moveEnemy clones, so the trials stay independent (see the Ghost test).
+  const base = createInitialState('warrior', 'hard');
+  base.terrain = {}; base.allies = [];
+  base.player.x = 0; base.player.y = 0;
   for (let i = 0; i < N; i += 1) {
-    const s = createInitialState('warrior', 'hard');
-    s.terrain = {}; s.allies = [];
-    s.player.x = 0; s.player.y = 0;
+    const s = base;
     const t = makeEnemy({ kind: 'rook', x: 10, y: 10, turret: true, hp: 2, maxHp: 2 });
     confuse(t);
     s.enemies = [t, makeEnemy({ kind: 'pawn', x: 12, y: 10 })];
@@ -4740,14 +4759,17 @@ test('the fog lifts ONLY on the coin — a blow will not sober a piece up', () =
   // ever bit.
   let lifted = 0;
   const N = 600;
+  // The floor is built ONCE — `moveEnemy` clones what it is given, so the base is never mutated and
+  // the trials stay independent. Generating a level per trial made a coin-flip measurement one of
+  // the slowest things in the suite for no statistical gain whatsoever.
+  const base = createInitialState('warrior', 'hard');
+  base.terrain = {}; base.allies = [];
+  base.player.x = 0; base.player.y = 0;
   for (let i = 0; i < N; i += 1) {
-    const s = createInitialState('warrior', 'hard');
-    s.terrain = {}; s.allies = [];
-    s.player.x = 0; s.player.y = 0;
     const me = makeEnemy({ kind: 'rook', x: 10, y: 10 });
     confuse(me);
-    s.enemies = [me];
-    const next = moveEnemy(s, me.id);
+    base.enemies = [me];
+    const next = moveEnemy(base, me.id);
     if (next.enemies[0] && !isConfused(next.enemies[0])) lifted += 1;
   }
   const rate = lifted / N;
@@ -4772,8 +4794,10 @@ test('a confused piece has no sense left: it blunders into pits and hacks at tre
   // One that has lost it does both, and the floor collects.
   let fell = 0;
   const N = 300;
+  // Floor built ONCE — moveEnemy clones, so the trials stay independent (see the Ghost test).
+  const base = createInitialState('warrior', 'hard');
   for (let i = 0; i < N; i += 1) {
-    const s = createInitialState('warrior', 'hard');
+    const s = base;
     s.terrain = {}; s.allies = [];
     s.player.x = 0; s.player.y = 0; // far off: this is about the FLOOR, not him
     // Ring it with pits so any stagger goes over an edge.
@@ -4850,8 +4874,14 @@ test('Vampiric Edge is a 1-in-3 coin per kill, and turrets are dead metal', () =
   assert.equal(build().player.meleeLeech, true, 'the perk grants it');
   let healed = 0;
   const N = 600;
+  // Built ONCE — `movePlayerTo` clones, so the trials stay independent. `build()` runs a whole level
+  // generation plus three perk grants; doing that 600 times to measure a coin was most of this
+  // test's nine seconds.
+  const base = build();
   for (let i = 0; i < N; i += 1) {
-    const next = movePlayerTo(build(), 11, 10);
+    base.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
+    base.player.hp = 5;
+    const next = movePlayerTo(base, 11, 10);
     if (next.player.hp > 5) healed += 1;
   }
   const rate = healed / N;
@@ -6280,6 +6310,60 @@ test('the Workshop’s fittings never leak onto an ordinary floor', () => {
   }
 });
 
+test('an ELECTRIC TURRET shoots the CIRCUIT, not the man — and bites back when struck', () => {
+  const bench = () => {
+    const s = createInitialState('warrior', 'easy');
+    s.realm = 'workshop';
+    s.terrain = {}; s.enemies = []; s.allies = []; s.fog = {};
+    s.player.x = 10; s.player.y = 10; s.player.hp = 8; s.player.maxHp = 8;
+    return s;
+  };
+
+  // IT DOES NOT NEED A SHOT AT HIM. Its bolt lands on a wired tile in its own lane, and the current
+  // walks the rest of the way — which is what makes the Workshop's wiring worth reading.
+  let s = bench();
+  const gun = makeTurret(s, 'rook', 10, 6);
+  gun.electric = true; gun.id = 'g'; gun.awake = true; gun.hp = 3; gun.maxHp = 3;
+  s.enemies = [gun];
+  for (let y = 7; y <= 10; y += 1) s.terrain[`10,${y}`] = 'wire';
+  assert.ok(electricTurretAim(s, gun), 'it finds a tile whose circuit reaches him');
+  assert.equal(turretTargetsKing(s, gun), true, 'and therefore locks on');
+  let n = moveEnemy(s, 'g'); // turn one: lock on
+  n = moveEnemy(n, 'g'); // turn two: fire
+  assert.equal(n.player.hp, 7, 'the current finds its way to him');
+
+  // STRIKE ONE AND IT EARTHS ITSELF. The obvious answer — walk up and hit the gun — is the one that
+  // costs, which is what pushes the player toward the switches instead.
+  s = bench();
+  const near = makeTurret(s, 'rook', 11, 10);
+  near.electric = true; near.id = 'h'; near.hp = 3; near.maxHp = 3;
+  s.enemies = [near];
+  damageTurret(s, near, 1);
+  assert.equal(s.player.hp, 7, 'an electric gun bites back when hit');
+  // A plain gun does not.
+  const plain = bench();
+  const pg = makeTurret(plain, 'rook', 11, 10);
+  pg.electric = false; pg.fire = false; pg.id = 'q'; pg.hp = 3; pg.maxHp = 3;
+  plain.enemies = [pg];
+  damageTurret(plain, pg, 1);
+  assert.equal(plain.player.hp, 8, 'an ordinary one just takes the hit');
+
+  // AN EVEN THIRD EACH in the Workshop, so no kind reads as the special case — and none anywhere else.
+  const mix = { plain: 0, fire: 0, elec: 0 };
+  for (let i = 0; i < 600; i += 1) {
+    const t = makeTurret({ floor: 1, realm: 'workshop', terrain: {} }, 'rook', 5, 5);
+    if (t.electric) mix.elec += 1; else if (t.fire) mix.fire += 1; else mix.plain += 1;
+  }
+  for (const k of ['plain', 'fire', 'elec']) {
+    assert.ok(mix[k] > 120 && mix[k] < 280, `${k} guns are about a third (${mix[k]}/600)`);
+  }
+  let elsewhere = 0;
+  for (let i = 0; i < 300; i += 1) {
+    if (makeTurret({ floor: 6, realm: 'overworld', terrain: {} }, 'rook', 5, 5).electric) elsewhere += 1;
+  }
+  assert.equal(elsewhere, 0, 'and there are none outside the Workshop');
+});
+
 test('ELECTRICITY hits a NETWORK, not a tile — and the machines that carry it do not care', () => {
   const bench = () => {
     const s = createInitialState('warrior', 'easy');
@@ -6363,6 +6447,10 @@ test('METAL is worked by CURRENT, not by an axe — and it shuts on whatever is 
 
 test('a GENERATOR is a hazard you can SHOVE — and it lets go on a shared beat', () => {
   const s = createInitialState('warrior', 'easy');
+  // Generators only exist in the Workshop, and `tickGenerators` bails on the realm before it walks
+  // the terrain map — that scan runs every enemy phase everywhere, and doing it unconditionally cost
+  // the test suite nearly three times its runtime.
+  s.realm = 'workshop';
   s.terrain = {}; s.enemies = []; s.allies = []; s.spatters = [];
   s.player.x = 9; s.player.y = 9; // within sight — the arc reaches no further than he can plainly see
   // A generator is TERRAIN, not a side list — which is exactly what makes it shove like a boulder,
@@ -6563,39 +6651,41 @@ test('an ALTAR trades, never gifts — and rebuilding the king keeps his history
   const base = king();
   const hp0 = base.player.maxHp;
   assert.equal(base.player.takenPerks.length, 3);
-  assert.deepEqual(altarOptions(base).map((r) => r.id).sort(),
-    ['heart-for-perk', 'perk-for-heart', 'swap-any', 'swap-class'], 'all four bargains are on offer');
 
-  // SWAPS are perk-count neutral and cost no blood.
-  for (const rite of ['swap-class', 'swap-any']) {
-    const after = useAltar(king(), rite);
-    assert.equal(after.player.takenPerks.length, 3, `${rite}: one out, one in`);
-    assert.equal(after.player.maxHp, hp0, `${rite}: costs no hearts`);
+  // IT NAMES ITS PRICE. Two offers, each stating exactly what is given up and exactly what is
+  // received — rolling the perks after he clicks would make the on-screen text a lie, and turn a
+  // decision about his build into a coin-flip with flavour on it.
+  const offers = rollAltarOffers(base);
+  assert.equal(offers.length, 2, 'exactly two bargains, so walking away costs something real');
+  for (const o of offers) {
+    assert.ok(o.name && o.desc, 'each is described up front');
+    if (o.dropId) assert.ok(perkById(o.dropId), 'the perk given up is a real, named one');
+    if (o.gainId) assert.ok(perkById(o.gainId), 'and so is the one received');
+    assert.ok(o.dropId || o.hearts, 'and every one of them COSTS him something');
   }
-  // BLOOD for knowledge, and knowledge for blood.
-  const bought = useAltar(king(), 'heart-for-perk');
-  assert.equal(bought.player.takenPerks.length, 4, 'a heart buys a boon');
-  assert.equal(bought.player.maxHp, hp0 - 1, '...and the heart is gone for good');
-  const sold = useAltar(king(), 'perk-for-heart');
-  assert.equal(sold.player.takenPerks.length, 2, 'a boon buys a heart');
-  assert.equal(sold.player.maxHp, hp0 + 1, '...and the heart is real');
 
-  // THE REBUILD must not launder his DIFFICULTY away. A Nightmare warrior starts on 5; rebuilding
-  // through `createPlayer` alone handed him the 9 of an easier setting — on every single rite.
-  for (const rite of ['swap-class', 'swap-any', 'heart-for-perk', 'perk-for-heart']) {
-    const after = useAltar(king(), rite);
-    assert.equal(after.player.difficulty, 'nightmare', `${rite}: still a Nightmare run`);
-    assert.ok(Math.abs(after.player.maxHp - hp0) <= 1, `${rite}: the pool moves by at most the heart traded`);
+  // Taking an offer does EXACTLY what its text promised.
+  for (const o of rollAltarOffers(king())) {
+    const s = king();
+    s.altarOffers = [o];
+    const after = useAltar(s, 0);
+    if (o.gainId) assert.ok(after.player.takenPerks.includes(o.gainId), `${o.id}: he receives the named perk`);
+    if (o.dropId) assert.ok(!after.player.takenPerks.includes(o.dropId), `${o.id}: and gives up the named one`);
+    assert.equal(after.player.maxHp, hp0 + (o.hearts || 0), `${o.id}: hearts move exactly as stated`);
+    // THE REBUILD must not launder his DIFFICULTY away. A Nightmare warrior starts on 5; rebuilding
+    // through `createPlayer` alone handed him the 9 of an easier setting — on every single rite.
+    assert.equal(after.player.difficulty, 'nightmare', `${o.id}: still a Nightmare run`);
     // ...and his HISTORY rides along, or the badges and the score are quietly wrong.
-    assert.equal(after.player.bossesSlain, 4, `${rite}: kills remembered`);
-    assert.equal(after.player.totalTurns, 123, `${rite}: turns remembered`);
-    assert.equal(after.player.boonsTaken, 3, `${rite}: the boon CEILING is untouched by trading`);
+    assert.equal(after.player.bossesSlain, 4, `${o.id}: kills remembered`);
+    assert.equal(after.player.totalTurns, 123, `${o.id}: turns remembered`);
+    assert.equal(after.player.boonsTaken, 3, `${o.id}: the boon CEILING is untouched by trading`);
+    assert.equal(after.player.className, 'warrior', `${o.id}: and he is still what he was`);
   }
 
-  // The class's INNATE trait is untouchable by construction — it never enters takenPerks at all.
-  const swapped = useAltar(king(), 'swap-any');
-  assert.ok(!swapped.player.takenPerks.some((id) => id.startsWith('start_')), 'no start perk is ever in the list');
-  assert.equal(swapped.player.className, 'warrior', 'and he is still what he was');
+  // WALKING AWAY is always allowed, and always spends the altar.
+  const left = useAltar(king(), null);
+  assert.equal(left.player.takenPerks.length, 3, 'nothing changes hands');
+  assert.match(left.message, /leave the altar/i, 'and it says so');
 });
 
 test('altars are a NEW GAME+ thing, about half of its floors, and never in the overworld', () => {

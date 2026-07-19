@@ -41,7 +41,7 @@ function createEnemy(type, x, y) {
 const UNDEAD_TYPES = ['zombie', 'skeleton', 'vampire'];
 const ZOMBIE_HP = 3;
 const SKELETON_REKNIT_TURNS = 3;
-const BAT_REFORM_CHANCE = 0.5;
+const BAT_REFORM_CHANCE = 1 / 3; // one turn in three, and only on ground it could stand on
 
 function isUndead(unit) {
   return Boolean(unit && unit.undeadType);
@@ -124,9 +124,16 @@ function tickGolems(state) {
 //
 // Both CONDUCT, and both TOGGLE on current or a switch. A closing one is not polite about it: it
 // deals a wound to whatever is standing in the doorway and shoves the survivor clear.
-function isMetalShut(t) { return t === 'metaldoor' || t === 'metalgate'; }
-function isMetalOpen(t) { return t === 'metaldooropen' || t === 'metalgateopen'; }
+function isMetalShut(t) { return t === 'metaldoor' || t === 'metalgate' || t === 'crushershut'; }
+function isMetalOpen(t) { return t === 'metaldooropen' || t === 'metalgateopen' || t === 'crusheropen'; }
 function isMetal(t) { return isMetalShut(t) || isMetalOpen(t); }
+
+// A CRUSHER is a press set into the floor. Open, it is ordinary ground you walk over without a
+// thought; shut, it is a solid block. The current works it like any other fitting — and what makes it
+// worth building a room around is what happens to whatever is standing in it when it comes down:
+// a GOLEM is destroyed outright (the only thing in the Workshop that kills one besides a pit), and
+// everything else is wounded and thrown clear.
+function isCrusher(t) { return t === 'crusheropen' || t === 'crushershut'; }
 
 // Flip one metal fitting. Shut → open is free; open → SHUT crushes whatever is in the way.
 function toggleMetalAt(state, x, y) {
@@ -134,7 +141,9 @@ function toggleMetalAt(state, x, y) {
   if (!isMetal(t)) return false;
   const key = `${x},${y}`;
   if (isMetalShut(t)) {
-    state.terrain[key] = t === 'metaldoor' ? 'metaldooropen' : 'metalgateopen';
+    state.terrain[key] = t === 'metaldoor' ? 'metaldooropen'
+      : t === 'crushershut' ? 'crusheropen'
+        : 'metalgateopen';
     return true;
   }
   // IT CLOSES. Anything standing in the doorway takes a wound and is shoved clear; if there is
@@ -155,12 +164,35 @@ function toggleMetalAt(state, x, y) {
       if (p.x === nx && p.y === ny) continue;
       spots.push({ x: nx, y: ny });
     }
+    // A CRUSHER is the exception to "jammed": it is a press, and a press does not politely stop.
+    // A GOLEM caught under one is FLATTENED — the only thing besides a pit that ends one for good,
+    // and the reason a crusher is worth luring something onto.
+    if (isCrusher(t) && occupant !== 'player' && isGolem(occupant)) {
+      addScrap(state, x, y);
+      tallyKill(state, occupant);
+      state.enemies = state.enemies.filter((e) => e.id !== occupant.id);
+      state.terrain[key] = 'crushershut';
+      cue(state, 'crush');
+      if (inLineOfSight(state, x, y)) state.message = `The press comes down — the ${occupant.kind} golem is flattened for good.`;
+      return true;
+    }
     if (!spots.length) return false; // jammed on whatever is in it
     const to = spots[randomInt(spots.length)];
     if (occupant === 'player') {
       const mit = rollMitigation(state, null);
       if (!mit) { hurtBy(state, 'crush'); p.hp -= 1; p.wasHit = true; p.hitThisFloor = true; checkDeath(state); }
       p.x = to.x; p.y = to.y;
+    } else if (isCrusher(t)) {
+      // Under a PRESS everything alive is wounded and thrown clear — machines included, since the
+      // thing is designed to work metal.
+      if (occupant.boss) damageBoss(state, occupant, 1, { ground: true, cause: 'crush' });
+      else if (occupant.turret) damageTurret(state, occupant, 1);
+      else if (state.enemies.includes(occupant)) {
+        addSpatter(state, x, y, 0, 0, isDemonKind(occupant.kind));
+        tallyKill(state, occupant);
+        state.enemies = state.enemies.filter((e) => e.id !== occupant.id);
+      } else damageAlly(state, occupant, 1);
+      if (state.enemies.includes(occupant) || occupant.hp > 0) { occupant.x = to.x; occupant.y = to.y; }
     } else if (occupant.turret || isGolem(occupant)) {
       // A machine in the doorway is simply shoved — the iron does not damage its own kind.
       occupant.x = to.x; occupant.y = to.y;
@@ -176,7 +208,7 @@ function toggleMetalAt(state, x, y) {
     }
     cue(state, 'crush');
   }
-  state.terrain[key] = t === 'metaldooropen' ? 'metaldoor' : 'metalgate';
+  state.terrain[key] = t === 'metaldooropen' ? 'metaldoor' : t === 'crusheropen' ? 'crushershut' : 'metalgate';
   return true;
 }
 
@@ -202,7 +234,7 @@ const ELECTRIC_DAMAGE = 1;
 // Does this tile pass current on? Terrain first, then whatever is standing on it.
 function conductsAt(state, x, y) {
   const t = terrainAt(state, x, y);
-  if (t === 'wire' || t === 'metaldoor' || t === 'metaldooropen' || t === 'metalgate' || t === 'metalgateopen') return true;
+  if (t === 'wire' || isMetal(t)) return true; // wires, metal doors/gates AND crushers all conduct
   if (t === 'generator') return true;
   if (state.enemies.some((e) => e.x === x && e.y === y)) return true; // a body is a cable
   if (allyAt(state, x, y)) return true;
@@ -259,6 +291,10 @@ function dischargeElectricity(state, x, y, opts) {
     // METAL swings: current is one of the two things that works a metal door or gate (a switch is
     // the other). Toggling on a live circuit is how a player opens a wing of the floor at once.
     toggleMetalAt(state, cx, cy);
+    // A FABRICATOR on the circuit stamps one out. This is why running current through a wired room
+    // can be worse than leaving it alone.
+    const fab = state.enemies.find((e) => e.fabricator && e.x === cx && e.y === cy);
+    if (fab) fireFabricator(state, fab);
     const p = state.player;
     if (p.x === cx && p.y === cy && !ledger.king) {
       ledger.king = true;
@@ -288,6 +324,86 @@ function dischargeElectricity(state, x, y, opts) {
   return charged;
 }
 
+// Give a fabricator its jolt: ONE golem, on a free tile beside it, at most once a turn however many
+// arcs wash over it. If it is hemmed in, nothing comes out — so walling one in is a real answer to it.
+function fireFabricator(state, fab) {
+  if (!fab || !fab.fabricator) return false;
+  if (fab.madeThisTurn) return false;
+  const spots = [];
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const x = fab.x + dx;
+    const y = fab.y + dy;
+    if (!standableAt(state, x, y, {})) continue;
+    if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+    if (state.player.x === x && state.player.y === y) continue;
+    if (keyTileAt(state, x, y)) continue;
+    spots.push({ x, y });
+  }
+  if (!spots.length) return false;
+  const t = spots[randomInt(spots.length)];
+  const made = makeGolem(createEnemy(fab.kind, t.x, t.y));
+  made.awake = true;
+  made.summoned = true;
+  state.enemies.push(made);
+  fab.madeThisTurn = true;
+  addSmoke(state, t.x, t.y);
+  if (inLineOfSight(state, t.x, t.y)) {
+    state.message = state.message
+      ? `${state.message} The fabricator stamps out a ${made.kind} golem!`
+      : `The fabricator stamps out a ${made.kind} golem!`;
+  }
+  return true;
+}
+
+// ---- ELECTRIC TURRETS ---------------------------------------------------------------------------
+// The gun that does not need a clear shot at you. It fires a bolt down its own lane like any turret,
+// but where the bolt LANDS it starts a circuit — so the tile it hits matters far less than what that
+// tile is connected to. It will happily shoot a golem, a wire, or a metal door, if the network on the
+// far side of it happens to run under your feet.
+//
+// That makes it the one enemy in the game that aims at the FLOOR rather than at the man, and it is
+// why the Workshop's wiring is worth reading before you walk into a room.
+
+// Would an arc starting at (x,y) reach the king? Answered by running the real discharge on a
+// throwaway clone — so the gun's reasoning can never drift from what the current actually does.
+function arcWouldReachKing(state, x, y) {
+  const probe = structuredClone(state);
+  probe.shockedThisTurn = {}; // a fresh ledger: this is a hypothetical, not this turn's damage
+  const charged = dischargeElectricity(probe, x, y, { skipOrigin: false });
+  return charged.has(`${state.player.x},${state.player.y}`);
+}
+
+// Where an electric turret chooses to put its bolt. It prefers, in order: a tile whose circuit
+// reaches the king (even one he is nowhere near), then the king himself, then nothing.
+function electricTurretAim(state, turret) {
+  const p = state.player;
+  // Everything on its own firing lines that it could actually hit.
+  const candidates = [];
+  for (const [dx, dy] of cardSlideDirs(turret.kind)) {
+    let x = turret.x + dx;
+    let y = turret.y + dy;
+    for (let i = 0; i < WORLD_SIZE; i += 1) {
+      if (x < 1 || y < 1 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) break;
+      const t = terrainAt(state, x, y);
+      if (t === 'wall' || t === 'boulder') break; // solid cover stops the bolt dead
+      candidates.push({ x, y });
+      if (state.enemies.some((e) => e.x === x && e.y === y) || (p.x === x && p.y === y)) break; // a body stops it
+      x += dx;
+      y += dy;
+    }
+  }
+  if (!candidates.length) return null;
+  // A DIRECT hit is always good. Otherwise look for a tile whose CIRCUIT reaches him — that is the
+  // whole trick of this gun, and the reason it is dangerous from around a corner.
+  const direct = candidates.find((c) => c.x === p.x && c.y === p.y);
+  if (direct) return direct;
+  for (const c of candidates) {
+    if (!conductsAt(state, c.x, c.y)) continue; // an arc into bare floor goes nowhere
+    if (arcWouldReachKing(state, c.x, c.y)) return c;
+  }
+  return null;
+}
+
 // ---- GENERATORS ---------------------------------------------------------------------------------
 // A humming lump of machinery you can SHOVE, exactly like a boulder — and every fourth turn it lets
 // go, arcing into everything around it. That makes it the one hazard in the game the player can pick
@@ -310,6 +426,10 @@ function generatorTiles(state) {
 // Their clock. Shared, like the geysers': they all let go on the same beat, so the player can learn
 // ONE rhythm rather than tracking a private timer per machine.
 function tickGenerators(state) {
+  // Cheap bail-out FIRST. `generatorTiles` walks the whole terrain map (~600 keys), and this runs
+  // once per enemy phase in every test and every floor of every realm — nine floors in ten have no
+  // machinery in them at all. Scanning regardless was most of a 3x slowdown in the suite.
+  if (!realmDef(realmOf(state)).metalDoors) return;
   const gens = generatorTiles(state);
   if (!gens.length) return;
   state.generatorPhase = (state.generatorPhase || 0) + 1;
@@ -370,7 +490,7 @@ function openMetalUntilReachable(state) {
         // Treat every one of the Workshop's IMPASSABLE fittings as notionally passable while we look
         // for a route: a switch housing and a generator seal a one-wide corridor exactly as a metal
         // gate does, and none of the three can be cut through.
-        if (!isStandable(t) && !isMetalShut(t) && t !== 'switch' && t !== 'generator') continue;
+        if (!isStandable(t) && !isMetalShut(t) && t !== 'switch' && t !== 'generator') continue; // isMetalShut covers crushers
         seen.add(key);
         from.set(key, `${cur.x},${cur.y}`);
         queue.push({ x: nx, y: ny });
@@ -426,6 +546,7 @@ function throwSwitch(state, x, y) {
       if (toggleMetalAt(state, nx, ny)) touched += 1;
       const unit = state.enemies.find((e) => e.x === nx && e.y === ny);
       if (!unit) continue;
+      if (unit.fabricator) { if (fireFabricator(state, unit)) touched += 1; continue; }
       // A GOLEM answers a switch (and a blow) — but never the current. See dischargeElectricity.
       if (isGolem(unit)) {
         touched += 1;
@@ -1253,17 +1374,30 @@ function makeTurret(state, kind, x, y) {
   // A realm may forbid fire outright (`noLava`): the undead realm is cold, black and drowned, and a
   // furnace gun standing in it would be the one warm thing for four floors.
   const cold = realmDef(realmOf(state)).noLava;
-  if (!cold && (state.floor || 1) >= 5 && Math.random() < 0.5) t.fire = true;
+  // THE WORKSHOP fields three kinds in equal measure — plain, fire, and ELECTRIC — from its first
+  // floor. An even third each is the point: no kind is the "special" one, so every gun you meet has
+  // to be read before you decide how to cross its lane.
+  if (realmDef(realmOf(state)).metalDoors) {
+    const roll = randomInt(3);
+    if (roll === 1) t.fire = true;
+    else if (roll === 2) t.electric = true;
+  } else if (!cold && (state.floor || 1) >= 5 && Math.random() < 0.5) t.fire = true;
   return t;
 }
 
 function damageTurret(state, turret, amount) {
   turret.dozing = false; // a struck turret isn't rendered dozing (Camouflage re-sleeps it by distance)
   turret.provoked = true; // it KNOWS he is out there now — the view shows it frustrated, not asleep
+  // AN ELECTRIC GUN BITES BACK. Strike one and it earths itself through whatever is touching it —
+  // which, if you had to walk up to it, is you. It makes the obvious answer (hit the gun) the one
+  // that costs, and pushes the player toward the switches instead.
+  const wasElectric = turret.electric && !turret.inert;
   turret.hp -= amount;
-  if (turret.hp > 0) {
+  const dead = turret.hp <= 0;
+  if (!dead) {
     state.message = `The ${turret.kind} turret sparks (${turret.hp}/${turret.maxHp}).`;
     state.lastAction = 'combat';
+    if (wasElectric) dischargeElectricity(state, turret.x, turret.y, { skipOrigin: true });
     return 'hurt';
   }
   state.enemies = state.enemies.filter((e) => e.id !== turret.id);
@@ -1272,6 +1406,8 @@ function damageTurret(state, turret, amount) {
   addScrap(state, turret.x, turret.y); // a MACHINE leaves rusty wreckage — no blood, no corpse
   state.message = `The ${turret.kind} turret is destroyed!`;
   state.lastAction = 'combat';
+  // Even its LAST breath earths itself — breaking one is not a free action either.
+  if (wasElectric) dischargeElectricity(state, turret.x, turret.y, { skipOrigin: true });
   return 'slain';
 }
 
@@ -2028,8 +2164,14 @@ function carveCorridor(state, x0, y0, x1, y1, wallsOnly) {
   let y = y0;
   const open = (cx, cy) => {
     if (cx <= 0 || cx >= WORLD_SIZE - 1 || cy <= 0 || cy >= WORLD_SIZE - 1) return;
-    if (state.fixedDoors && state.fixedDoors.has(`${cx},${cy}`)) return; // never carve out a deliberate gate (a gaol's bars)
     const t = terrainAt(state, cx, cy);
+    // Never carve out a DELIBERATE gate (a gaol's bars) — but the guard has to check what is actually
+    // standing there, not merely that the coordinate was once registered. `fixedDoors` is a set of
+    // positions, and terrain laid afterwards can turn one into lava or rock; refusing to carve those
+    // left a GAP in the bridge across a lava-ringed island, marooning it. Measured at ~2% of islands.
+    if (state.fixedDoors && state.fixedDoors.has(`${cx},${cy}`)
+        && (t === 'gate' || t === 'door' || t === 'dooropen' || t === 'doorajar'
+          || t === 'metalgate' || t === 'metaldoor' || t === 'metalgateopen' || t === 'metaldooropen')) return;
     if (t === 'wall' || isChoppable(t) || t === 'boulder' || t === 'pit' || t === 'ice' || (!wallsOnly && t === 'lava')) delete state.terrain[`${cx},${cy}`];
   };
   while (x !== x1) { open(x, y); x += Math.sign(x1 - x); }
@@ -3576,6 +3718,18 @@ function generateTerrain(floor, player, garrison, keepDoors, realm) {
         break;
       }
     }
+    // CRUSHERS. Presses set into the floor, wired in with everything else. Half start shut (a wall
+    // you can open) and half open (a floor you can be caught standing on) — which of the two you are
+    // looking at is the first thing worth working out about any given one.
+    for (let i = 0; i < 3 + randomInt(4); i += 1) {
+      for (let tries = 0; tries < 40; tries += 1) {
+        const cx = 2 + randomInt(WORLD_SIZE - 4);
+        const cy = 2 + randomInt(WORLD_SIZE - 4);
+        if (atT(cx, cy) !== 'normal' || nearStart(cx, cy)) continue;
+        terrain[`${cx},${cy}`] = Math.random() < 0.5 ? 'crushershut' : 'crusheropen';
+        break;
+      }
+    }
     // GENERATORS. Placed ON or beside a wire wherever possible, because a generator wired into a run
     // is a threat with REACH — the beat lands the whole length of the cable rather than in a puddle
     // round the machine. That is the difference between scenery and a thing worth shoving.
@@ -3827,6 +3981,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
       const k = randomStructureKind(floor);
       const c = createEnemy(k, post.x, post.y);
       c.summonCircle = true;
+      if (realmDef(realm).golemRoster) c.fabricator = true; // the Workshop stamps golems, it does not conjure
       state.enemies.push(c);
     } else if (post.kind === 'bones') {
       // The catacomb's dead: real corpses on the real decay clock, so they fade like any other body
@@ -4094,6 +4249,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
       if (spot) {
         const c = createEnemy(kind, spot.x, spot.y);
         c.summonCircle = true;
+        if (realmDef(realm).golemRoster) c.fabricator = true;
         state.enemies.push(c);
       }
     }
@@ -5403,9 +5559,32 @@ function tickUndead(state) {
       continue; // a heap of bones does nothing else this turn
     }
     if (e.bat) {
-      // It settles about half the time; otherwise it flits on. Either way it has spent its turn —
-      // a bat that both moved AND re-formed into a vampire on the same turn would be a free attack.
-      if (Math.random() < BAT_REFORM_CHANCE) {
+      // A BAT IS NOT A HUNTER. It flits about at random — it does not close on the king the way
+      // everything else on the board does — with one exception: if from where it stands it CAN bite
+      // him or a living companion of his, it does, and the blood puts it back together. That is the
+      // whole shape of the thing: harmless while it drifts, and a vampire again the moment it feeds.
+      const prey = batPrey(state, e);
+      if (prey.length) {
+        const bite = prey[randomInt(prey.length)];
+        e.bat = false; // the blood re-forms it
+        if (bite.x === state.player.x && bite.y === state.player.y) {
+          strikeKing(state, e);
+        } else {
+          const ally = allyAt(state, bite.x, bite.y);
+          if (ally) damageAlly(state, ally, 1);
+        }
+        if (inLineOfSight(state, e.x, e.y)) {
+          state.message = state.message
+            ? `${state.message} The bats feed and pour back into a vampire ${e.kind}!`
+            : `The bats feed and pour back into a vampire ${e.kind}!`;
+        }
+        continue;
+      }
+      // Otherwise it drifts. One turn in three it settles back into a vampire of its own accord —
+      // but only on ground it could actually STAND on: a bat hanging over a pit or a lava field has
+      // nowhere to re-form to, so it stays a bat until it has drifted somewhere solid.
+      const solid = isStandable(terrainAt(state, e.x, e.y));
+      if (solid && Math.random() < BAT_REFORM_CHANCE) {
         e.bat = false;
         if (inLineOfSight(state, e.x, e.y)) {
           state.message = state.message
@@ -5413,10 +5592,50 @@ function tickUndead(state) {
             : `The bats settle back into a vampire ${e.kind}!`;
         }
       } else {
-        batFlit(state, e);
+        const moves = batMoves(state, e);
+        if (moves.length) {
+          const to = moves[randomInt(moves.length)]; // RANDOM, not toward him
+          e.x = to.x;
+          e.y = to.y;
+        }
       }
     }
   }
+}
+
+// Every tile a BAT could move to. It keeps its PIECE's pattern — a bat that was a rook still moves
+// like a rook — but terrain is no object at all: it is flying, so walls, water, pits and lava are
+// simply air to it. The only things it will not enter are tiles already occupied.
+function batMoves(state, bat) {
+  const out = [];
+  const blocked = (x, y) => (x === state.player.x && y === state.player.y)
+    || keyTileAt(state, x, y)
+    || Boolean(allyAt(state, x, y))
+    || state.enemies.some((e) => e.id !== bat.id && e.x === x && e.y === y);
+  // FLYING: every terrain flag open, so generateMoves treats the whole board as clear ground.
+  const opts = { flying: true, pitOk: true, phaseWalls: true, pathfinder: true, lavaOk: true };
+  for (const m of generateMoves(bat.kind, state, bat.x, bat.y, () => null, () => false, opts)) {
+    if (m.x < 1 || m.y < 1 || m.x >= WORLD_SIZE - 1 || m.y >= WORLD_SIZE - 1) continue;
+    if (blocked(m.x, m.y)) continue;
+    out.push(m);
+  }
+  return out;
+}
+
+// Can this bat reach the king, or a LIVING ally, from where it stands? Necromancer allies are not
+// living — a bat has no interest in something already dead, and biting one would not restore it.
+function batPrey(state, bat) {
+  const opts = { flying: true, pitOk: true, phaseWalls: true, pathfinder: true, lavaOk: true };
+  const prey = [];
+  const isPrey = (x, y) => {
+    if (x === state.player.x && y === state.player.y) return true;
+    const ally = allyAt(state, x, y);
+    return Boolean(ally && !ally.undead && !ally.familiar);
+  };
+  for (const m of generateMoves(bat.kind, state, bat.x, bat.y, (x, y) => (isPrey(x, y) ? 'prey' : null), isPrey, opts)) {
+    if (m.capture && isPrey(m.x, m.y)) prey.push(m);
+  }
+  return prey;
 }
 
 // A bat's move: anywhere in the 3x3 around it. Terrain is no object (it is flying) and so is anything
@@ -7575,6 +7794,7 @@ function beginEnemyPhase(state) {
   const next = structuredClone(state);
   let moverIds = [];
   next.shockedThisTurn = {}; // a fresh turn: everything may be shocked once again (see dischargeElectricity)
+  for (const e of next.enemies) if (e.fabricator) e.madeThisTurn = false; // ...and each may stamp out one more
   next.arc = null; // last turn's circuit flash is spent
   const p = next.player;
   // WHICH WAY HE IS GOING. Worked out once, here, because this is the one function that runs exactly
@@ -7891,6 +8111,10 @@ function fireTurretBlast(state, turret, line) {
 // a FIRE turret) its piercing gout? The single source of truth for a turret's lock, shared by the
 // per-turn scan and the turret's own action so the two can never disagree.
 function turretTargetsKing(state, turret) {
+  // An ELECTRIC gun does not need him in its lane at all — it needs a tile in its lane whose CIRCUIT
+  // reaches him. Asking the aim routine is the only honest answer here, and it is the same routine
+  // the shot itself uses, so the lock and the bolt can never disagree.
+  if (turret.electric) return Boolean(electricTurretAim(state, turret));
   if (turret.fire) return Boolean(fireTurretLineToKing(state, turret));
   return getPieceThreats(turret, state).some((t) => t.x === state.player.x && t.y === state.player.y);
 }
@@ -8013,6 +8237,20 @@ function fireTurret(state, turret) {
     state.lastAction = 'enemy';
     return state;
   }
+  // ELECTRIC turret: it does not shoot the MAN, it shoots the CIRCUIT. The bolt lands on whatever
+  // tile its aim picked — a golem, a wire, a metal door — and the current does the rest.
+  if (turret.electric) {
+    const aim = electricTurretAim(state, turret);
+    turret.aiming = false;
+    if (!aim) { state.message = ''; state.lastAction = 'idle'; return state; }
+    state.lastShot = { fromX: turret.x, fromY: turret.y, toX: aim.x, toY: aim.y, role: 'turret' };
+    dischargeElectricity(state, aim.x, aim.y, { skipOrigin: false });
+    state.message = (aim.x === state.player.x && aim.y === state.player.y)
+      ? 'An electric turret earths its bolt through the king!'
+      : 'An electric turret fires into the machinery — the current finds its way!';
+    state.lastAction = 'enemy';
+    return state;
+  }
   // Fire turret: loose a piercing gout of spellfire down the line (then recover next turn).
   if (turret.fire) return fireTurretBlast(state, turret, fireLine);
   // Locked on and STILL in the line — it SHOOTS, and the recoil costs it the lock: it must spend
@@ -8125,6 +8363,16 @@ function summonAdjacent(state, origin, kind) {
 // A summoning circle's turn: while the king can see it, it conjures a minion of its
 // OWN piece type on charged turns (never two running). It never moves or strikes.
 function summonCircleTurn(state, circle) {
+  // A FABRICATOR is not a rune and does not wind itself up. It is a machine: it makes exactly one
+  // golem when it is given CURRENT (or thrown by a switch), and otherwise sits there doing nothing
+  // at all. That inverts what a summoning circle asks of the player — a circle is a clock you race,
+  // a fabricator is a thing you must be careful not to switch on.
+  if (circle.fabricator) {
+    circle.summonTick = 0;
+    state.message = '';
+    state.lastAction = 'idle';
+    return state;
+  }
   // WILD EMPATHY (Druid T2): a circle that conjures HORSES — knights or nightriders — has nothing to
   // offer against a king they'd only roam neutral around. It stands inert (no charge, no conjuring)
   // rather than feeding him a stream of harmless steeds. Any OTHER kind of rune works as normal.

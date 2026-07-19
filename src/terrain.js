@@ -35,7 +35,7 @@ function blocksSight(type) {
   // A METAL DOOR is a slab of plate — it blocks the look exactly as a wooden one does. A metal GATE
   // is still bars, so you can see (but not walk or shoot) through it, same as ordinary iron.
   return type === 'wall' || type === 'tree' || type === 'boulder' || type === 'devilgrass'
-    || type === 'door' || type === 'metaldoor';
+    || type === 'door' || type === 'metaldoor' || type === 'crushershut';
 }
 
 // What stops a SHOT, as opposed to what stops the LOOK. The two are not the same thing, and the
@@ -90,8 +90,8 @@ function standableFor(type, opts) {
   if (type === 'generator') return false; // a lump of machinery: solid, and SHOVED rather than walked past
   // METAL: an OPEN door or gate is a clear passage. A SHUT one admits nobody at all — not even a
   // phaser, and unlike ordinary iron it cannot be cut, so there is nothing to be gained by trying.
-  if (type === 'metaldooropen' || type === 'metalgateopen') return true;
-  if (type === 'metaldoor' || type === 'metalgate') return false;
+  if (type === 'metaldooropen' || type === 'metalgateopen' || type === 'crusheropen') return true;
+  if (type === 'metaldoor' || type === 'metalgate' || type === 'crushershut') return false;
   if (type === 'tree') return Boolean(o.pathfinder); // solid timber — only Pathfinder walks through it
   if (type === 'gate') return Boolean(o.phaseWalls); // barred iron — only Phase slips the bars (see-through, though; see blocksSight)
   if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // stone, rock & ice slabs — only a phasing mover
