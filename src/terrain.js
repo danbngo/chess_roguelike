@@ -35,6 +35,29 @@ function blocksSight(type) {
   return type === 'wall' || type === 'tree' || type === 'boulder' || type === 'devilgrass' || type === 'door';
 }
 
+// What stops a SHOT, as opposed to what stops the LOOK. The two are not the same thing, and the
+// difference is the whole character of ice and iron: a frozen pane and a barred gate are both
+// see-through, so you can watch what is behind them — and both are solid, so an arrow slaps into
+// them. Seeing a target is not the same as having a shot at it.
+//
+// Spellfire is exempt and handled at its own call sites: a bolt MELTS ice and a fire turret's gout
+// pierces, so those paths deliberately treat a slab as something to destroy rather than cover.
+// The KING's arrow: stopped by SOLID cover only — stone, a boulder, and a pane of ICE. Deliberately
+// NOT everything `blocksSight` names: he looses arrows through tall grass and between a gate's bars,
+// and Premonition is built on shooting through haze, so folding this into blocksSight would quietly
+// delete that whole perk. Ice is the addition — he can see through the pane perfectly well (that is
+// what makes it a window), but an arrow will not go through it.
+function blocksArrow(type) {
+  return type === 'wall' || type === 'boulder' || type === 'ice';
+}
+
+// A TURRET's bolt: everything opaque, plus GATES and ice. A fixed gun bolted down and firing a fat
+// lane does not thread a gate's bars or a hedge the way a man with a bow does. The asymmetry between
+// this and blocksArrow is deliberate and long-standing — do not collapse them into one predicate.
+function blocksShot(type) {
+  return blocksSight(type) || type === 'gate' || type === 'ice';
+}
+
 // SOFT cover: sight-blockers that are only a haze — tall grass and (handled separately) the
 // erupting geyser's steam. Premonition (trueSight) looks and shoots THROUGH these but not through
 // HARD, opaque cover (stone, timber, boulders, a shut door). Sixth Sense sees through everything.
@@ -242,7 +265,7 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
     // A gate is see-through BARS (not in blocksSight) — but a physical bolt still strikes the iron,
     // so a turret's shot is stopped by a gate even though the eye and the fog are not. Trees already
     // stop the ray (they block sight); the gate is the one thing sight and shot part ways on.
-    let blocked = projectile ? (blocksSight(terrain) || terrain === 'gate') : !standableFor(terrain, o);
+    let blocked = projectile ? (blocksShot(terrain)) : !standableFor(terrain, o);
     if (!blocked && isBorderStone(nx, ny)) blocked = true; // the shell of the world takes nobody, phaser included
     // A lava-averse phaser (a non-immune Phasing boss) shuns a burning wall-torch, so it reads as
     // solid to that mover even though it could otherwise slip through the wall.

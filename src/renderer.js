@@ -400,11 +400,18 @@ const Renderer = (function () {
       render.targetX = ally.x;
       render.targetY = ally.y;
       render.kind = ally.kind;
+      render.familiar = Boolean(ally.familiar); // carried so the DEPARTURE below knows whether it was conjured
+      render.undead = Boolean(ally.undead);
       nextAllies.push(render);
     }
     allySyncedOnce = true;
     for (const old of allyRenders) {
-      if (!nextAllies.some((r) => r.id === old.id)) puffs.push({ x: old.x, y: old.y, t: 0 });
+      // An ally that LEFT the board. A conjured one (familiar / undead) comes apart into arcane
+      // smoke; anything of flesh leaves a corpse instead (see damageAlly), so puffing it too would
+      // read as "it was never really there".
+      if (!nextAllies.some((r) => r.id === old.id) && (old.familiar || old.undead)) {
+        puffs.push({ x: old.x, y: old.y, t: 0 });
+      }
     }
     allyRenders = nextAllies;
     syncBoulders(state);
@@ -1957,15 +1964,52 @@ const Renderer = (function () {
     ctx.translate(cx, cy);
     ctx.rotate(-0.35 + (corpse.rot || 0)); // slanted, as if fallen
     ctx.scale(1, 0.5); // flattened
+    // A corpse must look like the THING THAT FELL. Every body used to be the same bone husk, so a
+    // slain demon, a fallen companion and a dead guardian were indistinguishable on the floor — the
+    // one thing corpses exist to tell you. Each now keeps a muted version of its living colours.
+    const demonCorpse = Boolean(corpse.demon);
+    let body = '#cbc6b7'; // muted bone (living enemy is #e7e2d1) — greyed, not black
+    let rim = '#6b6b63';
+    let ink = '#2c2c30';
+    if (corpse.ally) {
+      body = '#1c3a29'; // the king's deep green, drained
+      rim = '#4e8f6d';
+      ink = '#9ccfb2';
+    } else if (corpse.boss) {
+      // A guardian's remains: its own regalia gone dull. A MINI keeps the sickly moss it wore alive.
+      body = corpse.mini ? '#20261d' : '#241730';
+      rim = corpse.mini ? '#61795191' : '#9c7c33';
+      ink = corpse.mini ? '#a9b899' : '#d8c084';
+    } else if (demonCorpse) {
+      body = '#3a2432'; // bruised violet-black meat, not bone
+      rim = '#7d3f52';
+      ink = '#e0a3b4';
+    }
+    // A guardian is a BIG thing, and its body should say so before you read the glyph.
+    const r = tileSize * (corpse.boss ? (corpse.mini ? 0.40 : 0.47) : 0.34);
     ctx.beginPath();
-    ctx.arc(0, 0, tileSize * 0.34, 0, Math.PI * 2);
-    ctx.fillStyle = '#cbc6b7'; // muted bone (living enemy is #e7e2d1) — greyed, not black
+    if (demonCorpse) {
+      // A demon does not leave a tidy oval. Its carcass is a ragged, spiky mass — the same visual
+      // language as the spindly demon trees and the demon tokens' barbs.
+      const spikes = 9;
+      for (let i = 0; i <= spikes * 2; i += 1) {
+        const ang = (i / (spikes * 2)) * Math.PI * 2;
+        const rr = r * (i % 2 ? 0.66 : 1.06) * (0.9 + 0.2 * tileHash(corpse.x + i, corpse.y));
+        const px = Math.cos(ang) * rr;
+        const py = Math.sin(ang) * rr;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+    } else {
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = body;
     ctx.fill();
-    ctx.lineWidth = Math.max(1, tileSize * 0.03);
-    ctx.strokeStyle = '#6b6b63';
+    ctx.lineWidth = Math.max(1, tileSize * (corpse.boss ? 0.045 : 0.03));
+    ctx.strokeStyle = rim;
     ctx.stroke();
-    ctx.fillStyle = '#2c2c30'; // dark glyph, like the living piece
-    ctx.font = `bold ${tileSize * 0.42}px serif`;
+    ctx.fillStyle = ink;
+    ctx.font = `bold ${tileSize * (corpse.boss ? 0.56 : 0.42)}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(pieceGlyph(corpse.kind), 0, 0);
@@ -1973,11 +2017,10 @@ const Renderer = (function () {
     // in the corpse's flattened/slanted frame and clipped to its body so it reads as gore
     // pooled on the fallen piece (darker, dried).
     const b = Math.min(1, corpse.blood || 0.6);
-    const r = tileSize * 0.34;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.clip();
-    ctx.fillStyle = '#7a0f0f';
+    ctx.fillStyle = demonCorpse ? '#0f4f22' : '#7a0f0f'; // demons bleed green, alive or dead
     const n = Math.max(2, Math.round(b * BLOOD_SPECKS.length));
     for (let i = 0; i < n; i += 1) {
       const [sx, sy, sr] = BLOOD_SPECKS[i];
@@ -2513,18 +2556,27 @@ const Renderer = (function () {
         }
         // Canopy: overlapping blobs, tightening as it takes wounds.
         const r = tileSize * 0.30 * health;
-        if (demonRealm && !burning) {
+        // NB: this used to read `demonRealm && !burning`, which quietly sent every BURNING hell tree
+        // down the living-tree path — so a spindly dead thing sprouted a full round canopy the moment
+        // it caught fire, and a burning demon tree was indistinguishable from a burning oak. A hell
+        // tree keeps its clawing branches while it burns; only the colour changes.
+        if (demonRealm) {
           // In the demon realm a tree is a DEAD one: no canopy, just bare clawing branches off a grey
           // trunk. Drawn DARK and BIG on purpose — a player kept stumbling into hell trees he could
           // not pick out from the ashen violet floor. Near-black limbs, thicker and reaching further
           // than a living crown, over a soft dark silhouette so the whole thing reads as a SHAPE.
           const forkY = py + tileSize * 0.4;
           const reach = tileSize * 0.42 * (0.62 + 0.38 * health); // bigger than the living crown (0.30)
-          ctx.fillStyle = isDark ? 'rgba(12, 8, 12, 0.5)' : 'rgba(22, 14, 20, 0.5)'; // silhouette mass
+          // Ablaze, the silhouette glows from within rather than sitting black — the limbs are the
+          // thing burning, so the light comes off the branches instead of a crown that isn't there.
+          ctx.fillStyle = burning
+            ? `rgba(120, 30, 8, ${(0.34 + 0.12 * Math.sin(clock * 3.1 + tileHash(x, y) * 6.28)).toFixed(3)})`
+            : (isDark ? 'rgba(12, 8, 12, 0.5)' : 'rgba(22, 14, 20, 0.5)'); // silhouette mass
           ctx.beginPath();
           ctx.ellipse(cx, forkY - tileSize * 0.05, reach * 0.85, reach * 0.72, 0, 0, Math.PI * 2);
           ctx.fill();
-          ctx.strokeStyle = isDark ? '#150f16' : '#221820'; // near-black clawing limbs
+          // Charred limbs shot through with ember light while it burns; near-black otherwise.
+          ctx.strokeStyle = burning ? (isDark ? '#7c2d12' : '#9a3412') : (isDark ? '#150f16' : '#221820');
           ctx.lineCap = 'round';
           const thick = Math.max(1.5, tileSize * 0.075);
           for (const [ang, len] of [[-2.5, 0.95], [-0.64, 0.95], [-1.57, 1.05], [-2.1, 0.72], [-1.05, 0.72], [-1.9, 0.52], [-1.25, 0.52]]) {
@@ -2597,11 +2649,59 @@ const Renderer = (function () {
             }
           }
         }
-        if (burning) { // flames licking up off the crown
-          ctx.fillStyle = 'rgba(253, 224, 71, 0.85)';
-          for (let i = 0; i < 3; i += 1) {
+        if (burning) {
+          // A TREE ON FIRE. This was three static yellow dots that never moved — a burning tree read
+          // as a tree with some spots on it. Fire is motion and light, so it now gets both: a warm
+          // glow washing the tile (which is what actually sells "this is alight" at a glance), and
+          // tongues that rise, taper and flicker on the shared clock. Everything is seeded off the
+          // tile so neighbouring trees burn out of step instead of pulsing in unison.
+          const seed = tileHash(x, y) * 6.28;
+          const baseY = py + tileSize * (demonRealm ? 0.40 : 0.34);
+          // 1) THE GLOW — a soft radial wash, breathing on the clock. Additive so it lights the
+          // ground and the trunk rather than painting a grey disc over them.
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const flare = 0.5 + 0.5 * Math.sin(clock * 2.6 + seed);
+          const glowR = tileSize * (0.46 + 0.07 * flare);
+          const glow = ctx.createRadialGradient(cx, baseY, 0, cx, baseY, glowR);
+          glow.addColorStop(0, `rgba(255, 196, 92, ${(0.34 + 0.12 * flare).toFixed(3)})`);
+          glow.addColorStop(0.55, `rgba(240, 110, 30, ${(0.16 + 0.07 * flare).toFixed(3)})`);
+          glow.addColorStop(1, 'rgba(180, 50, 10, 0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(cx, baseY, glowR, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          // 2) THE TONGUES — five teardrops that climb, lean and shrink as they go, each on its own
+          // phase so the fire churns instead of throbbing as one blob.
+          const tongues = 5;
+          for (let i = 0; i < tongues; i += 1) {
+            const phase = clock * 3.4 + seed + i * 1.7;
+            const rise = (phase % 3.14) / 3.14; // 0..1: born at the base, gone at the top
+            const spread = (i / (tongues - 1) - 0.5) * 2; // -1..1 across the crown
+            const fx = cx + tileSize * spread * 0.19 + Math.sin(phase * 1.4) * tileSize * 0.035;
+            const fy = baseY - tileSize * (0.02 + rise * 0.34);
+            const fr = tileSize * (0.085 * (1 - rise * 0.7)) * (0.75 + 0.5 * tileHash(x + i, y));
+            if (fr <= 0) continue;
+            // Hot core near the base, cooling to red as it lifts away.
+            const heat = 1 - rise;
+            ctx.fillStyle = heat > 0.6
+              ? `rgba(255, 236, 150, ${(0.9 - rise * 0.5).toFixed(3)})`
+              : heat > 0.3
+                ? `rgba(251, 146, 60, ${(0.85 - rise * 0.5).toFixed(3)})`
+                : `rgba(194, 65, 12, ${(0.7 - rise * 0.5).toFixed(3)})`;
             ctx.beginPath();
-            ctx.arc(cx + tileSize * (i - 1) * 0.14, py + tileSize * (0.2 + (i % 2) * 0.06), tileSize * 0.07, 0, Math.PI * 2);
+            ctx.ellipse(fx, fy, fr, fr * 1.55, 0, 0, Math.PI * 2); // taller than wide — a flame, not a bead
+            ctx.fill();
+          }
+          // 3) EMBERS drifting off the top, a couple at a time.
+          ctx.fillStyle = `rgba(255, 210, 120, ${(0.35 + 0.3 * flare).toFixed(3)})`;
+          for (let i = 0; i < 3; i += 1) {
+            const ep = (clock * 1.1 + seed + i * 2.1) % 1;
+            const ex = cx + Math.sin(clock * 2 + i * 2.3 + seed) * tileSize * 0.16;
+            const ey = baseY - tileSize * (0.28 + ep * 0.3);
+            ctx.beginPath();
+            ctx.arc(ex, ey, tileSize * 0.018 * (1 - ep), 0, Math.PI * 2);
             ctx.fill();
           }
         }

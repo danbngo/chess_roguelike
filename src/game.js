@@ -656,7 +656,7 @@ function damageBoss(state, boss, amount, opts) {
   const gmx = Math.sign(boss.x - state.player.x);
   const gmy = Math.sign(boss.y - state.player.y);
   for (let i = 0; i < gushes; i += 1) addSpatter(state, boss.x, boss.y, gmx, gmy, isDemonBoss(boss));
-  addCorpse(state, boss.x, boss.y, boss.kind, BOSS_CORPSE_LIFE); // a boss's remains linger far longer
+  addCorpse(state, boss.x, boss.y, boss.kind, BOSS_CORPSE_LIFE, { boss: true, mini: Boolean(boss.mini || boss.rush), demon: isDemonBoss(boss) }); // bigger remains, and they linger far longer
   state.player.killedEnemy = true;
   defeatBoss(state, boss);
   return 'slain';
@@ -1796,6 +1796,661 @@ function generateTerrain(floor, player, garrison, keepDoors) {
     });
   };
 
+  // ---- THE MENAGERIE OF ODD ROOMS -------------------------------------------------------------
+  // Each of these is a PLACE with a joke or a puzzle in it, not just a shape. They share a few
+  // helpers so the eleven of them do not each re-derive "draw me a box with a door in it".
+
+  // A walled box with `doors` doorways punched at wall MIDPOINTS. Returns nothing; callers fill the
+  // interior. Every door is registered with keepDoors, because these rooms are deliberate and the
+  // prune must not second-guess a doorway that is the entire point of the structure.
+  const shell = (bx, by, w, h, sides) => {
+    for (let x = 0; x < w; x += 1) {
+      for (let y = 0; y < h; y += 1) {
+        if (x === 0 || x === w - 1 || y === 0 || y === h - 1) terrain[`${bx + x},${by + y}`] = 'wall';
+      }
+    }
+    const mx = bx + Math.floor((w - 1) / 2);
+    const my = by + Math.floor((h - 1) / 2);
+    const spots = { N: [mx, by], S: [mx, by + h - 1], W: [bx, my], E: [bx + w - 1, my] };
+    for (const side of sides) {
+      const [dx, dy] = spots[side];
+      terrain[`${dx},${dy}`] = 'door';
+      if (keepDoors) keepDoors.add(`${dx},${dy}`);
+    }
+  };
+  const bars = (x, y) => { terrain[`${x},${y}`] = 'gate'; if (keepDoors) keepDoors.add(`${x},${y}`); };
+  const carve = (x, y) => { delete terrain[`${x},${y}`]; };
+  const fill = (bx, by, w, h, type) => {
+    for (let x = bx; x < bx + w; x += 1) for (let y = by; y < by + h; y += 1) {
+      if (type) terrain[`${x},${y}`] = type; else delete terrain[`${x},${y}`];
+    }
+  };
+
+  // A ZOO: a proper ENCLOSURE — not a one-tile cell — full of ferzes, fronted by bars you can walk
+  // the length of. A ferz is the harmless dazed blob the Hexer's curse makes, so this is a room you
+  // are invited to gawp at rather than fight: the joke only lands if the exhibit is plainly pathetic
+  // and plainly numerous. Cut the bars and a dozen of them waddle out at you.
+  const zoo = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S']);
+    fill(bx + 1, by + 1, 7, 5, null); // hollow it out
+    // The pen fills the top four rows; the bottom row is the visitors' walkway.
+    for (let x = 1; x <= 7; x += 1) bars(bx + x, by + 4);
+    // In the demon realm the exhibit is the realm's own runt (a berolina), not a ferz: only
+    // STRUCTURES may be mortal down there, and a pen full of cursed blobs would smuggle a whole
+    // mortal roster into hell. The joke survives the substitution — it is still a room of nobodies.
+    const species = RUNT();
+    // ON A LATTICE — every second row AND every second column. Both exhibits move on exactly one
+    // axis (a ferz steps diagonally, a berolina orthogonally), so a pen packed shoulder to shoulder
+    // is a pen full of STATUES: every square each of them can reach holds another one of them.
+    // Alternate ROWS keep the diagonals clear for the ferz; alternate COLUMNS keep the orthogonals
+    // clear for the berolina. Both together means whichever creature is on show, every one of them
+    // always has somewhere to shuffle — and a pen of things milling about reads far more like a zoo
+    // than a solid block of them ever did.
+    if (garrison) {
+      for (let x = 1; x <= 7; x += 2) {
+        for (let y = 1; y <= 3; y += 2) {
+          if (Math.random() < 0.8) garrison.push({ kind: 'beast', species, x: bx + x, y: by + y });
+        }
+      }
+    }
+  });
+
+  // A BATHHOUSE: hot pools and the vents that feed them. Steam is not decor here — a geyser scalds
+  // whatever is standing in the water when it blows, so the nicest-looking room on the floor is a
+  // three-turn clock you have to read before you wade in.
+  const bathhouse = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S', 'N']);
+    fill(bx + 1, by + 1, 7, 5, 'water');
+    // Vents in the pools, set apart so their eruptions do not overlap into one unavoidable sheet.
+    for (const [gx, gy] of [[2, 2], [6, 2], [4, 4]]) terrain[`${bx + gx},${by + gy}`] = 'geyser';
+    // Dry benches along the wall — somewhere to stand while the vents blow.
+    for (const [sx, sy] of [[1, 5], [7, 5], [1, 1], [7, 1]]) carve(bx + sx, by + sy);
+  });
+
+  // A MORTUARY: the dead laid up in ice, behind bars. You can see every body and reach none of them
+  // without cutting in — and the ice that keeps them is the one wall in the game that a stray
+  // fireball opens for you.
+  const mortuary = () => tryPlace(9, 5, (bx, by) => {
+    shell(bx, by, 9, 5, ['S']);
+    fill(bx + 1, by + 1, 7, 3, null);
+    for (let x = 1; x <= 7; x += 1) {
+      terrain[`${bx + x},${by + 1}`] = 'ice'; // the slab the body is set in
+      bars(bx + x, by + 2); // and the bars across the front of it
+      if (garrison && x % 2 === 1) garrison.push({ kind: 'bones', x: bx + x, y: by + 1 });
+    }
+  });
+
+  // A HOT SPRING: one vent at the heart of a small pool. The plain fountain's evil twin — same
+  // silhouette, except the middle of it erupts.
+  const hotspring = () => tryPlace(5, 5, (bx, by) => {
+    fill(bx + 1, by + 1, 3, 3, 'water');
+    terrain[`${bx + 2},${by + 2}`] = 'geyser';
+    for (const [cx, cy] of [[0, 0], [4, 0], [0, 4], [4, 4]]) terrain[`${bx + cx},${by + cy}`] = 'wall';
+  });
+
+  // A BOWLING ALLEY: three lanes, a boulder at the head of each, a pit at the end of each. The whole
+  // room is one sentence — shove the rock down the lane and drop it in the hole — and it is the only
+  // place on the floor where the boulder-shoving rules are laid out as an exercise.
+  const bowling = () => tryPlace(11, 7, (bx, by) => {
+    shell(bx, by, 11, 7, ['W']);
+    fill(bx + 1, by + 1, 9, 5, null);
+    for (let lane = 0; lane < 3; lane += 1) {
+      const y = by + 1 + lane * 2;
+      if (lane > 0) for (let x = 1; x <= 9; x += 1) terrain[`${bx + x},${by + lane * 2}`] = 'wall'; // the gutters between lanes
+      terrain[`${bx + 3},${y}`] = 'boulder'; // the ball, set at the head of the lane
+      terrain[`${bx + 9},${y}`] = 'pit'; // ...and the hole at the end of it
+    }
+  });
+
+  // A CROSSFIRE: a gun in each corner. Every tile in the room is covered by at least two of them,
+  // and the doors are on the two axes that put you in all four lanes at once. Cross it fast.
+  const crossfire = () => tryPlace(7, 7, (bx, by) => {
+    shell(bx, by, 7, 7, ['N', 'S']);
+    fill(bx + 1, by + 1, 5, 5, null);
+    if (garrison) {
+      for (const [gx, gy] of [[1, 1], [5, 1], [1, 5], [5, 5]]) garrison.push({ kind: 'turret', x: bx + gx, y: by + gy });
+    }
+  });
+
+  // An ARENA: the combatants penned on an island, ringed by a drop. One gate is the only way across,
+  // so this is a fight you open on your terms or walk away from — and the pit ring is as much a
+  // weapon as an obstacle, since anything you shove off the edge is simply gone.
+  const arena = () => tryPlace(9, 9, (bx, by) => {
+    const c = 4;
+    for (let x = 0; x < 9; x += 1) {
+      for (let y = 0; y < 9; y += 1) {
+        const r = Math.max(Math.abs(x - c), Math.abs(y - c));
+        if (r === 4) terrain[`${bx + x},${by + y}`] = 'wall'; // the stands
+        else if (r === 3) terrain[`${bx + x},${by + y}`] = 'pit'; // the drop
+        else carve(bx + x, by + y); // the sand
+      }
+    }
+    terrain[`${bx + c},${by + 8}`] = 'door'; // the way in off the floor
+    if (keepDoors) keepDoors.add(`${bx + c},${by + 8}`);
+    bars(bx + c, by + 7); // ...and the gate over the pit ring
+    if (garrison) {
+      for (const [gx, gy] of [[c, c], [c - 1, c - 1], [c + 1, c + 1], [c - 1, c + 1]]) {
+        garrison.push({ kind: 'beast', x: bx + gx, y: by + gy });
+      }
+    }
+  });
+
+  // A GRAVEYARD: open ground, evenly spaced graves, a body lying in each. No walls and no door — it
+  // is a FIELD, and the danger is simply that a tidy grid of holes is a terrible place to be chased
+  // across. (A Lich walking through it finds a full magazine.)
+  const graveyard = () => tryPlace(9, 7, (bx, by) => {
+    for (let x = 1; x <= 7; x += 2) {
+      for (let y = 1; y <= 5; y += 2) {
+        terrain[`${bx + x},${by + y}`] = 'pit';
+        if (garrison) garrison.push({ kind: 'bones', x: bx + x, y: by + y });
+      }
+    }
+  });
+
+  // A FUNHOUSE: a maze of ICE. Every wall of it is a lie — a fireball thaws one, a leaper shatters
+  // one, a shoved boulder shears straight through — so the maze is exactly as solid as your
+  // patience. The vents inside are the reason not to take your time about it.
+  // (7x7, not 9x9. At nine on a side it lost roughly three quarters of its draws to `tryPlace` failing
+  // to find a clear footprint on an already-furnished floor, so the room that was supposed to be a
+  // memorable one-off was simply the rarest thing in the game for no designed reason.)
+  const funhouse = () => tryPlace(7, 7, (bx, by) => {
+    shell(bx, by, 7, 7, ['N', 'S']);
+    fill(bx + 1, by + 1, 5, 5, null);
+    // Offset stubs of ice — enough to break every sightline without ever sealing a pocket off.
+    for (let x = 2; x <= 4; x += 2) {
+      for (let y = 2; y <= 4; y += 2) {
+        terrain[`${bx + x},${by + y}`] = 'ice';
+        const [ox, oy] = [[1, 0], [-1, 0], [0, 1], [0, -1]][randomInt(4)];
+        terrain[`${bx + x + ox},${by + y + oy}`] = 'ice';
+      }
+    }
+    for (const [gx, gy] of [[1, 1], [5, 5]]) terrain[`${bx + gx},${by + gy}`] = 'geyser';
+  });
+
+  // A RESTAURANT: front of house, kitchen behind. The stove is a lava tile with something that used
+  // to be a customer laid on it; the wash-up is a pool at the back; and the pass between the two is
+  // ICE, so you can watch the kitchen from the dining room without being able to walk into it.
+  const restaurant = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    // The pass: a glazed partition across the middle, with one gap to squeeze through.
+    for (let x = 1; x <= 7; x += 1) terrain[`${bx + x},${by + 3}`] = 'ice';
+    carve(bx + 7, by + 3); // the swing door at the end of the counter
+    terrain[`${bx + 3},${by + 1}`] = 'lava'; // the stove
+    if (garrison) {
+      garrison.push({ kind: 'bones', x: bx + 3, y: by + 1 }); // ...and today's special
+      garrison.push({ kind: 'miniboss', x: bx + 2, y: by + 2 }); // the chef, working the pass
+    }
+    gore(bx + 3, by + 2, 2); // the kitchen floor. Best not to look.
+    gore(bx + 4, by + 1, 1);
+    for (const [wx, wy] of [[5, 1], [6, 1], [5, 2]]) terrain[`${bx + wx},${by + wy}`] = 'water'; // the wash-up
+    // WINDOWS onto the dining room — you get to see what you are walking into before you commit.
+    for (const wx of [2, 6]) window1(bx + wx, by + 6);
+  });
+
+  // A SHOP: a waiting area, a counter you cannot climb over, and the stock room behind it barred off.
+  // The shopkeeper stands where a shopkeeper stands. He is not for sale and neither, it turns out,
+  // is anything else — the joke is that the room looks exactly like a shop and does nothing.
+  const shop = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    for (let x = 1; x <= 7; x += 1) terrain[`${bx + x},${by + 3}`] = 'ice'; // the counter, glazed
+    carve(bx + 4, by + 2);
+    if (garrison) garrison.push({ kind: 'miniboss', x: bx + 4, y: by + 2 }); // the teller, behind the counter
+    for (const gx of [2, 6]) bars(bx + gx, by + 2); // gates through to the stock room
+    for (let x = 1; x <= 7; x += 1) if (x !== 2 && x !== 4 && x !== 6) terrain[`${bx + x},${by + 2}`] = 'wall';
+    // The STOREFRONT: panes either side of the door, so the shop advertises itself the way a shop
+    // does — you can read the whole room, and who is minding it, from out on the floor.
+    for (const wx of [2, 6]) window1(bx + wx, by + 6);
+  });
+
+  // ---- INHABITED PLACES -----------------------------------------------------------------------
+  // The rooms above are mostly terrain with a joke in them. These are rooms with PEOPLE in them —
+  // a garrison, a congregation, somebody in charge. `crew` seeds a scatter of sleeping occupants
+  // over a rectangle without ever packing them shoulder to shoulder (see the zoo's lattice: a pen
+  // packed solid is a pen of statues, because most pieces can only move on one axis).
+  const crew = (bx, by, w, h, chance, species) => {
+    if (!garrison) return;
+    for (let x = 0; x < w; x += 2) {
+      for (let y = 0; y < h; y += 2) {
+        if (Math.random() < (chance || 0.6)) garrison.push({ kind: 'beast', species, x: bx + x, y: by + y });
+      }
+    }
+  };
+  const gore = (x, y, n) => { if (garrison) for (let i = 0; i < (n || 1); i += 1) garrison.push({ kind: 'blood', x, y }); };
+  // A WINDOW: a single pane of ice set into masonry. You can see through it and not walk through it,
+  // which turns a blank wall into a storefront — and, because ice is the one wall a fireball opens,
+  // into an invitation.
+  const window1 = (x, y) => { terrain[`${x},${y}`] = 'ice'; };
+
+  // A BARRACKS: bunkrooms off a spine corridor, and a great many sleeping bodies in them. The walls
+  // are the point — you meet the room a quarter at a time instead of all at once.
+  const barracks = () => tryPlace(11, 7, (bx, by) => {
+    shell(bx, by, 11, 7, ['S']);
+    fill(bx + 1, by + 1, 9, 5, null);
+    // Partitions off the spine (row by+3), leaving the corridor itself clear.
+    for (const x of [3, 6, 9]) {
+      for (const y of [1, 2, 4, 5]) terrain[`${bx + x},${by + y}`] = 'wall';
+    }
+    crew(bx + 1, by + 1, 9, 2, 0.85);
+    crew(bx + 1, by + 4, 9, 2, 0.85);
+  });
+
+  // A LIBRARY: stacks in rows, a torch at the end of each, and something reading in the dark between
+  // them. The shelves block every sightline, so the circles get their wind-up in before you ever see
+  // what is turning it.
+  const library = () => tryPlace(11, 7, (bx, by) => {
+    shell(bx, by, 11, 7, ['S', 'N']);
+    fill(bx + 1, by + 1, 9, 5, null);
+    for (let x = 2; x <= 8; x += 2) {
+      for (let y = 1; y <= 3; y += 1) terrain[`${bx + x},${by + y}`] = 'wall'; // the stacks
+      if (garrison) garrison.push({ kind: 'torch', x: bx + x, y: by + 1 }); // a light at the head of each
+    }
+    if (garrison) {
+      garrison.push({ kind: 'circle', x: bx + 3, y: by + 5 });
+      garrison.push({ kind: 'circle', x: bx + 7, y: by + 5 });
+    }
+  });
+
+  // A WAREHOUSE: bay after barred bay. Nothing here but iron — you can see the whole room from the
+  // door and reach almost none of it, and every gate is three swings of an axe.
+  const warehouse = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    for (let x = 1; x <= 7; x += 2) {
+      for (let y = 1; y <= 4; y += 1) bars(bx + x, by + y);
+    }
+  });
+
+  // A GREAT HALL: one long room, no cover, and a crowd in it. The whole design is the absence of
+  // anywhere to hide — you take this room in the open or not at all.
+  const greathall = () => tryPlace(13, 5, (bx, by) => {
+    shell(bx, by, 13, 5, ['W', 'E']);
+    fill(bx + 1, by + 1, 11, 3, null);
+    crew(bx + 2, by + 1, 9, 3, 0.7);
+  });
+
+  // A THRONE ROOM: a colonnade of lit pillars, a retinue between them, and something on the dais at
+  // the far end. The columns are torches, so a phaser cannot take the easy road up the side.
+  const throneroom = () => tryPlace(11, 9, (bx, by) => {
+    shell(bx, by, 11, 9, ['S']);
+    fill(bx + 1, by + 1, 9, 7, null);
+    for (const x of [3, 7]) {
+      for (const y of [3, 5, 7]) {
+        terrain[`${bx + x},${by + y}`] = 'wall';
+        if (garrison) garrison.push({ kind: 'torch', x: bx + x, y: by + y });
+      }
+    }
+    crew(bx + 2, by + 4, 7, 4, 0.5);
+    if (garrison) garrison.push({ kind: 'miniboss', x: bx + 5, y: by + 1 }); // on the dais, at the back
+    gore(bx + 5, by + 2, 2); // the floor before the throne has seen some petitions go badly
+  });
+
+  // RUINS: a hall whose roof went long ago — broken columns, holes in the floor, and one rune still
+  // ticking over in the wreckage. No walls and no door: it is a place, not a room.
+  const ruins = () => tryPlace(9, 9, (bx, by) => {
+    for (let x = 0; x < 9; x += 2) {
+      for (let y = 0; y < 9; y += 2) {
+        const r = Math.random();
+        if (r < 0.45) terrain[`${bx + x},${by + y}`] = 'wall'; // a column still standing
+        else if (r < 0.75) terrain[`${bx + x},${by + y}`] = 'pit'; // ...and where one fell through
+      }
+    }
+    carve(bx + 4, by + 4);
+    if (garrison) garrison.push({ kind: 'circle', x: bx + 4, y: by + 4 });
+  });
+
+  // A WARDED RUNE: a summoning circle boxed in ice. You can SEE it winding up and you cannot reach
+  // it — until you melt a wall, shatter one with a leap, or shove a boulder through. A three-turn
+  // clock behind a wall that is only as solid as your answer to it.
+  const wardedrune = () => tryPlace(3, 3, (bx, by) => {
+    for (let x = 0; x < 3; x += 1) for (let y = 0; y < 3; y += 1) terrain[`${bx + x},${by + y}`] = 'ice';
+    carve(bx + 1, by + 1);
+    if (garrison) garrison.push({ kind: 'circle', x: bx + 1, y: by + 1 });
+  });
+
+  // A PILLBOX: a gun on an island, ringed by a drop. It rakes the room and there is no walking up to
+  // it — you shoot it, or you leave it, or you find something to shove in from range.
+  const pillbox = () => tryPlace(3, 3, (bx, by) => {
+    for (let x = 0; x < 3; x += 1) for (let y = 0; y < 3; y += 1) terrain[`${bx + x},${by + y}`] = 'pit';
+    carve(bx + 1, by + 1);
+    if (garrison) garrison.push({ kind: 'turret', x: bx + 1, y: by + 1 });
+  });
+
+  // A FIRING RANGE: three lanes, a gun at the head of each, and what is left of the targets at the
+  // far end. The lanes are walled apart, so stepping into one is stepping into exactly one muzzle.
+  const firingrange = () => tryPlace(11, 7, (bx, by) => {
+    shell(bx, by, 11, 7, ['W']);
+    fill(bx + 1, by + 1, 9, 5, null);
+    for (let lane = 0; lane < 3; lane += 1) {
+      const y = by + 1 + lane * 2;
+      if (lane > 0) for (let x = 1; x <= 9; x += 1) terrain[`${bx + x},${by + lane * 2}`] = 'wall';
+      if (garrison) {
+        garrison.push({ kind: 'turret', x: bx + 2, y }); // the firing point
+        garrison.push({ kind: 'bones', x: bx + 9, y }); // ...and the butts
+      }
+      gore(bx + 9, y, 2);
+      gore(bx + 8, y, 1);
+    }
+  });
+
+  // A FIGHTING PIT: two dazed little animals penned on an island, and a crowd standing round the
+  // rail watching them. The gate is the only way in — everything else is a drop.
+  const fightingpit = () => tryPlace(9, 9, (bx, by) => {
+    const c = 4;
+    for (let x = 0; x < 9; x += 1) {
+      for (let y = 0; y < 9; y += 1) {
+        const r = Math.max(Math.abs(x - c), Math.abs(y - c));
+        if (r === 2) terrain[`${bx + x},${by + y}`] = 'pit';
+        else if (r <= 1) carve(bx + x, by + y);
+      }
+    }
+    bars(bx + c, by + c + 2);
+    const species = RUNT(); // hell fields its own runts
+    if (garrison) {
+      garrison.push({ kind: 'beast', species, x: bx + c - 1, y: by + c });
+      garrison.push({ kind: 'beast', species, x: bx + c + 1, y: by + c });
+    }
+    gore(bx + c, by + c, 3); // the sand has seen a few bouts
+    // The crowd, standing well back on the safe side of the drop.
+    crew(bx, by, 9, 1, 0.5);
+    crew(bx, by + 8, 9, 1, 0.5);
+  });
+
+  // AN OUTHOUSE: three tiles square, one gate, and something enormous shut inside it. The entire
+  // joke is the ratio of the room to its occupant.
+  const outhouse = () => tryPlace(3, 3, (bx, by) => {
+    for (let x = 0; x < 3; x += 1) for (let y = 0; y < 3; y += 1) terrain[`${bx + x},${by + y}`] = 'wall';
+    carve(bx + 1, by + 1);
+    bars(bx + 1, by + 2);
+    if (garrison) garrison.push({ kind: 'miniboss', caged: true, x: bx + 1, y: by + 1 });
+  });
+
+  // A POOL: water in the middle, a deck round it, a wall round that, and someone on duty. Water is
+  // slow ground — you wade it one tile a turn — so the middle of this room is the worst place on the
+  // floor to be caught, and the lifeguard knows it.
+  const bathpool = () => tryPlace(9, 9, (bx, by) => {
+    shell(bx, by, 9, 9, ['S']);
+    fill(bx + 1, by + 1, 7, 7, null);
+    fill(bx + 2, by + 2, 5, 5, 'water');
+    if (garrison) garrison.push({ kind: 'miniboss', x: bx + 4, y: by + 1 }); // the chair, at the head of the pool
+    crew(bx + 1, by + 7, 7, 1, 0.6); // bathers along the near deck
+  });
+
+  // A MUSEUM: one of everything the dungeon can do to you, evenly spaced and labelled by a guide who
+  // will explain none of it. A whole floor's vocabulary in a single room.
+  // (9x5, not 9x7: at seven deep it lost about nine draws in ten to `tryPlace` on an already-furnished
+  // floor, and it only ever needed two rows of plinths.)
+  const museum = () => tryPlace(9, 5, (bx, by) => {
+    shell(bx, by, 9, 5, ['S']);
+    fill(bx + 1, by + 1, 7, 3, null);
+    const exhibits = ['tree', 'geyser', 'lava', 'ice', 'boulder', 'pit'];
+    let i = 0;
+    for (const y of [1, 3]) {
+      for (let x = 1; x <= 7 && i < exhibits.length; x += 2) {
+        terrain[`${bx + x},${by + y}`] = exhibits[i];
+        i += 1;
+      }
+    }
+    if (garrison) garrison.push({ kind: 'beast', x: bx + 4, y: by + 2 }); // the guide, in the aisle
+  });
+
+  // A VAMPIRE CRYPT: alcoves along the back wall, each shuttered by a boulder, each holding something
+  // standing on the remains of the last visitor. You cannot shove a boulder INTO an occupied alcove —
+  // so you step into a gap between them and shove one SIDEWAYS, opening one niche at a time. Which
+  // one you open, and in what order, is the whole room.
+  const crypt = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    for (let x = 1; x <= 7; x += 2) {
+      terrain[`${bx + x},${by + 2}`] = 'boulder'; // the shutter, in the mouth of the niche
+      if (garrison) {
+        garrison.push({ kind: 'bones', x: bx + x, y: by + 1 }); // the last visitor...
+        garrison.push({ kind: 'beast', caged: true, x: bx + x, y: by + 1 }); // ...and what is standing on him
+      }
+      gore(bx + x, by + 1, 2);
+    }
+    for (let x = 2; x <= 6; x += 2) terrain[`${bx + x},${by + 1}`] = 'wall'; // the masonry between niches
+  });
+
+  // A LABORATORY: the specimens are behind glass and there is no door in it. Nothing in this room can
+  // reach you and you cannot reach it — until somebody melts, shatters or shoves through the pane,
+  // and then all of it can.
+  const laboratory = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    for (let x = 1; x <= 7; x += 1) terrain[`${bx + x},${by + 3}`] = 'ice'; // the pane — sealed, no way through
+    crew(bx + 1, by + 1, 7, 2, 0.8);
+    gore(bx + 2, by + 4, 1);
+  });
+
+  // A MAX-SECURITY CELL: a long approach raked by guns in the walls, and at the end of it something
+  // behind gate after gate after gate. Every bar is three swings, and you take them in the open.
+  const maxsecurity = () => tryPlace(11, 5, (bx, by) => {
+    shell(bx, by, 11, 5, ['W']);
+    fill(bx + 1, by + 1, 9, 3, null);
+    for (const x of [3, 6]) { // guns recessed into both walls, raking the approach
+      for (const y of [0, 4]) {
+        carve(bx + x, by + y);
+        if (garrison) garrison.push({ kind: 'turret', x: bx + x, y: by + y });
+      }
+    }
+    for (const x of [7, 8, 9]) for (let y = 1; y <= 3; y += 1) bars(bx + x, by + y); // three layers of bars
+    if (garrison) garrison.push({ kind: 'miniboss', caged: true, x: bx + 9, y: by + 2 });
+  });
+
+  // A LAIR: a thicket with something living in it and one rock in the way. Small, and entirely about
+  // whether you would rather chop, shove, or leave it alone.
+  const lair = () => tryPlace(3, 3, (bx, by) => {
+    for (let x = 0; x < 3; x += 1) for (let y = 0; y < 3; y += 1) terrain[`${bx + x},${by + y}`] = 'tree';
+    carve(bx + 1, by + 1);
+    terrain[`${bx + 1},${by + 2}`] = 'boulder';
+    if (garrison) garrison.push({ kind: 'beast', caged: true, x: bx + 1, y: by + 1 });
+  });
+
+  // A FARM: a walled field of timber and undergrowth. Sight-blocking, walkable-if-you-are-the-right
+  // sort, and the only structure whose walls a Pathfinder simply strolls through.
+  const farm = () => tryPlace(7, 5, (bx, by) => {
+    shell(bx, by, 7, 5, ['S']);
+    for (let x = 1; x <= 5; x += 1) {
+      for (let y = 1; y <= 3; y += 1) terrain[`${bx + x},${by + y}`] = Math.random() < 0.4 ? 'tree' : 'devilgrass';
+    }
+  });
+
+  // A RANCH: a pen made of nothing but iron. Every wall of it is see-through and choppable, so the
+  // stock inside is fully visible from the moment you arrive and never more than a few swings away.
+  const ranch = () => tryPlace(9, 7, (bx, by) => {
+    for (let x = 0; x < 9; x += 1) {
+      for (let y = 0; y < 7; y += 1) {
+        if (x === 0 || x === 8 || y === 0 || y === 6) bars(bx + x, by + y);
+        else carve(bx + x, by + y);
+      }
+    }
+    crew(bx + 2, by + 2, 5, 3, 0.7);
+  });
+
+  // ---- DOORS, DWELLINGS AND JOKES ---------------------------------------------------------------
+  // A DOOR is the difference between a room and a shape. It shuts behind you, it blocks the look, and
+  // it is a decision to open — so it does far more work per tile than another length of wall.
+  const door1 = (x, y) => { terrain[`${x},${y}`] = 'door'; if (keepDoors) keepDoors.add(`${x},${y}`); };
+  // On-brand casting. A stable full of pawns is a missed joke; a stable full of horses is the room
+  // telling you what it is before you have read a word of it.
+  const HORSEKIND = () => (isDemonRealmFloor(floor) ? 'nightrider' : 'knight');
+  const RUNT = () => (isDemonRealmFloor(floor) ? 'berolina' : 'ferz');
+
+  // A HOTEL: a corridor, and doors off it into rooms you cannot see into. Some are empty. The point
+  // is that you never know which until it is open, and every one costs a turn to find out.
+  const hotel = () => tryPlace(11, 9, (bx, by) => {
+    shell(bx, by, 11, 9, ['W']);
+    fill(bx + 1, by + 1, 9, 7, null);
+    for (const side of [0, 1]) { // suites down both sides of the spine (row by+4)
+      const y0 = side ? by + 5 : by + 1;
+      for (const x0 of [bx + 3, bx + 6]) {
+        for (let x = 0; x < 3; x += 1) {
+          for (let y = 0; y < 3; y += 1) terrain[`${x0 + x},${y0 + y}`] = 'wall';
+        }
+        fill(x0 + 1, y0 + 1, 1, 1, null); // the room itself, 1 tile of privacy
+        door1(x0 + 1, side ? y0 : y0 + 2); // ...opening onto the corridor
+        if (garrison && Math.random() < 0.6) garrison.push({ kind: 'beast', caged: true, x: x0 + 1, y: y0 + 1 });
+      }
+    }
+  });
+
+  // A HALL OF DOORS: door after door after door, and something waiting at the end of them. Each one
+  // blocks the look, so the corridor reveals itself a tile at a time and you never see what is
+  // coming until you are level with it.
+  const halldoors = () => tryPlace(11, 3, (bx, by) => {
+    shell(bx, by, 11, 3, ['W']);
+    fill(bx + 1, by + 1, 9, 1, null);
+    for (let x = 2; x <= 8; x += 2) door1(bx + x, by + 1);
+    if (garrison) garrison.push({ kind: 'beast', caged: true, x: bx + 9, y: by + 1 });
+  });
+
+  // A HOUSE: four walls, a window either side of the door, and somebody home. The smallest complete
+  // building in the game — and the window means you get to decide before you knock.
+  const house = () => tryPlace(5, 5, (bx, by) => {
+    shell(bx, by, 5, 5, ['S']);
+    fill(bx + 1, by + 1, 3, 3, null);
+    window1(bx + 1, by + 4);
+    window1(bx + 3, by + 4);
+    if (garrison) garrison.push({ kind: 'beast', x: bx + 2, y: by + 2 });
+  });
+
+  // A MANSION: the house's grander cousin — a colonnaded hall with something important in it.
+  const mansion = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['S']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    for (const x of [2, 4, 6]) for (const y of [2, 4]) terrain[`${bx + x},${by + y}`] = 'wall'; // the columns
+    for (const wx of [1, 7]) window1(bx + wx, by + 6);
+    if (garrison) garrison.push({ kind: 'miniboss', x: bx + 4, y: by + 1 });
+  });
+
+  // A DOGHOUSE: three tiles square, one door, one very small occupant. The outhouse's harmless twin.
+  const doghouse = () => tryPlace(3, 3, (bx, by) => {
+    for (let x = 0; x < 3; x += 1) for (let y = 0; y < 3; y += 1) terrain[`${bx + x},${by + y}`] = 'wall';
+    carve(bx + 1, by + 1);
+    door1(bx + 1, by + 2);
+    if (garrison) garrison.push({ kind: 'beast', species: RUNT(), caged: true, x: bx + 1, y: by + 1 });
+  });
+
+  // A PET SHOP: the stock behind glass, with a door beside each pen. You can look at all of them and
+  // let out exactly as many as you decide to.
+  const petshop = () => tryPlace(9, 5, (bx, by) => {
+    shell(bx, by, 9, 5, ['S']);
+    fill(bx + 1, by + 1, 7, 3, null);
+    for (let x = 1; x <= 7; x += 2) {
+      terrain[`${bx + x},${by + 2}`] = 'ice'; // the glass front of the pen
+      if (x + 1 <= 7) door1(bx + x + 1, by + 2); // ...and the little door beside it
+      if (garrison) garrison.push({ kind: 'beast', species: RUNT(), caged: true, x: bx + x, y: by + 1 });
+    }
+  });
+
+  // A POOL TABLE: a rack of boulders and six pockets. Exactly the bowling alley's joke told the other
+  // way round — there, one lane and one hole; here, six holes and no lanes at all.
+  const pooltable = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['W']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    for (const [px, py] of [[1, 1], [4, 1], [7, 1], [1, 5], [4, 5], [7, 5]]) terrain[`${bx + px},${by + py}`] = 'pit'; // the pockets
+    // The rack: two, then one — a little triangle sat in the middle of the baize.
+    terrain[`${bx + 5},${by + 2}`] = 'boulder';
+    terrain[`${bx + 5},${by + 4}`] = 'boulder';
+    terrain[`${bx + 6},${by + 3}`] = 'boulder';
+  });
+
+  // A SAUNA: an ice shell with a vent inside it, and someone enduring both. Ice keeps the steam in;
+  // the steam is busy melting the ice. Neither of them is going to win.
+  const sauna = () => tryPlace(5, 5, (bx, by) => {
+    for (let x = 0; x < 5; x += 1) {
+      for (let y = 0; y < 5; y += 1) {
+        if (x === 0 || x === 4 || y === 0 || y === 4) terrain[`${bx + x},${by + y}`] = 'ice';
+      }
+    }
+    fill(bx + 1, by + 1, 3, 3, null);
+    door1(bx + 2, by + 4);
+    terrain[`${bx + 2},${by + 2}`] = 'geyser';
+    if (garrison) garrison.push({ kind: 'beast', x: bx + 1, y: by + 1 });
+  });
+
+  // A DUNK TANK: a box, a pane to watch through, and somebody sitting in the water inside it.
+  const dunktank = () => tryPlace(3, 3, (bx, by) => {
+    for (let x = 0; x < 3; x += 1) for (let y = 0; y < 3; y += 1) terrain[`${bx + x},${by + y}`] = 'wall';
+    terrain[`${bx + 1},${by + 1}`] = 'water';
+    window1(bx + 1, by + 2); // the pane, so the whole point of the thing is visible from outside
+    if (garrison) garrison.push({ kind: 'beast', caged: true, x: bx + 1, y: by + 1 });
+  });
+
+  // STABLES: a corridor with a stall either side of it, each one a single square of straw behind its
+  // own door. The stock is HORSES, obviously — a stable full of pawns would be a joke nobody made.
+  const stables = () => tryPlace(9, 7, (bx, by) => {
+    shell(bx, by, 9, 7, ['W']);
+    fill(bx + 1, by + 1, 7, 5, null);
+    // Stalls along the top and bottom, each one tile of grass behind a door onto the central aisle.
+    for (const side of [0, 1]) {
+      const sy = side ? by + 5 : by + 1;
+      const dy = side ? by + 4 : by + 2;
+      for (let x = 1; x <= 7; x += 2) {
+        terrain[`${bx + x},${sy}`] = 'devilgrass'; // the bedding
+        door1(bx + x, dy);
+        if (garrison) garrison.push({ kind: 'beast', species: HORSEKIND(), caged: true, x: bx + x, y: sy });
+      }
+      for (let x = 2; x <= 6; x += 2) {
+        terrain[`${bx + x},${sy}`] = 'wall'; // the partitions between stalls
+        terrain[`${bx + x},${dy}`] = 'wall';
+      }
+    }
+  });
+
+  // A CHURCH: a colonnade of lit pillars down a long nave, and a single BISHOP at the end of it.
+  // Every joke in this room is one word long.
+  const church = () => tryPlace(9, 9, (bx, by) => {
+    shell(bx, by, 9, 9, ['S']);
+    fill(bx + 1, by + 1, 7, 7, null);
+    for (const x of [2, 6]) {
+      for (const y of [2, 4, 6]) {
+        terrain[`${bx + x},${by + y}`] = 'wall';
+        if (garrison) garrison.push({ kind: 'torch', x: bx + x, y: by + y });
+      }
+    }
+    for (const wx of [1, 7]) window1(bx + wx, by); // clerestory windows at the altar end
+    // A BISHOP, obviously. In the realm the nearest thing to one is the archbishop — still a bishop
+    // by its moves, and a native, which the realm rule requires of anything living down there.
+    if (garrison) garrison.push({ kind: 'beast', species: isDemonRealmFloor(floor) ? 'archbishop' : 'bishop', x: bx + 4, y: by + 1 });
+  });
+
+  // A CHESSBOARD. An eight-by-eight board with a full army drawn up on the far rank, exactly where
+  // the pieces belong. It is the game looking back at you, and it is far too much for a floor-one
+  // player — hence the depth gate on the registry below.
+  const chessboard = () => tryPlace(10, 10, (bx, by) => {
+    shell(bx, by, 10, 10, ['S']);
+    fill(bx + 1, by + 1, 8, 8, null);
+    // Down in the realm the army is drawn from the DEMON roster instead — only structures may be
+    // mortal there, and a mortal back rank would smuggle a whole vanilla army into hell. It is still
+    // a proper array: heavy on the wings, the amazon where the queen belongs.
+    const backRank = isDemonRealmFloor(floor)
+      ? ['chancellor', 'nightrider', 'archbishop', 'amazon', 'amazon', 'archbishop', 'nightrider', 'chancellor']
+      : ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+    const pawnKind = isDemonRealmFloor(floor) ? 'berolina' : 'pawn';
+    if (garrison) {
+      for (let i = 0; i < 8; i += 1) {
+        garrison.push({ kind: 'beast', species: backRank[i], caged: true, x: bx + 1 + i, y: by + 1 });
+        garrison.push({ kind: 'beast', species: pawnKind, caged: true, x: bx + 1 + i, y: by + 2 });
+      }
+    }
+  });
+
+  // A CANYON: a chasm with one land bridge over it and something standing on the far side. `hazard`
+  // is what you are crossing — a drop, or a river of fire.
+  const canyonOf = (hazard) => () => tryPlace(9, 5, (bx, by) => {
+    for (let x = 0; x < 9; x += 1) {
+      for (let y = 0; y < 5; y += 1) terrain[`${bx + x},${by + y}`] = hazard;
+    }
+    const span = by + 2;
+    for (let x = 0; x < 9; x += 1) carve(bx + x, span); // the one way across
+    if (garrison) garrison.push({ kind: 'beast', x: bx + 8, y: span }); // whatever holds the far end
+  });
+  const canyon = canyonOf('pit');
+  const firecanyon = canyonOf('lava');
+
   // A set-piece has to belong to the floor it stands on. The RECIPE is the spec — "each floor is
   // made of what its name says" — so an orchard only grows where trees grow, and a lava bridge only
   // spans a floor that has lava to span. Left ungated, these quietly put a hedge maze in the
@@ -1806,9 +2461,32 @@ function generateTerrain(floor, player, garrison, keepDoors) {
     ['storeroom', storeroom], ['fountain', fountain], ['garden', garden], ['pond', pond],
     ['igloo', igloo], ['gaol', gaol], ['battery', battery],
     ['quarry', quarry], ['catacomb', catacomb], ['well', well], ['brazier', brazierHall],
+    // The odd rooms. Masonry, ice, pits, water and bodies are at home on any floor, so these are
+    // ungated — only the ones that need FIRE or a VENT have to wait for a floor that has them.
+    ['zoo', zoo], ['mortuary', mortuary], ['bowling', bowling], ['crossfire', crossfire],
+    ['arena', arena], ['graveyard', graveyard], ['shop', shop],
+    // Inhabited places — masonry, iron, ice, pits and bodies, all at home on any floor.
+    ['barracks', barracks], ['library', library], ['warehouse', warehouse], ['greathall', greathall],
+    ['throneroom', throneroom], ['ruins', ruins], ['wardedrune', wardedrune], ['pillbox', pillbox],
+    ['firingrange', firingrange], ['fightingpit', fightingpit], ['outhouse', outhouse], ['pool', bathpool],
+    ['crypt', crypt], ['laboratory', laboratory], ['maxsecurity', maxsecurity], ['ranch', ranch],
+    // Dwellings and jokes — every one of them built around a DOOR.
+    ['hotel', hotel], ['halldoors', halldoors], ['house', house], ['mansion', mansion],
+    ['doghouse', doghouse], ['petshop', petshop], ['pooltable', pooltable], ['dunktank', dunktank],
+    ['stables', stables], ['church', church], ['canyon', canyon],
   ];
-  if (floorRecipe.tree) SET_PIECES.push(['orchard', orchard], ['hedgemaze', hedgeMaze]);
-  if (floorRecipe.lava) SET_PIECES.push(['bridge', bridge]);
+  if (floorRecipe.tree) SET_PIECES.push(['orchard', orchard], ['hedgemaze', hedgeMaze], ['lair', lair], ['farm', farm]);
+  if (floorRecipe.lava) SET_PIECES.push(['bridge', bridge], ['restaurant', restaurant], ['firecanyon', firecanyon]);
+  // THE CHESSBOARD is a full army drawn up on one rank. That is far too much floor to hand a player
+  // who is still learning what a rook does, so it waits until the run is properly under way.
+  if (floor >= 5) SET_PIECES.push(['chessboard', chessboard]);
+  // GEYSERS are a demon-realm feature (see scatterGeysers) — a vent has no business bubbling up in
+  // the Old Forest, and a room built around one would be a room built around nothing. The MUSEUM
+  // exhibits one of everything, a vent included, so it waits for the realm that has them.
+  if (isDemonRealmFloor(floor)) {
+    SET_PIECES.push(['bathhouse', bathhouse], ['hotspring', hotspring], ['funhouse', funhouse],
+      ['museum', museum], ['sauna', sauna]);
+  }
   // ONE OF EACH PER RUN. A structure is a place you RECOGNISE — that is the entire reason they
   // exist — and the second igloo is worth a fraction of the first. `seenStructures` rides on the
   // player, which is the only thing that survives a descent, so the run remembers what it has
@@ -1820,7 +2498,13 @@ function generateTerrain(floor, player, garrison, keepDoors) {
   let pool = SET_PIECES.filter(([name]) => !seen.has(name));
   if (!pool.length) { seen.clear(); pool = SET_PIECES.slice(); }
   for (let i = pool.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [pool[i], pool[j]] = [pool[j], pool[i]]; }
-  for (let i = 0, n = Math.min(pool.length, 3 + randomInt(3)); i < n; i += 1) {
+  // 2-3 per floor, and no more. The vocabulary is now enormous (forty-odd rooms), and the temptation
+  // is to show more of it per floor — but set-pieces are laid FIRST and everything else flows around
+  // them, so a floor stuffed with structures stops being a dungeon with places in it and becomes a
+  // corridor between other people's rooms. Two or three is enough to make a floor memorable while
+  // leaving the ordinary generation room to breathe; the vocabulary gets spent ACROSS a run, not
+  // within one floor.
+  for (let i = 0, n = Math.min(pool.length, 2 + randomInt(2)); i < n; i += 1) {
     const [name, build] = pool[i];
     if (build()) seen.add(name); // only remember it if it actually FOUND room
   }
@@ -2152,7 +2836,13 @@ function generateFloor(floor, carryPlayer, score) {
   };
 
   const occupied = new Set([`${player.x},${player.y}`]);
-  const standable = (x, y) => isStandable(terrainAt(state, x, y));
+  // NEVER seed anything onto a GEYSER. A vent is walkable, so `isStandable` says yes — but a piece
+  // that starts the floor sitting on one is cooked by the shared eruption clock through no decision
+  // of anyone's, and the ambient trickle already refuses to drop a wanderer on one. This only began
+  // to matter when set-pieces (the bathhouse, the hot spring, the funhouse) started laying vents
+  // during TERRAIN generation, long before the roster is placed: until then every vent came from
+  // scatterGeysers, which runs afterwards and dodges the units itself.
+  const standable = (x, y) => isStandable(terrainAt(state, x, y)) && terrainAt(state, x, y) !== 'geyser';
   const seen = (x, y) => inLineOfSight(state, x, y);
 
   function place(predicate) {
@@ -2197,9 +2887,13 @@ function generateFloor(floor, carryPlayer, score) {
   for (const post of garrison) {
     if (post.x < 1 || post.x >= WORLD_SIZE - 1 || post.y < 1 || post.y >= WORLD_SIZE - 1) continue;
     // Scenery (bones, a lit torch) is not a unit and does not care what is standing there.
-    if (post.kind !== 'bones' && post.kind !== 'torch'
+    if (post.kind !== 'bones' && post.kind !== 'torch' && post.kind !== 'blood'
         && state.enemies.some((e) => e.x === post.x && e.y === post.y)) continue;
     if (post.kind === 'turret') {
+      // A gun emplacement stands on SOLID GROUND. A turret bedded into an ice slab looked absurd and
+      // played worse: the slab is destructible cover, so shattering it left a gun apparently floating
+      // in a puddle. If a room's own dressing has put ice under a gun post, clear it back to floor.
+      if (terrainAt(state, post.x, post.y) === 'ice') delete state.terrain[`${post.x},${post.y}`];
       state.enemies.push(makeTurret(state, randomTurretKind(floor), post.x, post.y));
     } else if (post.kind === 'circle') {
       const k = randomStructureKind(floor);
@@ -2213,12 +2907,50 @@ function generateFloor(floor, carryPlayer, score) {
     } else if (post.kind === 'torch') {
       if (!state.torches) state.torches = {};
       state.torches[`${post.x},${post.y}`] = true;
+    } else if (post.kind === 'blood') {
+      // DRESSING. A room that has plainly seen something happen in it reads as a place with a past —
+      // the back of the kitchen, the far end of a firing range. Pure decoration: no unit, no clock.
+      addSpatter(state, post.x, post.y, 0, 0, isDemonRealmFloor(floor));
+    } else if (post.kind === 'miniboss') {
+      // THE ONE IN CHARGE. A room with a named occupant at the heart of it — the shopkeeper, the
+      // chef, the thing in the outhouse — is a room with a POINT, not just a shape with foes in it.
+      // Asleep like everything else seeded with the floor, so you always get to open on your terms.
+      //
+      // NOT on floors 1-2. Rogue mini-bosses deliberately do not exist that early (see the seeding
+      // pass below); a shopkeeper who is secretly a mini-boss would smuggle that spike in through the
+      // back door, on the floor least able to take it. Down there the room keeps its occupant — it
+      // is simply an ordinary one, and the room still reads exactly the same.
+      if (floor >= 3) {
+        const mb = makeMiniBoss(state, post.species || randomEnemyKind(floor), post.x, post.y);
+        mb.asleep = true;
+        mb.resident = true; // it BELONGS to this room; it was not seeded prowling by the mini-boss pass
+        if (post.caged) mb.caged = true;
+        state.enemies.push(mb);
+      } else {
+        const e = createEnemy(post.species || randomEnemyKind(floor), post.x, post.y);
+        e.asleep = true;
+        if (post.caged) e.caged = true;
+        state.enemies.push(e);
+      }
+    } else if (post.kind === 'beast') {
+      // A NAMED occupant, penned on purpose: the zoo's ferzes, the arena's combatants. Unlike a
+      // prisoner it is not `caged` — the zoo's enclosure is a room, not a one-tile cell, so it has
+      // ground to shuffle about on and must not be exempted from the frozen-piece prune.
+      const e = createEnemy(post.species || randomEnemyKind(floor), post.x, post.y);
+      e.asleep = true;
+      // `caged` means DELIBERATELY sealed in — the thing in the outhouse, the specimen in its niche,
+      // the prisoner behind three gates. It exempts the piece from the frozen-piece prune, which
+      // otherwise (quite correctly) deletes anything terrain has walled in with no move to make.
+      // Without it, every room whose whole point is a sealed occupant quietly generated empty.
+      if (post.caged) e.caged = true;
+      state.enemies.push(e);
     } else {
       // A PRISONER: asleep behind its gate. Asleep because the cell is a thing to look at and think
       // about — cut it open on your terms, or leave it and walk on. A cell full of something already
       // awake and hammering the bars is just a fight you did not choose.
       const e = createEnemy(randomEnemyKind(floor), post.x, post.y);
       e.asleep = true;
+      e.prisoner = true; // a GAOL inmate specifically — other rooms now seal occupants in too (`caged`)
       e.caged = true; // DELIBERATELY immobile: walled in its cell behind a gate. Exempt from the
       // frozen-piece prune below (which drops wanderers that terrain sealed in) — a prisoner with no
       // move is the POINT of the cell, not an accident to clean up. Cut the gate and it walks out.
@@ -2376,9 +3108,9 @@ function generateFloor(floor, carryPlayer, score) {
     ? 'The final floor. Seize the Orb of Victory, then reach the portal to escape!'
     : 'A new floor. You start by the stair — find the floor key to unlock it.';
 
-  const nearChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 7 && chebyshev(x, y, player.x, player.y) >= 3 && !seen(x, y);
+  const nearChamber = (x, y) => standable(x, y) && chebyshev(x, y, ax, ay) >= 2 && chebyshev(x, y, ax, ay) <= 7 && chebyshev(x, y, player.x, player.y) >= 3 && !seen(x, y);
   // CLOSE PROTECTORS stand INSIDE the chamber alongside the guardian (the enlarged court has room).
-  const insideChamber = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) <= 2 && !(x === ax && y === ay);
+  const insideChamber = (x, y) => standable(x, y) && chebyshev(x, y, ax, ay) <= 2 && !(x === ax && y === ay);
   for (let i = 0; i < initCount(2 + Math.floor(floor / 2)); i += 1) {
     const spot = place(insideChamber);
     if (spot) addMobileEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
@@ -2393,8 +3125,8 @@ function generateFloor(floor, carryPlayer, score) {
   // but WEIGHTED, so the key still feels guarded without the guards drawing a map to it. The court
   // is the densest ground by far: it is ~24 tiles against the open floor's several hundred, so
   // even a quarter of the roll lands far more per-tile there than anywhere else.
-  const inCourt = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, ax, ay) <= 2 && !(x === ax && y === ay);
-  const anywhere = (x, y) => isStandable(terrainAt(state, x, y)) && chebyshev(x, y, player.x, player.y) >= 5 && !seen(x, y);
+  const inCourt = (x, y) => standable(x, y) && chebyshev(x, y, ax, ay) <= 2 && !(x === ax && y === ay);
+  const anywhere = (x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 5 && !seen(x, y);
   // Roll a zone, then fall back OUTWARD through the others so a structure is never simply lost when
   // its first choice is full.
   const structureSpot = (extra) => {
@@ -2515,7 +3247,7 @@ function generateFloor(floor, carryPlayer, score) {
     if (e.caged) continue; // a prisoner belongs in its cell — never drag it out to hide it from the king
     if (!seen(e.x, e.y)) continue;
     const canGo = (x, y) =>
-      isStandable(terrainAt(state, x, y)) &&
+      standable(x, y) &&
       !seen(x, y) &&
       chebyshev(x, y, player.x, player.y) >= 2 &&
       (e.turret || e.summonCircle || kindCanMove(state, e.kind, x, y));
@@ -2727,11 +3459,24 @@ function remainsJitter() {
 // A corpse: the slain piece's flattened, darkening remains — purely cosmetic, fades faster
 // than blood. (An enemy raised as a Necromancer ally leaves no body.) `life` overrides the
 // default lifespan (a boss's remains linger far longer).
-function addCorpse(state, x, y, kind, life) {
+// `opts` carries WHOSE body this is, so the remains look like the thing that fell rather than every
+// corpse on the floor being the same bone-coloured husk. A demon leaves a demon's carcass, an ally
+// leaves one in the king's own colours, a guardian leaves something markedly bigger. Without this the
+// board told you nothing about what died where — which is most of the point of leaving bodies at all.
+function addCorpse(state, x, y, kind, life, opts) {
   if (!Array.isArray(state.corpses)) state.corpses = [];
   const span = life || CORPSE_LIFE;
+  const o = opts || {};
   // `blood` (0..1) drives the gore spattered on the body when it's drawn.
-  state.corpses.push({ x, y, kind, life: span, max: span, blood: 0.5 + Math.random() * 0.4, ...remainsJitter() });
+  state.corpses.push({
+    x, y, kind, life: span, max: span,
+    blood: 0.5 + Math.random() * 0.4,
+    demon: Boolean(o.demon !== undefined ? o.demon : isDemonKind(kind)),
+    ally: Boolean(o.ally),
+    boss: Boolean(o.boss),
+    mini: Boolean(o.mini),
+    ...remainsJitter(),
+  });
 }
 // An ash pile: what a foe felled by a SPELL leaves instead of a corpse. It decays at the
 // same rate as a corpse and carries no piece identity (all ash looks alike).
@@ -4870,6 +5615,14 @@ function damageAlly(state, ally, amount) {
     if (ally.hp > 0) return false; // it holds the line
   }
   state.allies = (state.allies || []).filter((a) => a.id !== ally.id);
+  // It leaves a BODY. Conjured things (the Necromancer's skeletal familiar, the risen vampiress) are
+  // held together by the summoning and simply come apart into arcane smoke — but a warhorse that
+  // fought for him is flesh, and flesh stays on the floor. It used to vanish in a puff like the
+  // undead, so losing a real companion looked exactly like a spell wearing off.
+  if (!ally.familiar && !ally.undead) {
+    addSpatter(state, ally.x, ally.y, 0, 0, isDemonKind(ally.kind));
+    addCorpse(state, ally.x, ally.y, ally.kind, null, { ally: true });
+  }
   return true;
 }
 
@@ -6160,7 +6913,7 @@ function resolveShoveInto(state, tx, ty, moverId, moverIsKing) {
   if (ally) {
     state.allies = state.allies.filter((a) => a.id !== ally.id);
     addSpatter(state, tx, ty, 0, 0, isDemonKind(ally.kind));
-    addCorpse(state, tx, ty, ally.kind);
+    addCorpse(state, tx, ty, ally.kind, null, { ally: true }); // his OWN fallen — drawn in the king's colours
     return true;
   }
   // Slammed into another piece.

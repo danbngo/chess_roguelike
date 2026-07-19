@@ -475,6 +475,43 @@ function getCardMoves(state, card) {
       // a mage can deliberately thaw an ice slab or torch a tree even with no foe on the line. This
       // now mirrors the resolution exactly — it used to sail PAST ice/trees offering tiles the bolt
       // could never reach, and offered nothing when only terrain (not a foe) stood in the way.
+      // A FIREBALL is not a bolt: it BURSTS at the first thing it meets, so its aim point is that
+      // impact tile, NOT the far end of the line. Aiming the far tile put the cursor on ground the
+      // fireball never reaches — with a foe standing halfway, the marker sat several tiles past the
+      // thing about to be hit. The resolution always burst correctly (it rescans from the king along
+      // the cursor's DIRECTION), so this was purely a lie told by the display. Mirrors game.js's
+      // fireballCentre exactly, including bursting on a summoning circle.
+      if (kind === 'fireball') {
+        for (const [dx, dy] of dirs) {
+          let x = p.x;
+          let y = p.y;
+          let centre = null; // where it actually goes off
+          for (let i = 0; i < reach; i += 1) {
+            x += dx;
+            y += dy;
+            if (!inBounds(x, y)) break;
+            if (!inLineOfSight(state, x, y)) break; // he can only aim what he can see
+            const t = terrainAt(state, x, y);
+            centre = { x, y };
+            if (state.enemies.some((e) => e.x === x && e.y === y)) break; // a body stops it
+            if (t === 'wall' || t === 'boulder' || t === 'ice' || t === 'tree') break; // so does cover
+          }
+          if (!centre) continue;
+          // Worth casting if the BURST — the centre plus its ring — would actually do something.
+          let worth = false;
+          for (let ox = -1; ox <= 1 && !worth; ox += 1) {
+            for (let oy = -1; oy <= 1 && !worth; oy += 1) {
+              const bx = centre.x + ox;
+              const by = centre.y + oy;
+              if (!inBounds(bx, by)) continue;
+              if (missileTarget(bx, by)) worth = true;
+              const bt = terrainAt(state, bx, by);
+              if (bt === 'ice' || bt === 'tree' || bt === 'devilgrass') worth = true;
+            }
+          }
+          if (worth) results.push({ x: centre.x, y: centre.y, capture: Boolean(missileTarget(centre.x, centre.y)), viaJump: false });
+        }
+      } else {
       for (const [dx, dy] of dirs) {
         let x = p.x;
         let y = p.y;
@@ -495,6 +532,7 @@ function getCardMoves(state, card) {
           results.push({ x: far.x, y: far.y, capture: Boolean(missileTarget(far.x, far.y)), viaJump: false });
         }
       }
+      }
     } else {
       // RANGED: a single arrow to the FIRST foe it can reach (blocked by the first body / wall).
       for (const [dx, dy] of dirs) {
@@ -505,7 +543,7 @@ function getCardMoves(state, card) {
           y += dy;
           if (!inBounds(x, y)) break;
           const t = terrainAt(state, x, y);
-          if ((t === 'wall' || t === 'boulder') && !shootWalls) break;
+          if (blocksArrow(t) && !shootWalls) break; // an arrow will not fly through a pane of ice, however well you can SEE through it
           const occ = enemyAt(x, y);
           if (occ) {
             if (occ.summonCircle) continue; // a rune on the FLOOR — the arrow flies OVER it (never a target, never a block)

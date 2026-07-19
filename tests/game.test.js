@@ -132,7 +132,10 @@ test('from floor 3 a floor is SEEDED with rogue mini-bosses, well clear of the k
   const seeded = (floor) => {
     const base = createInitialState('warrior');
     const s = generateFloor(floor, base.player, 0);
-    const minis = s.enemies.filter((e) => e.boss && e.mini && !e.rush);
+    // PROWLERS only. A set-piece's RESIDENT mini-boss (the shopkeeper, the chef, the thing in the
+    // outhouse) belongs to its room and is placed by the garrison, not by this seeding pass — it has
+    // its own rules, including staying off floors 1-2 for exactly the reason asserted just below.
+    const minis = s.enemies.filter((e) => e.boss && e.mini && !e.rush && !e.resident);
     return { n: minis.length, nearest: minis.reduce((a, m) => Math.min(a, chebyshev(m.x, m.y, s.player.x, s.player.y)), 99) };
   };
   assert.equal(seeded(1).n, 0, 'the first floors are rank-and-file');
@@ -1178,9 +1181,10 @@ test('Fireball bursts around the FIRST foe on its ray, and burns friend and king
   ];
   s.allies = [{ id: 'pal', kind: 'mann', x: 11, y: 11 }];
   const idx = s.player.cards.findIndex((c) => c.kind === 'fireball');
-  // A SPELL aims at its ray's far end, not at the foe — the burst must still centre on the foe.
+  // The aim point IS the burst centre. It used to be the ray's far end — the marker sat past the
+  // foe about to be hit, which is precisely the thing that made the preview untrustworthy.
   const aim = getCardMoves(s, s.player.cards[idx]).find((m) => m.y === 10 && m.x > 10);
-  assert.ok(aim && aim.x > 12, 'the aim point is past the target, at the ray end');
+  assert.ok(aim && aim.x === 12, 'the aim point sits ON the foe it will burst against');
   const hp0 = s.player.hp;
   const r = useCard(s, idx, aim.x, aim.y);
   const at = (x, y) => r.enemies.some((e) => e.x === x && e.y === y);
@@ -2818,6 +2822,38 @@ test('FOG blocks the look while it lingers, Premonition peers through it, and it
   assert.equal(held.fog['11,10'], 2, 'his own turn leaves the bank at full strength');
 });
 
+test('a FIREBALL aims where it BURSTS, not at the far end of the line', () => {
+  // Every piercing spell aims the farthest tile it can reach, because a bolt travels the whole line.
+  // A fireball does not — it goes off at the first thing it meets. Aiming the far tile parked the
+  // cursor several squares PAST the foe about to be hit. (The resolution was always right: it
+  // rescans from the king along the cursor's direction, so this was a lie told only by the display.)
+  const mage = () => {
+    const s = sorcererWith('s_staff', 's_barrage', 's_fireball');
+    s.terrain = {}; s.enemies = []; s.allies = []; s.torches = {};
+    s.player.x = 10; s.player.y = 10;
+    return s;
+  };
+  const fb = (s) => s.player.cards.find((c) => c && c.kind === 'fireball');
+  const eastAims = (s) => getCardMoves(s, fb(s)).filter((m) => m.y === 10 && m.x > 10).map((m) => m.x);
+
+  // A foe three tiles east, open ground well beyond it.
+  const s = mage();
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true, id: 'f' })];
+  assert.deepEqual(eastAims(s), [13], 'the aim point IS the foe — the burst centre');
+  // ...and firing at it really does kill him, so the marker matches the outcome.
+  const idx = s.player.cards.findIndex((c) => c && c.kind === 'fireball');
+  const after = useCard(s, idx, 13, 10);
+  assert.ok(!after.enemies.some((e) => e.id === 'f'), 'and the burst lands where the marker promised');
+
+  // Cover stops it too: an ice slab is the centre, not the ground past it.
+  const ice = mage();
+  ice.terrain['12,10'] = 'ice';
+  assert.deepEqual(eastAims(ice), [12], 'it bursts against the slab');
+
+  // A line with nothing to burn or hit is not offered at all.
+  assert.deepEqual(eastAims(mage()), [], 'an empty line is not an aim');
+});
+
 test('a FIREBALL bursts against an ICE slab — where an ordinary bolt would merely stop', () => {
   const s = sorcererWith('s_staff', 's_barrage', 's_fireball');
   s.terrain = { '12,10': 'ice' };
@@ -3121,7 +3157,9 @@ test('a guardian ROARS on the turn it is startled, not the turn after — and on
 
 test('breaking a summoning circle sheds no blood — it is a rune, not a creature', () => {
   let s = createInitialState('warrior', 'easy');
-  s.terrain = {}; s.allies = [];
+  // A generated floor now arrives with DECORATIVE gore already on it (the back of the restaurant,
+  // the butts of the firing range), so this has to measure the blood THIS BLOW sheds, not the total.
+  s.terrain = {}; s.allies = []; s.spatters = [];
   s.player.x = 10; s.player.y = 10; s.player.moveRange = 1;
   s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, summonCircle: true, awake: true, id: 'c' })];
   const r = movePlayerTo(s, 11, 10);
@@ -3131,7 +3169,7 @@ test('breaking a summoning circle sheds no blood — it is a rune, not a creatur
   assert.ok((r.scars || []).some((c) => c.x === 11 && c.y === 10), 'over a permanent scar');
   // Control: a real creature still bleeds.
   let t = createInitialState('warrior', 'easy');
-  t.terrain = {}; t.allies = [];
+  t.terrain = {}; t.allies = []; t.spatters = [];
   t.player.x = 10; t.player.y = 10; t.player.moveRange = 1;
   t.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
   assert.ok((movePlayerTo(t, 11, 10).spatters || []).length > 0, 'control: a real foe bleeds');
@@ -4214,7 +4252,9 @@ test('a gaol always seats its prisoners (they are not pruned as frozen pieces)',
     const s = createInitialState('warrior', 'normal');
     if (!(s.player.seenStructures || []).includes('gaol')) continue;
     gaols += 1;
-    const prisoners = s.enemies.filter((e) => e.caged);
+    // `prisoner`, not merely `caged` — other set-pieces now seal occupants in too (the outhouse, the
+    // crypt niches, the max-security cell), and all of them carry `caged`.
+    const prisoners = s.enemies.filter((e) => e.prisoner);
     assert.equal(prisoners.length, 3, 'all three cells are seated (a gaol has three)');
     assert.ok(prisoners.every((e) => e.asleep), 'and every prisoner starts asleep');
   }
@@ -6077,6 +6117,107 @@ test('a boulder shoved onto a geyser caps it', () => {
   const next = movePlayerTo(s, 11, 10);
   assert.equal(terrainAt(next, 12, 10), 'boulder', 'the boulder now plugs the vent');
   assert.notEqual(terrainAt(next, 12, 10), 'geyser', 'the geyser is gone');
+});
+
+test('the odd rooms all build, and the ones needing fire or a vent wait for a floor that has them', () => {
+  // Each is a PLACE with a joke or a puzzle in it. A run keeps one of each (seenStructures), so this
+  // samples many fresh runs and checks every room can actually find a footprint.
+  const sawOn = {};
+  const record = (floor, s) => {
+    for (const n of (s.player.seenStructures || [])) {
+      if (!sawOn[n]) sawOn[n] = new Set();
+      sawOn[n].add(floor);
+    }
+  };
+  for (let floor = 1; floor <= 8; floor += 1) {
+    for (let t = 0; t < 40; t += 1) record(floor, generateFloor(floor, createPlayer('warrior'), 0));
+  }
+  const ANYWHERE = ['zoo', 'mortuary', 'bowling', 'crossfire', 'arena', 'graveyard', 'shop',
+    'barracks', 'library', 'warehouse', 'greathall', 'throneroom', 'ruins', 'wardedrune', 'pillbox',
+    'firingrange', 'fightingpit', 'outhouse', 'pool', 'crypt', 'laboratory', 'maxsecurity', 'ranch',
+    'hotel', 'halldoors', 'house', 'mansion', 'doghouse', 'petshop', 'pooltable', 'dunktank',
+    'stables', 'church', 'canyon'];
+  for (const n of ANYWHERE) assert.ok(sawOn[n] && sawOn[n].size, `${n} builds somewhere`);
+  // The CHESSBOARD is a full army drawn up on one rank — far too much floor for a player still
+  // learning what a rook does, so it waits until the run is properly under way.
+  assert.ok(sawOn.chessboard && sawOn.chessboard.size, 'the chessboard builds');
+  assert.ok([...sawOn.chessboard].every((f) => f >= 5), 'and never on the opening floors');
+  // Timber rooms need a floor whose recipe grows some.
+  for (const n of ['lair', 'farm']) {
+    assert.ok(sawOn[n] && sawOn[n].size, `${n} builds`);
+    assert.ok([...sawOn[n]].every((f) => (levelForFloor(f).recipe || {}).tree), `${n} only where there are trees`);
+  }
+  // The museum exhibits one of everything, a VENT included, so it waits for the realm that has them.
+  assert.ok(sawOn.museum && sawOn.museum.size, 'the museum builds');
+  assert.ok([...sawOn.museum].every((f) => isDemonRealmFloor(f)), 'and only where there are vents to exhibit');
+  // A VENT has no business bubbling up in the Old Forest, and a room built round one would be a room
+  // built round nothing — so these wait for the demon realm.
+  for (const n of ['bathhouse', 'hotspring', 'funhouse', 'sauna']) {
+    assert.ok(sawOn[n] && sawOn[n].size, `${n} builds`);
+    assert.ok([...sawOn[n]].every((f) => isDemonRealmFloor(f)), `${n} only where there are vents (saw ${[...sawOn[n]]})`);
+  }
+  // The restaurant's stove is a LAVA tile, so it needs a floor whose recipe pours some.
+  for (const n of ['restaurant', 'firecanyon']) {
+    assert.ok(sawOn[n] && sawOn[n].size, `${n} builds`);
+    assert.ok([...sawOn[n]].every((f) => (levelForFloor(f).recipe || {}).lava), `${n} only where there is lava`);
+  }
+});
+
+test('a room built round a sealed occupant actually HAS one — `caged` survives the frozen-piece prune', () => {
+  // The outhouse, the max-security cell, the lair and the crypt niches all wall their occupant in
+  // with no move to make. That is the design. The prune quite correctly deletes anything terrain has
+  // sealed in — so without `caged` on the garrison post, every one of those rooms generated EMPTY,
+  // which is the one failure mode that looks like nothing at all went wrong.
+  let sealedFound = 0;
+  let emptyOuthouse = 0;
+  for (let t = 0; t < 60; t += 1) {
+    const s = generateFloor(5, createPlayer('warrior'), 0);
+    const rooms = new Set(s.player.seenStructures || []);
+    for (const e of s.enemies) if (e.caged) sealedFound += 1;
+    // An outhouse is 3x3 with a single tile inside it: if the room built, something must be in there.
+    if (rooms.has('outhouse')) {
+      const anyCaged = s.enemies.some((e) => e.caged);
+      if (!anyCaged) emptyOuthouse += 1;
+    }
+  }
+  assert.ok(sealedFound > 0, `sealed occupants survive generation (${sealedFound} across 60 floors)`);
+  assert.equal(emptyOuthouse, 0, 'and an outhouse is never generated empty');
+});
+
+test('an arrow will not fly through a PANE OF ICE — seeing a target is not having a shot at it', () => {
+  // Ice is see-through, so the king can watch a foe standing behind a window all day. He could also
+  // SHOOT it, which made every glazed room (the shop counter, the laboratory pane, the pet shop
+  // fronts) purely decorative. Sight and shot are now separate rules.
+  const shoot = (between) => {
+    const s = rangerWith('r_bow');
+    s.terrain = {}; s.enemies = []; s.allies = []; s.torches = {};
+    s.player.x = 10; s.player.y = 10;
+    if (between) s.terrain['11,10'] = between;
+    s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true, id: 'f' })];
+    const card = s.player.cards.find((c) => c && classCategory(s.player.className) === 'ranged');
+    return { s, hits: getCardMoves(s, card).some((m) => m.x === 12 && m.y === 10) };
+  };
+  assert.ok(shoot(null).hits, 'open ground: the shot is there');
+  assert.ok(!shoot('ice').hits, 'a pane of ICE stops the arrow');
+  assert.ok(!shoot('wall').hits, 'so does stone, as ever');
+  // ...but he can still SEE it through the glass — the window still works as a window.
+  const { s } = shoot('ice');
+  assert.ok(inLineOfSight(s, 12, 10), 'and he can see straight through the pane');
+});
+
+test('nothing is ever SEEDED onto a geyser — a vent is walkable, not a place to start', () => {
+  // Vents used to arrive only from scatterGeysers, which runs after the roster is placed and dodges
+  // it. The bathhouse / hot spring / funhouse lay them during TERRAIN generation instead, long before
+  // anyone is placed — so every seeding predicate has to know a vent is not a spawn tile. A piece
+  // that begins the floor on one is cooked by the shared clock through nobody's decision.
+  for (let t = 0; t < 25; t += 1) {
+    const s = generateFloor(6, createPlayer('warrior'), 0);
+    const vents = new Set(Object.keys(s.terrain).filter((k) => s.terrain[k] === 'geyser'));
+    if (!vents.size) continue;
+    for (const e of s.enemies) assert.ok(!vents.has(`${e.x},${e.y}`), `no ${e.kind} seeded on a vent`);
+    for (const a of (s.allies || [])) assert.ok(!vents.has(`${a.x},${a.y}`), 'no ally seeded on a vent');
+    assert.ok(!vents.has(`${s.player.x},${s.player.y}`), 'and never the king');
+  }
 });
 
 test('geysers are laid only on the demon floors of a cycle, and never under a unit or the key', () => {
