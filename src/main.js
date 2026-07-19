@@ -325,14 +325,17 @@
     if (!gameState) {
       return;
     }
-    // Owned cards, in inventory order (their 1-based index is the hotkey).
+    // Owned cards, by HOTKEY SLOT (the 1-based index is the key you press). The hand is sparse — a
+    // card may sit on slot 7 with 4-6 empty — so a hole renders as a dimmed placeholder rather than
+    // being skipped: collapsing them would put a card under a number that does not fire it.
     gameState.player.cards.forEach((card, i) => {
-      cardBar.append(makeCardSlot(card, i));
+      cardBar.append(card ? makeCardSlot(card, i) : makeEmptySlot(i));
     });
+    const held = gameState.player.cards.filter(Boolean);
     // The caption only shows when he actually HAS a card to press.
-    if (cardHint && gameState.player.cards.length) cardHint.classList.remove('hidden');
+    if (cardHint && held.length) cardHint.classList.remove('hidden');
     // The first time a card is armed, spell out what these things are and how to swing them.
-    if (gameState.player.cards.some((c) => c.remaining === 0)) queueTip('cards');
+    if (held.some((c) => c.remaining === 0)) queueTip('cards');
   }
 
   // How many turns a card's ONGOING effect still has to run (0 = not currently active). Only cards
@@ -342,6 +345,21 @@
     if (card.kind === 'silence') return p.silence || 0;
     if (card.kind === 'promotion') return p.promotion || 0;
     return 0;
+  }
+
+  // An EMPTY hotkey slot: the number, greyed out, holding the place so the slots you can see line up
+  // with the keys you press.
+  function makeEmptySlot(i) {
+    const slot = document.createElement('div');
+    slot.className = 'card-slot empty';
+    slot.title = `Slot ${i + 1} — empty`;
+    const key = document.createElement('span');
+    key.className = 'card-trait';
+    key.style.left = '2px';
+    key.style.right = 'auto';
+    key.textContent = String(i + 1);
+    slot.append(key);
+    return slot;
   }
 
   function makeCardSlot(card, i) {
@@ -536,7 +554,7 @@
   // left empty and the total hand is unchanged.
   function addRebindRow(index) {
     const cards = gameState.player.cards;
-    if (!cards || cards.length < 2) return;
+    if (!cards) return;
     const block = document.createElement('div');
     block.className = 'examine-block';
     const h = document.createElement('div');
@@ -545,15 +563,21 @@
     block.append(h);
     const row = document.createElement('div');
     row.className = 'rebind-row';
-    cards.forEach((c, i) => {
+    // ALL NINE slots, always — not just as many as he happens to be holding. The keyboard has 1-9
+    // whether or not there is a card behind each one, and a player who wants his one spell on 5
+    // because that is where his finger sits should be able to put it there.
+    for (let i = 0; i < MAX_CARD_SLOTS; i += 1) {
+      const occupant = cards[i];
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'rebind-key' + (i === index ? ' current' : '');
+      b.className = 'rebind-key' + (i === index ? ' current' : occupant ? '' : ' vacant');
       b.textContent = String(i + 1);
-      b.title = i === index ? 'current slot' : `move to slot ${i + 1} (swaps with ${cards[i].kind})`;
+      b.title = i === index ? 'current slot'
+        : occupant ? `move to slot ${i + 1} (swaps with ${occupant.kind})`
+        : `move to slot ${i + 1} (empty)`;
       if (i !== index) b.addEventListener('click', () => rebindCard(index, i));
       row.append(b);
-    });
+    }
     block.append(row);
     examineEl.append(block);
   }
@@ -562,10 +586,15 @@
   // so rebinding mid-aim never fires the wrong spell.
   function rebindCard(fromIndex, toIndex) {
     const cards = gameState && gameState.player && gameState.player.cards;
-    if (!cards || fromIndex === toIndex || toIndex < 0 || toIndex >= cards.length) return;
+    if (!cards || fromIndex === toIndex || toIndex < 0 || toIndex >= MAX_CARD_SLOTS) return;
+    // Moving PAST the end of the hand grows it with empty slots — that is what makes slot 7 reachable
+    // while 4-6 sit vacant. Swapping with a vacant slot simply leaves a hole behind, which is the
+    // point: the card is where he asked for it, and nothing else shuffled to make room.
+    while (cards.length <= toIndex) cards.push(null);
     const tmp = cards[fromIndex];
-    cards[fromIndex] = cards[toIndex];
+    cards[fromIndex] = cards[toIndex] || null;
     cards[toIndex] = tmp;
+    while (cards.length && !cards[cards.length - 1]) cards.pop(); // no trailing dead slots
     if (cardTargeting === fromIndex) cardTargeting = toIndex;
     else if (cardTargeting === toIndex) cardTargeting = fromIndex;
     renderCards();
@@ -2018,7 +2047,7 @@
     // Double Cast: the first bolt has landed — stay up and let the caster aim a second
     // shot at whatever still stands. (If nothing targetable remains, end the turn.)
     if (nextState.lastAction === 'card-followup') {
-      const idx = gameState.player.cards.findIndex((c) => c.doubleReady);
+      const idx = gameState.player.cards.findIndex((c) => c && c.doubleReady);
       const foeLeft = idx >= 0 && (typeof spellCanHitFoe === 'function'
         ? spellCanHitFoe(gameState, gameState.player.cards[idx])
         : getCardMoves(gameState, gameState.player.cards[idx]).length > 0);

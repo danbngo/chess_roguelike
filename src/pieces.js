@@ -410,7 +410,7 @@ function getCardMoves(state, card) {
           const survives = Boolean(foe1.boss || foe1.turret || foe1.parry); // a warded foe soaks the first hoof
           if (survives) { add(bx, by, false, true); continue; }
           // ...otherwise he tramples it and keeps going. The far tile is the destination.
-        } else if (foe1 || !standableFor(t1, opts)) {
+        } else if (foe1 || !standableAt(state, bx, by, opts)) {
           continue; // an ally, a wall: the direction is shut
         }
         if (!inBounds(cx, cy)) continue;
@@ -424,7 +424,7 @@ function getCardMoves(state, card) {
           if (inLineOfSight(state, cx, cy)) results.push({ x: cx, y: cy, capture: false, viaJump: false, chop: true });
           continue;
         }
-        if (!foe2 && !standableFor(t2, opts)) continue; // nowhere to land
+        if (!foe2 && !standableAt(state, cx, cy, opts)) continue; // nowhere to land
         // The charge COMMITS to a direction and barrels THROUGH step one — so the landing is offered
         // even when step one is a sight-blocker (a bush/devilgrass) that hides the far tile. Pushing
         // straight past `add()` here bypasses its line-of-sight gate, which would otherwise delete the
@@ -547,7 +547,7 @@ function adjacentThreats(piece, state, dirs, includeOccupied) {
   // wherever he can stand — including a tree, which `isStandable` wrongly called impassable, leaving a
   // tree the Druid was standing on painted SAFE while a pawn beside it cut him down.
   const p = state.player || {};
-  const kingCanStand = (x, y) => standableFor(terrainAt(state, x, y), { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) });
+  const kingCanStand = (x, y) => standableAt(state, x, y, { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) });
   for (const [dx, dy] of dirs) {
     const x = piece.x + dx;
     const y = piece.y + dy;
@@ -642,7 +642,7 @@ function getPieceThreats(piece, state, includeOccupied) {
   // over pits, so this only matters for sliders.)
   if (!piece.turret) {
     const p = state.player || {};
-    opts.captureBlocked = (x, y) => standableFor(terrainAt(state, x, y), { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) });
+    opts.captureBlocked = (x, y) => standableAt(state, x, y, { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) });
   }
   return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, opts);
 }

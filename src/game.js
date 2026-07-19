@@ -636,7 +636,15 @@ function damageBoss(state, boss, amount, opts) {
     boss.asleep = false; // a blow wakes the one struck — even out of a Silence, which now holds only what he leaves be
     boss.hushed = false;
     rememberKing(state, boss);
-    state.message = `The king strikes ${boss.bossName} (${boss.hp}/${boss.maxHp}).`;
+    // WHO dealt the wound. Every ground source used to report itself as the king's own sword, so
+    // spellfire that steamed a pond and then scalded a guardian printed "The king strikes X" a second
+    // time — the same line twice for two entirely different events, one of which he did not do.
+    const cause = opts && opts.cause;
+    const dealt = cause === 'steam' ? `Scalding steam sears ${boss.bossName}`
+      : cause === 'lava' ? `Lava sears ${boss.bossName}`
+      : cause === 'torch' ? `A torch sears ${boss.bossName}`
+      : `The king strikes ${boss.bossName}`;
+    state.message = `${dealt} (${boss.hp}/${boss.maxHp}).`;
     state.lastAction = 'combat';
     applyBossHitReaction(state, boss);
     return 'hurt';
@@ -761,6 +769,7 @@ function isStalemate(state) {
   if (state.gameOver || state.won || state.pendingLevelUp) return false;
   if (getPlayerMoves(state).length > 0) return false;
   for (const card of state.player.cards || []) {
+    if (!card) continue; // an EMPTY hotkey slot — the hand is sparse (see rebindCard)
     if (cardBlockedReason(state, card)) continue; // spent, or the ground forbids it
     if (getCardMoves(state, card).length > 0) return false; // he can still DO something
   }
@@ -931,6 +940,19 @@ function cardBlockedReason(state, card) {
 // Build a card record. The category (from the owning class) sets the cooldown but
 // is NOT stored on the card — it is re-derived from the class wherever needed. `color`
 // is the card's subclass colour for the UI (the class colour for a starter card).
+// The hand is a set of NINE hotkey slots, not a list: the player may park a card on slot 7 with slots
+// 4-6 empty (see rebindCard). So a new card takes the lowest FREE slot rather than being appended —
+// appending onto a sparse array would leave the hole and hand out slot 8 while 4 sat empty.
+const MAX_CARD_SLOTS = 9; // Digit1..Digit9 — the keyboard is the hard limit here
+
+function giveCard(player, card) {
+  if (!Array.isArray(player.cards)) player.cards = [];
+  const free = player.cards.findIndex((c) => !c);
+  if (free >= 0) player.cards[free] = card;
+  else player.cards.push(card);
+  return card;
+}
+
 function makeCard(kind, category, cooldownOverride, color) {
   const cooldown = cooldownOverride != null ? cooldownOverride : cardCooldown(kind, category || 'melee');
   return { kind, cooldown, remaining: 0, color: color || null };
@@ -953,7 +975,7 @@ function applyPerk(player, grants, cardColor) {
   }
   if (grants.moveRange) player.moveRange += grants.moveRange;
   if (grants.cardReach) player.cardReach = (player.cardReach || 0) + grants.cardReach;
-  if (grants.gainCard) player.cards.push(makeCard(grants.gainCard, classCategory(player.className), grants.gainCooldown, cardColor));
+  if (grants.gainCard) giveCard(player, makeCard(grants.gainCard, classCategory(player.className), grants.gainCooldown, cardColor));
   for (const flag of PERK_FLAGS) {
     if (grants[flag]) player[flag] = true;
   }
@@ -1028,7 +1050,7 @@ function createPlayer(classKey) {
     maxCardsHeld: 0,
   };
   for (const flag of PERK_FLAGS) player[flag] = false;
-  player.cards.push(makeCard(cls.start, cls.category, cls.startCooldown, cls.color));
+  giveCard(player, makeCard(cls.start, cls.category, cls.startCooldown, cls.color));
   // The class's INNATE trait (Discipline / Sharpened Senses / Studious): a quality-of-life boon every
   // king of that class is born with. Applied like any perk, but never rolled and not added to
   // takenPerks — the character sheet reads cls.startPerk directly (see renderCharacter).
@@ -2624,7 +2646,7 @@ function overstayFraction(turn) {
 // boss (see defeatBoss). Slipping past a boss and descending thus yields nothing.
 function nextFloor(state) {
   const healed = { ...state.player, hp: state.player.maxHp };
-  healed.cards = (healed.cards || []).map((c) => ({ ...c, remaining: 0 }));
+  healed.cards = (healed.cards || []).map((c) => (c ? { ...c, remaining: 0 } : null)); // holes stay holes
   healed.extraLifeUsed = false;
   // Transformations END at the stair — the king walks onto the floor below as a MAN, never mid-form.
   // (Animal Form's rallied horses were this floor's; the new floor spawns its own, so nothing to undo.)
@@ -2783,6 +2805,7 @@ function passTurn(state) {
   p.totalTurns = (p.totalTurns || 0) + 1;
   const calmHaste = Boolean(p.spellHaste) && getVisibleEnemies(state).length === 0;
   for (const card of p.cards || []) {
+    if (!card) continue; // an empty hotkey slot
     // A card fired THIS turn doesn't tick down now (so the bar shows its full cooldown);
     // it starts counting down next turn.
     if (card.remaining > 0 && !card.justFired) {
@@ -3299,12 +3322,22 @@ function applyArrival(next, x, y, embedded) {
   if (embedded) {
     pl.attacked = true; pl.usedNormalAttack = true; // badge ledger: struck without a card
     const occ = next.enemies.find((e) => e.x === x && e.y === y);
+    const before = next.message;
     let realKill = false;
     if (occ && occ.boss) { if (damageBoss(next, occ, 1) === 'slain') { pl.killedEnemy = true; realKill = true; } }
     else if (occ && occ.turret) { damageTurret(next, occ, 1); }
     else if (occ) { realKill = isKillablePiece(occ); resolveKill(next, occ); }
     if (realKill && !next.gameOver && !next.won) applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
-    next.message = 'The king strikes through the cover!';
+    // NAME what he hit. This used to flatly overwrite whatever the damage routine had just written
+    // with a bare "The king strikes through the cover!" — so a guardian's wound count vanished and the
+    // log could not tell you WHAT you struck or whether it lived. That reads as "my kill did nothing".
+    // Keep the specific line (it carries the HP readout, or the kill) and merely note the cover.
+    if (next.message && next.message !== before) {
+      next.message = `${next.message} — struck through the cover.`;
+    } else {
+      const target = occ ? (occ.bossName || `the ${occ.kind}`) : null;
+      next.message = target ? `The king strikes ${target} through the cover!` : 'The king strikes through the cover!';
+    }
     if (realKill && pl.freeKillMove) {
       next.enemyTurn = false;
       next.lastAction = 'move-free';
@@ -4129,7 +4162,7 @@ function useCard(state, cardIndex, x, y) {
     return next;
   }
   if (card.kind === 'reload') {
-    for (const c of p.cards) if (c !== card) c.remaining = 0;
+    for (const c of p.cards) if (c && c !== card) c.remaining = 0;
     card.remaining = card.cooldown;
     card.justFired = true;
     next.message = 'You reload — every other card is ready.';
@@ -4464,7 +4497,7 @@ function useCard(state, cardIndex, x, y) {
     if (rdx || rdy) {
       const bx = p.x + rdx;
       const by = p.y + rdy;
-      if (bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE && standableFor(terrainAt(next, bx, by), {})) {
+      if (bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE && standableAt(next, bx, by, {})) {
         const foe = next.enemies.find((e) => e.x === bx && e.y === by);
         if (!foe) {
           p.x = bx;
@@ -4629,6 +4662,7 @@ function spellCanHitFoe(state, card) {
 function finishFollowup(state) {
   const next = structuredClone(state);
   for (const c of next.player.cards || []) {
+    if (!c) continue; // an empty hotkey slot
     if (c.doubleReady) {
       c.doubleReady = false;
       c.remaining = c.cooldown; // the one shot still spent the card
@@ -5398,7 +5432,7 @@ function tickFogDamage(state) {
   for (const e of caughtFoes) {
     addSmoke(state, e.x, e.y);
     scalded = true;
-    if (e.boss) damageBoss(state, e, 1, { ground: true }); // steam is the GROUND — no guard turns it aside
+    if (e.boss) damageBoss(state, e, 1, { ground: true, cause: 'steam' }); // steam is the GROUND — no guard turns it aside
     else if (e.turret) damageTurret(state, e, 1);
     else { addSpatter(state, e.x, e.y, 0, 0, isDemonKind(e.kind)); tallyKill(state, e); state.enemies = state.enemies.filter((o) => o.id !== e.id); }
   }
@@ -6363,7 +6397,7 @@ function bounceOffTarget(state, tx, ty, fromX, fromY) {
     const x = tx + dx;
     const y = ty + dy;
     if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
-    if (!standableFor(terrainAt(state, x, y), { phaseWalls: Boolean(p.phase), pathfinder: Boolean(p.pathfinder) })) continue;
+    if (!standableAt(state, x, y, { phaseWalls: Boolean(p.phase), pathfinder: Boolean(p.pathfinder) })) continue;
     if (terrainAt(state, x, y) === 'lava') continue; // never bounce into searing lava
     if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
     if (state.exit && x === state.exit.x && y === state.exit.y) continue; // don't stumble onto the stair
@@ -6448,7 +6482,7 @@ function bounceJumperBeside(state, jumper, kx, ky, fromX, fromY) {
     const x = kx + dx;
     const y = ky + dy;
     if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
-    if (!standableFor(terrainAt(state, x, y), pieceTerrainOpts(jumper))) continue;
+    if (!standableAt(state, x, y, pieceTerrainOpts(jumper))) continue;
     if (terrainAt(state, x, y) === 'lava' && !isLavaSafe(jumper)) continue; // it won't land in fire it can't survive
     if (terrainAt(state, x, y) === 'pit') continue; // nor down a hole
     if (keyTileAt(state, x, y)) continue;
@@ -6518,7 +6552,7 @@ function knockbackKing(state, enemy) {
       updateDiscovery(state);
       return state; // NB: callers do `return knockbackKing(...)` — this MUST hand the state back
     }
-    if (inBounds && standableFor(terrainAt(state, bx, by), { phaseWalls: Boolean(king.phase) })) {
+    if (inBounds && standableAt(state, bx, by, { phaseWalls: Boolean(king.phase) })) {
       if (resolveShoveInto(state, bx, by, null, true)) {
         const kx = king.x;
         const ky = king.y;
@@ -6570,7 +6604,7 @@ function closeInBeforeStrike(state, mover) {
   if (ax === mover.x && ay === mover.y) return;
   if (keyTileAt(state, ax, ay)) return;
   if (state.enemies.some((e) => e.id !== mover.id && e.x === ax && e.y === ay) || allyAt(state, ax, ay)) return;
-  if (!standableFor(terrainAt(state, ax, ay), pieceTerrainOpts(mover))) return; // never slide into a wall/pit/ice
+  if (!standableAt(state, ax, ay, pieceTerrainOpts(mover))) return; // never slide into a wall/pit/ice
   mover.x = ax;
   mover.y = ay;
 }
@@ -7056,12 +7090,12 @@ function bossMove(state, boss) {
   // vanilla-type boss into a lava field to whittle it down. Demon-floor guardians are immune.
   if (!boss.lavaImmune && terrainAt(state, boss.x, boss.y) === 'lava') {
     addSmoke(state, boss.x, boss.y);
-    if (damageBoss(state, boss, 1, { ground: true }) === 'slain') { state.lastAction = 'combat'; return state; }
+    if (damageBoss(state, boss, 1, { ground: true, cause: 'lava' }) === 'slain') { state.lastAction = 'combat'; return state; }
   }
   // Likewise a non-immune Phasing guardian embedded in a wall-torch sears — so its own wall-hiding
   // can be turned against it near a torch (it normally routes around them — see pieceTerrainOpts).
   if (!boss.lavaImmune && hasTorch(state, boss.x, boss.y)) {
-    if (damageBoss(state, boss, 1, { ground: true }) === 'slain') { state.lastAction = 'combat'; return state; }
+    if (damageBoss(state, boss, 1, { ground: true, cause: 'torch' }) === 'slain') { state.lastAction = 'combat'; return state; }
   }
   // Regenerating: it knits one wound shut every fourth turn (ticked whether it acts or recovers).
   if (bossHas(boss, 'regen')) {

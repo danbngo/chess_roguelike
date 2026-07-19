@@ -486,6 +486,15 @@ body.in-game canvas {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-height: 0; /* a flex child will not shrink below its content without this — and if it cannot
+                    shrink, the PANE overflows and you get a second scrollbar wrapped around the log's own */
+}
+/* When the log is EXPANDED it takes whatever room the pane has left, rather than a fixed slice of the
+   viewport. The old `max-height: 62vh` knew nothing about how tall the stats and cards above it were,
+   so on a full board the pane's content ran past 100vh and the shell grew its own scrollbar
+   alongside the log's — two bars, nested, for one list. */
+.log-wrap:has(.log.long) {
+  flex: 1 1 auto;
 }
 .log-toggle {
   align-self: flex-start;
@@ -516,7 +525,16 @@ body.in-game canvas {
   max-height: 5.4rem; /* ~4 recent lines */
 }
 .log.long {
-  max-height: 62vh; /* fills the tall left pane */
+  flex: 1 1 auto;
+  min-height: 4rem;
+  /* Fills whatever the pane has left (see .log-wrap:has above). The vh value is only a fallback for
+     browsers without :has() — deliberately conservative now, so it cannot push the pane past 100vh. */
+  max-height: 45vh;
+}
+@supports selector(:has(*)) {
+  .log.long {
+    max-height: none;
+  }
 }
 
 .log-line {
@@ -581,6 +599,13 @@ body.in-game canvas {
   background: #334155;
   color: #f8fafc;
   border-color: #94a3b8;
+}
+/* A slot with nothing in it: still perfectly pickable (that is the point — park a card on 7 and leave
+   4-6 empty), just drawn hollow so you can tell at a glance which numbers already hold something. */
+.rebind-key.vacant {
+  border-style: dashed;
+  color: #94a3b8;
+  background: transparent;
 }
 .rebind-key.current {
   background: #0f172a;

@@ -51,20 +51,33 @@ function standableFor(type, opts) {
   if (type === 'door' || type === 'dooropen' || type === 'doorajar') return true; // a door is always walkable — stepping onto a SHUT/closing one (re)opens it (see openDoorsUnderUnits)
   // The two immunities are DISJOINT, on purpose (no overlap): PATHFINDER (Druid) is the woodsman —
   // he threads TREES, wades WATER and treads PITS; PHASE (Sorcerer) is the ghost — it slips WALLS,
-  // ICE and GATES. Neither crosses LAVA.
+  // ICE, GATES and BOULDERS. Neither crosses LAVA.
   //
-  // A BOULDER is not on that list. Phase is for slipping into the dungeon's FABRIC — masonry, a slab,
-  // barred iron: fixed things you can sink into and hide inside. A boulder is loose rock sitting on
-  // the floor, and it is also a thing you SHOVE: letting a phaser occupy one made the push mechanic
-  // incoherent, and (worse) a knockback could hurl him into a rock he had no intention of entering.
-  // Nothing stands in a boulder now, so being shoved at one simply stops him short.
+  // NB: the BORDER STONE that rings the map is 'wall' terrain too, and nothing may enter it — not
+  // even a phaser. That is enforced by coordinate, not by type (see isBorderStone / blockedAt), since
+  // this function only ever sees the type.
   if (type === 'tree') return Boolean(o.pathfinder); // solid timber — only Pathfinder walks through it
   if (type === 'gate') return Boolean(o.phaseWalls); // barred iron — only Phase slips the bars (see-through, though; see blocksSight)
-  if (type === 'wall' || type === 'ice') return Boolean(o.phaseWalls); // masonry & ice slabs — only a phasing mover
-  if (type === 'boulder') return false; // LOOSE STONE stops everyone, phaser included — see below
+  if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // stone, rock & ice slabs — only a phasing mover
   if (type === 'pit') return Boolean(o.flying || o.pitOk || o.pathfinder); // Pathfinder treads the void; a FLYING mover soars it; a BURROWER walks it as solid ground
   if (type === 'lava') return o.lavaOk !== false; // walkable (it sears) unless a caller forbids it — NEITHER immunity gives a lava pass
   return true; // water & normal are walkable
+}
+
+// THE BORDER STONE: the one-tile ring of bedrock that wraps the map. It is stored as ordinary 'wall'
+// terrain, so by type alone a phaser would happily sink into it and walk the rim of the world (or be
+// KNOCKED into it, which is how this surfaced). Nothing may enter it — Phase is for the dungeon's
+// interior masonry, not the shell holding the dungeon in. Judged by COORDINATE, because that is the
+// only thing that distinguishes it from a wall you are meant to be able to slip inside.
+function isBorderStone(x, y) {
+  return x <= 0 || y <= 0 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1;
+}
+
+// standableFor, coordinate-aware: same rules, plus the board's edge and the border stone admit
+// nobody. Prefer this wherever a tile's position is known — standableFor only ever sees the type.
+function standableAt(state, x, y, opts) {
+  if (isBorderStone(x, y)) return false;
+  return standableFor(terrainAt(state, x, y), opts);
 }
 
 // SOLID ground: stone, timber, iron. Nothing alights on top of any of them — only a phasing mover
@@ -230,6 +243,7 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
     // so a turret's shot is stopped by a gate even though the eye and the fog are not. Trees already
     // stop the ray (they block sight); the gate is the one thing sight and shot part ways on.
     let blocked = projectile ? (blocksSight(terrain) || terrain === 'gate') : !standableFor(terrain, o);
+    if (!blocked && isBorderStone(nx, ny)) blocked = true; // the shell of the world takes nobody, phaser included
     // A lava-averse phaser (a non-immune Phasing boss) shuns a burning wall-torch, so it reads as
     // solid to that mover even though it could otherwise slip through the wall.
     if (!blocked && o.torchAverse && terrain === 'wall' && hasTorch(state, nx, ny)) blocked = true;

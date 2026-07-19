@@ -12,7 +12,7 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
@@ -30,7 +30,7 @@ const {
   playerTitle, cardBlockedReason, committedChain, attackTile, isStalemate, knightLPath, BOSS_PERKS,
   fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss,
   tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
-  overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine,
+  overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -1672,17 +1672,43 @@ test('a floor guardian is never a wild beast, whatever kind it is', () => {
   assert.equal(isNeutralBeast(s, amazon), false, 'and an amazon is no longer kin — only knights & nightriders are');
 });
 
-test('Phase slips MASONRY, not loose rock: a wall is walkable, a boulder is still shoved', () => {
-  // Phase is for sinking into the dungeon's fabric — masonry, a slab, barred iron. A boulder is loose
-  // stone sitting on the floor and a thing you PUSH; letting a phaser stand inside one made the shove
-  // incoherent and let a knockback hurl him into a rock he never chose to enter.
+test('Phase lets the king move through a boulder just like a wall', () => {
   const s = sorcererWith('s_swap', 's_phase');
   assert.equal(s.player.phase, true);
-  s.terrain = { '11,10': 'boulder', '10,11': 'wall' };
+  s.terrain = { '11,10': 'boulder' };
+  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10 && !m.push), 'the boulder tile is walkable while phasing');
+});
+
+test('...but NOT the BORDER STONE: the shell of the world takes nobody, phaser or shove', () => {
+  // The border ring is stored as ordinary 'wall', so by TYPE a phaser would sink into it and walk the
+  // rim of the map — or be knocked into it, which is how this surfaced. It is judged by coordinate
+  // (isBorderStone), since position is the only thing separating it from interior masonry.
+  const EDGE = WORLD_SIZE - 1;
+  const build = (px, py) => {
+    const s = sorcererWith('s_swap', 's_phase');
+    s.terrain = {}; s.enemies = []; s.allies = []; s.torches = {};
+    for (let i = 0; i < WORLD_SIZE; i += 1) {
+      s.terrain[`${i},0`] = 'wall'; s.terrain[`${i},${EDGE}`] = 'wall';
+      s.terrain[`0,${i}`] = 'wall'; s.terrain[`${EDGE},${i}`] = 'wall';
+    }
+    s.player.x = px; s.player.y = py;
+    return s;
+  };
+  const s = build(1, 5);
+  s.terrain['2,5'] = 'wall'; // an ORDINARY interior wall, for contrast
   const moves = getPlayerMoves(s);
-  assert.ok(moves.some((m) => m.x === 10 && m.y === 11 && !m.push), 'he still walks into the WALL');
-  assert.ok(!moves.some((m) => m.x === 11 && m.y === 10 && !m.push), 'but he cannot stand inside the boulder');
-  assert.ok(moves.some((m) => m.x === 11 && m.y === 10 && m.push), 'it is offered as a SHOVE, like it is for anyone else');
+  assert.ok(!moves.some((m) => m.x === 0 && m.y === 5), 'he cannot enter the border stone');
+  assert.ok(moves.some((m) => m.x === 2 && m.y === 5 && !m.push), 'but interior masonry is still his to slip into');
+  // Every side of the ring, not just the one the test happened to poke.
+  for (const [bx, by] of [[0, 5], [EDGE, 5], [5, 0], [5, EDGE]]) {
+    assert.equal(standableAt(s, bx, by, { phaseWalls: true }), false, `border (${bx},${by}) admits nobody`);
+  }
+  // And a SHOVE cannot put him there either — he stops short instead.
+  const k = build(1, 5);
+  const foe = makeEnemy({ kind: 'knight', x: 2, y: 5, awake: true, id: 'kn' });
+  k.enemies = [foe];
+  const after = knockbackKing(k, foe);
+  assert.ok(after.player.x >= 1, 'knocked at the wall of the world, he stops against it rather than entering it');
 });
 
 test('Blink never lands the king on a pit', () => {
@@ -1813,7 +1839,7 @@ test('a Flying boss crosses pits, water, and lava freely', () => {
   assert.ok(moves.some((m) => m.x === 11 && m.y === 10), 'flies over the pit');
 });
 
-test('a Phasing boss drifts through MASONRY — but loose rock stops it like everyone else', () => {
+test('a Phasing boss moves and sees through walls and boulders', () => {
   const s = createInitialState('warrior');
   s.terrain = { '11,10': 'boulder', '9,10': 'wall' };
   // Torches live in their OWN map, so replacing `terrain` does not clear them. Leave them and the
@@ -1824,8 +1850,8 @@ test('a Phasing boss drifts through MASONRY — but loose rock stops it like eve
   const boss = makeEnemy({ kind: 'rook', x: 10, y: 10, boss: true, bossPerk: 'phasing', awake: true });
   s.enemies = [boss];
   const moves = getPieceMoves(boss, s);
-  assert.ok(moves.some((m) => m.x === 9 && m.y === 10), 'drifts through the wall');
-  assert.ok(!moves.some((m) => m.x === 11 && m.y === 10), 'but not into the boulder — nothing stands in loose rock now');
+  assert.ok(moves.some((m) => m.x === 11 && m.y === 10), 'drifts through the boulder');
+  assert.ok(moves.some((m) => m.x === 9 && m.y === 10), 'and through the wall');
 });
 
 test('a gun shoots the PHASED king embedded in a wall — the wall is under him, not in the way', () => {

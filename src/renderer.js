@@ -4069,8 +4069,8 @@ const Renderer = (function () {
           } else if (threatCount > 0) {
             // A covered square the king can't reach: ORANGE if it's open ground he simply can't get
             // to, but GRAY if it's IMPASSABLE (a wall / ice / boulder he could never stand on anyway).
-            const passable = typeof standableFor === 'function'
-              && standableFor(type, { phaseWalls: Boolean(state.player.phase), pathfinder: Boolean(state.player.pathfinder) });
+            const passable = typeof standableAt === 'function'
+              && standableAt(state, x, y, { phaseWalls: Boolean(state.player.phase), pathfinder: Boolean(state.player.pathfinder) });
             tileOutline(px, py, passable ? '#f97316' : '#9ca3af', threatCount);
           }
           if (aiming) ctx.restore();
