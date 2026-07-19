@@ -842,7 +842,7 @@ const Renderer = (function () {
     petowner: { color: '#d97706', mark: '❦' }, // a leashed familiar
     hasty: { color: '#facc15', mark: '»' }, // twin chevrons of speed
     burrower: { color: '#7c5b3a', mark: '⧗' }, // a bored shaft
-    fogweaver: { color: '#cbd5e1', mark: '☁' }, // a pale storm cloud
+    steamweaver: { color: '#cbd5e1', mark: '♨' }, // rising vapour — it boils, it does not merely cloud
     wary: { color: '#94a3b8', mark: '⛨' }, // a raised steel guard (matches the ward's steel border)
   };
   function drawBossTraitHat(tileX, tileY, perk, rush) {
@@ -3899,7 +3899,7 @@ const Renderer = (function () {
     geyserStage = (typeof geyserErupting === 'function' && geyserErupting(state)) ? 'erupting'
       : (typeof geyserImminent === 'function' && geyserImminent(state)) ? 'imminent'
         : 'calm';
-    fogNow = state.fog || null; // drifting fog banks (spellfire steam, lava/ice steam, a Fogweaver)
+    fogNow = state.fog || null; // drifting fog banks (spellfire steam, lava/ice steam, a Steamweaver)
     // Premonition (soft-sight) and Sixth Sense (x-ray) both see CLEAR through HAZE — grass, fog and
     // geyser steam. When either is on, the view draws no haze veil at all over what he can see, so the
     // ground and the foes behind the murk read exactly as if it were not there.
@@ -3960,7 +3960,10 @@ const Renderer = (function () {
       if (m.capture || m.chop || m.push) continue; // he does not END his move on these
       const t = terrainAt(state, m.x, m.y);
       const ablaze = t === 'tree' && state.burningTrees && state.burningTrees[`${m.x},${m.y}`];
-      if (t === 'lava' || ablaze || (typeof hasTorch === 'function' && hasTorch(state, m.x, m.y))) harmfulKeys.add(`${m.x},${m.y}`);
+      // STEAM scalds anything standing in it at the end of the turn, so a tile under a bank is exactly
+      // as much of a "the ground bites" move as lava is — and it has to say so BEFORE you step in.
+      const steamed = state.fog && state.fog[`${m.x},${m.y}`] > 0;
+      if (t === 'lava' || ablaze || steamed || (typeof hasTorch === 'function' && hasTorch(state, m.x, m.y))) harmfulKeys.add(`${m.x},${m.y}`);
     }
     // Aiming a card: its target squares outrank the danger boxes (see the outline block below).
     const aiming = Boolean(cardTargets && cardTargets.length);
@@ -4428,15 +4431,26 @@ const Renderer = (function () {
       if (litFn && !litFn(fx, fy)) continue; // never paint fog on ground he cannot see
       const cx = (fx + 0.5) * tileSize;
       const cy = (fy + 0.5) * tileSize;
-      for (let i = 0; i < 5; i += 1) {
-        const ang = (i / 5) * Math.PI * 2 + clock * 0.35 + tileHash(fx + i, fy) * 6.28;
-        const dist = tileSize * (0.1 + 0.13 * (0.5 + 0.5 * Math.sin(clock * 0.5 + i + fx)));
-        const r = tileSize * (0.24 + 0.1 * tileHash(fx, fy + i));
-        ctx.fillStyle = 'rgba(205, 210, 220, 0.16)';
+      // This is SCALDING steam, not weather. It used to be five thin wisps at 0.16 alpha, which read
+      // as a decorative haze — players walked into it because nothing about it looked like it bit.
+      // Now it is a thick, boiling bank: more blobs, wider, denser, and spilling past the tile edge so
+      // a run of fogged tiles merges into one seething mass instead of a row of polite little clouds.
+      for (let i = 0; i < 8; i += 1) {
+        const ang = (i / 8) * Math.PI * 2 + clock * 0.35 + tileHash(fx + i, fy) * 6.28;
+        const dist = tileSize * (0.14 + 0.18 * (0.5 + 0.5 * Math.sin(clock * 0.5 + i + fx)));
+        const r = tileSize * (0.34 + 0.14 * tileHash(fx, fy + i));
+        ctx.fillStyle = 'rgba(214, 219, 228, 0.3)';
         ctx.beginPath();
         ctx.arc(cx + Math.cos(ang) * dist, cy + Math.sin(ang) * dist, r, 0, Math.PI * 2);
         ctx.fill();
       }
+      // A hot core underneath — a faint scalding blush, so the bank carries a hint of the burn it
+      // deals rather than reading as cold mist.
+      const boil = 0.1 + 0.05 * (0.5 + 0.5 * Math.sin(clock * 0.9 + tileHash(fx, fy) * 6.28));
+      ctx.fillStyle = `rgba(248, 200, 170, ${boil.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.38, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   }

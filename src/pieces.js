@@ -299,10 +299,14 @@ function getCardMoves(state, card) {
   if (kind === 'promotion' || kind === 'reload' || kind === 'blink' || kind === 'silence' || kind === 'confuse') {
     return [{ x: p.x, y: p.y, capture: false, viaJump: false, self: true }];
   }
-  // Displacement (swap) can target ANY unit in sight — enemies and turrets alike.
+  // Displacement (swap) can target any unit in sight — enemies and turrets alike. NOT a summoning
+  // circle: that is a rune cut into the floor, not a body standing on it, so there is nothing there to
+  // trade places WITH. (It was also a free teleport to the circle's tile, which destroys it on contact
+  // — a one-card answer to every circle on the board.)
   if (kind === 'swap') {
     const out = [];
     for (const e of state.enemies) {
+      if (e.summonCircle) continue;
       if (inLineOfSight(state, e.x, e.y)) out.push({ x: e.x, y: e.y, capture: false, viaJump: false, swap: true });
     }
     return out;
@@ -595,7 +599,18 @@ function getPieceThreats(piece, state, includeOccupied) {
       let step = 0;
       while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE && ++step <= reach) {
         const t = terrainAt(state, x, y);
-        if (t === 'wall' || t === 'boulder') break;
+        if (t === 'wall' || t === 'boulder') {
+          // Cover stops the gout — but whatever is EMBEDDED in that cover sits on its near face and
+          // is still hit (the phased king in a wall). Mark the tile dangerous, then stop. Without
+          // this the threat map died a tile short of him while the gun itself could still fire,
+          // so the lane read safe right up until the spellfire arrived.
+          // (`unitAt` is not in scope yet — it is declared for the non-piercing path below — and only
+          // the player's side matters for a threat map anyway.)
+          const embeddedTarget = (state.player && state.player.x === x && state.player.y === y)
+            || Boolean(typeof allyAt === 'function' && allyAt(state, x, y));
+          if (embeddedTarget) tiles.push({ x, y });
+          break;
+        }
         tiles.push({ x, y });
         x += dx;
         y += dy;

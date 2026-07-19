@@ -74,7 +74,7 @@ const PURSUIT_TTL_MAX = 10;
 // Having reached the spot where it lost him, a hunter casts on this many tiles further along the way
 // he was heading — the "he must have gone round that corner" guess. One guess per pursuit.
 const PURSUIT_GUESS = 3;
-// FOG: a drifting cloud (spellfire over water, steam off lava/ice, a Fogweaver boss) that blocks the
+// FOG: a drifting cloud (spellfire over water, steam off lava/ice, a Steamweaver boss) that blocks the
 // look for this many turns before it thins away. It is HAZE — Premonition (soft-sight) peers through.
 const FOG_TURNS = 2;
 const MAX_ENEMIES = 90; // A PERFORMANCE ceiling only. The per-floor cap now RISES with overstay (spawns
@@ -209,7 +209,7 @@ const VAMPIRESS_HP = 3;
 
 // Each floor guardian rolls ONE of these boss perks at creation, making every boss
 // fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
-const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen', 'lich', 'warper', 'guardian', 'mechanic', 'hotblooded', 'icygrasp', 'shadowstep', 'anchored', 'gardener', 'petowner', 'hasty', 'burrower', 'fogweaver', 'wary'];
+const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen', 'lich', 'warper', 'guardian', 'mechanic', 'hotblooded', 'icygrasp', 'shadowstep', 'anchored', 'gardener', 'petowner', 'hasty', 'burrower', 'steamweaver', 'wary'];
 // Traits keyed to a REALM: some only demon-kind guardians may roll, some only mortal ones.
 const DEMON_ONLY_PERKS = ['hotblooded', 'icygrasp', 'shadowstep'];
 const MORTAL_ONLY_PERKS = ['gardener'];
@@ -238,7 +238,7 @@ const BOSS_PERK_LABELS = {
   petowner: 'Beastmaster — keeps a ferz familiar beside it, conjuring a new one the moment the last is gone',
   hasty: 'Hasty — moves a second time in a turn, so long as neither step draws blood',
   burrower: 'Burrower — walks on the void unharmed, and tears open a fresh pit to lunge from',
-  fogweaver: 'Fogweaver — breathes out banks of fog around itself each turn, blinding you to the room (Premonition sees through it)',
+  steamweaver: 'Steamweaver — boils out scalding steam around itself each turn, blinding you to the room and searing whatever stands in it (Premonition sees through it)',
   wary: 'Wary — any turn it does NOT end beside you it raises its guard, and the next blow is turned aside. Close with it and it has no time to set itself (lava and steam ignore the guard)',
 };
 // A guardian has NO unique powers — it is simply a piece kind plus rolled BOSS_PERKS, so the player
@@ -390,7 +390,7 @@ const CLASSES = {
       // if it is ever wanted back, but with Displacement at T1 it was a second escape doing the
       // first one's job, and the chain has only three slots.
       // { id: 's_blink', chain: 'Translocations', tier: 1, name: 'Blink', desc: '...', grants: { gainCard: 'blink', gainCooldown: 6 } },
-      { id: 's_swap', chain: 'Translocations', tier: 1, name: 'Displacement', short: 'Card: swap places with any unit; shockwave where you land', desc: 'Gain a swap card: trade places with any unit in sight (cooldown 3). A SHOCKWAVE bursts where you ARRIVE — every other foe beside you is hurled back a tile (slamming into whatever is behind it). The unit you swapped with, and the tile you left, are spared.', grants: { gainCard: 'swap', gainCooldown: 3 } },
+      { id: 's_swap', chain: 'Translocations', tier: 1, name: 'Displacement', short: 'Card: swap places with any unit; shockwave where you land', desc: 'Gain a swap card: trade places with any unit in sight (cooldown 3). A SHOCKWAVE bursts where you ARRIVE — every other foe beside you is hurled back a tile (slamming into whatever is behind it). The unit you swapped with, and the tile you left, are spared. A summoning circle is a rune cut into the floor, not a body — it cannot be swapped with.', grants: { gainCard: 'swap', gainCooldown: 3 } },
       { id: 's_phase', chain: 'Translocations', tier: 2, requires: 's_swap', name: 'Phase', short: 'Walk onto walls and ice (sight shrinks while embedded)', desc: 'Move onto wall AND ice tiles; while embedded in opaque cover (a wall or boulder) your sight shrinks', grants: { phase: true } },
       { id: 's_banish', chain: 'Translocations', tier: 3, requires: 's_phase', name: 'Banish', short: 'Card: erase any foe/turret/mini-boss you see (no reward)', desc: 'Gain a Banish card (cooldown 9): send ANY foe, turret or rogue mini-boss you can see clean out of the world — it is simply gone, leaving nothing but a puff of smoke. A floor guardian is anchored to its key and a summoning circle is a rune in the floor: neither can be shifted', grants: { gainCard: 'banish', gainCooldown: 9 } },
       // 💫 Hexes — the curse-weaver: demote, dazzle, and lull.

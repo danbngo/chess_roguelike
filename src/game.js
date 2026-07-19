@@ -592,6 +592,17 @@ function bossShoutLine(boss) {
   return pool[randomInt(pool.length)];
 }
 
+// A DYING cry, for the bubble that pops the moment a guardian falls — the bookend to its battle-shout.
+// A mortal guardian dies like a man; a demon dies like something being dragged back where it came
+// from; the last boss of all does not get to be dignified about it.
+function bossDeathLine(boss) {
+  const demon = ['AAAIEEEE!', 'The dark takes me!', 'I burn! I BURN!', 'Back... to the pit...', 'You are DAMNED!', 'AAAGH!'];
+  const mortal = ['AAARGH!', 'AIEEE!', 'NOOO!', 'I... fall...', 'It cannot be...', 'Ungh!'];
+  const finale = ['NO! NOT LIKE THIS!', 'IMPOSSIBLE!!', 'THE REALM DIES WITH ME!', 'I AM ETERNAAAL—', 'YOU HAVE DOOMED US ALL!'];
+  const pool = boss.finalBoss ? finale : (isDemonBoss(boss) ? demon : mortal);
+  return pool[randomInt(pool.length)];
+}
+
 // Deal `amount` damage to a boss. Returns 'slain' if it fell, else 'hurt'.
 // A boss perk's short name, for the log ("Brutal — its blows land twice as hard" -> "Brutal").
 
@@ -681,6 +692,13 @@ function damageTurret(state, turret, amount) {
 // it). A conjured "rush" boss (the finale's converging guardians) is pure threat — no boon. The
 // run is NEVER won by a kill now; victory comes only from stepping into the portal with the Orb.
 function defeatBoss(state, boss) {
+  // THE DEATH SCREAM. A floor guardian (and the last boss) always cries out; a MINI-boss only
+  // sometimes — they die often enough that a scream every time would turn a real moment into
+  // punctuation. Rides the same one-shot channel as the battle-shout, flagged `death` so the view
+  // plays the dying wail instead of the bellow.
+  if (boss && (!(boss.mini || boss.rush) || randomInt(3) === 0)) {
+    state.bossShout = { x: boss.x, y: boss.y, text: bossDeathLine(boss), demon: isDemonBoss(boss), death: true };
+  }
   // Badge ledger: remember every TRAIT the felled guardian wore this run, for the "one of each" trophy.
   if (boss && Array.isArray(boss.bossPerks)) {
     if (!state.player.slainBossTraits) state.player.slainBossTraits = {};
@@ -2129,6 +2147,12 @@ function generateFloor(floor, carryPlayer, score) {
   function addMobileEnemy(type, x, y, surprised) {
     const enemy = createEnemy(type, x, y);
     enemy.surprised = Boolean(surprised);
+    // EVERYTHING seeded with the floor starts ASLEEP — posted where it was placed, holding its ground,
+    // doing nothing until the king is seen or lands a blow. That is what makes the initial population
+    // read as a garrison: foes guarding the ground they were put on. Only reinforcements (dread events,
+    // the ambient trickle, summons) arrive already WANDERING, hunting for him — see maybeSpawnEnemy.
+    // Once one wakes it never sleeps again; it wanders or hunts from then on.
+    enemy.asleep = true;
     state.enemies.push(enemy);
     if (!enemyHasMove(state, enemy)) {
       const roster = enemyRosterForFloor(floor); // natives only — never a mortal down in the realm
@@ -2183,7 +2207,7 @@ function generateFloor(floor, carryPlayer, score) {
   // Every initial cohort is scaled to 0.75x for a gentler starting population.
   const initCount = (n) => Math.round(n * 0.75);
 
-  // Wandering off-screen enemies, growing with depth.
+  // The floor's standing garrison — posted off-screen and asleep at their stations, growing with depth.
   const offscreenCount = Math.min(initCount(8 + floor * 4), MAX_ENEMIES);
   for (let i = 0; i < offscreenCount; i += 1) {
     const tile = place((x, y) => standable(x, y) && !seen(x, y) && chebyshev(x, y, player.x, player.y) >= 2);
@@ -2337,7 +2361,7 @@ function generateFloor(floor, carryPlayer, score) {
     const spot = place(insideChamber);
     if (spot) addMobileEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
   }
-  // A thicker screen of mobile guards prowling just OUTSIDE the chamber walls.
+  // A thicker screen of guards posted just OUTSIDE the chamber walls.
   for (let i = 0; i < initCount(4 + Math.floor(floor / 2)); i += 1) {
     const spot = place(nearChamber);
     if (spot) addMobileEnemy(randomEnemyKind(floor), spot.x, spot.y, false);
@@ -2750,7 +2774,11 @@ function passTurn(state) {
   p.lastTileX = p.x;
   p.lastTileY = p.y;
   state.turn += 1;
-  tickFog(state); // drifting fog thins by one turn (spellfire-over-water, lava/ice steam, a Fogweaver)
+  // NB: the steam does NOT thin here. It used to, and that cost every bank a turn of life before
+  // anyone could walk into it: steam laid on turn N was already down one by the time he could step in
+  // on turn N+1, and a geyser's 1-turn vent expired during his move — so walking into a gout of steam
+  // could never burn you, only standing in one when it went off. It now thins at the END of the enemy
+  // phase, straight after tickFogDamage, so a bank scalds for exactly as many turns as it claims.
   state.geyserPhase = (state.geyserPhase || 0) + 1; // the shared geyser clock (every third turn they blow)
   p.totalTurns = (p.totalTurns || 0) + 1;
   const calmHaste = Boolean(p.spellHaste) && getVisibleEnemies(state).length === 0;
@@ -4136,9 +4164,12 @@ function useCard(state, cardIndex, x, y) {
   }
   // Displacement: trade tiles with the targeted unit (no damage), then spend the turn.
   if (card.kind === 'swap') {
-    const unit = next.enemies.find((e) => e.x === x && e.y === y);
+    const unit = next.enemies.find((e) => e.x === x && e.y === y && !e.summonCircle);
     if (!unit) {
-      next.message = 'Nothing to swap with there.';
+      // A summoning circle is a rune in the floor, not a unit — nothing to trade places with.
+      next.message = next.enemies.some((e) => e.x === x && e.y === y && e.summonCircle)
+        ? 'A summoning circle is cut into the floor — there is nothing there to swap with.'
+        : 'Nothing to swap with there.';
       next.lastAction = 'blocked';
       return next;
     }
@@ -5051,7 +5082,36 @@ function wanderEnemy(state, enemy, hidden, roamFreely) {
     // into a statue the moment he looked at it.
     if (hidden || roamFreely || !enemyAwareOfKing(state, dest.x, dest.y)) candidates.push(dest);
   }
-  if (!candidates.length) return null;
+  if (!candidates.length) {
+    // BOXED IN. A wanderer hemmed in by timber and iron does not stand there forever — it takes an axe
+    // to whatever pens it. Only ever as a LAST resort (no step it was willing to take), so a foe with
+    // open ground around it never starts felling the scenery; and only for a foe that is actually
+    // wandering, never a neutral beast, which has no quarrel with a hedge.
+    if (!roamFreely) {
+      const blockers = [];
+      for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+        const bx = enemy.x + dx;
+        const by = enemy.y + dy;
+        if (bx < 0 || bx >= WORLD_SIZE || by < 0 || by >= WORLD_SIZE) continue;
+        const t = terrainAt(state, bx, by);
+        if (t === 'tree' || t === 'gate') blockers.push({ x: bx, y: by, gate: t === 'gate' });
+      }
+      if (blockers.length) {
+        const hit = blockers[randomInt(blockers.length)];
+        const res = damageTree(state, hit.x, hit.y, 1);
+        // Only SAY so if he can see it happen — otherwise every penned foe on the floor narrates its
+        // woodcutting into his log from three rooms away.
+        if (inLineOfSight(state, hit.x, hit.y)) {
+          const what = hit.gate ? 'gate' : 'tree';
+          state.message = res === 'felled'
+            ? `A ${enemy.kind} hacks down a ${what}, forcing its way through!`
+            : `A ${enemy.kind} hammers at a ${what}, penned in.`;
+        }
+        if (res === 'felled') updateDiscovery(state);
+      }
+    }
+    return null;
+  }
   const pick = candidates[randomInt(candidates.length)];
   if (hidden && pick.x === king.x && pick.y === king.y) {
     // It walks straight into the hidden king — an accidental blow that gives him away.
@@ -5317,7 +5377,7 @@ function tickGeysers(state) {
 
 // FOG/STEAM SCALDS. Any unit standing in fog takes 1 damage as its side of the turn comes up — the
 // king (no parry stops the ground, like lava), foes and allies alike; a lesser foe is destroyed, a
-// boss or turret soaks 1. This is now the ONE place geyser steam, spellfire steam and a Fogweaver's
+// boss or turret soaks 1. This is now the ONE place geyser steam, spellfire steam and a Steamweaver's
 // murk all deal their damage. Called once per turn from beginEnemyPhase, AFTER the geysers vent.
 function tickFogDamage(state) {
   if (!state.fog) return;
@@ -5418,7 +5478,8 @@ function beginEnemyPhase(state) {
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
   tickPitFalls(next); // anything that blundered onto a pit (a confused foe) falls in
   tickGeysers(next); // on the third turn, every geyser vents a gout of 1-turn STEAM (fog) over itself
-  tickFogDamage(next); // steam/fog SCALDS whatever stands in it — geyser vents, spellfire steam, a Fogweaver's murk
+  tickFogDamage(next); // steam/fog SCALDS whatever stands in it — geyser vents, spellfire steam, a Steamweaver's murk
+  tickFog(next); // ...and only THEN thins by a turn, so every bank burns for its full advertised life
   tickLavaEncroachment(next); // past max dread: the floor turns molten and closes in on a lingering king
   dislodgeWalledEnemies(next); // SAFETY NET: nudge any ordinary piece a terrain change closed a wall over
   tickTurrets(next); // every turret re-scans: no target in its lane → it idles and drops its lock
@@ -5427,23 +5488,21 @@ function beginEnemyPhase(state) {
 
   for (const enemy of next.enemies) {
     if (enemy.asleep) {
-      // A slumbering foe holds still — but it is asleep, not carved out of stone. It wakes if he
-      // STRIKES it, or if he blunders within arm's reach of it.
+      // ASLEEP is the GUARD state: a foe posted somewhere, holding its ground, doing nothing at all
+      // until the king turns up. It rouses on exactly the same terms a wanderer notices him — it SEES
+      // him (`enemyAwareOfKing`: inside its two-way sight footprint with a clear line) — or he
+      // STRIKES it, or he blunders within arm's reach whether it can see him or not.
       //
-      // A held Silence overrides both: while the hush lasts the room stays down no matter how he
-      // walks through it, which is the entire point of the card (and it already breaks the instant
-      // he strikes anything, elsewhere). Without this guard, adding a wake-on-approach rule for
-      // natural sleepers would have quietly gutted Silence.
+      // Sight here is strictly TWO-WAY. The Oracle's one-way band lets the king watch a sleeper from
+      // outside its notice, which is the whole point of that perk; `enemyAwareOfKing` already reckons
+      // from the awareness footprint rather than the display one, so the band never wakes anything.
+      //
+      // A held Silence overrides all of it: while the hush lasts the room stays down no matter how he
+      // walks through it, which is the entire point of the card (and it already breaks the instant he
+      // strikes anything, elsewhere).
       const near = chebyshev(enemy.x, enemy.y, p.x, p.y);
-      let disturbed = enemy.provoked || near <= 1;
-      // AT THE BARS. A gaol prisoner sits caged behind a GATE — and a gate is see-through iron. So it
-      // WATCHES the king through the bars: if it has a clear line to him with a gate on that line, it
-      // rouses at its full sight range, exactly as a foe standing in the open would notice him, rather
-      // than dozing until he is right at the cell door. (An open-field sleeper has no bars to peer
-      // through, so it still only wakes when he blunders within a tile — you can sneak past it.)
-      if (!disturbed && enemyAwareOfKing(next, enemy.x, enemy.y, false) && lineHasGate(next, enemy.x, enemy.y, p.x, p.y)) {
-        disturbed = true;
-      }
+      const sensesWalls = bossHas(enemy, 'phasing'); // a Phasing boss senses him through stone
+      const disturbed = enemy.provoked || near <= 1 || enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls);
       if (p.silence > 0 || !disturbed) continue;
       enemy.asleep = false;
       enemy.awake = true;
@@ -6856,10 +6915,10 @@ function bossSpawnPet(state, boss) {
 
 // FOGWEAVER: each turn it breathes out a bank of fog on 1-8 tiles around itself, blinding the king to
 // the room. A FREE effect (it still hunts and strikes). Fog is HAZE, so the Oracle's Premonition peers
-// through it. It fogs its OWN tile too, so a Fogweaver is often hidden in its own murk.
+// through it. It fogs its OWN tile too, so a Steamweaver is often hidden in its own murk.
 function bossFog(state, boss) {
   const n = 1 + randomInt(8); // 1..8 tiles this turn
-  // AROUND itself, never its OWN tile — steam scalds, and a Fogweaver must not choke in its own murk.
+  // AROUND itself, never its OWN tile — steam scalds, and a Steamweaver must not choke in its own murk.
   const dirs = [...ORTHO, ...DIAG];
   for (let i = dirs.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [dirs[i], dirs[j]] = [dirs[j], dirs[i]]; }
   let laid = 0;
@@ -7075,7 +7134,7 @@ function bossMove(state, boss) {
   // GARDENER: the wild sometimes grows around it — a FREE effect, so it still acts below.
   if (bossHas(boss, 'gardener') && bossSeenAndHunting(state, boss)) bossGarden(state, boss);
   // FOGWEAVER: breathe out fog around itself — FREE, so it still acts below.
-  if (bossHas(boss, 'fogweaver') && bossSeenAndHunting(state, boss)) bossFog(state, boss);
+  if (bossHas(boss, 'steamweaver') && bossSeenAndHunting(state, boss)) bossFog(state, boss);
   // Volley / Sorcerer: loose a bolt down an open line rather than closing to melee.
   if ((bossHas(boss, 'ranged') || bossHas(boss, 'sorcerer')) && bossRangedAttack(state, boss)) {
     return state;

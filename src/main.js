@@ -504,7 +504,7 @@
     switch (card.kind) {
       case 'promotion': return 'Self-cast: confirm on your own tile. Free action.';
       case 'reload': return 'Self-cast: confirm on your own tile — recharge every other card.';
-      case 'swap': return 'Target any unit in sight to trade places with it; arriving shoves other adjacent foes back a tile.';
+      case 'swap': return 'Target any unit in sight to trade places with it; arriving shoves other adjacent foes back a tile. Summoning circles are cut into the floor and cannot be swapped with.';
       case 'enpassant': return 'Step 1 tile; also strikes one foe you pass (marked ✕).';
       case 'doublestep': return 'Dash the FULL 2 tiles in one direction (capturing at the end).';
       case 'horse': return 'A spectral steed tramples an L-shaped path to an aimed knight tile — you don’t move.';
@@ -729,6 +729,12 @@
       lines.push('Your king');
     }
     lines.push(terrainLabel(tx, ty));
+    // STEAM sits ON the terrain rather than being terrain, so it has its own line — without it, a tile
+    // under a scalding bank described itself as plain floor and the burn came out of nowhere.
+    const steamLeft = gameState.fog && gameState.fog[`${tx},${ty}`];
+    if (steamLeft > 0) {
+      lines.push(`Scalding steam (${steamLeft} turn${steamLeft === 1 ? '' : 's'} left) — blocks sight, and sears anything standing in it each turn`);
+    }
     if (visible) {
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
@@ -744,7 +750,12 @@
           const perk = perks.length ? `; ${perks.join(', ')}` : '';
           tag = ` (${enemy.mini ? 'mini-boss' : 'boss'} — HP ${enemy.hp}/${enemy.maxHp}${perk})`;
         } else {
-          tag = enemy.asleep ? ' (asleep)' : enemy.surprised ? ' (surprised)' : enemy.awake ? ' (hostile)' : '';
+          // The four states, named, because "no tag" left the commonest one (wandering) invisible and
+          // players read it as the same thing as asleep.
+          if (enemy.asleep) tag = ' (asleep — posted here; it does nothing until it sees you or is struck)';
+          else if (enemy.surprised) tag = ' (surprised — it just spotted you and loses this turn)';
+          else if (enemy.lastSeen && enemy.lastSeenTtl > 0) tag = ' (hunting — it is tracking where it last saw you)';
+          else tag = ' (wandering — roaming, looking for you)';
         }
         // Confusion is true of EVERY kind of piece, so it is appended to whatever tag the branches
         // above chose rather than being one more case inside them — a confused turret is still a
@@ -2093,7 +2104,9 @@
     if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
     if (gameState.bossShout) {
       Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text, gameState.bossShout.demon);
-      GameAudio.play('roar');
+      // A dying guardian WAILS; a waking one BELLOWS. Same bubble, opposite sound — the bellow swells
+      // and the wail collapses, so you can hear which one happened without reading the words.
+      GameAudio.play(gameState.bossShout.death ? 'wail' : 'roar');
       gameState.bossShout = null;
     }
   }

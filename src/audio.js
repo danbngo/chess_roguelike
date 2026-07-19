@@ -175,6 +175,18 @@ const GameAudio = (function () {
       // swells WITH the tone rather than decaying away underneath it like an impact's dust.
       noise(t, 1.0, 0.075, { filter: 'bandpass', freq: 420, sweepTo: 130, q: 0.7, hold: true });
     },
+    // A guardian's DYING WAIL — the mirror image of `roar`. The bellow swells and falls from a low
+    // throat (a big thing filling its chest); the wail CRACKS in high and collapses, sliding down
+    // hard and thinning as it goes, because a scream is a thing losing its grip rather than taking a
+    // breath. Slightly shorter than the roar so death lands as a full stop, not another announcement.
+    wail(t) {
+      tone(340, t, 0.9, { type: 'sawtooth', gain: 0.18, slideTo: 88, attack: 0.02 }); // the cry, falling away
+      tone(344, t, 0.9, { type: 'sawtooth', gain: 0.13, slideTo: 86, attack: 0.02 }); // detuned against it — a ragged throat
+      tone(510, t, 0.55, { type: 'square', gain: 0.05, slideTo: 130, attack: 0.02 }); // a thin edge on top: pain, not size
+      tone(170, t, 1.0, { type: 'sawtooth', gain: 0.09, slideTo: 44, attack: 0.03 }); // the octave under it — the body going down
+      // Breath running OUT: a band that closes fast (no `hold`, unlike the roar's swelling gout).
+      noise(t, 0.7, 0.06, { filter: 'bandpass', freq: 900, sweepTo: 160, q: 0.8 });
+    },
     // A dull, low ERROR beep — "that did nothing, and it cost you nothing". Deliberately soft and
     // short: it fires on ordinary fumbles (walking into a wall, readying a weapon while wading), so
     // it must read as a nudge, never as a hit.
@@ -304,7 +316,7 @@ const GameAudio = (function () {
   //   3. VOICE-COUNT DUCKING. Each cue that starts alongside others is quieter than the last, so a
   //      busy turn gets DENSER rather than LOUDER. This is what stops the sum clipping.
   const PRIORITY = {
-    death: 10, win: 10, roar: 10, hit: 9, fanfare: 8, doom: 8, descend: 8, // a guardian's bellow outranks a blow: it is the floor announcing itself
+    death: 10, win: 10, roar: 10, wail: 10, hit: 9, fanfare: 8, doom: 8, descend: 8, // a guardian's bellow outranks a blow: it is the floor announcing itself
     deflect: 7, kill: 6, cast: 6, alarm: 6, fall: 6, unsummon: 5, thrum: 5,
     attack: 5, quaff: 5, pickup: 5, buy: 5, crush: 4, rumble: 4,
     timber: 6, splash: 3, hiss: 3, creak: 3, bonk: 3, chop: 3, nope: 2, swish: 1,

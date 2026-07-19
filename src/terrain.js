@@ -51,10 +51,17 @@ function standableFor(type, opts) {
   if (type === 'door' || type === 'dooropen' || type === 'doorajar') return true; // a door is always walkable — stepping onto a SHUT/closing one (re)opens it (see openDoorsUnderUnits)
   // The two immunities are DISJOINT, on purpose (no overlap): PATHFINDER (Druid) is the woodsman —
   // he threads TREES, wades WATER and treads PITS; PHASE (Sorcerer) is the ghost — it slips WALLS,
-  // ICE, GATES and BOULDERS. Neither crosses LAVA.
+  // ICE and GATES. Neither crosses LAVA.
+  //
+  // A BOULDER is not on that list. Phase is for slipping into the dungeon's FABRIC — masonry, a slab,
+  // barred iron: fixed things you can sink into and hide inside. A boulder is loose rock sitting on
+  // the floor, and it is also a thing you SHOVE: letting a phaser occupy one made the push mechanic
+  // incoherent, and (worse) a knockback could hurl him into a rock he had no intention of entering.
+  // Nothing stands in a boulder now, so being shoved at one simply stops him short.
   if (type === 'tree') return Boolean(o.pathfinder); // solid timber — only Pathfinder walks through it
   if (type === 'gate') return Boolean(o.phaseWalls); // barred iron — only Phase slips the bars (see-through, though; see blocksSight)
-  if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // stone, rock & ice slabs — only a phasing mover
+  if (type === 'wall' || type === 'ice') return Boolean(o.phaseWalls); // masonry & ice slabs — only a phasing mover
+  if (type === 'boulder') return false; // LOOSE STONE stops everyone, phaser included — see below
   if (type === 'pit') return Boolean(o.flying || o.pitOk || o.pathfinder); // Pathfinder treads the void; a FLYING mover soars it; a BURROWER walks it as solid ground
   if (type === 'lava') return o.lavaOk !== false; // walkable (it sears) unless a caller forbids it — NEITHER immunity gives a lava pass
   return true; // water & normal are walkable
@@ -226,7 +233,17 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
     // A lava-averse phaser (a non-immune Phasing boss) shuns a burning wall-torch, so it reads as
     // solid to that mover even though it could otherwise slip through the wall.
     if (!blocked && o.torchAverse && terrain === 'wall' && hasTorch(state, nx, ny)) blocked = true;
-    if (projectile && blocked) break; // a bolt stops at opaque cover (wall/boulder) — never reaches a unit behind it
+    if (projectile && blocked) {
+      // A bolt stops AT opaque cover and never reaches anything behind it — but a unit standing IN
+      // that cover is on its NEAR face, and the bolt gets there first. That is the phased king
+      // embedded in a wall: nothing is in the way, so a turret can shoot him exactly as a slider can
+      // reach out and strike him. Without this the ray died one tile short of him and every gun on
+      // the board read "no target" while he stood in plain view of it.
+      if (unitAt(nx, ny) && isTarget(nx, ny) && groundUsed < maxGround) {
+        stops.push({ x: nx, y: ny, capture: true, embedded: true });
+      }
+      break;
+    }
     if (unitAt(nx, ny)) {
       // Capturing the target costs a ground step; without the range to spend it,
       // the target is out of reach this move (a 1-range king can't pounce two). A capturable

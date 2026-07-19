@@ -12,12 +12,12 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine };`,
 )();
 const {
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
   getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
-  getVisibleBounds, capturableAt, createBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
+  getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
   fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
   advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, getPieceThreats, maybeSpawnEnemy,
   ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast,
@@ -30,7 +30,7 @@ const {
   playerTitle, cardBlockedReason, committedChain, attackTile, isStalemate, knightLPath, BOSS_PERKS,
   fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss,
   tickGeysers, tickFogDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
-  overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow,
+  overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine,
 } = api;
 
 // A bare enemy with the default flags, overridden by `extra`.
@@ -662,7 +662,10 @@ test('a Hardened boss bears a THIRD again as much life', () => {
   for (const floor of [1, 4, 8]) {
     const base = levelForFloor(floor).boss.hp;
     let sawTough = false;
-    for (let i = 0; i < 80; i += 1) {
+    // 80 draws off a 26-perk pool missed 'tough' outright in ~4% of runs per floor — this test failed
+    // at random maybe one run in eight, for no reason connected to the Hardened perk. 500 puts the
+    // miss rate somewhere under one in a million.
+    for (let i = 0; i < 500; i += 1) {
       const b = createBoss(floor, 9, 8);
       if (bossHas(b, 'tough')) { sawTough = true; assert.equal(b.maxHp, Math.ceil(base * 4 / 3), `floor ${floor}: a third again on ${base}`); }
       else assert.equal(b.maxHp, base, `floor ${floor}: an ordinary guardian carries its authored pool`);
@@ -1669,11 +1672,17 @@ test('a floor guardian is never a wild beast, whatever kind it is', () => {
   assert.equal(isNeutralBeast(s, amazon), false, 'and an amazon is no longer kin — only knights & nightriders are');
 });
 
-test('Phase lets the king move through a boulder just like a wall', () => {
+test('Phase slips MASONRY, not loose rock: a wall is walkable, a boulder is still shoved', () => {
+  // Phase is for sinking into the dungeon's fabric — masonry, a slab, barred iron. A boulder is loose
+  // stone sitting on the floor and a thing you PUSH; letting a phaser stand inside one made the shove
+  // incoherent and let a knockback hurl him into a rock he never chose to enter.
   const s = sorcererWith('s_swap', 's_phase');
   assert.equal(s.player.phase, true);
-  s.terrain = { '11,10': 'boulder' };
-  assert.ok(getPlayerMoves(s).some((m) => m.x === 11 && m.y === 10 && !m.push), 'the boulder tile is walkable while phasing');
+  s.terrain = { '11,10': 'boulder', '10,11': 'wall' };
+  const moves = getPlayerMoves(s);
+  assert.ok(moves.some((m) => m.x === 10 && m.y === 11 && !m.push), 'he still walks into the WALL');
+  assert.ok(!moves.some((m) => m.x === 11 && m.y === 10 && !m.push), 'but he cannot stand inside the boulder');
+  assert.ok(moves.some((m) => m.x === 11 && m.y === 10 && m.push), 'it is offered as a SHOVE, like it is for anyone else');
 });
 
 test('Blink never lands the king on a pit', () => {
@@ -1804,7 +1813,7 @@ test('a Flying boss crosses pits, water, and lava freely', () => {
   assert.ok(moves.some((m) => m.x === 11 && m.y === 10), 'flies over the pit');
 });
 
-test('a Phasing boss moves and sees through walls and boulders', () => {
+test('a Phasing boss drifts through MASONRY — but loose rock stops it like everyone else', () => {
   const s = createInitialState('warrior');
   s.terrain = { '11,10': 'boulder', '9,10': 'wall' };
   // Torches live in their OWN map, so replacing `terrain` does not clear them. Leave them and the
@@ -1815,8 +1824,65 @@ test('a Phasing boss moves and sees through walls and boulders', () => {
   const boss = makeEnemy({ kind: 'rook', x: 10, y: 10, boss: true, bossPerk: 'phasing', awake: true });
   s.enemies = [boss];
   const moves = getPieceMoves(boss, s);
-  assert.ok(moves.some((m) => m.x === 11 && m.y === 10), 'drifts through the boulder');
-  assert.ok(moves.some((m) => m.x === 9 && m.y === 10), 'and through the wall');
+  assert.ok(moves.some((m) => m.x === 9 && m.y === 10), 'drifts through the wall');
+  assert.ok(!moves.some((m) => m.x === 11 && m.y === 10), 'but not into the boulder — nothing stands in loose rock now');
+});
+
+test('a gun shoots the PHASED king embedded in a wall — the wall is under him, not in the way', () => {
+  // A slider can already reach out and strike him where he stands in the masonry. A projectile could
+  // not: the ray broke AT the cover before it ever checked whether somebody was standing in it, so
+  // every turret on the board read "no target" while he stood in plain view of it, one tile away.
+  const probe = ({ fire, gap, kingTerrain, between }) => {
+    const s = createInitialState('sorcerer', 'easy');
+    s.terrain = {}; s.enemies = []; s.allies = []; s.torches = {};
+    s.player.x = 10; s.player.y = 10; s.player.phase = true;
+    if (kingTerrain) s.terrain['10,10'] = kingTerrain;
+    if (between) s.terrain['9,10'] = between;
+    const gun = makeTurret(s, 'rook', 10 - gap, 10);
+    gun.fire = Boolean(fire);
+    gun.awake = true;
+    s.enemies = [gun];
+    return { targets: turretTargetsKing(s, gun), threats: getPieceThreats(gun, s) };
+  };
+  for (const fire of [false, true]) {
+    const what = fire ? 'fire turret' : 'turret';
+    assert.ok(probe({ fire, gap: 1 }).targets, `${what}: open ground, adjacent`);
+    assert.ok(probe({ fire, gap: 1, kingTerrain: 'wall' }).targets, `${what}: he is IN the wall, one tile off — it shoots him`);
+    assert.ok(probe({ fire, gap: 3, kingTerrain: 'wall' }).targets, `${what}: and from down the lane`);
+    // The threat map must agree, or the lane reads safe right up until the bolt lands.
+    const r = probe({ fire, gap: 3, kingTerrain: 'wall' });
+    assert.ok(r.threats.some((t) => t.x === 10 && t.y === 10), `${what}: and his tile is MARKED dangerous`);
+    // CONTROL: real cover between them still stops it dead.
+    assert.ok(!probe({ fire, gap: 3, between: 'wall' }).targets, `${what}: a wall IN THE WAY still blocks`);
+  }
+});
+
+test('a felled guardian SCREAMS — always for a floor boss, sometimes for a mini', () => {
+  const slay = (make) => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    const b = make(s);
+    defeatBoss(s, b);
+    return s.bossShout;
+  };
+  const boss = slay((s) => { const b = createBoss(3, 9, 8); b.x = 9; b.y = 8; return b; });
+  assert.ok(boss, 'a floor guardian always cries out');
+  assert.equal(boss.death, true, 'flagged as a DEATH cry, so the view wails instead of bellowing');
+  assert.ok(boss.text && boss.text.length, 'with actual words in it');
+  assert.equal(boss.x, 9, 'over the body');
+  // A MINI dies often enough that a scream every time would be punctuation — so it is occasional.
+  let screams = 0;
+  for (let i = 0; i < 300; i += 1) {
+    if (slay((s) => makeMiniBoss(s, 'rook', 9, 8))) screams += 1;
+  }
+  assert.ok(screams > 30 && screams < 270, `a mini screams sometimes, not always (${screams}/300)`);
+  // The finale gets its own pool, distinct from a common guardian's.
+  const last = { finalBoss: true, kind: 'amazon' };
+  const finaleLines = new Set();
+  for (let i = 0; i < 200; i += 1) finaleLines.add(bossDeathLine(last));
+  const mortalLines = new Set();
+  for (let i = 0; i < 200; i += 1) mortalLines.add(bossDeathLine({ kind: 'rook' }));
+  assert.ok([...finaleLines].every((l) => !mortalLines.has(l)), 'the last boss does not borrow a common guardian’s last words');
 });
 
 test('a boss bolt shatters a boulder in its path to the king', () => {
@@ -2710,11 +2776,20 @@ test('FOG blocks the look while it lingers, Premonition peers through it, and it
   oracle.player.x = 10; oracle.player.y = 10;
   oracle.fog = { '11,10': 2 };
   assert.equal(hasLineOfSight(oracle, 10, 10, 12, 10, 'soft'), true, 'soft-sight sees straight through the murk');
-  // It thins by one each turn and is gone after FOG_TURNS.
-  passTurn(s);
-  assert.ok(s.fog['11,10'] > 0, 'still lingering after one turn');
-  passTurn(s);
-  assert.ok(!s.fog['11,10'], 'and gone after two');
+  // It thins by one per TURN — but at the end of the enemy phase, AFTER the scald has been dealt out,
+  // never during his own move. Thinning it in passTurn cost every bank a turn of life before anyone
+  // could walk into it, so a gout of steam could only ever burn whoever was already standing in it.
+  let n = beginEnemyPhase(s).state;
+  assert.ok(n.fog['11,10'] > 0, 'still lingering after one turn');
+  n = beginEnemyPhase(n).state;
+  assert.ok(!n.fog['11,10'], 'and gone after two');
+  // And the king's OWN move must not thin it — that was the off-by-one.
+  const held = createInitialState('warrior');
+  held.terrain = {}; held.enemies = [];
+  held.player.x = 10; held.player.y = 10;
+  held.fog = { '11,10': 2 };
+  passTurn(held);
+  assert.equal(held.fog['11,10'], 2, 'his own turn leaves the bank at full strength');
 });
 
 test('a FIREBALL bursts against an ICE slab — where an ordinary bolt would merely stop', () => {
@@ -4120,22 +4195,28 @@ test('a gaol always seats its prisoners (they are not pruned as frozen pieces)',
   assert.ok(gaols >= 1, 'the run produced at least one gaol to check');
 });
 
-test('a caged prisoner WATCHES through its gate — it wakes at sight range, but an open-field sleeper does not', () => {
-  const caged = (ky) => {
+test('a sleeper is a POSTED GUARD: it rouses the moment it sees the king — but stone still hides him', () => {
+  // The model: asleep = holding its ground, does nothing until it SEES him (or he strikes it, or he
+  // walks into arm's reach). Sight is the same reckoning a wanderer uses, so a cell's gate — see-through
+  // iron — wakes the prisoner behind it, while a solid wall does not.
+  const rouses = (terrain, ky) => {
     const s = createInitialState('warrior');
-    s.terrain = { '10,11': 'gate' }; // the cell door, between the rook and the king below
+    s.terrain = terrain;
     s.player.x = 10; s.player.y = ky;
     s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 10, asleep: true, awake: false, id: 'r' })];
     return !beginEnemyPhase(s).state.enemies.find((e) => e.id === 'r').asleep;
   };
-  assert.ok(caged(13), 'through the bars it spots the king three tiles off and rouses');
-  assert.ok(caged(12), 'and closer, of course');
-  // CONTROL: no gate between them — an ordinary sleeper dozes until he is nearly on top of it.
-  const s = createInitialState('warrior');
-  s.terrain = {};
-  s.player.x = 10; s.player.y = 13;
-  s.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 10, asleep: true, awake: false, id: 'o' })];
-  assert.equal(beginEnemyPhase(s).state.enemies.find((e) => e.id === 'o').asleep, true, 'the open-field sleeper is unroused (you can sneak it)');
+  assert.ok(rouses({}, 13), 'in the open it spots him three tiles off and rouses');
+  assert.ok(rouses({}, 12), 'and closer, of course');
+  assert.ok(rouses({ '10,11': 'gate' }, 13), 'a cell gate is see-through iron — the prisoner watches him through the bars');
+  // CONTROL: a solid WALL on the line. It cannot see him, so it sleeps on and he can slip past.
+  assert.ok(!rouses({ '10,11': 'wall' }, 13), 'a wall on the line hides him — it sleeps on');
+  // ...but blundering within a tile wakes it whatever is between them.
+  const near = createInitialState('warrior');
+  near.terrain = {};
+  near.player.x = 10; near.player.y = 11;
+  near.enemies = [makeEnemy({ kind: 'rook', x: 10, y: 10, asleep: true, awake: false, id: 'n' })];
+  assert.equal(beginEnemyPhase(near).state.enemies.find((e) => e.id === 'n').asleep, false, 'arm’s reach wakes it regardless');
 });
 
 test('land ringed by lava gets a DRY bridge — never a marooned island', () => {
