@@ -107,6 +107,29 @@ function rallyHorses(state) {
   return horses.length;
 }
 
+// When Animal Form wears off the herd disbands — every horse it rallied (`charmed`) reverts to a
+// WILD horse and gallops off on its own again (neutral, since the Druid still has Wild Empathy). The
+// rally was the whole runaway strength of the Druid: a permanent, growing warband it kept forever.
+// The horses only serve while the king IS the beast; the moment he is a man again, they are wild.
+function unrallyHorses(state) {
+  if (!Array.isArray(state.allies)) return 0;
+  const charmed = state.allies.filter((a) => a.charmed);
+  if (!charmed.length) return 0;
+  state.allies = state.allies.filter((a) => !a.charmed);
+  let freed = 0;
+  for (const a of charmed) {
+    const taken = (state.player.x === a.x && state.player.y === a.y)
+      || (state.enemies || []).some((e) => e.x === a.x && e.y === a.y)
+      || (state.allies || []).some((o) => o.x === a.x && o.y === a.y);
+    if (taken) continue; // its old ground is occupied — the horse simply scatters and is gone
+    const horse = createEnemy(a.kind, a.x, a.y);
+    horse.awake = false; // a wild horse again — Wild Empathy keeps it neutral (isNeutralBeast)
+    state.enemies.push(horse);
+    freed += 1;
+  }
+  return freed;
+}
+
 // The uncollected floor key sits on this tile — enemies and structures may never enter
 // or spawn on it (only the king may walk over it, to collect it).
 function keyTileAt(state, x, y) {
@@ -455,14 +478,50 @@ function puffSmoke(state, x, y) {
   state.puffs.push({ x, y });
 }
 
+// Queue a GRAY SCORCH puff at (x,y) — drifts up wherever lava or fire seared a unit (king, foe or
+// ally). Drained in main.js's applyState (see Renderer.smoke).
+function addSmoke(state, x, y) {
+  if (!state) return;
+  if (!Array.isArray(state.smoke)) state.smoke = [];
+  state.smoke.push({ x, y });
+}
+
+// FOG: a drifting cloud that blocks the LOOK (like tall grass — it is HAZE, so soft-sight sees through
+// it) for FOG_TURNS before it thins. Stored as an overlay map "x,y" -> turns left, ticked in passTurn.
+// Kept separate from `terrain`, like torches and burning trees, so it never overwrites the ground.
+function addFog(state, x, y, turns) {
+  if (!state || x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) return;
+  if (!state.fog) state.fog = {};
+  const k = `${x},${y}`;
+  state.fog[k] = Math.max(state.fog[k] || 0, turns || FOG_TURNS);
+}
+function fogAt(state, x, y) {
+  return Boolean(state && state.fog && state.fog[`${x},${y}`] > 0);
+}
+function tickFog(state) {
+  if (!state.fog) return;
+  for (const k in state.fog) {
+    state.fog[k] -= 1;
+    if (state.fog[k] <= 0) delete state.fog[k];
+  }
+}
+
+// A boulder rolling into a hazard makes the hazard's own sound as it swallows the rock: a SPLASH into
+// water, a HISS into lava (which also gouts steam — see the fog it leaves), a distant FALL into a pit.
+function cueHazardFill(state, t, x, y) {
+  if (t === 'water') cue(state, 'splash');
+  else if (t === 'lava') { cue(state, 'hiss'); addSmoke(state, x, y); addFog(state, x, y); } // molten rock flashes the boulder to steam/fog
+  else if (t === 'pit') cue(state, 'fall');
+}
+
 // The sound of the ground the king is STANDING on. Only the tile he ends on ever sounds: a leap
 // passes clean OVER water without touching it, so nothing under the arc is cued — but a leap that
-// LANDS in water still splashes. Fairy Wings (terrainImmune) flits over all of it untouched.
+// LANDS in water still splashes. Pathfinder wades WATER quietly (no splash), but LAVA still sears it,
+// so the lava hiss stays.
 function cueStandingOn(state) {
   const p = state.player;
-  if (p.terrainImmune) return;
   const t = terrainAt(state, p.x, p.y);
-  if (t === 'water') cue(state, 'splash');
+  if (t === 'water') { if (!p.pathfinder) cue(state, 'splash'); }
   else if (t === 'lava') cue(state, 'hiss');
   else if (t === 'devilgrass') cue(state, 'swish');
   if (hasTorch(state, p.x, p.y)) cue(state, 'hiss'); // only a phaser can stand inside a burning wall
@@ -695,8 +754,8 @@ function checkDeath(state) {
 function rollMitigation(state, attacker) {
   const player = state.player;
   let mit = null;
-  if (player.promotion > 0 || player.invuln) {
-    mit = 'invuln'; // the promoted warhorse, or a Sentinel WAITING out the turn, takes no damage
+  if (player.invuln) {
+    mit = 'invuln'; // a Sentinel WAITING out the turn takes no damage (Animal Form no longer does — it is fast, not invulnerable)
   } else if (player.warded) {
     mit = 'parry';
   } else if (player.firstHitEachTurn && player.guardUp) {
@@ -711,22 +770,29 @@ function rollMitigation(state, attacker) {
     // spend a turn covering up, bank one hit — and it survives you taking the fight to them.
     player.guardUp = false;
     mit = 'ward';
-    // REFLECT (Sentinel T3): the guard BITES BACK. A foe whose blow it turns aside takes 1 damage —
-    // a lesser piece dies to the point, a boss or turret soaks it. Never a boulder (no foe) or a rune.
-    if (player.reflect && attacker && !attacker.summonCircle) {
-      if (attacker.boss) damageBoss(state, attacker, 1);
-      else if (attacker.turret) damageTurret(state, attacker, 1);
-      else if (isCapturable(state, attacker)) resolveKill(state, attacker);
-    }
   }
   if (mit) player.deflected = true;
   return mit;
+}
+
+// REFLECT (Sentinel T3): the king RIPOSTES. ANY foe that strikes him and ENDS its turn adjacent is cut
+// down where it stands — a counter-blow struck out of turn, whether or not the blow was parried. A
+// lesser piece dies to it; a boss or turret soaks 1. Ranged attackers (a turret or bolt-boss across
+// the room) are never adjacent, so they are safe. Sets `reflectAt` so the view can play the counter.
+function applyReflect(state, attacker) {
+  if (!state.player.reflect || !attacker || attacker.summonCircle || state.gameOver || state.won) return;
+  if (chebyshev(attacker.x, attacker.y, state.player.x, state.player.y) > 1) return;
+  if (!state.enemies.some((e) => e.id === attacker.id)) return; // already gone (e.g. its own blow felled it)
+  state.reflectAt = { x: attacker.x, y: attacker.y };
+  if (attacker.boss) damageBoss(state, attacker, 1);
+  else if (attacker.turret) damageTurret(state, attacker, 1);
+  else if (isCapturable(state, attacker)) resolveKill(state, attacker);
 }
 function mitigationMessage(mit, kind) {
   // The FOE is the actor here, and the wording has to say so. "The warhorse charges through a rook"
   // read as the KING doing something — so the log never once told the player he was being attacked,
   // and the whole board looked like it had stopped fighting back.
-  if (mit === 'invuln') return `A ${kind} hurls itself at the warhorse and breaks against it!`;
+  if (mit === 'invuln') return `A ${kind} strikes the waiting king — but the blow finds nothing to wound!`;
   if (mit === 'parry') return `The king parries a ${kind}!`;
   if (mit === 'ward') return `A ward absorbs a ${kind}'s blow!`;
   return `The king shrugs off a ${kind}!`;
@@ -750,7 +816,7 @@ const PERK_FLAGS = [
   'revealFloor', 'spellHaste', 'freeSpell', 'spellSurprise',
   'meleeCleave', 'meleeLeech', 'rangedRapid', 'spellDazzle',
   'meleeRefund', 'meleePierce', 'leapShock', 'meleeFlourish',
-  'terrainImmune', 'seeThroughWalls', 'trueSight', 'seeAllFoes', 'beastFriend', 'elusive', 'camouflage', 'recoil', 'shrapnel',
+  'pathfinder', 'seeThroughWalls', 'trueSight', 'seeAllFoes', 'beastFriend', 'elusive', 'camouflage', 'recoil', 'shrapnel',
   'phase', 'hexDemote', 'doubleCast',
   'familiar', 'necromancy', 'generalForm',
   // Innate CLASS traits (granted at createPlayer, never rolled): the Warrior's hold-your-ground, the
@@ -777,10 +843,12 @@ function cardUnusableReason(state, card) {
   // ANIMAL FORM: he roams as the warhorse and wields nothing.
   if (p.promotion > 0) return 'The warhorse needs no cards — strike by leaping.';
   const under = terrainAt(state, p.x, p.y);
-  // Wading: both hands are busy keeping him upright. Winged Boots (terrainImmune) carry him over
-  // it, and a self-cast ability needs no hands at all.
-  if (isSlowTerrain(under) && !p.terrainImmune && !isAbilityCard(card)) {
-    return `You can't ready a weapon while wading through ${under}.`;
+  // Wading WATER ties up both hands keeping him upright, so he can't ready a weapon there (Pathfinder
+  // wades at a walk, hands free). LAVA no longer blocks a card — it only SEARS (see passTurn): dashing
+  // across fire is dangerous, not disarming. A self-cast ability needs no hands at all.
+  if (under === 'water' && !p.pathfinder && !isAbilityCard(card)) {
+    const noun = classCategory(p.className) === 'spell' ? 'spell' : classCategory(p.className) === 'ranged' ? 'bow' : 'weapon';
+    return `You can't ready a ${noun} while wading through ${under}.`;
   }
   return null;
 }
@@ -889,6 +957,8 @@ function createPlayer(classKey) {
     pitDived: false, // escaped a corner by diving into a pit
     slainBossTraits: {}, // every boss/mini trait felled THIS run (for the "one of each" trophy)
     killedFoeWithFoe: false, // shoved one into another hard enough to end it
+    killStreak: 0, // consecutive turns (right now) on each of which he felled a foe
+    bestKillStreak: 0, // the longest such run this game (feeds the kill-streak trophies)
     bossKilledAsBeast: false, // felled a guardian while in Animal Form
     finishedFloorOnOneHeart: false,
     maxCardsHeld: 0,
@@ -2439,6 +2509,11 @@ function nextFloor(state) {
   const healed = { ...state.player, hp: state.player.maxHp };
   healed.cards = (healed.cards || []).map((c) => ({ ...c, remaining: 0 }));
   healed.extraLifeUsed = false;
+  // Transformations END at the stair — the king walks onto the floor below as a MAN, never mid-form.
+  // (Animal Form's rallied horses were this floor's; the new floor spawns its own, so nothing to undo.)
+  healed.promotion = 0;
+  healed.invuln = false;
+  healed.silence = 0;
   // Badge ledger: he just took a WHOLE floor start-to-stair. Bank it if he did it unbloodied, then
   // wipe the slate for the floor below. maxFloorTurns is banked in passTurn as the floor runs.
   if (!healed.hitThisFloor) healed.clearedFloorUnhit = true;
@@ -2566,6 +2641,14 @@ function addScrap(state, x, y) {
 
 // One turn's upkeep: age counters, recharge cards, fade blood, and lapse wards.
 function passTurn(state) {
+  // KILL STREAK: turns in an unbroken row on each of which he felled at least one foe. Read the tally
+  // from the action just resolved BEFORE it is wiped below; a turn with no kill breaks the streak.
+  if ((state.player.killsThisTurn || 0) > 0) {
+    state.player.killStreak = (state.player.killStreak || 0) + 1;
+    state.player.bestKillStreak = Math.max(state.player.bestKillStreak || 0, state.player.killStreak);
+  } else {
+    state.player.killStreak = 0;
+  }
   state.player.killsThisTurn = 0; // badge ledger: a fresh turn, a fresh tally (maxKillsInTurn is banked as they land)
   const p = state.player;
   // What he is standing on, sounded ONCE on arrival — a turn he did not move must not re-splash,
@@ -2574,6 +2657,7 @@ function passTurn(state) {
   p.lastTileX = p.x;
   p.lastTileY = p.y;
   state.turn += 1;
+  tickFog(state); // drifting fog thins by one turn (spellfire-over-water, lava/ice steam, a Fogweaver)
   state.geyserPhase = (state.geyserPhase || 0) + 1; // the shared geyser clock (every third turn they blow)
   p.totalTurns = (p.totalTurns || 0) + 1;
   const calmHaste = Boolean(p.spellHaste) && getVisibleEnemies(state).length === 0;
@@ -2623,7 +2707,7 @@ function passTurn(state) {
       }
     }
   }
-  if (p.promotion > 0) p.promotion -= 1; // Promotion (horse form) wears off after its turns elapse
+  if (p.promotion > 0) { p.promotion -= 1; if (p.promotion === 0) unrallyHorses(state); } // form ends -> the herd scatters back to the wild
   // SILENCE holds for its full run of turns now — striking a foe no longer snuffs the WHOLE hush.
   // Instead only the foe he HITS wakes (damageBoss wakes a struck guardian; a lesser foe just dies),
   // and the rest of the room sleeps on, so he can pick a hushed room apart one piece at a time. That
@@ -2639,26 +2723,27 @@ function passTurn(state) {
       }
     }
   }
-  // Lava sears the king for 1 HP each turn he ends on it (Winged Boots / terrainImmune
-  // negates it). He CAN cross lava now — it just costs blood.
-  if (terrainAt(state, p.x, p.y) === 'lava' && !p.terrainImmune) { // Waiting does NOT stop the GROUND — only lava-crossing Fairy Wings does
+  // Lava sears the king for 1 HP each turn he ends on it. NOTHING negates it now — not Pathfinder
+  // (no lava pass), not Waiting (the ground is not a blow). He CAN cross lava; it just costs blood.
+  if (terrainAt(state, p.x, p.y) === 'lava') {
     p.hp -= 1;
     p.wasHit = true; p.hitThisFloor = true;
     addSpatter(state, p.x, p.y);
+    addSmoke(state, p.x, p.y);
     hurtBy(state, 'lava');
     p.burnedByFire = true; // badge ledger: fire has touched him
     if (state.message) state.message += ' The lava sears the king!';
     else state.message = 'The lava sears the king!';
     checkDeath(state);
   }
-  // A tree ABLAZE around him sears exactly as a wall-torch does: same fire, same price. Only Phase
-  // can put him inside a trunk and only spellfire can light one, so it is a rare corner — but taking
-  // no harm whatever while stood in the middle of a burning tree was plainly wrong when the torch
-  // one tile over costs a heart.
-  if (state.burningTrees && state.burningTrees[`${p.x},${p.y}`] && !p.terrainImmune) {
+  // A tree ABLAZE around him sears exactly as a wall-torch does: same fire, same price. A PATHFINDER
+  // can walk through a trunk now, so this is his risk to run — timber is his road, but a BURNING road
+  // still burns (Pathfinder is no lava/fire pass).
+  if (state.burningTrees && state.burningTrees[`${p.x},${p.y}`]) {
     p.hp -= 1;
     p.wasHit = true; p.hitThisFloor = true;
     addSpatter(state, p.x, p.y);
+    addSmoke(state, p.x, p.y);
     hurtBy(state, 'burningtree');
     p.burnedByFire = true; // badge ledger: fire has touched him
     if (state.message) state.message += ' The burning tree sears the king!';
@@ -2666,11 +2751,12 @@ function passTurn(state) {
     checkDeath(state);
   }
   // A wall-torch sears the phasing king for 1 HP each turn he ends EMBEDDED in it — the same price
-  // lava exacts (Winged Boots / terrainImmune negates it). Only the Phase perk can put him there.
-  if (hasTorch(state, p.x, p.y) && !p.terrainImmune) {
+  // lava exacts. Only the Phase perk can put him inside a wall at all.
+  if (hasTorch(state, p.x, p.y)) {
     p.hp -= 1;
     p.wasHit = true; p.hitThisFloor = true;
     addSpatter(state, p.x, p.y);
+    addSmoke(state, p.x, p.y);
     hurtBy(state, 'torch');
     p.burnedByFire = true; // badge ledger: fire has touched him
     if (state.message) state.message += ' The wall-torch sears the king!';
@@ -2774,14 +2860,14 @@ function getPlayerMoves(state) {
     moves.push({ x: tile.x, y: tile.y, viaJump: Boolean(tile.viaJump), capture: Boolean(tile.capture), push: Boolean(tile.push), chop: Boolean(tile.chop), embedded: Boolean(tile.embedded), pitDive: Boolean(tile.pitDive) });
   };
   if (p.promotion > 0) {
-    // Animal Form (Druid): the king becomes an invincible UNICORN — it glides like a bishop AND
+    // Animal Form (Druid): the king becomes a swift UNICORN — it glides like a bishop AND
     // rides like a nightrider for a few turns, taking no damage and playing no cards. Click/target
     // any reachable tile.
-    const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
+    const opts = { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) };
     for (const t of generateMoves('unicorn', state, p.x, p.y, enemyAt, isEnemy, opts)) add(t);
     return moves;
   }
-  const opts = { terrainImmune: Boolean(p.terrainImmune), phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) };
+  const opts = { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) };
   for (const [dx, dy] of [...ORTHO, ...DIAG]) {
     const stops = slideStops(state, p.x, p.y, dx, dy, p.moveRange, enemyAt, isEnemy, opts);
     // The king must COMMIT to the full slide (his moveRange) — he can only stop short
@@ -2801,8 +2887,8 @@ function getPlayerMoves(state) {
   }
   // PIT DIVE — a last resort offered ONLY when he is otherwise STRANDED (not one other move on the
   // board): he scrambles down into an adjacent pit and hauls himself out the nearest side for a
-  // wound, rather than being stalemated on the spot. A terrain-immune king already walks pits freely.
-  if (!moves.length && !p.terrainImmune) {
+  // wound, rather than being stalemated on the spot. A Pathfinder king already treads pits freely.
+  if (!moves.length && !p.pathfinder) {
     for (const [dx, dy] of [...ORTHO, ...DIAG]) {
       if (terrainAt(state, p.x + dx, p.y + dy) === 'pit') add({ x: p.x + dx, y: p.y + dy, pitDive: true });
     }
@@ -2812,8 +2898,15 @@ function getPlayerMoves(state) {
 
 /* -------------------------------- boulders -------------------------------- */
 
+// The floor's DOWNSTAIR — a boulder must never be shoved onto it (it would bury the way out, and a
+// boulder can't be pushed off an exit tile cleanly). The uncollected key is guarded the same way.
+function boulderBlockedTile(state, x, y) {
+  if (keyTileAt(state, x, y)) return true; // never bury the floor key
+  if (state.exit && x === state.exit.x && y === state.exit.y) return true; // never bury the downstair
+  return false;
+}
 // Can the king shove the boulder at (bx,by) one step in (dx,dy)? The tile beyond must be
-// on-board, not a wall/boulder, hold no unit, and not be the floor key.
+// on-board, not a wall/boulder, hold no unit, and not the floor key or the downstair.
 function canPushBoulder(state, bx, by, dx, dy) {
   const tx = bx + dx;
   const ty = by + dy;
@@ -2822,7 +2915,7 @@ function canPushBoulder(state, bx, by, dx, dy) {
   if (t === 'wall' || t === 'boulder' || t === 'ice') return false; // an ice slab stops a shove like a wall
   if (tx === state.player.x && ty === state.player.y) return false;
   if (state.enemies.some((e) => e.x === tx && e.y === ty) || allyAt(state, tx, ty)) return false;
-  if (keyTileAt(state, tx, ty)) return false; // never bury the floor key
+  if (boulderBlockedTile(state, tx, ty)) return false; // never bury the key or the downstair
   return true;
 }
 // Shove the boulder at (bx,by) one step. Driven into a PIT / LAVA / WATER it FILLS the
@@ -2835,6 +2928,7 @@ function pushBoulder(state, bx, by, dx, dy) {
   const t = terrainAt(state, tx, ty);
   delete state.terrain[`${bx},${by}`]; // the boulder leaves its tile
   if (t === 'pit' || t === 'lava' || t === 'water') {
+    cueHazardFill(state, t, tx, ty);
     delete state.terrain[`${tx},${ty}`]; // hazard filled, boulder consumed
   } else {
     state.terrain[`${tx},${ty}`] = 'boulder';
@@ -2860,8 +2954,9 @@ function pushBoulderFar(state, bx, by, dx, dy, dist) {
     if (t === 'wall' || t === 'boulder' || t === 'ice') break;
     if (nx === state.player.x && ny === state.player.y) break;
     if (state.enemies.some((e) => e.x === nx && e.y === ny) || allyAt(state, nx, ny)) break;
-    if (keyTileAt(state, nx, ny)) break; // never bury the floor key
+    if (boulderBlockedTile(state, nx, ny)) break; // never bury the key or the downstair
     if (t === 'pit' || t === 'lava' || t === 'water') {
+      cueHazardFill(state, t, nx, ny);
       delete state.terrain[`${bx},${by}`];
       delete state.terrain[`${nx},${ny}`]; // hazard filled, boulder consumed
       state.player.x = bx;
@@ -2987,7 +3082,7 @@ function smashWall(state, x, y) {
 // where the bolt is resolved, so it is left alone here.
 function scorchGround(state, x, y) {
   const t = terrainAt(state, x, y);
-  if (t === 'water') { delete state.terrain[`${x},${y}`]; return; } // boiled off, leaving clean stone
+  if (t === 'water') { addFog(state, x, y); return; } // the bolt steams the water into a bank of FOG — the water STAYS
   if (t !== 'normal') return;
   if (!Array.isArray(state.scorches)) state.scorches = [];
   const already = state.scorches.find((s) => s.x === x && s.y === y);
@@ -3008,10 +3103,11 @@ function smashIce(state, x, y) {
   addIceShards(state, x, y);
   return true;
 }
-// Ice MELTS (struck by fire / a spell): slab → water.
+// Ice MELTS (struck by fire / a spell): slab → water, and the flash of heat throws up a bank of FOG.
 function meltIce(state, x, y) {
   if (terrainAt(state, x, y) !== 'ice') return false;
   state.terrain[`${x},${y}`] = 'water';
+  addFog(state, x, y); // the slab flashes to steam as it thaws
   return true;
 }
 // Devilgrass is cleared away (scorched by a spell, or flattened by a rolling boulder) → floor.
@@ -3027,7 +3123,37 @@ function scorchTileTerrain(next, x, y) {
   if (t === 'ice') { if (meltIce(next, x, y)) next.player.brokeIce = true; } // badge ledger
   else if (t === 'devilgrass') clearDevilgrass(next, x, y);
   else if (t === 'tree') igniteTree(next, x, y); // fire doesn't fell a tree — it LIGHTS it (see tickBurningTrees)
-  else if (t === 'boulder') smashBoulder(next, x, y);
+  // NB: a BOULDER is spell-proof — fire neither blasts nor targets it. It stops the bolt like a wall
+  // (see the bolt paths) but is never destroyed; only a shove rolls one away.
+}
+
+// ICE IS SLICK. A leaper that comes down on an ice slab keeps GOING — it skids in the direction of its
+// leap across slab after slab until it reaches solid footing, or fetches up against something it can't
+// cross (a wall, a boulder, a body, the key, the board's edge, a hazard), stopping on the last slab.
+// Symmetric: the king and any leaping foe (a knight / nightrider) both slide. Bounded, so a closed box
+// of ice can never loop — it just stops at the far wall (from which it can step off next turn).
+function iceSlide(state, unit, dx, dy) {
+  if ((!dx && !dy) || terrainAt(state, unit.x, unit.y) !== 'ice') return;
+  const blocked = (t) => t === 'wall' || t === 'tree' || t === 'gate' || t === 'boulder' || t === 'pit' || t === 'lava';
+  const taken = (x, y) => (state.player !== unit && state.player.x === x && state.player.y === y)
+    || state.enemies.some((e) => e !== unit && e.x === x && e.y === y)
+    || (state.allies || []).some((a) => a !== unit && a.x === x && a.y === y)
+    || keyTileAt(state, x, y);
+  for (let i = 0; i < 24; i += 1) {
+    const nx = unit.x + dx;
+    const ny = unit.y + dy;
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) break; // the edge halts the skid
+    const t = terrainAt(state, nx, ny);
+    if (blocked(t) || taken(nx, ny)) break; // fetches up here — perch on the current slab
+    unit.x = nx;
+    unit.y = ny;
+    if (t !== 'ice') break; // reached solid footing — the skid ends
+  }
+}
+// If `unit` ended a LEAP on an ice slab, skid it along the leap's own heading.
+function settleLeapOnIce(state, unit, fromX, fromY) {
+  if (terrainAt(state, unit.x, unit.y) !== 'ice') return;
+  iceSlide(state, unit, Math.sign(unit.x - fromX), Math.sign(unit.y - fromY));
 }
 
 // Resolve the king arriving on (x, y): attack a boss in place, destroy a summoning
@@ -3061,11 +3187,40 @@ function applyArrival(next, x, y, embedded) {
     return next;
   }
 
-  // NB: there is deliberately NO free pass through a neutral beast. Stepping onto one used to
-  // gently swap places with it, which made a truce strictly better than an empty tile — a wild
-  // amazon was a doormat he could walk over from across the room. Its tile is now exactly what any
-  // other enemy's tile is: a blow, which breaks the truce for good (damageBoss sets provokedBeast).
-  // If he wants it on his side he has to walk up BESIDE it and offer his hand (see charmBeasts).
+  // A LEAP is an L-shaped arrival (a knight / nightrider pounce, e.g. Animal Form) — both axes move
+  // and unequally. A plain king step or a bishop-style glide is not a leap. It changes how the king
+  // treats a NEUTRAL beast or one of his own ALLIES on the destination tile (below).
+  const leapAdx = Math.abs(x - fromX);
+  const leapAdy = Math.abs(y - fromY);
+  const viaLeap = leapAdx !== leapAdy && leapAdx > 0 && leapAdy > 0;
+
+  // A NEUTRAL beast (Wild Empathy): a plain STEP or glide onto its tile TRADES places with it, the way
+  // moving onto an ally does — the truce holds and the king slips past. A LEAP, though, comes down ON
+  // it and crushes it. Handled BEFORE the boss block so a neutral MINI-BOSS horse swaps too rather
+  // than eating a hit (which would wrongly break the truce).
+  const neutralHere = next.enemies.find((e) => e.x === x && e.y === y && isNeutralBeast(next, e));
+  if (neutralHere) {
+    if (viaLeap) {
+      pl.attacked = true; pl.usedNormalAttack = true;
+      const rk = isKillablePiece(neutralHere);
+      resolveKill(next, neutralHere); // crushed under the pounce
+      if (rk) pl.killedEnemy = true;
+      pl.x = x; pl.y = y;
+      next.message = `The king comes down on ${aWord(neutralHere.kind)}, crushing it!`;
+      if (rk && !next.gameOver && !next.won) applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
+    } else {
+      pl.x = x; pl.y = y;
+      neutralHere.x = fromX; neutralHere.y = fromY; // trade places — the beast is unruffled, still neutral
+      next.message = `The king slips past the ${neutralHere.kind}.`;
+    }
+    collectKeyIfHere(next);
+    if (!viaLeap && tryDescend(next)) return next;
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = viaLeap ? 'combat' : 'move';
+    updateDiscovery(next);
+    return next;
+  }
 
   // Leapt onto a boulder? He crushes it to rubble as he lands. Onto an ice slab? He simply perches on
   // it — a leap lands ON ice without breaking it (only fire thaws it, or a slam shatters it).
@@ -3128,17 +3283,36 @@ function applyArrival(next, x, y, embedded) {
     return next;
   }
 
-  // Moving onto an ally TRADES places with it (the Necromancer can shuffle his familiar
-  // in and out of the front line).
+  // Moving onto an ally. A plain STEP/glide TRADES places with it (the Necromancer shuffles his
+  // familiar in and out of the front line). A LEAP comes down ON it: it scrambles to a free tile
+  // beside it if it can; if it is HEMMED IN, a 1-HP ally is crushed under the hooves and a sturdier
+  // one holds firm so the king BOUNCES off beside it (as off a boss). The ally is his either way —
+  // this never turns it hostile.
   const allyHere = allyAt(next, x, y);
   if (allyHere) {
-    next.player.x = x;
-    next.player.y = y;
-    allyHere.x = fromX;
-    allyHere.y = fromY;
+    if (viaLeap) {
+      const dodge = freeAdjacentTile(next, x, y);
+      if (dodge) {
+        allyHere.x = dodge.x; allyHere.y = dodge.y;
+        next.player.x = x; next.player.y = y;
+        next.message = `The ${allyHere.kind} scrambles aside as the king lands.`;
+      } else if ((allyHere.hp || 1) <= 1) {
+        next.allies = (next.allies || []).filter((a) => a.id !== allyHere.id);
+        next.player.x = x; next.player.y = y;
+        next.message = `Cornered, the king's own ${allyHere.kind} is crushed beneath his landing!`;
+      } else {
+        bounceOffTarget(next, x, y, fromX, fromY); // no room to dodge and too tough to crush — he bounds off beside it
+        next.message = `The king bounds off his ${allyHere.kind}.`;
+      }
+    } else {
+      next.player.x = x;
+      next.player.y = y;
+      allyHere.x = fromX;
+      allyHere.y = fromY;
+      next.message = `The king trades places with the ${allyHere.kind}.`;
+    }
     next.enemyTurn = true;
     next.lastAction = 'move';
-    next.message = `The king trades places with the ${allyHere.kind}.`;
     collectKeyIfHere(next);
     if (tryDescend(next)) return next;
     passTurn(next);
@@ -3151,6 +3325,10 @@ function applyArrival(next, x, y, embedded) {
   next.enemyTurn = true;
   next.lastAction = 'move';
   next.message = 'The king moves.';
+  // Landing on ice here can only be a LEAP (a plain slide never stops on a slab) — an Animal-Form
+  // unicorn riding like a nightrider onto ice. It skids off, same as a card leap does. A PHASING king
+  // grips the slab (he can stand in it deliberately), so he never skids.
+  if (!next.player.phase) settleLeapOnIce(next, next.player, fromX, fromY);
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   let realKill = false;
@@ -3745,23 +3923,30 @@ function useCard(state, cardIndex, x, y) {
       const cx = p.x + bdx * i;
       const cy = p.y + bdy * i;
       if (cx < 0 || cx >= WORLD_SIZE || cy < 0 || cy >= WORLD_SIZE) break;
-      if (terrainAt(next, cx, cy) === 'wall') break; // a wall stops the bolt cold
+      // The fireball DETONATES at the first thing that stops it — the FIRST foe on the line, or the
+      // first solid obstacle (a wall, a boulder, an ice slab, a tree). It bursts even against ice,
+      // which merely stops an ordinary bolt (that is the whole point of the card). Empty ground past
+      // the obstacle is never the centre, so the AoE lands on what the player actually aimed at.
+      const bt = terrainAt(next, cx, cy);
       if (next.enemies.some((e) => e.x === cx && e.y === cy)) { fireballCentre = { x: cx, y: cy }; break; }
+      if (bt === 'wall' || bt === 'boulder' || bt === 'ice' || bt === 'tree') { fireballCentre = { x: cx, y: cy }; break; }
     }
   }
 
-  // Promotion: a FREE action (no turn spent) that turns the king into an invincible
-  // warhorse for a few turns — he leaps like a knight, takes no damage, and can play no
-  // cards until it wears off. Its long cooldown is what balances the invulnerability.
+  // Promotion (Animal Form): turns the king into a swift warhorse for a few turns — he glides and
+  // leaps but can play no cards until it wears off. He still takes damage as normal. Taking the form
+  // COSTS a turn (the transformation itself), so it is a real commitment, not a free reposition. The
+  // +1 offsets passTurn's own decrement this turn, so the beast still gets its full PROMOTION_TURNS.
   if (card.kind === 'promotion') {
-    p.promotion = PROMOTION_TURNS;
+    p.promotion = PROMOTION_TURNS + 1;
     card.remaining = card.cooldown;
     const rallied = rallyHorses(next); // the wild horses recognise kin and join the herd
     next.message = rallied
-      ? `The Ranger takes Animal Form — an invincible UNICORN storms the board, and ${rallied} wild horse${rallied === 1 ? '' : 's'} rally to it!`
-      : 'The Ranger takes Animal Form — an invincible UNICORN storms the board!';
-    next.enemyTurn = false;
-    next.lastAction = 'card-free';
+      ? `The Ranger takes Animal Form — a swift UNICORN storms the board, and ${rallied} wild horse${rallied === 1 ? '' : 's'} rally to it!`
+      : 'The Ranger takes Animal Form — a swift UNICORN storms the board!';
+    passTurn(next); // transforming spends the turn
+    next.enemyTurn = true;
+    next.lastAction = 'card';
     updateDiscovery(next);
     return next;
   }
@@ -3987,6 +4172,7 @@ function useCard(state, cardIndex, x, y) {
       p.x = x;
       p.y = y;
       next.message = 'The king repositions.';
+      if (isLeap && !p.phase) settleLeapOnIce(next, p, fromX, fromY); // a leap that lands on ice SKIDS off it (a phaser grips it)
     }
     // En Passant: after the step, strike one foe "in passing" (a piece that flanked the
     // ORIGIN square). `move.flanks[0]` is that target.
@@ -4014,6 +4200,25 @@ function useCard(state, cardIndex, x, y) {
     // the king's line of advance.
     if (realKill && !next.gameOver && !next.won) {
       applyOnKill(next, x, y, Math.sign(x - fromX), Math.sign(y - fromY));
+    }
+    // A CHARGE (Double Step) gallops OVER the midpoint tile. If that tile is lava or fire, the king is
+    // seared in passing — exactly as if he had ended a move on it (the tile he ENDS on is handled by
+    // passTurn; this catches the one he only crossed). Skipped if he actually stopped ON the midpoint.
+    if (card.kind === 'doublestep' && chebyshev(x, y, fromX, fromY) === 2 && (p.x !== fromX || p.y !== fromY) && !next.gameOver && !next.won) {
+      const mx = fromX + Math.sign(x - fromX);
+      const my = fromY + Math.sign(y - fromY);
+      const mid = terrainAt(next, mx, my);
+      const midBurns = mid === 'lava' || (next.burningTrees && next.burningTrees[`${mx},${my}`]) || hasTorch(next, mx, my);
+      if (midBurns && !(mx === p.x && my === p.y)) {
+        p.hp -= 1;
+        p.wasHit = true; p.hitThisFloor = true;
+        addSpatter(next, mx, my);
+        addSmoke(next, mx, my);
+        hurtBy(next, 'lava');
+        p.burnedByFire = true;
+        next.message = (next.message ? next.message + ' ' : '') + 'The fire sears the king as he charges across!';
+        checkDeath(next);
+      }
     }
   } else if (card.kind === 'horse') {
     // The Conjuration horse: a spectral steed charges the L-shaped path toward the aimed
@@ -4055,8 +4260,7 @@ function useCard(state, cardIndex, x, y) {
         break;
       }
       if ((bt === 'wall' || bt === 'boulder') && !p.seeThroughWalls) {
-        if (bt === 'boulder') { smashBoulder(next, cx, cy); impactTiles.push({ x: cx, y: cy }); scored = true; } // the bolt blasts it to rubble
-        break;
+        break; // stone and boulders alike STOP the bolt — a boulder is spell-proof, never blasted to rubble
       }
       impactTiles.push({ x: cx, y: cy }); // every tile the fireball scorches
       scorchGround(next, cx, cy); // ...and it leaves its mark on the stone (boiling any water away)
@@ -4066,6 +4270,10 @@ function useCard(state, cardIndex, x, y) {
         if (cx === x && cy === y) scored = true; // struck the aimed tile (flavour)
         if (isKillablePiece(felled)) kills.push(felled);
       }
+      // A FIREBALL does NOT pierce on: it DETONATES on the first foe it reaches (its burst centre) and
+      // strikes that tile exactly once here. Everything else is caught by the ring of eight AROUND it
+      // (below), so no tile is ever hit twice — the bolt hits the target, the burst hits its neighbours.
+      if (card.kind === 'fireball' && fireballCentre && cx === fireballCentre.x && cy === fireballCentre.y) break;
     }
     realKill = kills.length > 0; // Blast: hurl any survivor along the bolt's path (farthest-first)
     if (!next.gameOver && !next.won && p.spellDazzle) {
@@ -4128,6 +4336,14 @@ function useCard(state, cardIndex, x, y) {
         if (!foe) {
           p.x = bx;
           p.y = by;
+        } else if (foe.summonCircle) {
+          // Shoved back ONTO a summoning circle — he comes down on the rune and shatters it, exactly as
+          // if he had stepped onto it. (It used to HALT the recoil, because a circle is not "capturable"
+          // and never moves aside, so the kick simply fizzled against it.)
+          resolveKill(next, foe);
+          p.x = bx;
+          p.y = by;
+          next.message = 'The recoil flings the king back onto a summoning circle — it shatters!';
         } else if (isCapturable(next, foe)) {
           if (attackTile(next, bx, by)) {
             p.x = bx;
@@ -4218,7 +4434,7 @@ function useCard(state, cardIndex, x, y) {
   const doubleFollowup = Boolean(card.doubleReady);
   card.doubleReady = false;
   const canDoubleCast = category === 'spell' && p.doubleCast && !doubleFollowup
-    && !next.gameOver && !next.won && getCardMoves(next, card).length > 0;
+    && !next.gameOver && !next.won && spellCanHitFoe(next, card); // only if a real UNIT still stands (not just terrain)
   if (canDoubleCast) card.doubleReady = true;
 
   const free = (category === 'spell' && p.freeSpell) || rapidTrigger || canDoubleCast;
@@ -4246,6 +4462,31 @@ function useCard(state, cardIndex, x, y) {
   }
   updateDiscovery(next);
   return next;
+}
+
+// Does this spell card have a UNIT it could actually strike from here — a real foe on one of its
+// firing lines, not merely a slab of ice or a tree to burn? Double Cast keys off this: a second cast
+// is only offered while a TARGET (a body) remains, never just to blast leftover terrain.
+function spellCanHitFoe(state, card) {
+  const p = state.player;
+  const reach = cardReach(card.kind, p.cardReach || 0);
+  const shootWalls = Boolean(p.seeThroughWalls);
+  const dirs = new Set();
+  for (const m of getCardMoves(state, card)) dirs.add(`${Math.sign(m.x - p.x)},${Math.sign(m.y - p.y)}`);
+  for (const key of dirs) {
+    const [dx, dy] = key.split(',').map(Number);
+    if (!dx && !dy) continue;
+    for (let i = 1; i <= reach; i += 1) {
+      const x = p.x + dx * i;
+      const y = p.y + dy * i;
+      if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) break;
+      if (state.enemies.some((e) => e.x === x && e.y === y && isCapturable(state, e) && !e.summonCircle)) return true;
+      const t = terrainAt(state, x, y);
+      if (t === 'wall' || t === 'boulder') { if (!shootWalls) break; } // opaque cover stops the bolt
+      else if (t === 'ice' || t === 'tree') break; // the bolt is spent on the slab / trunk — no body here
+    }
+  }
+  return false;
 }
 
 // End a turn that a Double Cast left hanging: the caster loosed one bolt and then either
@@ -4379,7 +4620,7 @@ function movePlayer(state, dx, dy) {
   const isEnemy = (x, y) => capturableAt(state, x, y) || Boolean(allyAt(state, x, y));
   // Slide the king's FULL move range (normally 1), stopping only on collision —
   // the furthest reachable stop is the destination.
-  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { terrainImmune: Boolean(state.player.terrainImmune), phaseWalls: Boolean(state.player.phase), flying: Boolean(state.player.terrainImmune) });
+  const stops = slideStops(state, state.player.x, state.player.y, dx, dy, state.player.moveRange, enemyAt, isEnemy, { pathfinder: Boolean(state.player.pathfinder), phaseWalls: Boolean(state.player.phase) });
   if (!stops.length) {
     const next = structuredClone(state);
     next.message = 'The king cannot move that way.';
@@ -4725,6 +4966,45 @@ function movesTowardTile(state, enemy) {
   return generateMoves(enemy.kind, state, enemy.x, enemy.y, unitAt, never, opts);
 }
 
+// A flood-fill of king-step distances from (tx,ty) over every tile THIS piece could stand on, so a
+// pursuer can be steered AROUND walls toward the target instead of giving up the instant the straight
+// line to it is blocked. This is what makes a foe follow the king round a corner or down a corridor,
+// rather than shuffling toward the wall between them and then wandering off. Cached per (state,piece).
+function navFieldTo(state, tx, ty, enemy) {
+  const opts = pieceTerrainOpts(enemy);
+  const phases = Boolean(opts.phaseWalls);
+  const leaper = typeof isJumperKind === 'function' && isJumperKind(enemy.kind); // knights/nightriders land on ice/boulders
+  // The flood only spreads over ground THIS piece could actually cross, so the distance it hands back
+  // routes AROUND what the piece can't traverse — a walker goes the long way round a ring of ice, a
+  // non-flier around a pit — instead of counting a straight line through it. A leaper treats ice and
+  // boulders as landing tiles; a phaser walks stone; a lava-safe demon wades fire.
+  const stand = (x, y) => {
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) return false;
+    const t = terrainAt(state, x, y);
+    if (t === 'wall' || t === 'tree' || t === 'gate') return phases;
+    if (t === 'boulder' || t === 'ice') return leaper || phases; // walkers route around; leapers land on them
+    if (t === 'pit') return leaper || Boolean(opts.flying) || Boolean(opts.pitOk);
+    if (t === 'lava') return opts.lavaOk !== false; // lava-safe pieces conduct fire; the rest route around it
+    return true; // normal / water / door / grass / geyser all conduct
+  };
+  const dist = new Map();
+  const q = [[tx, ty]];
+  dist.set(`${tx},${ty}`, 0); // the goal tile seeds the flood even if the piece could not stand on it
+  for (let i = 0; i < q.length; i += 1) {
+    const [x, y] = q[i];
+    const d = dist.get(`${x},${y}`);
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const k = `${nx},${ny}`;
+      if (dist.has(k) || !stand(nx, ny)) continue;
+      dist.set(k, d + 1);
+      q.push([nx, ny]);
+    }
+  }
+  return dist;
+}
+
 // An out-of-sight enemy hunts toward the king's last-seen tile. Returns true if it
 // pursued; false if it gave up (then it wanders).
 // How many turns THIS pursuit lasts: rolled fresh each time it lays eyes on him, so the trail never
@@ -4784,17 +5064,26 @@ function pursueLastSeen(state, enemy) {
     forget();
     return false;
   }
-  const curD = distanceSq(enemy.x, enemy.y, target.x, target.y);
+  // Navigate by a flood-fill distance field AROUND walls, not by shrinking the straight line — that
+  // is what lets a pursuer round a corner or thread a corridor toward the last-seen tile instead of
+  // butting against the wall between them and giving up. Straight-line distance is only the tiebreak.
+  const field = navFieldTo(state, target.x, target.y, enemy);
+  const fieldAt = (x, y) => (field.has(`${x},${y}`) ? field.get(`${x},${y}`) : Infinity);
+  const curF = fieldAt(enemy.x, enemy.y);
   let best = null;
-  let bestD = Infinity;
+  let bestF = Infinity;
+  let bestTie = Infinity;
   for (const m of movesTowardTile(state, enemy)) {
-    const d = distanceSq(m.x, m.y, target.x, target.y);
-    if (d < bestD) {
-      bestD = d;
+    const f = fieldAt(m.x, m.y);
+    const tie = distanceSq(m.x, m.y, target.x, target.y);
+    if (f < bestF || (f === bestF && tie < bestTie)) {
+      bestF = f;
+      bestTie = tie;
       best = m;
     }
   }
-  if (!best || bestD > curD) {
+  // No move gets it any closer along a real path (walled off, or the trail led nowhere it can follow).
+  if (!best || bestF >= curF) {
     forget();
     return false;
   }
@@ -4824,18 +5113,55 @@ function tickLavaDamage(state) {
   // Lava OR a wall-torch a creature is embedded in (only a phaser can be) burns any non-demon.
   const burns = (u) => (terrainAt(state, u.x, u.y) === 'lava' || hasTorch(state, u.x, u.y)) && !isLavaSafe(u);
   const doomedFoes = state.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle && burns(e));
-  for (const e of doomedFoes) addAsh(state, e.x, e.y);
+  for (const e of doomedFoes) { addAsh(state, e.x, e.y); addSmoke(state, e.x, e.y); }
   if (doomedFoes.length) state.enemies = state.enemies.filter((e) => !doomedFoes.includes(e));
   const doomedAllies = (state.allies || []).filter((a) => burns(a));
-  for (const a of doomedAllies) addAsh(state, a.x, a.y);
+  for (const a of doomedAllies) { addAsh(state, a.x, a.y); addSmoke(state, a.x, a.y); }
   if (doomedAllies.length) state.allies = state.allies.filter((a) => !doomedAllies.includes(a));
+}
+
+// SAFETY NET: no ordinary (non-phasing) piece should ever end a turn standing INSIDE a wall, boulder,
+// ice slab or tree — but a terrain change can close one over it (a cave-in dropping a wall, a killing
+// frost sheeting a floor to ice) or a generator slip can seat it wrong. Nudge any such piece to the
+// nearest tile it can actually stand on; if it is wholly entombed with no footing in reach, it is
+// crushed and removed. Circles are runes (they belong anywhere) and a PHASER belongs in walls — both
+// exempt. This runs each enemy phase, so a walled piece is freed before it ever gets to act.
+function dislodgeWalledEnemies(state) {
+  const entombed = [];
+  // Only SOLID cover entombs — stone, a boulder, an ice slab, timber, iron. Lava, water and pits are
+  // walkable-or-hazard tiles a piece may legitimately stand on (a demon wades lava, a flier a pit), so
+  // they are NOT "stuck". Guarding on this rather than isStandable is what stops the sweep from wrongly
+  // hauling a lava-immune demon off the fire it is meant to be standing in.
+  const entombing = (t) => t === 'wall' || t === 'boulder' || t === 'ice' || t === 'tree' || t === 'gate';
+  for (const e of state.enemies) {
+    if (e.summonCircle || e.turret || bossHas(e, 'phasing')) continue;
+    if (!entombing(terrainAt(state, e.x, e.y))) continue;
+    let moved = false;
+    for (let r = 1; r <= 4 && !moved; r += 1) {
+      for (let dx = -r; dx <= r && !moved; dx += 1) {
+        for (let dy = -r; dy <= r && !moved; dy += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // just this ring
+          const nx = e.x + dx;
+          const ny = e.y + dy;
+          if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
+          if (!isStandable(terrainAt(state, nx, ny))) continue;
+          if (nx === state.player.x && ny === state.player.y) continue;
+          if (keyTileAt(state, nx, ny) || allyAt(state, nx, ny)) continue;
+          if (state.enemies.some((o) => o !== e && o.x === nx && o.y === ny)) continue;
+          e.x = nx; e.y = ny; moved = true;
+        }
+      }
+    }
+    if (!moved) entombed.push(e.id);
+  }
+  if (entombed.length) state.enemies = state.enemies.filter((e) => !entombed.includes(e.id));
 }
 
 // A non-flying, non-burrowing piece that ENDS a turn standing on a PIT falls into the void — the
 // mirror of the lava tick, so a CONFUSED foe that blunders onto a pit dies just as one that blunders
 // onto lava burns (it used to perch on the hole, harmless). A shove already drops them elsewhere.
 function tickPitFalls(state) {
-  const falls = (u) => terrainAt(state, u.x, u.y) === 'pit' && !bossHas(u, 'flying') && !bossHas(u, 'burrower') && !u.terrainImmune;
+  const falls = (u) => terrainAt(state, u.x, u.y) === 'pit' && !bossHas(u, 'flying') && !bossHas(u, 'burrower') && !u.pathfinder;
   const doomedFoes = state.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle && falls(e));
   if (doomedFoes.length) { cue(state, 'fall'); state.enemies = state.enemies.filter((e) => !doomedFoes.includes(e)); }
   const doomedAllies = (state.allies || []).filter((a) => falls(a));
@@ -4858,40 +5184,53 @@ function geyserErupting(state) {
 function geyserImminent(state) {
   return ((state.geyserPhase || 0) % GEYSER_PERIOD) === GEYSER_PERIOD - 1;
 }
-// The blast: 1 damage to ANY unit standing over a geyser on its erupting turn — the king (no parry
-// stops the ground, like lava), foes, and allies alike.
+// A geyser ERUPTS by venting a gout of scalding STEAM (fog) over its own tile — it no longer wounds
+// directly; the STEAM is what scalds whatever stands in it (see tickFogDamage), unifying geysers with
+// every other bank of fog. Geyser steam is brief — 1 turn — where most fog lingers for two.
 function tickGeysers(state) {
   if (!geyserErupting(state)) return;
-  const onGeyser = (u) => terrainAt(state, u.x, u.y) === 'geyser';
   let blew = false;
-  // The king. Waiting does NOT stop a geyser — it is the GROUND, like lava; only terrainImmune shrugs it.
-  if (onGeyser(state.player) && !state.player.terrainImmune) {
+  for (const key in (state.terrain || {})) {
+    if (state.terrain[key] !== 'geyser') continue;
+    const comma = key.indexOf(',');
+    addFog(state, Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 1); // 1-turn steam
     blew = true;
-    hurtBy(state, 'geyser');
-    state.player.hp -= 1;
-    state.player.wasHit = true; state.player.hitThisFloor = true;
-    addSpatter(state, state.player.x, state.player.y);
-    state.message = state.message ? `${state.message} A geyser erupts under the king!` : 'A geyser erupts under the king!';
+  }
+  if (blew) cue(state, 'hiss');
+}
+
+// FOG/STEAM SCALDS. Any unit standing in fog takes 1 damage as its side of the turn comes up — the
+// king (no parry stops the ground, like lava), foes and allies alike; a lesser foe is destroyed, a
+// boss or turret soaks 1. This is now the ONE place geyser steam, spellfire steam and a Fogweaver's
+// murk all deal their damage. Called once per turn from beginEnemyPhase, AFTER the geysers vent.
+function tickFogDamage(state) {
+  if (!state.fog) return;
+  const inFog = (u) => fogAt(state, u.x, u.y);
+  const p = state.player;
+  if (inFog(p)) {
+    hurtBy(state, 'steam');
+    p.hp -= 1;
+    p.wasHit = true; p.hitThisFloor = true;
+    addSpatter(state, p.x, p.y);
+    addSmoke(state, p.x, p.y);
+    state.message = state.message ? `${state.message} The scalding steam sears the king!` : 'The scalding steam sears the king!';
     checkDeath(state);
   }
-  // Foes: a lesser piece caught over one is destroyed; a boss/turret soaks 1.
-  const caughtFoes = state.enemies.filter((e) => onGeyser(e));
+  const caughtFoes = state.enemies.filter((e) => !e.summonCircle && inFog(e));
   for (const e of caughtFoes) {
-    if (e.summonCircle) continue; // a rune doesn't stand ON anything to be scalded
-    blew = true;
+    addSmoke(state, e.x, e.y);
     if (e.boss) damageBoss(state, e, 1);
     else if (e.turret) damageTurret(state, e, 1);
     else { addSpatter(state, e.x, e.y, 0, 0, isDemonKind(e.kind)); tallyKill(state, e); state.enemies = state.enemies.filter((o) => o.id !== e.id); }
   }
-  for (const a of (state.allies || []).filter((al) => onGeyser(al))) { blew = true; damageAlly(state, a, 1); }
-  if (blew) cue(state, 'hiss');
+  for (const a of (state.allies || []).filter((al) => inFog(al))) { addSmoke(state, a.x, a.y); damageAlly(state, a, 1); }
 }
 
 // PAST max dread, a floor the king refuses to leave turns MOLTEN. From MAX_TURNS_SCARY onward, fresh
 // LAVA wells up in new fissures near him AND existing lava creeps toward him — even under his feet —
 // thickening as the overstay runs (overstayFraction). With the unbounded swarm this is a guaranteed
-// kill: Fairy Wings crosses the fire but not the horde, Waiting shrugs the horde but not the fire, and
-// no class holds both. The stair, the uncollected key and the upstair are spared so escape stays open.
+// kill: no perk shrugs off lava any more (Pathfinder wades water/trees/pits, never fire), and Waiting
+// shrugs the horde but not the ground. The stair, uncollected key and upstair are spared so escape stays open.
 function tickLavaEncroachment(state) {
   const intensity = overstayFraction(state.turn || 0);
   if (intensity <= 0) return;
@@ -4955,8 +5294,10 @@ function beginEnemyPhase(state) {
   tickBurningTrees(next); // a tree lit last turn burns away now, leaving a scorch (and may spread)
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
   tickPitFalls(next); // anything that blundered onto a pit (a confused foe) falls in
-  tickGeysers(next); // on the third turn, every geyser blows — scalding whatever stands over it
+  tickGeysers(next); // on the third turn, every geyser vents a gout of 1-turn STEAM (fog) over itself
+  tickFogDamage(next); // steam/fog SCALDS whatever stands in it — geyser vents, spellfire steam, a Fogweaver's murk
   tickLavaEncroachment(next); // past max dread: the floor turns molten and closes in on a lingering king
+  dislodgeWalledEnemies(next); // SAFETY NET: nudge any ordinary piece a terrain change closed a wall over
   tickTurrets(next); // every turret re-scans: no target in its lane → it idles and drops its lock
 
   applySilence(next); // Silence: while the hush holds, everything in view stays down
@@ -4972,17 +5313,13 @@ function beginEnemyPhase(state) {
       // natural sleepers would have quietly gutted Silence.
       const near = chebyshev(enemy.x, enemy.y, p.x, p.y);
       let disturbed = enemy.provoked || near <= 1;
-      // AT THE BARS. A gaol prisoner sits in a one-tile cell walled on three sides with a gate on
-      // the fourth, so every neighbour of it is stone or iron — the king can NEVER stand adjacent to
-      // it, and a rule of "wake within one tile" left it dozing forever however long he loitered at
-      // its door. So it also stirs when he stands next to the GATE (or tree) it sits directly
-      // behind: he is right at the cell, and the thing inside knows it.
-      if (!disturbed && near === 2) {
-        for (const [dx, dy] of [...ORTHO, ...DIAG]) {
-          const gx = enemy.x + dx;
-          const gy = enemy.y + dy;
-          if (isChoppable(terrainAt(next, gx, gy)) && chebyshev(gx, gy, p.x, p.y) <= 1) { disturbed = true; break; }
-        }
+      // AT THE BARS. A gaol prisoner sits caged behind a GATE — and a gate is see-through iron. So it
+      // WATCHES the king through the bars: if it has a clear line to him with a gate on that line, it
+      // rouses at its full sight range, exactly as a foe standing in the open would notice him, rather
+      // than dozing until he is right at the cell door. (An open-field sleeper has no bars to peer
+      // through, so it still only wakes when he blunders within a tile — you can sneak past it.)
+      if (!disturbed && enemyAwareOfKing(next, enemy.x, enemy.y, false) && lineHasGate(next, enemy.x, enemy.y, p.x, p.y)) {
+        disturbed = true;
       }
       if (p.silence > 0 || !disturbed) continue;
       enemy.asleep = false;
@@ -5029,6 +5366,9 @@ function beginEnemyPhase(state) {
     if (elusiveMiss || !enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
       enemy.awake = false;
       enemy.surprised = false;
+      // A SUMMONING CIRCLE that has lost sight of the king lets its wind-up EBB — one tick per turn,
+      // the same rate it builds — instead of holding a stored charge to loose the moment he reappears.
+      if (enemy.summonCircle) enemy.summonTick = Math.max(0, (enemy.summonTick || 0) - 1);
       if (!isStationary(enemy)) {
         if (elusiveMiss) {
           // Blind to him this turn: Ghost means this foe failed to fix on him. It wanders on, oblivious. Only BLUNDERING straight into the
@@ -5061,6 +5401,13 @@ function beginEnemyPhase(state) {
       if (!elusiveMiss && enemyAwareOfKing(next, enemy.x, enemy.y, sensesWalls)) {
         enemy.awake = true;
         rememberKing(next, enemy);
+      } else if (enemy.lastSeen && enemy.lastSeenTtl > 0) {
+        // Still HUNTING — it holds a live memory of him and is chasing his last-seen tile. Keep it
+        // flagged awake even out of sight, so re-sighting him never re-startles it. This is what kills
+        // the "duck behind a wall for a turn to reset its surprise" dance: once a foe is on his trail
+        // it stays on it until the trail actually goes cold (the memory expires), at which point — and
+        // only then — a fresh sighting can catch it off guard again.
+        enemy.awake = true;
       }
       continue;
     }
@@ -5468,11 +5815,21 @@ function summonAdjacent(state, origin, kind) {
 // A summoning circle's turn: while the king can see it, it conjures a minion of its
 // OWN piece type on charged turns (never two running). It never moves or strikes.
 function summonCircleTurn(state, circle) {
-  // Camouflage (Gloom Stalker): a circle can't sense a camouflaged king MORE than one tile away, so
-  // it never conjures against him (its wind-up resets). Step adjacent (within one tile) and it
+  // WILD EMPATHY (Druid T2): a circle that conjures HORSES — knights or nightriders — has nothing to
+  // offer against a king they'd only roam neutral around. It stands inert (no charge, no conjuring)
+  // rather than feeding him a stream of harmless steeds. Any OTHER kind of rune works as normal.
+  if (state.player.beastFriend && (circle.kind === 'knight' || circle.kind === 'nightrider')) {
+    circle.summonTick = 0;
+    state.message = '';
+    state.lastAction = 'idle';
+    return state;
+  }
+  // Camouflage (Gloom Stalker): a circle can't sense a camouflaged king MORE than one tile away, so it
+  // cannot conjure against him — and its wind-up EBBS at the same rate it builds (1/turn) rather than
+  // holding the charge to loose the instant he reappears. Step adjacent (within one tile) and it
   // conjures as normal; he can also still step onto it to dispel it any time.
   if (state.player.camouflage && chebyshev(circle.x, circle.y, state.player.x, state.player.y) > 1) {
-    circle.summonTick = 0;
+    circle.summonTick = Math.max(0, (circle.summonTick || 0) - 1);
     state.message = '';
     state.lastAction = 'idle';
     return state;
@@ -5497,18 +5854,37 @@ function preferNonGeyser(state, legal) {
   return dry.length ? dry : legal;
 }
 
-function chooseHostileMove(moves, px, py) {
+function chooseHostileMove(moves, px, py, state, enemy) {
+  if (!moves.length) return null;
   const key = `${px},${py}`;
-  let chosen = moves.find((m) => `${m.x},${m.y}` === key);
-  if (!chosen) {
-    let best = Infinity;
+  const onKing = moves.find((m) => `${m.x},${m.y}` === key);
+  if (onKing) return onKing; // it can land ON the king this turn — always take the capture
+  // PATH around obstacles, don't just shrink the straight line. Rank each candidate by its BFS distance
+  // to the king over ground this piece can actually cross — so a foe boxed off by a ring of ice or a
+  // wall corner takes the step that leads the long way AROUND, instead of shuffling toward the barrier
+  // between them (the old greedy `distanceSq` bug: it would step "down" when the only real route to a
+  // down-RIGHT king curled around a slab). Straight-line distance is only the tiebreak.
+  if (state && enemy) {
+    const field = navFieldTo(state, px, py, enemy);
+    const fAt = (m) => (field.has(`${m.x},${m.y}`) ? field.get(`${m.x},${m.y}`) : Infinity);
+    let best = null;
+    let bestF = Infinity;
+    let bestD = Infinity;
     for (const m of moves) {
+      const f = fAt(m);
       const d = distanceSq(m.x, m.y, px, py);
-      if (d < best || (d === best && Math.random() < 0.5)) {
-        best = d;
-        chosen = m;
+      if (f < bestF || (f === bestF && (d < bestD || (d === bestD && Math.random() < 0.5)))) {
+        bestF = f; bestD = d; best = m;
       }
     }
+    if (best && bestF < Infinity) return best; // a real path exists — follow it
+  }
+  // Fallback (no state, or the king is wholly walled off): the old straight-line pick.
+  let chosen = null;
+  let best = Infinity;
+  for (const m of moves) {
+    const d = distanceSq(m.x, m.y, px, py);
+    if (d < best || (d === best && Math.random() < 0.5)) { best = d; chosen = m; }
   }
   return chosen;
 }
@@ -5531,6 +5907,7 @@ function bossHit(state, boss, hitMsg) {
     state.message = `The king withstands ${boss.bossName || `the ${boss.kind} guardian`}!`;
     state.lastAction = 'enemy';
   }
+  applyReflect(state, boss); // Reflect (Sentinel): the guardian's own blow earns it a riposte (soaks 1)
   return state;
 }
 
@@ -5732,7 +6109,7 @@ function knockbackBoulder(state, bx, by, dx, dy) {
         state.message = `${capitalize(aWord(foeLabel(foe)))} is flattened by a rolling boulder!`;
       }
     } else if (allyAt(state, nx, ny)) { rest(); return; } // it won't crush your own ally — it stops short
-    if (t === 'pit' || t === 'lava' || t === 'water') { delete state.terrain[`${nx},${ny}`]; return; } // rolls in, fills the hazard, consumed
+    if (t === 'pit' || t === 'lava' || t === 'water') { cueHazardFill(state, t, nx, ny); delete state.terrain[`${nx},${ny}`]; return; } // rolls in, fills the hazard, consumed
     clearDevilgrass(state, nx, ny); // flattens any thicket it rolls over
     cx = nx;
     cy = ny;
@@ -5804,8 +6181,8 @@ function bounceOffTarget(state, tx, ty, fromX, fromY) {
     const x = tx + dx;
     const y = ty + dy;
     if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
-    if (!standableFor(terrainAt(state, x, y), { phaseWalls: Boolean(p.phase), flying: Boolean(p.terrainImmune) })) continue;
-    if (terrainAt(state, x, y) === 'lava' && !p.terrainImmune) continue; // never bounce into searing lava
+    if (!standableFor(terrainAt(state, x, y), { phaseWalls: Boolean(p.phase), pathfinder: Boolean(p.pathfinder) })) continue;
+    if (terrainAt(state, x, y) === 'lava') continue; // never bounce into searing lava
     if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
     if (state.exit && x === state.exit.x && y === state.exit.y) continue; // don't stumble onto the stair
     const d = chebyshev(x, y, fromX, fromY);
@@ -5840,6 +6217,22 @@ function landBesideSurvivor(state, target, tx, ty, fromX, fromY, isLeap) {
 // non-hazardous tile to (x,y), searched ring by ring so he always surfaces as near the hole as the
 // floor allows. isStandable bars lava and other pits, so he can never climb out of one hole into a
 // worse one.
+// The first free, standable tile ADJACENT to (x,y) — where a displaced ally scrambles when the king
+// leaps onto its square. Excludes the king, other units, the key. Returns null if it is hemmed in.
+function freeAdjacentTile(state, x, y) {
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
+    if (!isStandable(terrainAt(state, nx, ny))) continue;
+    if (keyTileAt(state, nx, ny)) continue;
+    if (nx === state.player.x && ny === state.player.y) continue;
+    if (state.enemies.some((e) => e.x === nx && e.y === ny) || allyAt(state, nx, ny)) continue;
+    return { x: nx, y: ny };
+  }
+  return null;
+}
+
 function nearestFooting(state, x, y, avoidX, avoidY) {
   for (let r = 1; r < WORLD_SIZE; r += 1) {
     const ring = [];
@@ -5891,6 +6284,7 @@ function bounceJumperBeside(state, jumper, kx, ky, fromX, fromY) {
 
 function knockbackKing(state, enemy) {
   const king = state.player;
+  markStrikeBump(state, enemy); // the leap was still made — animate it even when parried/warded away
   let pdx = Math.sign(king.x - enemy.x);
   let pdy = Math.sign(king.y - enemy.y);
   if (pdx === 0 && pdy === 0) pdx = 1;
@@ -5920,9 +6314,9 @@ function knockbackKing(state, enemy) {
     // A PIT behind him is the one thing that doesn't merely halt the shove — he goes over the edge.
     // Rare (it needs a pit exactly behind him, and the blow must land), but it should be possible.
     // He hauls himself out the way a GUARDIAN does: another wound, and back onto the nearest ground
-    // he can find. Not fatal — a hole is a beating, not an instant loss. Fairy Wings simply flies over
+    // he can find. Not fatal — a hole is a beating, not an instant loss. Pathfinder simply treads over
     // it; WAITING does not — a pit is the GROUND, and Waiting shrugs off blows, never the ground.
-    if (inBounds && terrainAt(state, bx, by) === 'pit' && !king.terrainImmune) {
+    if (inBounds && terrainAt(state, bx, by) === 'pit' && !king.pathfinder) {
       cue(state, 'fall');
       hurtBy(state, 'pit'); // shoved over an edge: the HOLE is what got him, not the shover
       king.hp -= 1;
@@ -5968,6 +6362,7 @@ function knockbackKing(state, enemy) {
   }
   if (!state.gameOver) collectKeyIfHere(state); // shoved onto the key? he grabs it
   if (!state.gameOver && pushed) checkDefenestration(state); // bowled onto the open stair? he tumbles down
+  applyReflect(state, enemy); // Reflect (Sentinel): a jumper that lands its leap adjacent is cut down in riposte
   updateDiscovery(state);
   return state;
 }
@@ -6073,6 +6468,9 @@ function chopTowardKing(state, enemy) {
   }
   if (!best) return false;
   const what = terrainAt(state, best.x, best.y) === 'gate' ? 'gate' : 'tree';
+  // It LUNGES at the barrier as it swings — the same strike-nudge it makes at the king — so hacking a
+  // gate or tree reads as a blow, not a piece sitting inert beside it. Toward the TILE, not the king.
+  state.strikeBump = { id: enemy.id, dx: Math.sign(best.x - enemy.x), dy: Math.sign(best.y - enemy.y) };
   const res = damageTree(state, best.x, best.y, 1);
   state.message = res === 'felled'
     ? `A ${enemy.kind} hacks down the ${what} in its way!`
@@ -6127,10 +6525,13 @@ function meleeMove(state, enemy) {
     state.lastAction = 'enemy';
     return state;
   }
-  const chosen = chooseHostileMove(legal, king.x, king.y);
+  const chosen = chooseHostileMove(legal, king.x, king.y, state, enemy);
+  const fromX = enemy.x;
+  const fromY = enemy.y;
   enemy.x = chosen.x;
   enemy.y = chosen.y;
   crushBoulderUnder(state, enemy); // a leaper that lands on a boulder crushes it
+  if (!bossHas(enemy, 'phasing')) settleLeapOnIce(state, enemy, fromX, fromY); // a leaping foe skids off ice too (a phasing boss grips it)
   state.message = `${capitalize(aWord(enemy.kind))} advances.`;
   state.lastAction = 'enemy';
   return state;
@@ -6167,6 +6568,7 @@ function strikeKing(state, enemy) {
     state.message = mitigationMessage(mit, enemy.kind);
     state.lastAction = 'enemy';
   }
+  applyReflect(state, enemy); // Reflect (Sentinel): a foe that ends its blow adjacent is cut down in riposte
   return state;
 }
 
@@ -6317,15 +6719,38 @@ function bossBuildTurret(state, boss) {
 
 // BEASTMASTER (pet owner): keeps a ferz familiar. Whenever NO hostile ferz is in view, it conjures a
 // fresh one at its side — so the pet cannot be permanently killed while the master lives. Spends the turn.
+// BEASTMASTER (petowner): keeps a ferz familiar at heel. Whistling up a fresh one is a FREE effect
+// now — it does NOT cost the boss its turn (it still hunts/strikes the same turn), so the pet is a
+// standing threat the boss maintains rather than a turn it trades away.
 function bossSpawnPet(state, boss) {
   const hasFerz = getVisibleEnemies(state).some((e) => e.kind === 'ferz' && !e.summonCircle && !isNeutralBeast(state, e));
   if (hasFerz) return false;
   if (!summonAdjacent(state, boss, 'ferz')) return false;
   const pet = state.enemies[state.enemies.length - 1];
   if (pet) { pet.awake = true; pet.provoked = true; rememberAt(pet, state.player.x, state.player.y, state.kingHeading); }
-  state.message = `${bossTitle(boss)} whistles up a ferz!`;
-  state.lastAction = 'enemy';
   return true;
+}
+
+// FOGWEAVER: each turn it breathes out a bank of fog on 1-8 tiles around itself, blinding the king to
+// the room. A FREE effect (it still hunts and strikes). Fog is HAZE, so the Oracle's Premonition peers
+// through it. It fogs its OWN tile too, so a Fogweaver is often hidden in its own murk.
+function bossFog(state, boss) {
+  const n = 1 + randomInt(8); // 1..8 tiles this turn
+  // AROUND itself, never its OWN tile — steam scalds, and a Fogweaver must not choke in its own murk.
+  const dirs = [...ORTHO, ...DIAG];
+  for (let i = dirs.length - 1; i > 0; i -= 1) { const j = randomInt(i + 1); [dirs[i], dirs[j]] = [dirs[j], dirs[i]]; }
+  let laid = 0;
+  for (const [dx, dy] of dirs) {
+    if (laid >= n) break;
+    const fx = boss.x + dx;
+    const fy = boss.y + dy;
+    // Never fog the tile the KING is standing on — steam damages now, and conjuring it directly under
+    // him would be an unavoidable, undodgeable hit. It has to well up on a tile he can still step off.
+    if (fx === state.player.x && fy === state.player.y) continue;
+    addFog(state, fx, fy);
+    laid += 1;
+  }
+  if (laid) cue(state, 'thrum');
 }
 
 // GARDENER (mortal): now and then the wild grows up around it — a handful of adjacent tiles turn to
@@ -6448,6 +6873,7 @@ function bossMove(state, boss) {
   // lava it stands on — 1 wound at the start of its turn, so the king can lure or knock a
   // vanilla-type boss into a lava field to whittle it down. Demon-floor guardians are immune.
   if (!boss.lavaImmune && terrainAt(state, boss.x, boss.y) === 'lava') {
+    addSmoke(state, boss.x, boss.y);
     if (damageBoss(state, boss, 1) === 'slain') { state.lastAction = 'combat'; return state; }
   }
   // Likewise a non-immune Phasing guardian embedded in a wall-torch sears — so its own wall-hiding
@@ -6518,12 +6944,15 @@ function bossMove(state, boss) {
       return state;
     }
   }
-  // BEASTMASTER: if its ferz familiar has fallen, whistle up a new one (spends the turn).
-  if (bossHas(boss, 'petowner') && bossSeenAndHunting(state, boss) && bossSpawnPet(state, boss)) return state;
+  // BEASTMASTER: if its ferz familiar has fallen, whistle up a new one — a FREE effect, so it still
+  // acts (hunts/strikes) this same turn.
+  if (bossHas(boss, 'petowner') && bossSeenAndHunting(state, boss)) bossSpawnPet(state, boss);
   // MECHANIC: a 1-in-4 chance to bolt together a turret instead of acting.
   if (bossHas(boss, 'mechanic') && bossSeenAndHunting(state, boss) && bossBuildTurret(state, boss)) return state;
   // GARDENER: the wild sometimes grows around it — a FREE effect, so it still acts below.
   if (bossHas(boss, 'gardener') && bossSeenAndHunting(state, boss)) bossGarden(state, boss);
+  // FOGWEAVER: breathe out fog around itself — FREE, so it still acts below.
+  if (bossHas(boss, 'fogweaver') && bossSeenAndHunting(state, boss)) bossFog(state, boss);
   // Volley / Sorcerer: loose a bolt down an open line rather than closing to melee.
   if ((bossHas(boss, 'ranged') || bossHas(boss, 'sorcerer')) && bossRangedAttack(state, boss)) {
     return state;
@@ -6563,7 +6992,7 @@ function bossMove(state, boss) {
     state.lastAction = 'enemy';
     return state;
   }
-  const chosen = chooseHostileMove(legal, king.x, king.y);
+  const chosen = chooseHostileMove(legal, king.x, king.y, state, boss);
   boss.x = chosen.x;
   boss.y = chosen.y;
   crushBoulderUnder(state, boss); // a leaping boss crushes a boulder it lands on
@@ -6581,7 +7010,7 @@ function bossHastySecondMove(state, boss) {
   const here = chebyshev(boss.x, boss.y, king.x, king.y);
   const legal = getPieceMoves(boss, state).filter((m) => !(m.x === king.x && m.y === king.y) && !allyAt(state, m.x, m.y));
   if (!legal.length) return;
-  const chosen = chooseHostileMove(legal, king.x, king.y);
+  const chosen = chooseHostileMove(legal, king.x, king.y, state, boss);
   if (chebyshev(chosen.x, chosen.y, king.x, king.y) >= here) return; // no closer → don't bother (never paces)
   boss.x = chosen.x;
   boss.y = chosen.y;
@@ -6594,6 +7023,7 @@ function moveEnemy(state, enemyId) {
   const next = structuredClone(state);
   next.lastShot = null;
   next.strikeBump = null; // set below only if THIS enemy actually swings at him
+  next.reflectAt = null; // set only if THIS enemy's blow earns a Sentinel riposte
   next.player.deflected = false; // set true only if THIS enemy's blow is deflected
   const enemy = next.enemies.find((piece) => piece.id === enemyId);
   if (!enemy) return next;
@@ -6629,7 +7059,7 @@ function dangerReachOk(next) {
 function ensureReachable(state) {
   const p = state.player;
   if (!state.exit) return false;
-  if (p.phase || p.terrainImmune) return false; // he can cross walls / lava / pits — never truly boxed in
+  if (p.phase || p.pathfinder) return false; // he can cross walls / water / pits — never truly boxed in
   if (terrainAt(state, p.x, p.y) === 'lava') return false; // mid lava-crossing — he'll step off; don't yank him
   if (dangerReachOk(state)) return false; // he already reaches all he needs
   const region = playerReachable(state, state.exit.x, state.exit.y); // the exit+key component

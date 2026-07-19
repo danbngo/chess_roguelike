@@ -251,7 +251,7 @@
   function logSeverityColor(text) {
     const t = text.toLowerCase();
     if (/\byou win|victory|orb of victory|level up|a boon|new power|is slain|is defeated|guardian falls|slain!|claims? the (key|orb)|reaches the portal/.test(t)) return '#7dd3fc';
-    if (/you have fallen|the king falls|game over|hurled screaming|blasts the king|slams into the king|bowls the king aside|strikes the king|wounds the king|the king is struck/.test(t)) {
+    if (/you have fallen|the king falls|game over|hurled screaming|blasts the king|slams into the king|bowls the king aside|strikes the king|wounds the king|the king is struck|sears the king|erupts under the king/.test(t)) {
       return '#b91c1c'; // really bad — the king is wounded or worse (dark red)
     }
     if (/roars?|awakens|turns hostile|locks onto the king|— move!|floods|lava wells|slump into|pits yawn|ceiling caves|caves in|erupts|killing frost|ice sheets|a wave of|mini-?boss|rogue \w+|claws in|converge|conjures a minion/.test(t)) {
@@ -428,15 +428,29 @@
       return;
     }
     const card = gameState.player.cards[index];
-    if (!card || card.remaining > 0) {
+    if (!card) {
       return;
     }
-    // Can't even AIM a weapon card while wading (Amphibious/Druid lifts this); ability
-    // cards (promotion / reload / swap) are exempt, matching useCard's own guard.
-    const isAbilityCard = card.kind === 'promotion' || card.kind === 'reload' || card.kind === 'swap' || card.kind === 'blink' || card.kind === 'silence';
+    // Ability cards (utility: promotion/reload/swap/blink/silence/confuse) vs weapons. Two things key
+    // off this: they are exempt from the wading guard below (no weapon to ready), and — clicking one
+    // WHILE AIMING another card CANCELS the aim rather than switching to it. Mid-aim, an ability is the
+    // "never mind, do this instead" choice; a clean cancel reads better than re-aiming onto a self-cast
+    // target. (Weapon cards still switch the aim. Works whether or not the ability is off cooldown.)
+    const isAbilityCard = card.kind === 'promotion' || card.kind === 'reload' || card.kind === 'swap' || card.kind === 'blink' || card.kind === 'silence' || card.kind === 'confuse';
+    if (cardTargeting !== null && isAbilityCard) {
+      cancelCardTargeting();
+      gameState.message = 'Aim cancelled.';
+      updateHud();
+      return;
+    }
+    if (card.remaining > 0) {
+      return;
+    }
     const p = gameState.player;
-    if (!isAbilityCard && !p.terrainImmune && isSlowTerrain(terrainAt(gameState, p.x, p.y))) {
-      gameState.message = `You can't ready a weapon while wading through ${terrainAt(gameState, p.x, p.y)}.`;
+    const underNow = terrainAt(gameState, p.x, p.y);
+    if (!isAbilityCard && !p.pathfinder && underNow === 'water') {
+      const cardNoun = classCategory(p.className) === 'spell' ? 'spell' : classCategory(p.className) === 'ranged' ? 'bow' : 'weapon';
+      gameState.message = `You can't ready a ${cardNoun} while wading through ${underNow}.`;
       updateHud();
       return;
     }
@@ -457,13 +471,17 @@
       const angB = Math.atan2(b.y - ky, b.x - kx);
       return angA !== angB ? angA - angB : distToKing(a) - distToKing(b);
     });
-    // Snap the cursor to the NEAREST HITTABLE ENEMY by default (offensive cards want a
-    // foe, not empty ground) — falling back to the nearest reachable tile if none is armed.
-    const foeTargets = cardTargets.filter((t) => gameState.enemies.some((e) => e.x === t.x && e.y === t.y));
-    const preferred = (foeTargets.length ? foeTargets : cardTargets).slice().sort((a, b) => distToKing(a) - distToKing(b))[0];
+    // Snap the cursor to the HIGHEST-VALUE target by default (offensive cards want the best foe, not
+    // empty ground or an ice slab). A boss outweighs a common foe outweighs a slab of terrain; a shot
+    // that would wash back over the KING scores far below zero, so the aim never DEFAULTS to burning
+    // him (fireball). Ties break by nearness, and if nothing is worth hitting it falls to the closest
+    // reachable tile — exactly the old behaviour once every value is a wash.
+    const scored = cardTargets.map((t) => ({ t, v: aimValue(card, t) }));
+    scored.sort((a, b) => (b.v - a.v) || (distToKing(a.t) - distToKing(b.t)));
+    const preferred = scored[0].t;
     cardCursor = { x: preferred.x, y: preferred.y };
     gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — cycle targets with the numpad/WSAD, then Enter/Space (or press ${index + 1} again) to fire; Esc to cancel.`;
-    showCardInfo(card);
+    showCardInfo(card, index);
     updateHud();
   }
 
@@ -505,10 +523,54 @@
     return [sub ? `${sub} subclass` : null, cardVerb(card), `Cooldown ${card.cooldown} turns`].filter(Boolean);
   }
 
-  // Show the card being aimed in the right pane (BRIEF description, not the full piece text).
-  function showCardInfo(card) {
+  // Show the card being aimed in the right pane (BRIEF description, not the full piece text), plus a
+  // row of hotkey buttons to REBIND it to another slot (1-9) — swapping with whatever holds that slot.
+  function showCardInfo(card, index) {
     examineEl.innerHTML = '';
     addExamineBlock(`${card.kind} — ${classCategory(gameState.player.className)}`, cardInfoLines(card));
+    if (typeof index === 'number') addRebindRow(index);
+  }
+
+  // A row of numbered buttons under the aimed card's description: press one to move this card to that
+  // hotkey slot. If another card already sits there, the two simply TRADE places, so no slot is ever
+  // left empty and the total hand is unchanged.
+  function addRebindRow(index) {
+    const cards = gameState.player.cards;
+    if (!cards || cards.length < 2) return;
+    const block = document.createElement('div');
+    block.className = 'examine-block';
+    const h = document.createElement('div');
+    h.className = 'examine-h';
+    h.textContent = 'Rebind hotkey';
+    block.append(h);
+    const row = document.createElement('div');
+    row.className = 'rebind-row';
+    cards.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rebind-key' + (i === index ? ' current' : '');
+      b.textContent = String(i + 1);
+      b.title = i === index ? 'current slot' : `move to slot ${i + 1} (swaps with ${cards[i].kind})`;
+      if (i !== index) b.addEventListener('click', () => rebindCard(index, i));
+      row.append(b);
+    });
+    block.append(row);
+    examineEl.append(block);
+  }
+
+  // Swap the cards in two hotkey slots. Keeps the aim pointed at the SAME card if one is being aimed,
+  // so rebinding mid-aim never fires the wrong spell.
+  function rebindCard(fromIndex, toIndex) {
+    const cards = gameState && gameState.player && gameState.player.cards;
+    if (!cards || fromIndex === toIndex || toIndex < 0 || toIndex >= cards.length) return;
+    const tmp = cards[fromIndex];
+    cards[fromIndex] = cards[toIndex];
+    cards[toIndex] = tmp;
+    if (cardTargeting === fromIndex) cardTargeting = toIndex;
+    else if (cardTargeting === toIndex) cardTargeting = fromIndex;
+    renderCards();
+    if (cardTargeting !== null) showCardInfo(cards[cardTargeting], cardTargeting); // refresh the panel on the moved card
+    saveGame(gameState);
   }
 
   // Hovering a card slot floats the same brief description (like the purchase menu, minus the
@@ -532,6 +594,34 @@
     cardCursor = null;
   }
 
+  // How much the king WANTS to hit whatever stands on (x,y): a boss is the prize, a common awake foe
+  // next, a dozing one or a structure less so; bare ground (or a terrain obstacle like ice/a tree) is
+  // worth nothing. Used to pick the best default aim.
+  function foeValueAt(x, y) {
+    const e = gameState.enemies.find((en) => en.x === x && en.y === y);
+    if (!e) return 0;
+    if (e.summonCircle) return 4; // shutting a circle is worth something
+    if (e.boss) return 20;
+    if (e.turret) return 5;
+    if (e.awake && !e.asleep) return 10;
+    return 6; // a foe that hasn't woken yet
+  }
+
+  // The total value of aiming `card` at `tile`: the worth of every foe the cast would actually strike
+  // (its whole AoE for a spell, just the tile for a melee/ranged card), MINUS a heavy penalty if the
+  // blast would wash back over the king himself (so a fireball never DEFAULTS to burning him) and a
+  // smaller one for catching his own allies.
+  function aimValue(card, tile) {
+    const area = classCategory(gameState.player.className) === 'spell'
+      ? (spellAoeTiles(gameState, cardTargeting, tile) || [tile])
+      : [tile];
+    let v = 0;
+    for (const t of area) v += foeValueAt(t.x, t.y);
+    if (area.some((t) => t.x === gameState.player.x && t.y === gameState.player.y)) v -= 50; // self-harm: never the default
+    if (area.some((t) => (gameState.allies || []).some((a) => a.x === t.x && a.y === t.y))) v -= 8; // burns his own
+    return v;
+  }
+
   // The tiles a spell cast at `cursor` would scorch (its whole pierced line), so the aim
   // overlay can highlight them. Ranged/melee cards hit only their target, so return null.
   function spellAoeTiles(state, cardIndex, cursor) {
@@ -544,7 +634,28 @@
     const tiles = [];
     const push = (x, y) => { if (inB(x, y) && !tiles.some((t) => t.x === x && t.y === y)) tiles.push({ x, y }); };
 
-    if (card.kind === 'horse') {
+    if (card.kind === 'fireball') {
+      // The fireball BURSTS at the first thing that stops it — the first foe on the line, or the first
+      // solid obstacle (wall / boulder / ice / tree) — NOT the empty far tile the cursor sits on. The
+      // burst is that centre PLUS all eight tiles around it, so the preview must show the whole ring
+      // (this is exactly what the resolution does — see fireballCentre + the burst loop).
+      const reach = cardReach('fireball', p.cardReach || 0);
+      const dx = Math.sign(cursor.x - p.x);
+      const dy = Math.sign(cursor.y - p.y);
+      let centre = null;
+      for (let i = 1; i <= reach; i += 1) {
+        const x = p.x + dx * i;
+        const y = p.y + dy * i;
+        if (!inB(x, y)) break;
+        const bt = terrainAt(state, x, y);
+        if (state.enemies.some((e) => e.x === x && e.y === y)) { centre = { x, y }; break; }
+        if (bt === 'wall' || bt === 'boulder' || bt === 'ice' || bt === 'tree') { centre = { x, y }; break; }
+      }
+      if (centre) {
+        push(centre.x, centre.y);
+        for (let ox = -1; ox <= 1; ox += 1) for (let oy = -1; oy <= 1; oy += 1) push(centre.x + ox, centre.y + oy);
+      }
+    } else if (card.kind === 'horse') {
       // The phantom steed scorches the whole L-path to the aimed knight tile.
       for (const t of knightLPath(p.x, p.y, cursor.x - p.x, cursor.y - p.y, gameState)) push(t.x, t.y);
     } else {
@@ -639,7 +750,7 @@
         // above chose rather than being one more case inside them — a confused turret is still a
         // turret, and the player wants to read both facts.
         if (enemy.confused) tag += ' — CONFUSED';
-        if (gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)) tag += ' — neutral (step beside it to tame it)';
+        if (gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)) tag += ' — neutral (it ignores you; strike it and the truce ends)';
         lines.push(`Enemy: ${enemy.kind}${tag}`);
       }
     }
@@ -781,7 +892,7 @@
       const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
       if (enemy) {
         const st = gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)
-          ? 'Neutral — a wild beast at truce. It roams and takes no interest in you, and nothing else picks a fight with it. Step BESIDE it and it joins you; strike it and the truce is off for good'
+          ? 'Neutral — a wild beast at truce. It roams and takes no interest in you, and nothing else picks a fight with it. Strike it and the truce is off for good'
           : enemy.confused
           ? 'Confused — strikes whatever is nearest, its own side included, or blunders off at random. Any blow you land snaps it out of it'
           : enemy.boss && enemy.dormant
@@ -924,7 +1035,15 @@
     // from both sides of the board — an enemy's Bulwark blow AND the king's own Blast/Recoil/
     // Thundering Charge — and this is the one place both of them land.
     if (nextState.shoveBumps && nextState.shoveBumps.length) {
-      for (const b of nextState.shoveBumps) Renderer.bumpEnemy(b.id, b.dx, b.dy);
+      // A shove wave hurls the OUTERMOST foe first, then the next in, and so on. Stagger the nudges by
+      // each foe's distance from the king (the shove's origin) so the eye can FOLLOW the ripple out and
+      // read which collision felled what, rather than every token jerking on the same frame.
+      const king = nextState.player;
+      for (const b of nextState.shoveBumps) {
+        const e = nextState.enemies.find((en) => en.id === b.id);
+        const d = e ? chebyshev(e.x, e.y, king.x, king.y) : 1;
+        Renderer.bumpEnemy(b.id, b.dx, b.dy, Math.max(0, d - 1) * 0.06);
+      }
       nextState.shoveBumps = [];
     }
     // Drain SMOKE PUFFS: a Warper/Shadowstep/Burrower leaves smoke where it vanished and where it
@@ -932,6 +1051,11 @@
     if (nextState.puffs && nextState.puffs.length) {
       for (const pf of nextState.puffs) Renderer.puff(pf.x, pf.y);
       nextState.puffs = [];
+    }
+    // Drain SCORCH SMOKE: gray puffs left wherever lava or fire seared a unit this turn.
+    if (nextState.smoke && nextState.smoke.length) {
+      for (const sm of nextState.smoke) Renderer.smoke(sm.x, sm.y);
+      nextState.smoke = [];
     }
     if (animate) {
       Renderer.sync(nextState);
@@ -1161,12 +1285,18 @@
     };
   }
 
+  // The id of the first (top-left) trophy of the current room, or null if the room is empty.
+  function firstTrophyId() {
+    const room = trophyPages[trophyPage];
+    return room && room[0] ? room[0].id : null;
+  }
+
   function openTrophies() {
     screen = 'trophies';
     gameState = null;
     trophyPage = 0;
-    sceneHover = null;
     buildTrophyPages();
+    sceneHover = firstTrophyId(); // the top-left trophy is highlighted by default
     document.body.classList.remove('in-game');
     document.body.classList.add('on-title');
     hideOverlays(); // the diegetic hall IS the screen — no DOM card
@@ -1175,7 +1305,7 @@
   function pageTrophies(delta) {
     const pageCount = Math.max(1, trophyPages.length);
     trophyPage = Math.max(0, Math.min(pageCount - 1, trophyPage + delta));
-    sceneHover = null;
+    sceneHover = firstTrophyId(); // stepping into a new room lands on its top-left trophy
   }
 
   function showTitle() {
@@ -1876,8 +2006,11 @@
     // shot at whatever still stands. (If nothing targetable remains, end the turn.)
     if (nextState.lastAction === 'card-followup') {
       const idx = gameState.player.cards.findIndex((c) => c.doubleReady);
-      if (idx >= 0 && getCardMoves(gameState, gameState.player.cards[idx]).length > 0) {
-        toggleCardTargeting(idx); // re-open the aim overlay for the bonus shot
+      const foeLeft = idx >= 0 && (typeof spellCanHitFoe === 'function'
+        ? spellCanHitFoe(gameState, gameState.player.cards[idx])
+        : getCardMoves(gameState, gameState.player.cards[idx]).length > 0);
+      if (foeLeft) {
+        toggleCardTargeting(idx); // re-open the aim overlay for the bonus shot — only if a UNIT still stands
         if (cardTargeting === idx) {
           awaitingFollowup = true;
           return;
@@ -1920,6 +2053,19 @@
     // raised by the phase itself, not by a mover (a gasping boss doesn't act), so nothing in the
     // per-mover path would ever show it.
     showBossShout();
+    // The FLOOR ITSELF can kill him at the very START of the enemy phase — a geyser erupting under his
+    // feet, the molten floor closing in, a burning tree — all before any foe moves. That death lands
+    // inside beginEnemyPhase, not in a per-mover landEnemyMove, so it must be caught HERE: otherwise
+    // the queue runs on a dead king and the defeat overlay never drops (the game just hangs).
+    if (gameState.gameOver) {
+      Renderer.effect('death');
+      GameAudio.play('death');
+      flashHealth();
+      enemyQueue = [];
+      pendingAction = 'gameover';
+      animTimer = ENEMY_MOVE_TIME * 2.5;
+      return;
+    }
     enemyQueue = phase.moverIds;
     animTimer = PLAYER_MOVE_TIME;
     scanVisibleTips(phase.state);
@@ -1949,6 +2095,14 @@
     if (gameState.strikeBump) {
       Renderer.bumpEnemy(gameState.strikeBump.id, gameState.strikeBump.dx, gameState.strikeBump.dy);
       gameState.strikeBump = null;
+    }
+    // REFLECT (Sentinel): the king ripostes a foe that ended its blow adjacent — he LUNGES at it and
+    // it is cut down, out of turn. Shown as the king's own strike so the counter-kill reads clearly.
+    if (gameState.reflectAt) {
+      Renderer.lunge(gameState.reflectAt.x, gameState.reflectAt.y);
+      Renderer.effect('kill');
+      GameAudio.play('kill');
+      gameState.reflectAt = null;
     }
     if (gameState.player.hp < hpBefore) {
       Renderer.effect(gameState.gameOver ? 'death' : 'hit');
@@ -2229,6 +2383,35 @@
       return;
     }
 
+    // Diegetic MENUS are keyboard-navigable: the usual movement keys (WASD, numpad) AND the arrows
+    // move the highlight from option to option; Enter/Space fires the highlighted one, exactly as a
+    // click would. `menuDir` folds both key sets into a single [dx,dy], and a 1-D menu reads whichever
+    // axis the player pushed (so up OR left both step "back" through a row of options).
+    const menuDir = (ev) => resolveMove(ev) || resolvePan(ev);
+    const isConfirmKey = (ev) => ev.key === 'Enter' || ev.key === ' ' || ev.code === 'Space';
+
+    // TITLE menu: the four icons ring the throne (New Game left, Continue right, Trophies down-left,
+    // Options down-right). A pressed DIRECTION lands on the icon that lies that way from the centre —
+    // press left → the left icon, down-left → the down-left icon — rather than rotating through a list.
+    if (screen === 'title') {
+      const opts = titleMenuModel().options.filter((o) => o.enabled);
+      if (!opts.length) return;
+      const dir = menuDir(event);
+      if (dir) {
+        event.preventDefault();
+        const id = Renderer.titleOptionInDirection(dir[0], dir[1]);
+        if (id) titleHover = id; // no icon that way → keep the current highlight
+        else if (titleHover == null) titleHover = opts[0].id;
+        return;
+      }
+      if (isConfirmKey(event)) {
+        event.preventDefault();
+        const sel = opts.find((o) => o.id === titleHover) || opts[0];
+        if (sel && sel.action) sel.action();
+      }
+      return;
+    }
+
     // A yes/no confirm modal (e.g. descending past a live boss): Enter = yes, Esc = no.
     if (screen === 'confirm') {
       if (event.key === 'Enter') {
@@ -2254,6 +2437,39 @@
       if (screen === 'trophies' && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
         event.preventDefault();
         pageTrophies(event.key === 'ArrowRight' ? 1 : -1);
+        return;
+      }
+      // TROPHY HALL: the NUMPAD (and WASD) directionally SELECT a medallion — press up-left → the
+      // top-left trophy, right → the right one, etc. (Arrows are reserved for walking room to room,
+      // above.) Any trophy can be read this way, earned or not; the blurb shows its name and condition.
+      if (screen === 'trophies') {
+        const dir = resolveMove(event); // numpad + WASD only, NOT the arrows
+        if (dir) {
+          event.preventDefault();
+          const id = Renderer.trophyInDirection(dir[0], dir[1]);
+          if (id) sceneHover = id;
+          return;
+        }
+        return;
+      }
+      // CLASS SELECT is keyboard-navigable: a movement key walks the row of kings (or difficulties),
+      // Enter/Space chooses the highlighted one — the same handler a click runs.
+      if (screen === 'class') {
+        const ids = pickStage === 'class' ? Object.keys(CLASSES) : Object.keys(DIFFICULTY_HP);
+        const dir = menuDir(event);
+        if (dir) {
+          event.preventDefault();
+          if (sceneHover == null || !ids.includes(sceneHover)) { sceneHover = ids[0]; return; }
+          const step = (dir[0] || dir[1]) > 0 ? 1 : -1;
+          const i = (ids.indexOf(sceneHover) + step + ids.length) % ids.length;
+          sceneHover = ids[i];
+          return;
+        }
+        if (isConfirmKey(event)) {
+          event.preventDefault();
+          handleSceneClick(ids.includes(sceneHover) ? sceneHover : ids[0]);
+          return;
+        }
       }
       return;
     }

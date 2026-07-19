@@ -23,9 +23,14 @@ function getAwarenessBounds(state) {
 
 function boundsOfSize(state, size) {
   const half = Math.floor(size / 2);
+  // ALWAYS centred on the king — NOT clamped to stay on-board. Clamping shoved the window inward near
+  // an edge, so a king by the west wall saw an extra column or two EAST — foes further into the room
+  // than his vision should reach (which he could see but never hit). Now his sight is symmetric; the
+  // part of the window that falls past the rampart is simply off-board VOID (the border wall blocks
+  // the look to it, so nothing out there ever lights, and the renderer paints it black).
   return {
-    x: clamp(state.player.x - half, 0, state.worldSize - size),
-    y: clamp(state.player.y - half, 0, state.worldSize - size),
+    x: state.player.x - half,
+    y: state.player.y - half,
     width: size,
     height: size,
   };
@@ -66,6 +71,10 @@ function threatensNextTurn(state, enemy) {
 // A turret is only a LIVE threat when the king is actually standing in its firing line (then it
 // locks on and fires); off-line it sits idle. Used to gate its danger tiles and its status icon.
 function turretHasKingInLine(state, turret) {
+  // Camouflage (Gloom Stalker): a king more than one tile from the gun is INVISIBLE to it — it cannot
+  // be "in the line" of a turret that can't see him, so it never locks on. Without this the gun kept
+  // flashing its aiming crosshair at a king it would never actually fire on (tickTurrets dozes it).
+  if (state.player.camouflage && chebyshev(turret.x, turret.y, state.player.x, state.player.y) > 1) return false;
   return getPieceThreats(turret, state, true).some((t) => t.x === state.player.x && t.y === state.player.y);
 }
 
@@ -134,16 +143,8 @@ function enemySeesTile(state, enemy, x, y) {
 function getThreatenedTiles(state) {
   const counts = new Map();
   const p = state.player;
-  // ANIMAL FORM. While the warhorse holds, NOTHING on the board can lay a finger on him —
-  // rollMitigation returns 'invuln' before any enemy blow resolves — so every tile he can reach is
-  // safe and painting lanes red is simply false.
-  //
-  // But NOT on the last turn, and that exception is the whole point. passTurn ticks the form down
-  // BEFORE the room swings, so a king who acts with 1 turn left is a plain king again by the time
-  // the blows land (verified: at promotion 1 he takes the hit; at 2 he does not). That is the most
-  // dangerous turn of the entire form — he has spent three turns learning that nothing can touch
-  // him — so it must go back to reading red BEFORE he steps, not after he is bleeding.
-  if (p.promotion > 1) return counts;
+  // Animal Form no longer makes the king invincible (it is fast, not invulnerable), so the threat map
+  // paints real danger during it exactly as for a plain king — no special case.
   const ghost = buildThreatGhost(state);
   for (const enemy of getVisibleEnemies(state)) {
     if (!threatensNextTurn(state, enemy)) continue;
@@ -164,6 +165,17 @@ function getThreatenedTiles(state) {
       // "move one tile and the turret drops out of range" case the map used to get wrong.
       if (!enemySeesTile(state, enemy, tile.x, tile.y)) continue;
       const key = `${tile.x},${tile.y}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+  // ENVIRONMENTAL DANGER: a geyser one turn from blowing (imminent) makes its own tile lethal to end
+  // a move on — the shared clock fires the instant the king's move resolves, scalding whatever stands
+  // over a vent. No class is immune, so paint every visible imminent vent red exactly like a threat.
+  if (typeof geyserImminent === 'function' && geyserImminent(state)) {
+    for (const key in (state.terrain || {})) {
+      if (state.terrain[key] !== 'geyser') continue;
+      const [gx, gy] = key.split(',').map(Number);
+      if (typeof inLineOfSight === 'function' && !inLineOfSight(state, gx, gy)) continue;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
   }

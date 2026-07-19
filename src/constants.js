@@ -38,8 +38,9 @@ const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 240 — dread m
 // PAST max dread, a floor the king WILL NOT LEAVE turns lethal: five more OVERSTAY steps (turns
 // 240-360) over which LAVA wells up and closes in (tickLavaEncroachment) and the swarm runs unbounded.
 // It peaks at turn 360 — by then the molten floor and the horde together kill any build. See
-// overstayFraction. (Fairy Wings crosses the fire but not the horde; Waiting shrugs the horde but not
-// the fire; no class can hold both, so lingering is always fatal in the end.)
+// overstayFraction. (Nothing crosses the fire now — Pathfinder wades water/trees/pits but lava sears
+// all; Waiting shrugs the horde but not the ground; no build survives the molten peak, so lingering
+// is always fatal in the end.)
 const DREAD_OVERSTAY_STEPS = 5;
 const MAX_TURNS_LAVA = MAX_TURNS_SCARY + DREAD_STEP_TURNS * DREAD_OVERSTAY_STEPS; // 360 — the molten floor peaks here
 // Which HURRY gear a dread fraction sits in. Gear 0 is the GRACE; 1..DREAD_RAMP_STEPS are the
@@ -73,6 +74,9 @@ const PURSUIT_TTL_MAX = 10;
 // Having reached the spot where it lost him, a hunter casts on this many tiles further along the way
 // he was heading — the "he must have gone round that corner" guess. One guess per pursuit.
 const PURSUIT_GUESS = 3;
+// FOG: a drifting cloud (spellfire over water, steam off lava/ice, a Fogweaver boss) that blocks the
+// look for this many turns before it thins away. It is HAZE — Premonition (soft-sight) peers through.
+const FOG_TURNS = 2;
 const MAX_ENEMIES = 90; // A PERFORMANCE ceiling only. The per-floor cap now RISES with overstay (spawns
 // are MEANT to run unbounded the longer he lingers — see the caps in maybeSpawnEnemy); this just stops
 // the enemy array from exploding past what the per-turn clone can carry.
@@ -205,7 +209,7 @@ const VAMPIRESS_HP = 3;
 
 // Each floor guardian rolls ONE of these boss perks at creation, making every boss
 // fight a little different. See createBoss / bossMove / damageBoss for the behaviour.
-const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen', 'lich', 'warper', 'guardian', 'mechanic', 'hotblooded', 'icygrasp', 'shadowstep', 'anchored', 'gardener', 'petowner', 'hasty', 'burrower'];
+const BOSS_PERKS = ['summoner', 'blinker', 'brutal', 'ranged', 'sorcerer', 'knockback', 'shapeshifter', 'tough', 'leech', 'flying', 'phasing', 'regen', 'lich', 'warper', 'guardian', 'mechanic', 'hotblooded', 'icygrasp', 'shadowstep', 'anchored', 'gardener', 'petowner', 'hasty', 'burrower', 'fogweaver'];
 // Traits keyed to a REALM: some only demon-kind guardians may roll, some only mortal ones.
 const DEMON_ONLY_PERKS = ['hotblooded', 'icygrasp', 'shadowstep'];
 const MORTAL_ONLY_PERKS = ['gardener'];
@@ -234,6 +238,7 @@ const BOSS_PERK_LABELS = {
   petowner: 'Beastmaster — keeps a ferz familiar beside it, conjuring a new one the moment the last is gone',
   hasty: 'Hasty — moves a second time in a turn, so long as neither step draws blood',
   burrower: 'Burrower — walks on the void unharmed, and tears open a fresh pit to lunge from',
+  fogweaver: 'Fogweaver — breathes out banks of fog around itself each turn, blinding you to the room (Premonition sees through it)',
 };
 // A guardian has NO unique powers — it is simply a piece kind plus rolled BOSS_PERKS, so the player
 // only ever has to learn that one list. Its KIND is rolled too, from a sliding window over its tier
@@ -310,7 +315,7 @@ const CLASSES = {
       // ⛨ Sentinel — the immovable bastion: wait out a blow untouched, guard the next, punish the rest.
       { id: 'w_waiting', chain: 'Sentinel', tier: 1, name: 'Waiting', short: 'Skip a turn to shrug off all enemy attacks until your next turn', desc: 'Skip a turn (Discipline) and no enemy attack or collision can hurt you until your next turn — though knockback still shoves you. The GROUND still can: lava, torches, and a fall into a pit all burn as ever. A halo marks you while it holds.', grants: { waiting: true } },
       { id: 'w_bulwark', chain: 'Sentinel', tier: 2, requires: 'w_waiting', name: 'Parry', short: 'End a turn without attacking to block the next hit', desc: 'End a turn without striking and you RAISE your guard (a shield shows over your token). The next blow that would land is turned aside, and the guard drops — whatever you did in between. Bank it, then take the fight to them', grants: { firstHitEachTurn: true } },
-      { id: 'w_reflect', chain: 'Sentinel', tier: 3, requires: 'w_bulwark', name: 'Reflect', short: 'A foe whose blow your Parry turns aside takes 1 damage', desc: 'Whenever your raised Parry guard turns a blow aside, the foe that struck it takes 1 damage in return — the guard bites back.', grants: { reflect: true } },
+      { id: 'w_reflect', chain: 'Sentinel', tier: 3, requires: 'w_bulwark', name: 'Riposte', short: 'A foe that strikes you and ends adjacent is cut down in return', desc: 'Any foe that lands (or attempts) a blow and ENDS its turn next to you is struck down where it stands — a counter-blow out of turn, whether or not you parried. A common foe dies to it; a boss or turret soaks 1. Ranged attackers across the room are out of reach.', grants: { reflect: true } },
       // ⚔ Reaver — the bloodletter: kills fuel more kills.
       { id: 'w_edge', chain: 'Reaver', tier: 1, name: 'Keen Edge', short: 'A card kill halves that card’s cooldown', desc: "A card kill cuts that card's cooldown IN HALF (rounded down)", grants: { meleeRefund: true } },
       { id: 'w_cleave', chain: 'Reaver', tier: 2, requires: 'w_edge', name: 'Cleave', short: 'A kill also fells one adjacent foe (or tree/gate)', desc: 'When you fell a foe, one adjacent foe dies too — or, finding no second body, the sweep bites into an adjacent tree or gate', grants: { meleeCleave: true } },
@@ -339,13 +344,13 @@ const CLASSES = {
     startPerk: { id: 'r_senses', name: 'Sharpened Senses', short: '+1 sight radius and +1 card reach', desc: '+1 sight radius and +1 card reach — a hunter’s eye for lining up a bishop shot. Stacks with the Oracle’s Hawk Eyes.', grants: { vision: 2, cardReach: 1 } },
     perks: [
       // 🌲 Druid — the survivalist: master the terrain, then ride to war.
-      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Fairy Wings', short: 'Cross water, lava and pits freely — no slow, burn or fall', desc: 'You flit over water, lava, and pits — walking, carding, or leaping onto and across them freely, with no slow, no burn, and no falling', grants: { terrainImmune: true } },
+      { id: 'r_wade', chain: 'Druid', tier: 1, name: 'Pathfinder', short: 'Cross water, trees and pits freely — no slow, no fall (lava still burns)', desc: 'The wild is no obstacle: you wade WATER at a walk, push straight through TREES, and tread PITS without falling — walking, carding, or leaping across them all. Only LAVA still stops you, searing as ever.', grants: { pathfinder: true } },
       { id: 'r_xray', chain: 'Druid', tier: 2, requires: 'r_wade', name: 'Wild Empathy', short: 'Wild horses (knights & nightriders) roam neutral — they ignore you', desc: 'Wild HORSES — enemy and mini-boss knights and nightriders (never a floor guardian, never an amazon) — turn NEUTRAL: they roam, take no interest in you, and nothing else on the board picks a fight with them. Strike one and the truce is off for good.', grants: { beastFriend: true } },
-      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Animal Form', short: 'Card: become an invincible unicorn for 3 turns; wild horses rally to you', desc: 'Gain an Animal Form card (cooldown 9): become an INVINCIBLE UNICORN (glides like a bishop AND rides like a nightrider) for 3 turns, taking no damage and playing no cards — and every wild horse on the board rallies to your side as an ally.', grants: { gainCard: 'promotion', gainCooldown: 9 } },
+      { id: 'r_promo', chain: 'Druid', tier: 3, requires: 'r_xray', name: 'Animal Form', short: 'Card: become a unicorn for 3 turns; wild horses rally to you', desc: 'Gain an Animal Form card (cooldown 9): become a UNICORN (glides like a bishop AND rides like a nightrider) for 3 turns, playing no cards — and every wild horse on the board rallies to your side as an ally. You still take damage as normal — the beast is fast and deadly, not invulnerable.', grants: { gainCard: 'promotion', gainCooldown: 9 } },
       // 🎯 Oracle — the seer: know the floor, then see (and shoot) beyond your foes' sight.
-      { id: 'r_eagle', chain: 'Oracle', tier: 1, name: 'Premonition', short: 'See and shoot through cover within sight (one-way)', desc: 'Cover no longer blinds you: within your sight radius you SEE and SHOOT straight through walls, boulders, and devilgrass. It is ONE-WAY — a foe with a wall between you can’t strike back, but it DOES wake and start closing in on you', grants: { seeThroughWalls: true } },
-      { id: 'r_eyes2', chain: 'Oracle', tier: 2, requires: 'r_eagle', name: 'Hawk Eyes', short: '+2 sight radius and +2 card reach', desc: '+2 sight radius AND +2 card reach. The wider sight is TWO-WAY — foes out in the new band can see and strike you back, so the extra reach cuts both ways.', grants: { vision: 4, cardReach: 2 } },
-      { id: 'r_reach', chain: 'Oracle', tier: 3, requires: 'r_eyes2', name: 'Revelation', short: 'Arrive knowing the whole floor — key and stair marked', desc: 'The floor holds no secrets from you: the fog is torn away the instant you arrive, and you know where the key and the stair lie. You still only SEE (and shoot) what is within your sight — but you never again walk a floor not knowing where you are going', grants: { revealFloor: true } },
+      { id: 'r_eagle', chain: 'Oracle', tier: 1, name: 'Premonition', short: 'See and shoot through haze — tall grass and geyser steam (one-way)', desc: 'Haze no longer blinds you: within your sight radius you SEE and SHOOT straight through tall grass and erupting geyser steam. Solid cover — walls, boulders, trees — still blocks you. It is ONE-WAY: a foe hidden in the haze can’t strike back, but it DOES wake and start closing in on you', grants: { trueSight: true } },
+      { id: 'r_reach', chain: 'Oracle', tier: 2, requires: 'r_eagle', name: 'Revelation', short: 'Arrive knowing the whole floor — key, stair, circles and turrets marked', desc: 'The floor holds no secrets from you: the fog is torn away the instant you arrive, you know where the key and the stair lie, and summoning circles and turrets stay marked even in the dark. You still only SEE (and shoot) living foes within your sight — but you never again walk a floor not knowing where you are going or what waits in the fog', grants: { revealFloor: true } },
+      { id: 'r_eyes2', chain: 'Oracle', tier: 3, requires: 'r_reach', name: 'Hawk Eyes', short: '+2 sight radius (one-way) and +2 card reach', desc: '+2 sight radius AND +2 card reach. Like Premonition, the extra sight is ONE-WAY — foes out in the new band cannot see or strike you back (though they will start closing in), so you pick them off from range.', grants: { visionOneWay: 4, cardReach: 2 } },
       // 🌑 Gloom Stalker — the ghost: unchased, ignored by structures, unnoticed.
       // Ghost used to grant `noChase` (foes gave up the moment you broke sight). That read as
       // stealth but PUNISHED good play: it made a foe impossible to draw off its pack, so you could

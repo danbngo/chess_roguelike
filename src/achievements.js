@@ -99,6 +99,11 @@ const ACHIEVEMENTS = (() => {
   add('pace:100', 'Relentless', 'Win never spending more than 100 turns on any one floor.', (p) => p.maxFloorTurns <= 100, { won: true });
   add('pace:75', 'Blur', 'Win never spending more than 75 turns on any one floor.', (p) => p.maxFloorTurns <= 75, { won: true });
 
+  // --- Conduct: slaughter — a foe felled on each of N turns in an unbroken row (any run) ----
+  add('streak:10', 'On a Roll', 'Fell a foe on 10 turns in a row.', (p) => (p.bestKillStreak || 0) >= 10);
+  add('streak:20', 'Bloodstorm', 'Fell a foe on 20 turns in a row.', (p) => (p.bestKillStreak || 0) >= 20);
+  add('streak:30', 'Unstoppable', 'Fell a foe on 30 turns in a row.', (p) => (p.bestKillStreak || 0) >= 30);
+
   // --- Conduct: restraint -------------------------------------------------
   add('card:none', 'Bare Hands', 'Win without ever playing a weapon card.', (p) => !p.usedCard, { won: true });
   add('attack:none', 'Never Lifted a Finger', 'Win without ever landing a plain attack.', (p) => !p.usedNormalAttack, { won: true });

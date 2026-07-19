@@ -35,6 +35,13 @@ function blocksSight(type) {
   return type === 'wall' || type === 'tree' || type === 'boulder' || type === 'devilgrass' || type === 'door';
 }
 
+// SOFT cover: sight-blockers that are only a haze — tall grass and (handled separately) the
+// erupting geyser's steam. Premonition (trueSight) looks and shoots THROUGH these but not through
+// HARD, opaque cover (stone, timber, boulders, a shut door). Sixth Sense sees through everything.
+function blocksSightSoft(type) {
+  return type === 'devilgrass';
+}
+
 // Whether a mover may enter/stop on a tile. Walls and BOULDERS stop everyone (a phasing
 // king excepted). PITS are bottomless — impassable to all, always. Lava is WALKABLE by
 // default (the king sears 1 HP/turn on it — see passTurn); `opts.lavaOk === false` bars it,
@@ -42,12 +49,14 @@ function blocksSight(type) {
 function standableFor(type, opts) {
   const o = opts || {};
   if (type === 'door' || type === 'dooropen' || type === 'doorajar') return true; // a door is always walkable — stepping onto a SHUT/closing one (re)opens it (see openDoorsUnderUnits)
-  // A TREE is solid timber; a GATE is solid iron. Both bar the way to everything but a phaser.
-  // They differ in ONE respect, in blocksSight: you can see straight through a gate's bars.
-  if (type === 'tree' || type === 'gate') return Boolean(o.phaseWalls);
-  if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // walls, boulders & ice slabs stop everyone but a phasing mover
-  if (type === 'pit') return Boolean(o.flying || o.pitOk); // a FLYING mover crosses a pit; a BURROWER walks it as solid ground
-  if (type === 'lava') return o.lavaOk !== false; // walkable unless a caller explicitly forbids it
+  // The two immunities are DISJOINT, on purpose (no overlap): PATHFINDER (Druid) is the woodsman —
+  // he threads TREES, wades WATER and treads PITS; PHASE (Sorcerer) is the ghost — it slips WALLS,
+  // ICE, GATES and BOULDERS. Neither crosses LAVA.
+  if (type === 'tree') return Boolean(o.pathfinder); // solid timber — only Pathfinder walks through it
+  if (type === 'gate') return Boolean(o.phaseWalls); // barred iron — only Phase slips the bars (see-through, though; see blocksSight)
+  if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // stone, rock & ice slabs — only a phasing mover
+  if (type === 'pit') return Boolean(o.flying || o.pitOk || o.pathfinder); // Pathfinder treads the void; a FLYING mover soars it; a BURROWER walks it as solid ground
+  if (type === 'lava') return o.lavaOk !== false; // walkable (it sears) unless a caller forbids it — NEITHER immunity gives a lava pass
   return true; // water & normal are walkable
 }
 
@@ -75,9 +84,14 @@ function isStandable(type) {
   return standableFor(type, { lavaOk: false });
 }
 
-// Symmetric line of sight: clear unless a wall lies strictly between the two
-// points (endpoints themselves are not opaque to the look).
-function hasLineOfSight(state, x0, y0, x1, y1, seeWalls) {
+// Symmetric line of sight: clear unless cover lies strictly between the two points (endpoints
+// themselves are not opaque to the look). `seeMode` is how far the looker sees THROUGH cover:
+//   false  — sees through nothing (plain sight)
+//   'soft' — sees/shoots through HAZE only: tall grass and erupting geyser steam (Premonition)
+//   true   — sees through everything, opaque cover included (Sixth Sense)
+function hasLineOfSight(state, x0, y0, x1, y1, seeMode) {
+  const seesAll = seeMode === true || seeMode === 'all';
+  const seesSoft = seesAll || seeMode === 'soft';
   const dx = Math.abs(x1 - x0);
   const dy = Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
@@ -99,24 +113,55 @@ function hasLineOfSight(state, x0, y0, x1, y1, seeWalls) {
       break;
     }
     const tt = terrainAt(state, x, y);
-    if (blocksSight(tt) && !seeWalls) {
-      return false; // walls block the look (unless the looker sees over them)
+    if (blocksSight(tt)) {
+      // Haze (grass) yields to soft-sight; opaque cover (stone/timber/boulder/door) only to full sight.
+      if (blocksSightSoft(tt) ? !seesSoft : !seesAll) return false;
     }
     // A geyser is see-through when dormant, but its erupting plume of gas blocks the look for that
-    // one turn — the same gas that scalds anything over it (see geyserErupting/tickGeysers).
-    if (tt === 'geyser' && typeof geyserErupting === 'function' && geyserErupting(state) && !seeWalls) {
+    // one turn — the same gas that scalds anything over it (see geyserErupting/tickGeysers). Steam is
+    // HAZE, so soft-sight (Premonition) peers through it.
+    if (tt === 'geyser' && typeof geyserErupting === 'function' && geyserErupting(state) && !seesSoft) {
+      return false;
+    }
+    // FOG: a drifting cloud that blocks the look while it lingers. It too is HAZE — soft-sight sees
+    // through it (that is the Oracle's Premonition), and full x-ray sight of course does.
+    if (typeof fogAt === 'function' && fogAt(state, x, y) && !seesSoft) {
       return false;
     }
   }
   return true;
 }
 
-// Does the king's OWN sight pass over sight-blockers (walls/boulders/devilgrass)? Sixth Sense
-// grants it for both seeing AND shooting; Premonition (trueSight) grants it for SEEING ONLY
-// (his shots and steps still stop at cover). Both are one-way — see enemyAwareOfKing.
+// Is there a GATE strictly between two points? Used to tell a caged (gaol) prisoner apart from an
+// open-field sleeper: it watches the king through the see-through bars of its cell, so it wakes at
+// sight range rather than only when he is right at the door.
+function lineHasGate(state, x0, y0, x1, y1) {
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  let x = x0;
+  let y = y0;
+  while (x !== x1 || y !== y1) {
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dx; y += sy; }
+    if (x === x1 && y === y1) break;
+    if (terrainAt(state, x, y) === 'gate') return true;
+  }
+  return false;
+}
+
+// How far the king's OWN sight passes THROUGH cover. Sixth Sense (seeThroughWalls) sees and shoots
+// clean through opaque cover — full x-ray (returns true). Premonition (trueSight) is now the lesser
+// gift: it peers only through HAZE — tall grass and geyser steam — never stone, timber or boulders
+// (returns 'soft'). Both are one-way — see enemyAwareOfKing.
 function playerSeesThroughCover(state) {
   const p = state.player || {};
-  return Boolean(p.seeThroughWalls || p.trueSight);
+  if (p.seeThroughWalls) return true;
+  if (p.trueSight) return 'soft';
+  return false;
 }
 
 // A tile is in the KING's sight if it is inside his window and unobstructed.
@@ -157,7 +202,9 @@ function computeVisibleTiles(state) {
 // captured (and thus stopped on).
 function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
   const o = opts || {};
-  const immune = Boolean(o.terrainImmune); // ignore slow-terrain effects
+  // FLYING soars over all slow terrain; PATHFINDER wades WATER at a walk but is still mired by lava
+  // (no lava pass). So water is fast for both, lava only for flying.
+  const ignoresSlow = (t) => Boolean(o.flying) || (Boolean(o.pathfinder) && t === 'water');
   // A PROJECTILE ray (turret fire) flies over pits / lava / water, stopped only by walls,
   // boulders, and the first unit it strikes — so a turret's line of fire crosses a pit.
   const projectile = Boolean(o.projectile);
@@ -191,11 +238,19 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
       }
       break;
     }
-    if (blocked) break; // empty non-standable terrain stops the slide
-    if (!projectile && isSlowTerrain(terrain) && !immune && slowUsed >= 1) break; // one water tile / move
+    if (blocked) {
+      // THREAT MAP only: the tile is not standable for THIS mover, but if the KING could stand there
+      // (a Pathfinder king on a pit/tree, a phaser in stone), a slider can still slide onto it to
+      // CAPTURE him — so mark it a reachable capture endpoint. It never lets the ray continue past.
+      if (o.captureBlocked && o.captureBlocked(nx, ny) && groundUsed < maxGround) {
+        stops.push({ x: nx, y: ny, capture: true, embedded: true });
+      }
+      break; // empty non-standable terrain stops the slide
+    }
+    if (!projectile && isSlowTerrain(terrain) && !ignoresSlow(terrain) && slowUsed >= 1) break; // one water/lava tile / move
     if (groundUsed >= maxGround) break; // out of range
     groundUsed += 1;
-    if (!projectile && isSlowTerrain(terrain) && !immune) slowUsed += 1;
+    if (!projectile && isSlowTerrain(terrain) && !ignoresSlow(terrain)) slowUsed += 1;
     x = nx;
     y = ny;
     stops.push({ x, y, capture: false });
@@ -208,7 +263,8 @@ function slideStops(state, sx, sy, dx, dy, maxGround, unitAt, isTarget, opts) {
 // is leapt clean over.
 function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
   const phaseWalls = Boolean(opts && opts.phaseWalls);
-  const flying = Boolean(opts && opts.flying); // Fairy Wings / a Flying boss — may alight on lava/pits
+  const flying = Boolean(opts && opts.flying); // a Flying boss — may alight on lava AND pits
+  const pathfinder = Boolean(opts && opts.pathfinder); // Pathfinder (Druid) — alights on pits and in timber, never lava
   const targets = [];
   for (const [dx, dy] of KNIGHT_STEPS) {
     const x = fromX + dx;
@@ -217,9 +273,8 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if ((terrain === 'lava' || terrain === 'pit') && !flying) {
-      continue; // never land in lava or a bottomless pit — unless flying (Fairy Wings)
-    }
+    if (terrain === 'lava' && !flying) continue; // never land in lava unless FLYING — Pathfinder gets no lava pass
+    if (terrain === 'pit' && !flying && !pathfinder) continue; // a pit swallows all but a Flying/Pathfinder lander
     const unit = unitAt(x, y);
     if (unit && !isTarget(x, y)) {
       continue; // Friendly piece in the way.
@@ -229,10 +284,10 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
       continue; // a lava-averse phaser never pounces into a burning wall-torch
     }
     if (isSolidBarrier(terrain)) {
-      // Can't land on stone, timber or iron — UNLESS a phasing leaper is pouncing onto a foe
-      // embedded there. A boulder is NOT in this class: the impact crushes it flat, which is a
-      // perfectly good landing (and ice shatters the same way, below).
-      if (!(phaseWalls && capHere)) continue;
+      // Can't land on stone, timber or iron — UNLESS a phasing leaper pounces onto a foe embedded
+      // there, OR a PATHFINDER alights in TIMBER (it walks through trees). A boulder is NOT in this
+      // class: the impact crushes it flat, a fine landing (and ice is perched on, below).
+      if (!(phaseWalls && capHere) && !(terrain === 'tree' && pathfinder)) continue;
     } else if (terrain === 'ice') {
       // Empty ice is a fine landing — a jumper PERCHES on the slab without breaking it (only fire
       // thaws it, a slam shatters it). But a foe EMBEDDED in ice may only be pounced on by a phaser.
@@ -244,10 +299,11 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
     // on both shoulders caged leaps that plainly had a clear path — the "a nightrider a knight's-move
     // away can't reach me" bug — and it cages the king's own leap cards the same wrong way.
     if (!phaseWalls) {
-      const legWall = Math.abs(dx) === 2
-        ? terrainAt(state, fromX + Math.sign(dx), fromY) === 'wall'
-        : terrainAt(state, fromX, fromY + Math.sign(dy)) === 'wall';
-      if (legWall) continue;
+      // A WALL or a GATE on the xiangqi-horse "leg" (the long-axis first step) is the one thing a leap
+      // cannot vault — solid stone or barred iron hobbles the horse. Everything else it clears: timber,
+      // boulders, water, lava, pits, ice, other pieces. (A short-axis shoulder does not cage take-off.)
+      const legT = Math.abs(dx) === 2 ? terrainAt(state, fromX + Math.sign(dx), fromY) : terrainAt(state, fromX, fromY + Math.sign(dy));
+      if (legT === 'wall' || legT === 'gate') continue;
     }
     targets.push({ x, y, viaJump: true, capture: capHere });
   }
@@ -265,6 +321,7 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
 function riderLeapTargets(state, fromX, fromY, steps, unitAt, isTarget, opts) {
   const phaseWalls = Boolean(opts && opts.phaseWalls);
   const flying = Boolean(opts && opts.flying);
+  const pathfinder = Boolean(opts && opts.pathfinder); // an Animal-Form unicorn on a Pathfinder Druid rides through timber/pits
   const torchAverse = Boolean(opts && opts.torchAverse);
   const targets = [];
   for (const [dx, dy] of steps) {
@@ -275,21 +332,22 @@ function riderLeapTargets(state, fromX, fromY, steps, unitAt, isTarget, opts) {
       // a wall off the perpendicular short-axis shoulder does not cage the take-off. (Blocking both
       // shoulders wrongly stranded a nightrider a knight's-move from the king behind a side wall.)
       if (leg === 0 && !phaseWalls) {
-        const legWall = Math.abs(dx) === 2
-          ? terrainAt(state, px + Math.sign(dx), py) === 'wall'
-          : terrainAt(state, px, py + Math.sign(dy)) === 'wall';
-        if (legWall) break;
+        // A WALL or GATE on the launch leg hobbles the take-off (see jumpTargets); nothing else does.
+        const legT = Math.abs(dx) === 2 ? terrainAt(state, px + Math.sign(dx), py) : terrainAt(state, px, py + Math.sign(dy));
+        if (legT === 'wall' || legT === 'gate') break;
       }
       const x = px + dx;
       const y = py + dy;
       if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) break;
       const terrain = terrainAt(state, x, y);
-      if ((terrain === 'lava' || terrain === 'pit') && !flying) break;
+      if (terrain === 'lava' && !flying) break; // lava halts the ride for all but a Flying mover
+      if (terrain === 'pit' && !flying && !pathfinder) break; // a pit halts it bar Flying / Pathfinder
       const unit = unitAt(x, y);
       const capHere = Boolean(unit) && isTarget(x, y);
       if (torchAverse && terrain === 'wall' && hasTorch(state, x, y)) break;
       if (isSolidBarrier(terrain)) {
-        if (!(phaseWalls && capHere)) break; // stone, timber and iron all halt the ride
+        // A Pathfinder rides THROUGH timber; otherwise stone, timber and iron all halt the ride.
+        if (!(phaseWalls && capHere) && !(terrain === 'tree' && pathfinder)) break;
       } else if (terrain === 'ice' && capHere && !phaseWalls) {
         break;
       }

@@ -152,7 +152,7 @@ function pieceTerrainOpts(piece) {
   // immolating itself to reach the king (isLavaSafe is the same predicate tickLavaDamage burns by).
   // Pits need no rule here: standableFor already bars everything but a flier.
   const opts = { lavaOk: isLavaSafe(piece) };
-  if (bossHas(piece, 'flying')) { opts.flying = true; opts.terrainImmune = true; }
+  if (bossHas(piece, 'flying')) { opts.flying = true; }
   if (bossHas(piece, 'phasing')) {
     opts.phaseWalls = true;
     if (!isLavaSafe(piece)) opts.torchAverse = true; // a non-immune phaser routes around burning wall-torches
@@ -365,7 +365,7 @@ function getCardMoves(state, card) {
   } else if (category === 'melee') {
     // The king walks/leaps onto a foe (a capture) OR onto empty ground within reach
     // (a plain repositioning move) — real movement rules apply either way.
-    const opts = { terrainImmune: Boolean(p.terrainImmune), flying: Boolean(p.terrainImmune) };
+    const opts = { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) };
     for (const [dx, dy] of dirs) {
       for (const stop of slideStops(state, p.x, p.y, dx, dy, reach, enemyAt, targetable, opts)) {
         // Double Step has its OWN generator (below) — it is two steps, not a slide.
@@ -435,9 +435,9 @@ function getCardMoves(state, card) {
         if (!inBounds(x, y)) continue;
         const t = terrainAt(state, x, y);
         const phases = Boolean(p.phase);
-        const flies = Boolean(p.terrainImmune); // Fairy Wings: alight on lava/pits with no ill effect
+        const pathfinder = Boolean(p.pathfinder); // Pathfinder: alight in a pit with no fall (lava still burns)
         if (t === 'wall' && !phases) continue; // can't land in a wall (unless phasing)
-        if (t === 'pit' && !phases && !flies) continue; // can't land in a pit (unless phasing/flying)
+        if (t === 'pit' && !phases && !pathfinder) continue; // can't land in a pit (unless phasing/pathfinder)
         // TIMBER and IRON are not landing squares. The leap is still offered — but as a STRIKE: he
         // springs at the tree, buries the blade and rebounds to where he came from, exactly as he
         // does against a boss that shrugs off the blow. He must never come down on top of a tree,
@@ -482,8 +482,7 @@ function getCardMoves(state, card) {
           if (!inBounds(x, y)) break;
           const t = terrainAt(state, x, y);
           if (t === 'ice' || t === 'tree') { if (inLineOfSight(state, x, y)) { far = { x, y }; worth = true; } break; } // thawed / lit — the bolt stops and this is a valid endpoint
-          if (t === 'wall' && !shootWalls) break; // opaque cover stops the bolt short of this tile
-          if (t === 'boulder' && !shootWalls) { if (inLineOfSight(state, x, y)) { far = { x, y }; worth = true; } break; } // blasted to rubble; stops here
+          if ((t === 'wall' || t === 'boulder') && !shootWalls) break; // opaque cover (stone OR a spell-proof boulder) stops the bolt short of this tile — never a target
           if (inLineOfSight(state, x, y)) far = { x, y }; // can only AIM a tile he can see; max range is capped by sight
           if (t === 'devilgrass') worth = true; // the fire scorches the thicket away and rages on
           if (missileTarget(x, y)) worth = true;
@@ -503,9 +502,11 @@ function getCardMoves(state, card) {
           if (!inBounds(x, y)) break;
           const t = terrainAt(state, x, y);
           if ((t === 'wall' || t === 'boulder') && !shootWalls) break;
-          if (enemyAt(x, y)) {
+          const occ = enemyAt(x, y);
+          if (occ) {
+            if (occ.summonCircle) continue; // a rune on the FLOOR — the arrow flies OVER it (never a target, never a block)
             if (missileTarget(x, y)) add(x, y, false, true);
-            break; // a solid unit (including a circle) blocks a non-piercing shot
+            break; // a real body blocks a non-piercing shot
           }
         }
       }
@@ -536,13 +537,20 @@ function getCardMoves(state, card) {
 // can capture him next turn.
 function adjacentThreats(piece, state, dirs, includeOccupied) {
   const threats = [];
+  // The tile is dangerous only if the KING could actually END a move on it — and that depends on HIS
+  // powers, not a generic walker's. A Pathfinder Druid stands on TREES, WATER and PITS; a phaser in
+  // WALLS/ICE; anyone on LAVA (it sears). A pawn/king/knight strikes IN PLACE, so it can capture him
+  // wherever he can stand — including a tree, which `isStandable` wrongly called impassable, leaving a
+  // tree the Druid was standing on painted SAFE while a pawn beside it cut him down.
+  const p = state.player || {};
+  const kingCanStand = (x, y) => standableFor(terrainAt(state, x, y), { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) });
   for (const [dx, dy] of dirs) {
     const x = piece.x + dx;
     const y = piece.y + dy;
     if (x < 0 || x >= state.worldSize || y < 0 || y >= state.worldSize) {
       continue;
     }
-    if (!isStandable(terrainAt(state, x, y))) {
+    if (!kingCanStand(x, y)) {
       continue;
     }
     if (!includeOccupied && state.enemies.some((other) => other.id !== piece.id && other.x === x && other.y === y)) {
@@ -613,6 +621,14 @@ function getPieceThreats(piece, state, includeOccupied) {
   // A TURRET fires a projectile (crossing pits / lava / water, stopped only by walls,
   // boulders, and the unit it hits); a mobile piece threatens where it can MOVE.
   const opts = piece.turret ? { projectile: true } : pieceTerrainOpts(piece);
+  // THREAT MAP: a tile the KING could stand on (Pathfinder pit/tree/water, a phaser in stone) is a
+  // valid capture endpoint even though the mover can't STOP there — a queen can still slide onto it to
+  // take him. Marks those tiles dangerous; the ray never continues past one. (Turrets already fire
+  // over pits, so this only matters for sliders.)
+  if (!piece.turret) {
+    const p = state.player || {};
+    opts.captureBlocked = (x, y) => standableFor(terrainAt(state, x, y), { pathfinder: Boolean(p.pathfinder), phaseWalls: Boolean(p.phase) });
+  }
   return generateMoves(piece.kind, state, piece.x, piece.y, unitAt, isTarget, opts);
 }
 

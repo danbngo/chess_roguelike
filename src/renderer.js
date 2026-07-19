@@ -18,12 +18,15 @@ const Renderer = (function () {
   // 'imminent' (tall warning plume, ending a turn here next means the blast), or 'calm'. Set in draw()
   // from state.geyserPhase, since drawTexture gets no route to `state`.
   let geyserStage = 'calm';
+  let fogNow = null; // per-frame ref to state.fog ("x,y" -> turns left), set in draw()
+  let seeThroughHaze = false; // Premonition / Sixth Sense: the king sees CLEAR through haze — draw no veil
 
   let playerRender = { x: 0, y: 0, targetX: 0, targetY: 0 };
   let enemyRenders = [];
   let allyRenders = []; // the king's summons — eased like enemies (they used to snap)
   let allySyncedOnce = false; // guards the first sync of a floor: an ally already at his side is not a conjuring
   let puffs = []; // purple-smoke death puffs for vanished allies (client-side, time-decayed)
+  let scheduledBumps = []; // knockback nudges held a beat each, so a shove WAVE ripples outward instead of jerking as one
   const PUFF_TIME = 5; // seconds a death/summon smoke puff takes to dissipate (lingers ~4x longer)
   let shouts = []; // { x, y, text, t } — a boss's one-turn battle-cry speech bubble (client-side)
   const SHOUT_TIME = 1.6; // seconds the bubble lingers before it fades
@@ -230,7 +233,8 @@ const Renderer = (function () {
   // so the ordinary easing hauls it straight back to its own square — a lunge and a recoil, the
   // same trick bumpBoulder plays. Without it a melee blow was invisible: the king lost a heart
   // while every piece on the board stood perfectly still.
-  function bumpEnemy(id, dx, dy) {
+  function bumpEnemy(id, dx, dy, delay) {
+    if (delay && delay > 0) { scheduledBumps.push({ id, dx, dy, t: delay }); return; } // ripple: fires after a beat
     const e = enemyRenders.find((r) => r.id === id);
     if (e) { e.x += dx * 0.34; e.y += dy * 0.34; }
   }
@@ -326,6 +330,7 @@ const Renderer = (function () {
     projectiles = [];
     bursts = [];
     puffs = []; // a fresh floor: no lingering smoke
+    scheduledBumps = [];
     allySyncedOnce = false; // ...and nobody standing beside him on arrival was CONJURED there
     shouts = [];
     lungePoint = null;
@@ -475,6 +480,17 @@ const Renderer = (function () {
     }
     for (const puff of puffs) puff.t += delta / PUFF_TIME;
     puffs = puffs.filter((p) => p.t < 1);
+    // Held knockback nudges: count each down, and fire it (the token jerks and eases back) once its
+    // beat elapses — so a shove wave ripples out tile by tile instead of every foe lurching at once.
+    if (scheduledBumps.length) {
+      const still = [];
+      for (const b of scheduledBumps) {
+        b.t -= delta;
+        if (b.t <= 0) { const e = enemyRenders.find((r) => r.id === b.id); if (e) { e.x += b.dx * 0.34; e.y += b.dy * 0.34; } }
+        else still.push(b);
+      }
+      scheduledBumps = still;
+    }
     for (const s of shouts) s.t += delta / SHOUT_TIME;
     shouts = shouts.filter((s) => s.t < 1);
     clampCamera();
@@ -826,6 +842,7 @@ const Renderer = (function () {
     petowner: { color: '#d97706', mark: '❦' }, // a leashed familiar
     hasty: { color: '#facc15', mark: '»' }, // twin chevrons of speed
     burrower: { color: '#7c5b3a', mark: '⧗' }, // a bored shaft
+    fogweaver: { color: '#cbd5e1', mark: '☁' }, // a pale storm cloud
   };
   function drawBossTraitHat(tileX, tileY, perk, rush) {
     const spec = BOSS_TRAIT_HAT[perk];
@@ -1032,17 +1049,20 @@ const Renderer = (function () {
       const t = puff.t;
       const fade = 1 - t;
       ctx.save();
+      // Gray for fire/lava scorch smoke; pink for a Hex; violet for arcane conjuring/dissolve.
+      const bodyRGB = puff.gray ? '120, 120, 128' : puff.hex ? '236, 72, 153' : '168, 85, 247';
+      const coreRGB = puff.gray ? '200, 200, 205' : puff.hex ? '251, 207, 232' : '216, 180, 254';
       for (let i = 0; i < 6; i += 1) {
         const ang = (i / 6) * Math.PI * 2 + t * 1.6;
         const dist = tileSize * (0.04 + t * 0.34);
         const r = tileSize * (0.13 + t * 0.16) * (i % 2 ? 0.75 : 1);
-        ctx.fillStyle = `rgba(${puff.hex ? '236, 72, 153' : '168, 85, 247'}, ${(fade * 0.5).toFixed(3)})`;
+        ctx.fillStyle = `rgba(${bodyRGB}, ${(fade * 0.5).toFixed(3)})`;
         ctx.beginPath();
         ctx.arc(cx + Math.cos(ang) * dist, cy - tileSize * t * 0.18 + Math.sin(ang) * dist, r, 0, Math.PI * 2);
         ctx.fill();
       }
-      // A brighter lilac core that shrinks as the smoke thins.
-      ctx.fillStyle = `rgba(${puff.hex ? '251, 207, 232' : '216, 180, 254'}, ${(fade * 0.65).toFixed(3)})`;
+      // A brighter core that shrinks as the smoke thins.
+      ctx.fillStyle = `rgba(${coreRGB}, ${(fade * 0.65).toFixed(3)})`;
       ctx.beginPath();
       ctx.arc(cx, cy, tileSize * 0.17 * fade, 0, Math.PI * 2);
       ctx.fill();
@@ -1191,6 +1211,72 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // The tell that the Animal Form king is a UNICORN, not just another horse: a spiralled golden HORN
+  // jutting up from its brow, a wisp of a rainbow mane, and a drifting sparkle. Without it the green
+  // token read as one more knight — this is what makes it unmistakable at a glance.
+  function drawUnicornHorn(tileX, tileY) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const baseX = cx + tileSize * 0.12;      // brow, a touch forward of centre
+    const baseY = cy - tileSize * 0.24;
+    const tipX = cx + tileSize * 0.26;       // horn angles up and forward
+    const tipY = cy - tileSize * 0.52;
+    ctx.save();
+    // The horn: a tapering gold spike with a dark keyline so it survives any background.
+    ctx.shadowBlur = tileSize * 0.28;
+    ctx.shadowColor = 'rgba(253, 224, 71, 0.9)';
+    const grad = ctx.createLinearGradient(baseX, baseY, tipX, tipY);
+    grad.addColorStop(0, '#fde047');
+    grad.addColorStop(1, '#fff7cc');
+    ctx.fillStyle = grad;
+    const w = tileSize * 0.06;
+    const nx = -(tipY - baseY);
+    const ny = (tipX - baseX);
+    const nlen = Math.hypot(nx, ny) || 1;
+    const ox = (nx / nlen) * w;
+    const oy = (ny / nlen) * w;
+    ctx.beginPath();
+    ctx.moveTo(baseX + ox, baseY + oy);
+    ctx.lineTo(baseX - ox, baseY - oy);
+    ctx.lineTo(tipX, tipY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(120, 53, 15, 0.85)';
+    ctx.lineWidth = Math.max(1, tileSize * 0.015);
+    ctx.stroke();
+    // Two spiral ridges across the horn so it reads as twisted, not a plain cone.
+    ctx.strokeStyle = 'rgba(180, 120, 20, 0.75)';
+    ctx.lineWidth = Math.max(1, tileSize * 0.014);
+    for (let i = 1; i <= 2; i += 1) {
+      const t = i / 3;
+      const mx = baseX + (tipX - baseX) * t;
+      const my = baseY + (tipY - baseY) * t;
+      ctx.beginPath();
+      ctx.moveTo(mx + ox * (1 - t), my + oy * (1 - t));
+      ctx.lineTo(mx - ox * (1 - t), my - oy * (1 - t));
+      ctx.stroke();
+    }
+    // A drifting sparkle off the tip — a tiny four-point star that twinkles on the tile clock.
+    const tw = 0.5 + 0.5 * Math.sin(clock * 4 + tileX * 1.3 + tileY * 0.7);
+    const sx = tipX + tileSize * 0.06;
+    const sy = tipY - tileSize * 0.02;
+    const sr = tileSize * (0.03 + 0.03 * tw);
+    ctx.fillStyle = `rgba(255, 255, 255, ${(0.5 + 0.5 * tw).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - sr);
+    ctx.lineTo(sx + sr * 0.32, sy - sr * 0.32);
+    ctx.lineTo(sx + sr, sy);
+    ctx.lineTo(sx + sr * 0.32, sy + sr * 0.32);
+    ctx.lineTo(sx, sy + sr);
+    ctx.lineTo(sx - sr * 0.32, sy + sr * 0.32);
+    ctx.lineTo(sx - sr, sy);
+    ctx.lineTo(sx - sr * 0.32, sy - sr * 0.32);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   // A bobbing arrow pointing DOWN at whatever he is supposed to be going for: the key while he
   // hunts it, then the way out once it is his. Only ever ONE of them on screen at a time, because
   // it means "this, now" — two would mean neither.
@@ -1247,6 +1333,32 @@ const Renderer = (function () {
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#1e293b';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // A GOLDEN shield badge in the top-LEFT corner while WAITING (Sentinel) holds — the same shape as the
+  // Parry mark but gold, and on the opposite corner so both can show at once (a Sentinel who Waits also
+  // banks a Parry). It reads as a persistent "I am untouchable until my next turn" tell, alongside the
+  // whole-body halo — the badge for a glance, the halo for the drama.
+  function drawWaitMark(tileX, tileY) {
+    const cx = tileX * tileSize + tileSize * 0.2; // top-LEFT (Parry lives top-right)
+    const top = tileY * tileSize + tileSize * 0.04;
+    const w = tileSize * 0.24;
+    const h = tileSize * 0.26;
+    const beat = 0.75 + 0.25 * (0.5 + 0.5 * Math.sin(clock * 5));
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2, top);
+    ctx.lineTo(cx + w / 2, top);
+    ctx.lineTo(cx + w / 2, top + h * 0.55);
+    ctx.quadraticCurveTo(cx, top + h * 1.2, cx, top + h);
+    ctx.quadraticCurveTo(cx, top + h * 1.2, cx - w / 2, top + h * 0.55);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(250, 204, 21, ${beat.toFixed(3)})`; // gold, matching the invuln halo
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#3f2d07';
     ctx.stroke();
     ctx.restore();
   }
@@ -2119,6 +2231,10 @@ const Renderer = (function () {
         // only terrain that wounds you for merely standing on it, so it must never read as decor.
         return isDark ? '#c02a0a' : '#e8460f'; // molten rock, glowing (drawTexture pulses it)
       case 'water':
+        // In the demon realm the water is fouled — BRACKISH SLUDGE: a murky olive-brown, so it reads
+        // as poisoned muck rather than clean teal (the same "same terrain, hellish look" trick the
+        // withered grass and dead trees use). Mechanically it is still just slow water.
+        if (demonRealm) return isDark ? '#33371f' : '#565b34';
         return isDark ? '#1b5a5f' : '#2f8f8c'; // deep water — nudged TEAL/green so it reads apart from ice
       case 'wall':
         return isDark ? '#54535a' : '#6a696f'; // neutral grey stone (cool, desaturated)
@@ -2213,7 +2329,10 @@ const Renderer = (function () {
           const wy = py + tileSize * (0.16 + 0.16 * i + 0.04 * tileHash(x * 3 + i, y));
           const wx = px + tileSize * (0.1 + 0.35 * tileHash(x, y * 3 + i)); // start point wanders
           const wlen = tileSize * (0.24 + 0.2 * tileHash(x * 5 + i, y * 2));
-          ctx.strokeStyle = `rgba(255, 255, 255, ${(0.12 + 0.08 * tileHash(x + i, y - i)).toFixed(3)})`;
+          // Clean water catches WHITE glints; brackish sludge only shows a dull, sickly scum sheen.
+          ctx.strokeStyle = demonRealm
+            ? `rgba(150, 170, 90, ${(0.1 + 0.07 * tileHash(x + i, y - i)).toFixed(3)})`
+            : `rgba(255, 255, 255, ${(0.12 + 0.08 * tileHash(x + i, y - i)).toFixed(3)})`;
           ctx.beginPath();
           ctx.moveTo(wx, wy);
           ctx.quadraticCurveTo(wx + wlen * 0.5, wy - tileSize * 0.035, wx + wlen, wy);
@@ -2563,7 +2682,9 @@ const Renderer = (function () {
         // cloud on the erupting turn. Bubbles rise and fade on the tile clock so a field of vents
         // shimmers rather than blinking as one.
         const pulse = 0.5 + 0.5 * Math.sin(clock * 3 + tileHash(x, y) * Math.PI * 2);
-        if (geyserStage === 'erupting') {
+        // Premonition/Sixth Sense see through the erupting STEAM — so for them the vent shows only the
+        // slimmer warning column (you still read that it is active), never the full obscuring cloud.
+        if (geyserStage === 'erupting' && !seeThroughHaze) {
           ctx.fillStyle = `rgba(210, 235, 200, ${(0.4 + 0.25 * pulse).toFixed(3)})`;
           for (let i = 0; i < 6; i += 1) {
             const bx = cx + (tileHash(x * 7 + i, y) - 0.5) * tileSize * 0.7;
@@ -2573,7 +2694,7 @@ const Renderer = (function () {
             ctx.arc(bx, by, br, 0, Math.PI * 2);
             ctx.fill();
           }
-        } else if (geyserStage === 'imminent') {
+        } else if (geyserStage === 'imminent' || geyserStage === 'erupting') {
           // A rising warning COLUMN — pale, tall, and pulsing so it plainly reads as "about to blow".
           ctx.fillStyle = `rgba(225, 225, 150, ${(0.28 + 0.28 * pulse).toFixed(3)})`;
           for (let i = 0; i < 4; i += 1) {
@@ -3030,6 +3151,8 @@ const Renderer = (function () {
   // terrainColor) so the splash is unmistakably the same game, not a web page bolted to the front.
 
   let titleRects = []; // {id, x, y, w, h, enabled} in canvas pixels — the hit-test targets
+  let titleCenter = null; // the throne's pixel centre — the origin for spatial keyboard select
+  let sceneCenter = null; // the trophy-hall king's pixel centre — origin for directional trophy select
 
   // ONE layout, shared by the draw and the hit-test so a click can never land somewhere the eye
   // was not pointed. A tidy 2x2 of options around the king in the middle.
@@ -3193,6 +3316,7 @@ const Renderer = (function () {
     drawPiece(L.midc, L.midr, 'king', true, { classColor: '#e8c14a' });
 
     // 3) THE OPTIONS, as tiles around him.
+    titleCenter = { x: kx, y: ky }; // the throne — origin for the directional keyboard select
     titleRects = [];
     opts.forEach((opt, i) => {
       const cell = L.cells[i];
@@ -3216,15 +3340,26 @@ const Renderer = (function () {
     tg.addColorStop(1, '#d8a93a');
     ctx.fillStyle = tg;
     ctx.fillText(m.title || 'Chess Dungeon', L.W / 2, titleY);
+    // The subtitle and the save-file line both sit over a busy, torch-lit board, so each gets a HEAVY
+    // dark outline (stroke under fill) — otherwise the pale text washes out against the bright tiles.
+    ctx.lineJoin = 'round';
     if (m.subtitle) {
       ctx.font = `italic ${Math.round(L.tile * 0.3)}px Georgia, serif`;
-      ctx.fillStyle = '#cbb489';
+      ctx.lineWidth = Math.max(3, L.tile * 0.055);
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.92)';
+      ctx.strokeText(m.subtitle, L.W / 2, titleY + L.tile * 0.72);
+      ctx.fillStyle = '#e6d3a8'; // a touch brighter, too, so it lifts off the outline
       ctx.fillText(m.subtitle, L.W / 2, titleY + L.tile * 0.72);
     }
     if (m.save && L.cells[1]) {
+      const sx = (L.cells[1][0] + 0.5) * L.tile;
+      const sy = (L.cells[1][1] + 1.34) * L.tile;
       ctx.font = `${Math.round(L.tile * 0.22)}px Georgia, serif`;
-      ctx.fillStyle = '#9fb0c4';
-      ctx.fillText(m.save, (L.cells[1][0] + 0.5) * L.tile, (L.cells[1][1] + 1.34) * L.tile);
+      ctx.lineWidth = Math.max(2.5, L.tile * 0.05);
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.92)';
+      ctx.strokeText(m.save, sx, sy);
+      ctx.fillStyle = '#c4d2e4';
+      ctx.fillText(m.save, sx, sy);
     }
     ctx.restore();
 
@@ -3507,6 +3642,7 @@ const Renderer = (function () {
     const L = drawBoardBackdrop();
     tileSize = L.tile;
     const { cc, cr } = sceneCentre(L);
+    sceneCenter = { x: (cc + 0.5) * L.tile, y: (cr + 0.5) * L.tile }; // origin for directional trophy select (pan settled = no offset)
     const accent = TROPHY_ROOM_ACCENTS[page % TROPHY_ROOM_ACCENTS.length];
     drawRoomAccent(L, accent); // this room's colour wash + a big faint room numeral, so each reads apart
     drawRoomNumeral(L, cc, cr, page + 1, accent);
@@ -3573,6 +3709,41 @@ const Renderer = (function () {
       if (r.enabled && px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return r.id;
     }
     return null;
+  }
+
+  // SPATIAL keyboard select: given rects laid out AROUND a centre and a pressed direction (dx,dy),
+  // return the id of the one whose bearing from the centre best matches the key — press LEFT and you
+  // land on the left icon, DOWN-LEFT on the down-left icon, and so on. ABSOLUTE (not a rotation through
+  // a list): the same direction always picks the same icon, whichever one is currently highlighted.
+  function pickByDirection(rects, cx, cy, dx, dy) {
+    if ((!dx && !dy) || !rects.length) return null;
+    const dlen = Math.hypot(dx, dy) || 1;
+    let best = null;
+    let bestScore = 0.35; // require a real match, not a near-perpendicular one
+    for (const r of rects) {
+      if (r.enabled === false) continue;
+      const vx = (r.x + r.w / 2) - cx;
+      const vy = (r.y + r.h / 2) - cy;
+      const vlen = Math.hypot(vx, vy) || 1;
+      const score = (vx * dx + vy * dy) / (vlen * dlen); // cosine of the angle between bearing and key
+      if (score > bestScore) { bestScore = score; best = r.id; }
+    }
+    return best;
+  }
+
+  // The title icons ring the throne — pick the one the pressed direction points at.
+  function titleOptionInDirection(dx, dy) {
+    const cx = titleCenter ? titleCenter.x : (titleRects.reduce((a, r) => a + r.x + r.w / 2, 0) / (titleRects.length || 1));
+    const cy = titleCenter ? titleCenter.y : (titleRects.reduce((a, r) => a + r.y + r.h / 2, 0) / (titleRects.length || 1));
+    return pickByDirection(titleRects, cx, cy, dx, dy);
+  }
+
+  // The trophy medallions ring the king in the Hall — same directional pick, ignoring the ‹ › doors and
+  // the Back button (those page rooms / leave, not select a trophy).
+  function trophyInDirection(dx, dy) {
+    if (!sceneCenter) return null;
+    const medallions = sceneRects.filter((r) => r.id !== 'prev' && r.id !== 'next' && r.id !== 'back');
+    return pickByDirection(medallions, sceneCenter.x, sceneCenter.y, dx, dy);
   }
 
 
@@ -3722,11 +3893,16 @@ const Renderer = (function () {
     geyserStage = (typeof geyserErupting === 'function' && geyserErupting(state)) ? 'erupting'
       : (typeof geyserImminent === 'function' && geyserImminent(state)) ? 'imminent'
         : 'calm';
+    fogNow = state.fog || null; // drifting fog banks (spellfire steam, lava/ice steam, a Fogweaver)
+    // Premonition (soft-sight) and Sixth Sense (x-ray) both see CLEAR through HAZE — grass, fog and
+    // geyser steam. When either is on, the view draws no haze veil at all over what he can see, so the
+    // ground and the foes behind the murk read exactly as if it were not there.
+    seeThroughHaze = Boolean(state.player.trueSight) || Boolean(state.player.seeThroughWalls);
     const world = state.worldSize;
     const bounds = getVisibleBounds(state);
     const awareBounds = getAwarenessBounds(state); // his TWO-WAY footprint (foes here can strike back)
     const oneWayActive = Boolean(state.player.visionOneWay); // Oracle extended (one-way) sight in play
-    const seeThrough = Boolean(state.player.seeThroughWalls); // Premonition: see/shoot through cover (one-way)
+    const seeThrough = Boolean(state.player.seeThroughWalls) || Boolean(state.player.trueSight); // Premonition (haze) / x-ray: see/shoot through cover (one-way)
     // A lit tile is a SAFE one-way firing zone if it lies out in the extended Oracle band, or if the
     // king only sees it THROUGH cover (his normal line to it is blocked) — a foe there can't hit back.
     const oneWaySafe = (x, y) => {
@@ -3876,7 +4052,7 @@ const Renderer = (function () {
             // A covered square the king can't reach: ORANGE if it's open ground he simply can't get
             // to, but GRAY if it's IMPASSABLE (a wall / ice / boulder he could never stand on anyway).
             const passable = typeof standableFor === 'function'
-              && standableFor(type, { phaseWalls: Boolean(state.player.phase), flying: Boolean(state.player.terrainImmune) });
+              && standableFor(type, { phaseWalls: Boolean(state.player.phase), pathfinder: Boolean(state.player.pathfinder) });
             tileOutline(px, py, passable ? '#f97316' : '#9ca3af', threatCount);
           }
           if (aiming) ctx.restore();
@@ -3906,8 +4082,11 @@ const Renderer = (function () {
           // as a slow shimmer you stop noticing; a colour moving light-to-dark is a thing the eye
           // keeps catching, which is the entire job of this overlay.
           const beat = 0.5 + 0.5 * Math.sin(clock * 1.9 + tileHash(x, y) * 0.6);
-          const lum = 40 + 96 * beat; // 40 -> 136: genuinely dark to genuinely lit
-          ctx.fillStyle = `rgba(${Math.round(lum * 0.18)}, ${Math.round(lum)}, ${Math.round(lum * 1.02)}, ${(0.30 + 0.16 * beat).toFixed(3)})`;
+          // The FLOOR of the pulse is lifted (was 40/0.30): even at its dimmest the zone now reads
+          // clearly as "special ground", so the extent of Premonition's one-way sight is obvious at a
+          // glance rather than fading almost to nothing at the bottom of each breath.
+          const lum = 72 + 76 * beat; // 72 -> 148: never fully dim
+          ctx.fillStyle = `rgba(${Math.round(lum * 0.18)}, ${Math.round(lum)}, ${Math.round(lum * 1.02)}, ${(0.4 + 0.14 * beat).toFixed(3)})`;
           ctx.fillRect(px, py, tileSize, tileSize);
         }
       }
@@ -4005,6 +4184,11 @@ const Renderer = (function () {
     // drawn first so the target hints and cursor box sit on top of it.
     if (aoeTiles && aoeTiles.length) {
       for (const t of aoeTiles) drawAoeTile(t.x, t.y);
+      // SELF-HARM WARNING: if the blast would wash over the king's OWN tile, ring it in danger-red
+      // (the same red a threatened move tile wears) so he sees he is about to burn himself.
+      if (aoeTiles.some((t) => t.x === state.player.x && t.y === state.player.y)) {
+        tileOutline(state.player.x * tileSize, state.player.y * tileSize, '#ef4444', 3);
+      }
     }
     if (cardTargets) {
       for (const target of cardTargets) {
@@ -4032,7 +4216,12 @@ const Renderer = (function () {
     // through the fog — the out-of-sight ones faded, so the player has full foe awareness even
     // though he can still only target within his sight.
     const seesAll = Boolean(state.player.seeAllFoes);
-    const shown = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY) || seesAll);
+    // REVELATION (Oracle): the STATIONARY hazards — summoning circles and turrets — stay marked
+    // through the fog once the floor is known, so the player can plan around them. Living foes
+    // (enemies, minis, bosses) are NOT revealed; only the fixtures are.
+    const revealsHazards = Boolean(state.player.revealFloor);
+    const isKnownHazard = (enemy) => (enemy.role === 'circle' || enemy.role === 'turret') && isExplored(enemy.targetX, enemy.targetY);
+    const shown = enemyRenders.filter((enemy) => lit(enemy.targetX, enemy.targetY) || seesAll || (revealsHazards && isKnownHazard(enemy)));
     const isMoving = (enemy) => Math.abs(enemy.x - enemy.targetX) + Math.abs(enemy.y - enemy.targetY) > 0.05;
     const ordered = [...shown.filter((enemy) => !isMoving(enemy)), ...shown.filter(isMoving)];
     // A unit's gore lives on the live state object (render objects only track position), so
@@ -4063,6 +4252,23 @@ const Renderer = (function () {
         ctx.lineWidth = Math.max(1.5, tileSize * 0.055);
         ctx.beginPath();
         ctx.arc(cx, cy, tileSize * 0.42, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      // Seen ONLY through Premonition — the king sees it PAST cover (haze/fog) with no direct line to
+      // it, so it cannot strike back. Ring it in the same teal as the one-way firing zone, so it reads
+      // at a glance as "a free shot": a foe you can hit that can't hit you.
+      if (seeThrough && inSight && typeof hasLineOfSight === 'function'
+          && !hasLineOfSight(state, state.player.x, state.player.y, enemy.targetX, enemy.targetY, false)) {
+        const beat = 0.5 + 0.5 * Math.sin(clock * 1.9 + tileHash(enemy.x | 0, enemy.y | 0) * 0.6);
+        const cx = enemy.x * tileSize + tileSize / 2;
+        const cy = enemy.y * tileSize + tileSize / 2;
+        ctx.save();
+        ctx.strokeStyle = `rgba(45, 212, 191, ${(0.65 + 0.3 * beat).toFixed(3)})`; // teal, matching the zone wash
+        ctx.lineWidth = Math.max(1.5, tileSize * 0.06);
+        ctx.setLineDash([tileSize * 0.14, tileSize * 0.1]); // dashed, so it never reads as a solid capture-ring
+        ctx.beginPath();
+        ctx.arc(cx, cy, tileSize * 0.43, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
@@ -4153,8 +4359,10 @@ const Renderer = (function () {
     const playerGlyph = state.player.promotion > 0 ? 'nightrider' : 'king';
     if (state.player.promotion > 0) drawBeastAura(playerRender.x, playerRender.y, state.player.promotion);
     drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor, blood: woundBlood(state.player) });
+    if (state.player.promotion > 0) drawUnicornHorn(playerRender.x, playerRender.y); // the horn that makes the beast a UNICORN, not just a horse
     if (state.player.invuln && !(state.player.promotion > 0)) {
       drawInvulnMark(playerRender.x, playerRender.y); // Waiting: an untouchable halo (Animal Form has its own aura)
+      drawWaitMark(playerRender.x, playerRender.y); // ...and a golden corner badge, the at-a-glance tell (like Parry, but gold)
     }
     if (state.player.guardUp) {
       drawGuardMark(playerRender.x, playerRender.y);
@@ -4166,6 +4374,7 @@ const Renderer = (function () {
     drawProjectiles();
     drawBursts();
     drawPuffs();
+    drawFog(lit);
     drawShouts();
 
     ctx.restore();
@@ -4190,11 +4399,44 @@ const Renderer = (function () {
     puffs.push({ x: tileX, y: tileY, t: 0 });
   }
 
+  // Drifting FOG banks: a soft gray haze over every fogged tile the king can currently SEE (only the
+  // near edge of a bank is lit — the fog blocks the look past it). Semi-transparent, so pieces caught
+  // in the near fog still show through, and animated on the tile clock so it rolls rather than sits.
+  function drawFog(litFn) {
+    if (!fogNow || seeThroughHaze) return; // Premonition/Sixth Sense: no veil — he sees clear through it
+    ctx.save();
+    for (const key in fogNow) {
+      if (fogNow[key] <= 0) continue;
+      const comma = key.indexOf(',');
+      const fx = Number(key.slice(0, comma));
+      const fy = Number(key.slice(comma + 1));
+      if (litFn && !litFn(fx, fy)) continue; // never paint fog on ground he cannot see
+      const cx = (fx + 0.5) * tileSize;
+      const cy = (fy + 0.5) * tileSize;
+      for (let i = 0; i < 5; i += 1) {
+        const ang = (i / 5) * Math.PI * 2 + clock * 0.35 + tileHash(fx + i, fy) * 6.28;
+        const dist = tileSize * (0.1 + 0.13 * (0.5 + 0.5 * Math.sin(clock * 0.5 + i + fx)));
+        const r = tileSize * (0.24 + 0.1 * tileHash(fx, fy + i));
+        ctx.fillStyle = 'rgba(205, 210, 220, 0.16)';
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(ang) * dist, cy + Math.sin(ang) * dist, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  // GRAY scorch smoke — drifts up wherever lava or fire sears a unit (king, foe or ally). Same shape
+  // as the arcane puff, ashen instead of violet, so a burn reads as a burn at a glance.
+  function smoke(tileX, tileY) {
+    puffs.push({ x: tileX, y: tileY, t: 0, gray: true });
+  }
+
   // Ring the foes threatening the hovered tile. Takes ids (not pieces) so a stale hover can never
   // resurrect a dead one — an id that no longer matches anything on the board simply draws nothing.
   function markThreats(ids) {
     markedThreats = new Set(ids || []);
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, shout, puff, drawTitle, titleOptionAt, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats };
 })();

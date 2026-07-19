@@ -559,6 +559,36 @@ body.in-game canvas {
   color: #cbd5e1;
 }
 
+/* Rebind-hotkey buttons under an aimed card's description. */
+.rebind-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+.rebind-key {
+  min-width: 1.6rem;
+  padding: 0.15rem 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #cbd5e1;
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.rebind-key:hover {
+  background: #334155;
+  color: #f8fafc;
+  border-color: #94a3b8;
+}
+.rebind-key.current {
+  background: #0f172a;
+  color: #64748b;
+  border-color: #334155;
+  cursor: default;
+}
+
 /* The card bar beneath the board. */
 .card-bar {
   display: flex;
