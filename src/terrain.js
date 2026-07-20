@@ -173,7 +173,14 @@ function isSolidBarrier(type) {
 // the same way water does, on top of searing whatever ends its turn in it. (Projectiles are exempt
 // — a bolt still flies over both; see slideStops' `projectile`.)
 function isSlowTerrain(type) {
-  return type === 'water' || type === 'deathwater' || type === 'lava';
+  return type === 'water' || type === 'deathwater' || type === 'deepwater' || type === 'lava';
+}
+
+// DEEP WATER: out of his depth. Walkable like any water — he can swim — but he cannot BREATHE there,
+// and the longer he stays the worse it gets (see tickDrowning). It is the water floor's answer to
+// lava: a tile that does not stop you crossing, only stops you living in it.
+function isDeepWater(type) {
+  return type === 'deepwater';
 }
 
 // Context-free standability (used for placement / spawns): a plain walker who avoids

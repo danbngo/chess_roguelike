@@ -12,9 +12,15 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
 )();
 const {
+  tickUndead,
+  isSlowTerrain,
+  tickDrowning, tickTrueBats, isDeepWater,
+  resolveElementalBlow,
+  fireTurretLineTo,
+  tickMushrooms, isTimber, isRock, scorchTileTerrain,
   pieceTerrainOpts,
   makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS,
   elementForFloor, isElementFloor, petrifyEarthFloor,
@@ -7907,4 +7913,222 @@ test('MOLEFOLK dig the floor away — but can never cut it in two', () => {
   mole.lastDig = { x: st.exit.x, y: st.exit.y };
   for (let i = 0; i < 40; i += 1) tickMolefolk(st);
   assert.notEqual(terrainAt(st, st.exit.x, st.exit.y), 'pit', 'the stair is never dug away');
+});
+
+test('MUSHROOMS are the earth floor\'s timber — and they put back what the diggers take', () => {
+  // They stand in for trees entirely on the earth floor, and exist nowhere else.
+  let trees = 0, caps = 0;
+  for (let i = 0; i < 8; i += 1) {
+    const s = generateFloor(1, createPlayer('warrior', 'nightmare'), 0, 'elemental');
+    for (const v of Object.values(s.terrain)) {
+      if (v === 'tree') trees += 1;
+      if (v === 'mushroom') caps += 1;
+    }
+  }
+  assert.equal(trees, 0, 'no tree stands on the Deepstone');
+  assert.ok(caps > 40, `and a real crop of caps does (${caps} over 8 floors)`);
+  for (const [f, realm] of [[2, 'elemental'], [1, 'overworld'], [1, 'undead']]) {
+    const s = generateFloor(f, createPlayer('warrior', 'nightmare'), 0, realm);
+    assert.ok(!Object.values(s.terrain).includes('mushroom'), `none on ${realm} floor ${f}`);
+  }
+
+  // A cap obeys every one of timber's rules...
+  assert.ok(isChoppable('mushroom') && blocksSight('mushroom'), 'chopped and opaque, like a tree');
+  assert.ok(!standableFor('mushroom', {}) && standableFor('mushroom', { pathfinder: true }),
+    'only a Pathfinder threads it');
+  assert.ok(!standableFor('mushroom', { phaseWalls: true }), 'and a phaser does not — it is timber, not stone');
+
+  // ...including three blows to fell. What it leaves behind is ORDINARY FLOOR, which is the whole
+  // point: a cap that came up over a molefolk's pit hands the ground back when it is cut down.
+  const s = generateFloor(1, createPlayer('warrior', 'nightmare'), 0, 'elemental');
+  s.terrain['10,10'] = 'pit';
+  s.terrain['10,10'] = 'mushroom'; // as tickMushrooms would leave it, having capped the hole
+  assert.equal(damageTree(s, 10, 10, 1), 'hurt');
+  assert.equal(damageTree(s, 10, 10, 1), 'hurt');
+  assert.equal(damageTree(s, 10, 10, 1), 'felled', 'three blows and it comes down');
+  assert.equal(terrainAt(s, 10, 10), 'normal', 'and the hole it capped is now floor, not a pit again');
+
+  // It is WET: spellfire sears it rather than setting it alight, so a bolt never starts a blaze
+  // running through a fungal thicket the way it would through a wood.
+  const w = createInitialState('warrior', 'nightmare');
+  w.terrain = { '9,9': 'mushroom' };
+  scorchTileTerrain(w, 9, 9);
+  assert.equal(terrainAt(w, 9, 9), 'mushroom', 'it still stands');
+  assert.equal(treeHpAt(w, 9, 9), 2, 'but it took the wound');
+  assert.ok(!(w.burningTrees && w.burningTrees['9,9']), 'and nothing caught fire');
+});
+
+test('new terrain is never invisible to the guns: isTimber / isRock close the hand-written lists', () => {
+  // A dozen call sites carried their own `t === 'tree'` / `t === 'wall'` checks, so every new
+  // terrain risked being thin air to some of them — a turret shooting straight through bedrock, a
+  // bolt sailing through a thicket. These two predicates exist so that can't recur; this pins the
+  // behaviour they were introduced for.
+  assert.ok(isTimber('tree') && isTimber('mushroom') && !isTimber('wall'), 'timber is tree + cap');
+  assert.ok(isRock('wall') && isRock('stone') && !isRock('tree'), 'rock is masonry + bedrock');
+
+  const lineWith = (cover) => {
+    const s = createInitialState('warrior', 'nightmare');
+    s.enemies = []; s.allies = []; s.terrain = {};
+    s.player.x = 10; s.player.y = 10;
+    const gun = createEnemy('rook', 6, 10);
+    gun.turret = true; gun.awake = true;
+    s.enemies.push(gun);
+    if (cover) s.terrain['8,10'] = cover;
+    return fireTurretLineTo(s, gun, 10, 10);
+  };
+  assert.ok(lineWith(null), 'a clear lane gives the gun its shot');
+  for (const cover of ['wall', 'stone', 'boulder', 'gate', 'tree', 'mushroom']) {
+    assert.equal(lineWith(cover), null, `${cover} stops a turret's bolt`);
+  }
+});
+
+test('ELEMENTALS cannot be beaten — each has ONE answer, and the folk beside them are mortal', () => {
+  const foe = (type) => {
+    const s = createInitialState('warrior', 'nightmare');
+    s.enemies = []; s.allies = []; s.terrain = {};
+    const e = makeElemental(createEnemy('rook', 8, 8), type);
+    e.awake = true;
+    s.enemies.push(e);
+    return { s, e };
+  };
+  // A sword does nothing at all to either earth elemental. This is the realm's governing rule and
+  // the reason they carry no HP bar: showing a health pool would tell the player that hitting it is
+  // working, which is exactly the wrong thing to learn.
+  for (const type of ['earthen', 'stonen']) {
+    const { s, e } = foe(type);
+    resolveKill(s, e);
+    assert.ok(s.enemies.includes(e), `a blow leaves the ${type} elemental standing`);
+    assert.ok(e.noHp, 'and it carries no health pool to whittle down');
+  }
+  // The FOLK on the same floor are ordinary mortals — that contrast is the tell.
+  const mole = foe('molefolk');
+  resolveKill(mole.s, mole.e);
+  assert.ok(!mole.s.enemies.includes(mole.e), 'molefolk die to a sword like anything else');
+  assert.ok(!mole.e.noHp, 'and they bleed like it too');
+
+  // EARTH is smashed by being LANDED ON; STONE is not — it is heavier in every sense.
+  const crushed = foe('earthen');
+  resolveKill(crushed.s, crushed.e, { crush: true });
+  assert.ok(!crushed.s.enemies.includes(crushed.e), 'an earth elemental is crushed from above');
+  const unbowed = foe('stonen');
+  resolveKill(unbowed.s, unbowed.e, { crush: true });
+  assert.ok(unbowed.s.enemies.includes(unbowed.e), 'a stone elemental shrugs off even that');
+
+  // A PIT is final for both — the shared answer on a floor the molefolk fill with holes.
+  for (const type of ['earthen', 'stonen']) {
+    const { s, e } = foe(type);
+    s.terrain['8,8'] = 'pit';
+    tickPitFalls(s);
+    assert.ok(!s.enemies.includes(e), `a pit is final for the ${type} elemental`);
+  }
+  // ...and the stone one is SLOW, so he is given the turns to arrange it.
+  assert.ok(makeElemental(createEnemy('rook', 1, 1), 'stonen').slow, 'stone moves every other turn');
+  assert.ok(!makeElemental(createEnemy('rook', 1, 1), 'earthen').slow, 'earth moves normally');
+});
+
+test('a BOULDER TURRET walls its own lane', () => {
+  // The earth floor's gun throws rock: it wounds, it bowls him back, and the rock stays on the tile
+  // he was driven off — which is between him and the gun. So every shot that lands builds the cover
+  // that ends the next one, and being shoved (normally pure loss) is how he gets a wall.
+  const setup = () => {
+    const s = createInitialState('warrior', 'nightmare');
+    s.enemies = []; s.allies = []; s.terrain = {};
+    s.key = null; s.upstair = null; s.altar = null;
+    s.exit = { x: 0, y: 0, discovered: false };
+    s.player.x = 10; s.player.y = 10; s.player.hp = 20; s.player.maxHp = 20;
+    const gun = createEnemy('rook', 6, 10);
+    gun.turret = true; gun.boulder = true; gun.awake = true; gun.aiming = true;
+    s.enemies.push(gun);
+    return { s, gun };
+  };
+  const { s, gun } = setup();
+  fireTurret(s, gun);
+  assert.equal(s.player.hp, 19, 'the rock wounds him');
+  assert.equal(s.player.x, 11, 'and bowls him a tile further from the gun');
+  assert.equal(terrainAt(s, 10, 10), 'boulder', 'and settles on the tile he was driven off');
+  // A GUN IS BOLTED DOWN. It must never follow up its own shot — the shove path advances a melee
+  // attacker into the vacated tile, and a turret riding that would cross the room in three shots.
+  assert.equal(gun.x, 6, 'the gun has not moved');
+  assert.equal(gun.y, 10, 'not one tile');
+  // ...and its own rock now denies it the lane.
+  assert.equal(fireTurretLineTo(s, gun, s.player.x, s.player.y), null, 'its own cover ends the lane');
+
+  // It must never bury an objective tile.
+  const o = setup();
+  o.s.exit = { x: 10, y: 10, discovered: true }; // he is standing on the stair
+  fireTurret(o.s, o.gun);
+  assert.notEqual(terrainAt(o.s, 10, 10), 'boulder', 'never buries the stair');
+});
+
+test('CAVE BATS are bats and nothing else — they never become vampires', () => {
+  assert.ok(ELEMENTAL_TYPES.earth.includes('batkin'), 'they belong to the earth floor');
+  assert.ok(isElementalFolk('batkin'), 'and they are flesh, not an elemental');
+  const b = makeElemental(createEnemy('rook', 18, 18), 'batkin');
+  assert.ok(b.bat && b.trueBat, 'born a bat');
+  assert.ok(!b.noHp, 'and it bleeds and dies like anything mortal');
+
+  // THE ONE DIFFERENCE the user asked for. The undead realm's bats want to be vampires again; these
+  // have nothing to turn into. Run BOTH clocks — the undead one is what would re-form a vampire.
+  const s = createInitialState('warrior', 'nightmare');
+  s.enemies = [b]; s.allies = []; s.terrain = {};
+  s.player.x = 2; s.player.y = 2;
+  for (let t = 0; t < 400; t += 1) { tickUndead(s); tickTrueBats(s); }
+  assert.ok(b.bat, 'after 400 turns it is still a bat');
+
+  // With nothing to bite it DRIFTS — a bat is not a hunter, which is what makes it survivable.
+  // (The king is taken off the board: it moves like its piece kind, so a rook-bat would otherwise
+  // reach him down a whole rank and spend its turns biting rather than drifting.)
+  s.player.x = -50; s.player.y = -50;
+  let moved = 0;
+  for (let t = 0; t < 20; t += 1) {
+    const at = `${b.x},${b.y}`;
+    tickTrueBats(s);
+    if (`${b.x},${b.y}` !== at) moved += 1;
+  }
+  assert.equal(moved, 20, 'it drifts every turn when there is nothing to reach');
+});
+
+test('DEEP WATER punishes STAYING, not entering — and surfacing clears the lungs', () => {
+  // The point of contrast with lava: lava charges you for being there at all, once a turn, forever.
+  // Deep water charges you more the longer you stay, so it reads as a DISTANCE to be crossed rather
+  // than a wall — the question is whether he can make it across THIS strait on the hearts he has.
+  assert.ok(standableFor('deepwater', {}), 'he can swim it — it is not a wall');
+  assert.ok(isSlowTerrain('deepwater'), 'and it wades like any water');
+  assert.ok(isDeepWater('deepwater') && !isDeepWater('water'), 'the shallows are a different thing');
+
+  const s = createInitialState('warrior', 'nightmare');
+  s.terrain = { '5,5': 'deepwater', '6,5': 'water' };
+  s.player.x = 5; s.player.y = 5; s.player.hp = 40; s.player.maxHp = 40;
+  const bites = [];
+  for (let t = 0; t < 4; t += 1) { const h = s.player.hp; tickDrowning(s); bites.push(h - s.player.hp); }
+  assert.deepEqual(bites, [1, 2, 3, 4], 'each further turn under costs one more than the last');
+
+  // Coming up — even into ordinary shallow water — resets it completely. That is what makes a line
+  // of stepping stones through a lake worth anything.
+  s.player.x = 6; s.player.y = 5;
+  tickDrowning(s);
+  assert.equal(s.player.drowning, 0, 'the shallows let him breathe');
+  s.player.x = 5; s.player.y = 5;
+  const h = s.player.hp;
+  tickDrowning(s);
+  assert.equal(h - s.player.hp, 1, 'and going back under starts the count again at 1');
+
+  // It is made from WATER at the end of generation, so it can never sever a route: deep water is
+  // still walkable, and it costs hearts rather than passage.
+  let deep = 0, tooClose = 0;
+  for (let i = 0; i < 6; i += 1) {
+    const f = generateFloor(2, createPlayer('warrior', 'nightmare'), 0, 'elemental');
+    const reach = playerReachable(f, f.player.x, f.player.y);
+    assert.ok(reach.has(`${f.exit.x},${f.exit.y}`), 'the stair stays walkable-to');
+    for (const k of Object.keys(f.terrain)) {
+      if (f.terrain[k] !== 'deepwater') continue;
+      deep += 1;
+      const [x, y] = k.split(',').map(Number);
+      if (chebyshev(x, y, f.player.x, f.player.y) <= 3) tooClose += 1;
+    }
+  }
+  assert.ok(deep > 20, `the Sunken Reach runs deep (${deep} tiles over 6 floors)`);
+  assert.equal(tooClose, 0, 'but never opens out of his depth right under his arrival');
+  const dry = generateFloor(1, createPlayer('warrior', 'nightmare'), 0, 'elemental');
+  assert.ok(!Object.values(dry.terrain).includes('deepwater'), 'and never on the earth floor');
 });

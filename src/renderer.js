@@ -90,6 +90,11 @@ const Renderer = (function () {
   // when they heal. Everything else wears the fading combat stain it accumulated.
   function woundBlood(unit) {
     if (!unit) return 0;
+    // AN ELEMENTAL DOES NOT BLEED. It is rock, or water, or fire — there is nothing in it to wound,
+    // and damage is not the answer to any of them (`noHp`). Painting gore on one would say the exact
+    // opposite of the truth: that hitting it is working, and that it is nearly done. The FOLK who
+    // share its floor are flesh and bleed normally, which is precisely the tell the player needs.
+    if (unit.noHp) return 0;
     if (unit.maxHp) return Math.max(0, Math.min(1, 1 - unit.hp / unit.maxHp));
     return unit.blood || 0;
   }
@@ -327,6 +332,7 @@ const Renderer = (function () {
       // drawPiece no matter what the call site passes, which is how `summoned` came to have a violet
       // colour branch in drawPiece that had never once run. Every realm variant that re-colours a
       // piece needs its flag added here as well as at the call site.
+      boulderGun: Boolean(enemy.boulder),
       wisp: Boolean(enemy.wisp),
       summoned: Boolean(enemy.summoned),
       elemental: enemy.elemental || null,
@@ -383,6 +389,7 @@ const Renderer = (function () {
       render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.summoned = Boolean(enemy.summoned); // conjured — drawn violet, like an ally is drawn green
+      render.boulderGun = Boolean(enemy.boulder); // a rock-throwing gun: brown stone, not steel
       render.wisp = Boolean(enemy.wisp);
       render.elemental = enemy.elemental || null; // its element's livery (piece art, new paint) // a mote of current: piece silhouette, electric livery + glow
       render.boss = Boolean(enemy.boss);
@@ -612,7 +619,13 @@ const Renderer = (function () {
     // The king's glyph flips to ink on light class colours (e.g. lime) so it stays legible.
     let glyph = isPlayer ? contrastInk(fill) : '#17171d';
     if (role === 'turret') {
-      if (o.fire) {
+      if (o.boulder) {
+        // A BOULDER GUN: rough brown stone rather than steel, so it reads as part of the earth floor
+        // it is bolted to — and as something that throws rock rather than fire.
+        fill = '#3a2a1a';
+        stroke = '#b98a54';
+        glyph = '#f0d8b8';
+      } else if (o.fire) {
         fill = '#3a1512'; // charred red — a FIRE turret
         stroke = '#ef4444'; // hot red danger ring
         glyph = '#ffc4b0';
@@ -2421,6 +2434,12 @@ const Renderer = (function () {
         // because nothing else does what it does: it drinks at anything still alive. It has to read
         // as "wrong water" at a glance, not as a teal pond with a filter over it.
         return isDark ? '#123d1e' : '#1e6b31';
+      case 'deepwater':
+        // OUT OF HIS DEPTH. Much darker and bluer than the shallows beside it — the one thing the
+        // player must be able to read off this floor at a glance is where the bottom drops away,
+        // because stepping in is survivable and STAYING in is not. Deliberately a deep saturated
+        // blue rather than a dimmed teal: dimming would read as shadow, and shadow is not a hazard.
+        return isDark ? '#061c33' : '#0b2d52';
       case 'water':
         // In the demon realm the water is fouled — BRACKISH SLUDGE: a murky olive-brown, so it reads
         // as poisoned muck rather than clean teal (the same "same terrain, hellish look" trick the
@@ -2765,6 +2784,7 @@ const Renderer = (function () {
         }
         break;
       }
+      case 'deepwater':
       case 'deathwater':
       case 'water': {
         // Several SHORT wavelets, fainter and staggered across the tile, rather than two big lines
@@ -5015,7 +5035,7 @@ const Renderer = (function () {
         ctx.stroke();
         ctx.restore();
       }
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, boulder: enemy.boulderGun, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
         // A guardian UNMADE — every perk torn off it by the Hexer — wears NO crown at all. That
         // bare head is the tell that there is nothing left of it but the piece.

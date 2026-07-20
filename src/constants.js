@@ -239,7 +239,7 @@ const ELEMENTS = ['earth', 'water', 'fire', 'air'];
 // terrain that kills the king, which is a different kind of pressure: it can be killed, it just gets
 // to use the floor in a way he cannot.
 const ELEMENTAL_TYPES = {
-  earth: ['earthen', 'stonen', 'molefolk'],
+  earth: ['earthen', 'stonen', 'molefolk', 'batkin'],
   water: ['watery', 'icy', 'merfolk'],
   fire: ['lavan', 'fiery', 'salamander'],
   air: ['electric', 'steamy', 'tengu'],
@@ -252,6 +252,10 @@ const ELEMENTAL_MASKS = {
   earthen: {},
   stonen: {},
   molefolk: { phaseWalls: true }, // tunnels rock — and leaves a pit behind it (see tickMolefolk)
+  // CAVE BATS. The undead realm's bats are a vampire's second form and want to become one again;
+  // these are simply bats, and there is nothing else for them to turn into. Airborne, so the ground
+  // has nothing to say to them — the same all-flags-open mask batMoves already uses.
+  batkin: { flying: true, pitOk: true, phaseWalls: true, lavaOk: true },
   watery: { lavaOk: false },
   icy: { lavaOk: false },
   merfolk: { deepWaterOk: true },

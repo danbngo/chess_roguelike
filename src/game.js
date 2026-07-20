@@ -166,6 +166,14 @@ function makeElemental(enemy, type) {
   // ELEMENTALS proper have NO HP BAR: damage is not the answer to any of them, so advertising a
   // health pool would be a lie the player acts on. The FOLK are ordinary mortals and keep theirs.
   if (!isElementalFolk(type)) enemy.noHp = true;
+  // A STONE ELEMENTAL moves every OTHER turn (the same `slow` flag a zombie carries: a recovery turn
+  // after every exertion — see moveEnemy). Something with exactly one answer and no way to be hurt
+  // has to give him the time to arrange that answer, or it is not a puzzle, it is a countdown.
+  if (type === 'stonen') enemy.slow = true;
+  // CAVE BATS are born as bats and stay that way. `bat` gives them the existing airborne drift-and-
+  // bite behaviour for free; `trueBat` is what stops the undead clock ever settling one into a
+  // vampire, which is the ONE thing the user asked to be different about them.
+  if (type === 'batkin') { enemy.bat = true; enemy.trueBat = true; }
   return enemy;
 }
 // MOLEFOLK dig, and the hole stays. Every tile one leaves becomes a PIT — so a floor with diggers on
@@ -224,6 +232,86 @@ function tickMolefolk(state) {
     if (Math.random() >= MOLEFOLK_DIG_CHANCE) continue;
     state.terrain[`${prev.x},${prev.y}`] = 'pit';
   }
+}
+
+// What a blow does to an elemental realm native. Returns false ("still standing, nothing died"),
+// null ("not my business — let it die normally"), exactly like resolveUndeadBlow.
+//
+// THE RULE ALL THE ELEMENTALS SHARE: damage is not the answer. Each has one counter and nothing else
+// touches it, so a player who arrives swinging finds that swinging does nothing at all. The FOLK
+// (molefolk, merfolk, salamander, tengu) are ordinary mortals and are deliberately absent from this
+// function — they die to a sword like anything else, and the contrast is what makes the elementals
+// legible as a different kind of problem.
+function resolveElementalBlow(state, enemy, byFire, opts) {
+  const kind = enemy.elemental;
+  if (!kind || isElementalFolk(kind)) return null; // a mortal: ordinary rules
+
+  // A PIT is final for every one of them — a thing made of rock does not climb out of a hole — and
+  // that is the shared, findable answer on a floor the molefolk spend the whole level filling with
+  // holes. NB pit deaths do NOT come through here: `tickPitFalls` removes the piece outright, which
+  // is already final. This clause only covers a caller that routes a fall through the kill path.
+  if (opts && opts.pit) return null;
+
+  // EARTH ELEMENTAL: not fought, SHOVED. It is a boulder that walks — a blow does nothing at all,
+  // and the way to be rid of one is to push it into something that swallows a boulder (a pit, lava,
+  // water) or to come down on it from above. That is why it is on the same floor as the molefolk:
+  // they spend the level digging exactly the holes it can be put into.
+  if (kind === 'earthen') {
+    if (opts && opts.crush) return null; // a leaper landing on it smashes it flat
+    state.message = `The earth ${enemy.kind} takes the blow without noticing — it must be moved, not beaten.`;
+    state.lastAction = 'combat';
+    return false;
+  }
+
+  // STONE ELEMENTAL: the earth elemental's harder brother. It cannot even be crushed from above, and
+  // it cannot be rolled — the ONLY thing that answers it is knocking it into ground that will not
+  // hold it. Slow (it moves every other turn, with a windup), because something with one answer must
+  // give him the time to arrange it.
+  if (kind === 'stonen') {
+    state.message = `The stone ${enemy.kind} does not so much as chip — only the ground will take it.`;
+    state.lastAction = 'combat';
+    return false;
+  }
+
+  return null;
+}
+
+// ---- DEEP WATER ---------------------------------------------------------------------------------
+// The water floor's hazard, and deliberately NOT lava with a new colour. Lava punishes you for being
+// there at all, once per turn, forever. Deep water punishes you for STAYING: the first turn out of
+// his depth costs 1, the next 2, the next 3, and it keeps climbing. One tile of it is nothing; a
+// channel of it is a decision about how far you can get before you have to come up.
+//
+// So it reads as a distance rather than a wall. He can always cross a strait — the question is only
+// whether he can cross THIS one, and the answer changes as his hearts do. Stepping onto dry land (or
+// even ordinary shallow water) resets the count completely, which is what makes a line of stepping
+// stones through a lake worth something.
+const DROWN_STEP = 1; // each further turn under costs one more than the last
+function tickDrowning(state) {
+  const p = state.player;
+  // Scans UNITS, not terrain, so no realm guard (rule 5) — deep water anywhere behaves the same.
+  const under = terrainAt(state, p.x, p.y) === 'deepwater';
+  if (!under) {
+    // He has his head up. The lungs reset completely — no lingering penalty, because the mechanic is
+    // about the crossing you are in the middle of, not about a debt you carry around the floor.
+    if (p.drowning) p.drowning = 0;
+    return;
+  }
+  // A MERFOLK's element, not his: anything at home in deep water is exempt. The player never is —
+  // there is no perk that grants gills, on purpose. This floor is the one place his build cannot
+  // answer the ground, only his planning can.
+  p.drowning = (p.drowning || 0) + DROWN_STEP;
+  const bite = p.drowning;
+  hurtBy(state, 'deepwater');
+  p.hp -= bite;
+  p.wasHit = true; p.hitThisFloor = true;
+  addSpatter(state, p.x, p.y);
+  state.message = state.message
+    ? `${state.message} The king goes under — ${bite} damage, and it is getting worse!`
+    : (bite === 1
+      ? 'The king is out of his depth — he cannot breathe down here!'
+      : `The king is still under, and failing — ${bite} damage!`);
+  checkDeath(state);
 }
 
 // ---- MUSHROOMS ----------------------------------------------------------------------------------
@@ -287,7 +375,38 @@ function tickMushrooms(state) {
   }
 }
 
-const ELEMENTAL_FOLK = new Set(['molefolk', 'merfolk', 'salamander', 'tengu']);
+// The MORTALS. Everything not in here is an elemental proper: no health pool, no gore, and exactly
+// one counter that is never "hit it". Cave bats are flesh and blood, so they belong here.
+const ELEMENTAL_FOLK = new Set(['molefolk', 'merfolk', 'salamander', 'tengu', 'batkin']);
+
+// THE CAVE BATS' CLOCK. The undead realm's bats are handled by tickUndead, which gates on isUndead —
+// these are not undead, so they need their own turn. Same drift, same bite, and deliberately NO
+// re-forming: there is no vampire under a cave bat, and it never becomes one.
+function tickTrueBats(state) {
+  // Scans state.enemies, so NO realm guard (rule 5) — a cave bat carried anywhere still behaves.
+  for (const e of state.enemies) {
+    if (!e.trueBat || !e.bat || e.inert) continue;
+    e.awake = true;
+    // If it can reach him (or something of his) from where it hangs, it bites. Otherwise it drifts
+    // at RANDOM — a bat is not a hunter, and that is what makes it survivable.
+    const prey = typeof batPrey === 'function' ? batPrey(state, e) : [];
+    if (prey.length) {
+      const bite = prey[randomInt(prey.length)];
+      if (bite.x === state.player.x && bite.y === state.player.y) strikeKing(state, e);
+      else {
+        const ally = allyAt(state, bite.x, bite.y);
+        if (ally) damageAlly(state, ally, 1);
+      }
+      continue;
+    }
+    const moves = batMoves(state, e);
+    if (moves.length) {
+      const to = moves[randomInt(moves.length)];
+      e.x = to.x;
+      e.y = to.y;
+    }
+  }
+}
 function isElementalFolk(type) { return ELEMENTAL_FOLK.has(type); }
 function isElemental(unit) { return Boolean(unit && unit.elemental); }
 // The terrain mask for a native, folded into pieceTerrainOpts so it goes through exactly the same
@@ -1715,6 +1834,18 @@ function makeTurret(state, kind, x, y) {
   // THE WORKSHOP fields three kinds in equal measure — plain, fire, and ELECTRIC — from its first
   // floor. An even third each is the point: no kind is the "special" one, so every gun you meet has
   // to be read before you decide how to cross its lane.
+  // THE ELEMENTAL REALM arms its guns out of whatever the floor is made of, so the gun is part of
+  // the element rather than an import. Checked FIRST, because these floors have their own answer for
+  // every kind and must never fall through to the ordinary fire-turret roll.
+  const element = elementForFloor(state.floor || 1, realmOf(state));
+  if (element) {
+    if (element === 'earth') t.boulder = true; // throws rock: it walls the lane it is shooting down
+    else if (element === 'fire') t.fire = true; // the Emberworks fields nothing else
+    else if (element === 'air') t.electric = true;
+    // WATER deliberately fields PLAIN guns for now — its water-spraying turret is not built yet, and
+    // a fire turret on the drowned floor would contradict the whole level (no fire there at all).
+    return t;
+  }
   if (realmDef(realmOf(state)).metalDoors) {
     const roll = randomInt(3);
     if (roll === 1) t.fire = true;
@@ -4844,6 +4975,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
       if (state.terrain[k] === 'tree') state.terrain[k] = 'mushroom';
     }
   }
+  drownWaterFloor(state, realm);
   petrifyEarthFloor(state, realm);
   // NOTHING ENDS GENERATION INSIDE A WALL. Half a dozen passes write terrain after the roster is
   // placed — the boss chamber's ring, the decoy chambers, the stair dressing, the door prune, the
@@ -4870,6 +5002,28 @@ function generateFloor(floor, carryPlayer, score, realm) {
 //     through the map stops working, and he has to walk it like everybody else.
 // Torched walls are spared: a fitting on a face of bedrock reads as a mistake, and hasTorch is keyed
 // to 'wall' anyway, so a petrified torch would silently go dark.
+// THE SUNKEN REACH runs deep in places. A share of the floor's water drops away out of his depth,
+// and — like petrification — this happens at the END of generation and converts EXISTING WATER ONLY.
+// Both halves matter for the same reasons: water is laid by the recipe, by lakes, by set-pieces and
+// by the stair dressing (rule 1), and converting water rather than dry land means the change can
+// never sever a route a walker had, because deep water is still walkable. It costs him hearts, not
+// passage — which is precisely the difference between a hazard and a wall.
+//
+// Deliberately NOT applied near his arrival: opening a run out of his depth under his feet on turn
+// one would be a hit he had no way to read coming.
+const DEEP_SHARE = 0.4;
+const DEEP_SAFE_RADIUS = 3;
+function drownWaterFloor(state, realm) {
+  if (elementForFloor(state.floor || 1, realm) !== 'water') return;
+  for (const k of Object.keys(state.terrain)) {
+    if (state.terrain[k] !== 'water') continue;
+    const [x, y] = k.split(',').map(Number);
+    if (chebyshev(x, y, state.player.x, state.player.y) <= DEEP_SAFE_RADIUS) continue;
+    if (isObjectiveTile(state, x, y)) continue;
+    if (Math.random() < DEEP_SHARE) state.terrain[k] = 'deepwater';
+  }
+}
+
 const STONE_SHARE = 0.45;
 function petrifyEarthFloor(state, realm) {
   if (elementForFloor(state.floor || 1, realm) !== 'earth') return;
@@ -5801,7 +5955,10 @@ function applyArrival(next, x, y, embedded) {
     if (viaLeap) {
       pl.attacked = true; pl.usedNormalAttack = true;
       const rk = isKillablePiece(neutralHere);
-      resolveKill(next, neutralHere); // crushed under the pounce
+      // `crush: true` — the blow came from ABOVE, with the king's weight behind it. Most things do
+      // not care, but an EARTH ELEMENTAL is immune to being hit and not to being landed on, so the
+      // kill path has to be able to tell the two apart.
+      resolveKill(next, neutralHere, { crush: true }); // crushed under the pounce
       if (rk) pl.killedEnemy = true;
       pl.x = x; pl.y = y;
       next.message = `The king comes down on ${aWord(neutralHere.kind)}, crushing it!`;
@@ -6221,6 +6378,10 @@ function resolveKill(state, enemy, opts) {
   if (isUndead(enemy)) {
     const undeadOutcome = resolveUndeadBlow(state, enemy, byFire, opts);
     if (undeadOutcome !== null) return undeadOutcome;
+  }
+  if (isElemental(enemy)) {
+    const elemOutcome = resolveElementalBlow(state, enemy, byFire, opts);
+    if (elemOutcome !== null) return elemOutcome;
   }
   // A GOLEM cannot be killed by a blow at all — it is switched off, and it will get up again. Only a
   // PIT is final (`opts.pit`, passed by the fall paths), because a hole is the one thing a machine
@@ -8367,6 +8528,8 @@ function beginEnemyPhase(state) {
   tickTombstones(next); // ...and a grave he lingers beside opens
   tickGolems(next); // ...and switched-off golems count down and grind back into motion
   tickWisps(next); // loose current drifts at him through walls, and bursts when it arrives
+  tickDrowning(next); // the deep takes anything that stays under too long
+  tickTrueBats(next); // cave bats drift and bite — and never settle into anything worse
   tickMolefolk(next); // the diggers leave the floor behind them full of holes
   tickMushrooms(next); // ...and the caps come up and quietly close them again
   tickGenerators(next); // every fourth turn the Workshop's machinery lets go into the network
@@ -8802,6 +8965,38 @@ function fireTurret(state, turret) {
       ? 'An electric turret earths its bolt through the king!'
       : 'An electric turret fires into the machinery — the current finds its way!';
     state.lastAction = 'enemy';
+    return state;
+  }
+  // BOULDER TURRET (the earth floor's gun): it does not shoot a bolt, it THROWS A ROCK. The rock
+  // hurts, it bowls him back a tile — and it stays where it landed, on the tile he was standing on,
+  // which is by definition between him and the gun.
+  //
+  // So this gun builds its own cover as it fires. Every shot that connects puts a boulder in its own
+  // lane, and after two or three the lane is walled and the gun cannot shoot down it any more. It is
+  // the one turret in the game that runs out of angle on its own, and it hands the player a real
+  // choice while it does: take the hit and gain the cover, or keep stepping clear and stay in the
+  // open. Being shoved is normally pure loss; here it is how you get a wall.
+  if (turret.boulder) {
+    turret.aiming = false;
+    state.lastShot = { fromX: turret.x, fromY: turret.y, toX: state.player.x, toY: state.player.y, role: 'turret' };
+    const fromX = state.player.x;
+    const fromY = state.player.y;
+    // Routed through knockbackKing so the rock obeys EVERY rule a melee shove obeys — Parry, Ward,
+    // Waiting's shove-without-damage, being bowled into a pit, slamming whatever stands behind him.
+    // Writing a bespoke shove here is how those would have quietly disagreed.
+    knockbackKing(state, turret);
+    const moved = state.player.x !== fromX || state.player.y !== fromY;
+    if (moved && !state.gameOver
+        && terrainAt(state, fromX, fromY) === 'normal'
+        && !boulderBlockedTile(state, fromX, fromY)
+        && !state.enemies.some((e) => e.x === fromX && e.y === fromY)
+        && !allyAt(state, fromX, fromY)) {
+      state.terrain[`${fromX},${fromY}`] = 'boulder';
+      state.message = `${state.message || 'A boulder turret hurls a rock at the king!'} The rock settles where he stood.`;
+    } else if (!state.message) {
+      state.message = 'A boulder turret hurls a rock at the king!';
+    }
+    state.lastAction = 'hit';
     return state;
   }
   // Fire turret: loose a piercing gout of spellfire down the line (then recover next turn).
@@ -9453,8 +9648,14 @@ function knockbackKing(state, enemy) {
         const ky = king.y;
         king.x = bx;
         king.y = by;
-        enemy.x = kx;
-        enemy.y = ky;
+        // The shover follows up into the tile he was driven out of — it CLOSED on him, so it takes
+        // the ground. A TURRET does not: a gun is bolted to the floor, and a boulder turret that
+        // advanced on its own shot would cross the room in three shots and end up standing on the
+        // king. (Found when the boulder turret teleported four tiles down its own lane.)
+        if (!enemy.turret) {
+          enemy.x = kx;
+          enemy.y = ky;
+        }
         pushed = true;
       }
     }
