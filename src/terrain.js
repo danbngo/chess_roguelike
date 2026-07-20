@@ -21,6 +21,14 @@ function terrainAt(state, x, y) {
 // does the torch sears it 1 HP a turn exactly as lava does (see passTurn / bossMove / tickLavaDamage).
 // Guarded by the wall check so a stale entry left on a since-cleared tile is harmless.
 function hasTorch(state, x, y) {
+  // A Workshop LIGHT that has been switched off is stored as the string 'off' — truthy, so every
+  // other reader would have gone on treating it as a live flame. It is a fitting, not a fire: it
+  // does not burn a phasing king, and it does not light the gloom back.
+  const lit = state.torches && state.torches[`${x},${y}`];
+  return terrainAt(state, x, y) === 'wall' && Boolean(lit) && lit !== 'off';
+}
+// Is there a light FITTING here at all, lit or not? (Conduction and toggling care; searing does not.)
+function hasLightFitting(state, x, y) {
   return terrainAt(state, x, y) === 'wall' && Boolean(state.torches && state.torches[`${x},${y}`]);
 }
 
@@ -34,8 +42,12 @@ function blocksSight(type) {
   // through. That is the whole point of it, and the only thing separating it from a tree.
   // A METAL DOOR is a slab of plate — it blocks the look exactly as a wooden one does. A metal GATE
   // is still bars, so you can see (but not walk or shoot) through it, same as ordinary iron.
-  return type === 'wall' || type === 'tree' || type === 'boulder' || type === 'devilgrass'
-    || type === 'door' || type === 'metaldoor' || type === 'crushershut';
+  // GLOOM is HAZE, like tall grass: it hides what is behind it, and Premonition looks straight
+  // through it (see blocksSightSoft). Nothing else the player has will shift it.
+  // STONE is the earth floor's bedrock: opaque exactly like a wall, and (unlike a wall) proof against
+  // absolutely everything — see standableFor.
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'boulder' || type === 'devilgrass' || type === 'gloom'
+    || type === 'door' || type === 'metaldoor' || type === 'crushershut' || type === 'tombstone';
 }
 
 // What stops a SHOT, as opposed to what stops the LOOK. The two are not the same thing, and the
@@ -51,7 +63,7 @@ function blocksSight(type) {
 // delete that whole perk. Ice is the addition — he can see through the pane perfectly well (that is
 // what makes it a window), but an arrow will not go through it.
 function blocksArrow(type) {
-  return type === 'wall' || type === 'boulder' || type === 'ice';
+  return type === 'wall' || type === 'stone' || type === 'boulder' || type === 'ice';
 }
 
 // A TURRET's bolt: everything opaque, plus GATES and ice. A fixed gun bolted down and firing a fat
@@ -65,7 +77,7 @@ function blocksShot(type) {
 // erupting geyser's steam. Premonition (trueSight) looks and shoots THROUGH these but not through
 // HARD, opaque cover (stone, timber, boulders, a shut door). Sixth Sense sees through everything.
 function blocksSightSoft(type) {
-  return type === 'devilgrass';
+  return type === 'devilgrass' || type === 'gloom';
 }
 
 // Whether a mover may enter/stop on a tile. Walls and BOULDERS stop everyone (a phasing
@@ -85,6 +97,10 @@ function standableFor(type, opts) {
   // WIRE is a cable laid IN the floor — you walk over it like any ground. It is only special to the
   // current that runs down it (see conductsAt).
   if (type === 'wire') return true;
+  // GLOOM is a standing darkness, not a wall — you walk into it, you simply cannot see out of it.
+  if (type === 'gloom') return true;
+  // A TOMBSTONE is a block of stone. Impassable, and nothing the player has will touch it.
+  if (type === 'tombstone') return false;
   // A SWITCH is a housing, not a plate: nobody stands on one. It is STRUCK to work it (see throwSwitch).
   if (type === 'switch') return false;
   if (type === 'generator') return false; // a lump of machinery: solid, and SHOVED rather than walked past
@@ -93,6 +109,12 @@ function standableFor(type, opts) {
   if (type === 'metaldooropen' || type === 'metalgateopen' || type === 'crusheropen') return true;
   if (type === 'metaldoor' || type === 'metalgate' || type === 'crushershut') return false;
   if (type === 'tree') return Boolean(o.pathfinder); // solid timber — only Pathfinder walks through it
+  // STONE: the bedrock of the earth floor, and the ONE terrain with no answer at all. It is what the
+  // border ring is made of, brought inside the map — a phaser cannot slip it, a Pathfinder cannot
+  // thread it, it cannot be cut, shoved, burned, dug or blasted, and the molefolk who tunnel through
+  // walls and boulders stop dead at it. Everything else on this floor yields to SOMETHING; stone is
+  // the fixed geometry the puzzle is drawn on, and its whole job is to be the thing that never moves.
+  if (type === 'stone') return false;
   if (type === 'gate') return Boolean(o.phaseWalls); // barred iron — only Phase slips the bars (see-through, though; see blocksSight)
   if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // stone, rock & ice slabs — only a phasing mover
   if (type === 'pit') return Boolean(o.flying || o.pitOk || o.pathfinder); // Pathfinder treads the void; a FLYING mover soars it; a BURROWER walks it as solid ground
@@ -121,7 +143,7 @@ function standableAt(state, x, y, opts) {
 // hand-written list of terrain names, and trees and gates were added long after those lists were
 // written: nothing pointed a knight at them, so it would happily perch in a treetop.
 function isSolidBarrier(type) {
-  return type === 'wall' || type === 'tree' || type === 'gate';
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'gate';
 }
 
 // Slow terrain: a mover wades ONE tile of it per move and must stop there — no sliding clean

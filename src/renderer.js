@@ -10,6 +10,9 @@ const Renderer = (function () {
   let miniGeom = null; // last-drawn minimap geometry {cell, ox, oy, world} — maps a minimap pixel to a tile
   let demonRealm = false; // floor >= DEMON_FLOOR: the ground turns to dark RED MARBLE
   let undeadRealm = false; // a New Game+ undead floor: blacker still (see UNDEAD_GROUND)
+  let workshopRealm = false; // a New Game+ workshop floor: its lights are electric, not fire
+  let elementNow = null; // 'earth'|'water'|'fire'|'air' on an elemental floor — per FLOOR, not per realm
+  let torchesNow = null; // per-frame ref to state.torches, so drawTorch can read a light's on/off state
   // Per-frame handles on the tree state, so drawTexture can size a canopy to its wounds and set it
   // ablaze. Set in draw(), exactly like demonRealm — drawTexture is called per tile and has no
   // route to `state` of its own.
@@ -161,7 +164,13 @@ const Renderer = (function () {
   // A fireball (spell) also blooms on every `tiles` entry, staggered so the burst on
   // each tile fires as the fireball sweeps across it.
   function rangedShot(fromX, fromY, toX, toY, role, tiles) {
-    const color = PROJECTILE_COLOR[role] || '#ffffff';
+    // A CASTER throws its realm's own fire. Hell hurls pink, the Boneyard hurls corpse-blue, the
+    // Workshop throws yellow-white current — so a bolt in flight tells you where you are as plainly
+    // as the walls do. Arrows and slugs are unchanged; only the burning things take the realm colour.
+    const realmBolt = (role === 'fireball' || role === 'bolt')
+      ? (undeadRealm ? '#60a5fa' : workshopRealm ? '#fde047' : demonRealm ? '#f472b6' : null)
+      : null;
+    const color = realmBolt || PROJECTILE_COLOR[role] || '#ffffff';
     projectiles.push({ fromX, fromY, toX, toY, t: 0, role, color });
     if (role === 'fireball' && Array.isArray(tiles) && tiles.length) {
       const total = Math.max(1, Math.hypot(toX - fromX, toY - fromY));
@@ -2315,6 +2324,31 @@ const Renderer = (function () {
   // the sick green of the river. Deliberately the darkest ground in the game, so a player who has
   // seen the demon floors immediately reads this as somewhere worse.
   const UNDEAD_GROUND = { dark: '#15151a', light: '#232329' };
+  // THE WORKSHOP: oil-stained plate and poured concrete — a made floor rather than a dug one, and
+  // warmer than the undead realm's ash so the two never read as the same place.
+  const WORKSHOP_GROUND = { dark: '#2b2a26', light: '#3d3b35' };
+  // THE ELEMENTAL REALM: one ground per element, and they are deliberately far apart on the wheel so
+  // that taking a stair here reads as arriving somewhere else entirely rather than as a re-tint.
+  // EARTH is close, brown and heavy; WATER is a cold blue-green shallows; FIRE is scorched black-red
+  // — darker than the demon realm's violet so the two never blur; AIR is pale, thin and high, the
+  // only LIGHT ground in the game, because the floor there is mostly absence.
+  const ELEMENT_GROUND = {
+    earth: { dark: '#3b2a1c', light: '#54402c' },
+    water: { dark: '#123040', light: '#1c4a5e' },
+    fire: { dark: '#3a1a14', light: '#57281c' },
+    air: { dark: '#4a5266', light: '#69748c' },
+  };
+  // THE NATIVE GROUND of whatever floor is being drawn, or null in the ordinary mortal dungeon.
+  // Every tile that sits ON the realm's floor rather than replacing it (ice, geysers, gates, wires)
+  // asks this instead of repeating a realm-by-realm chain — there were five such chains before the
+  // elemental realm landed, and a fourth realm with four palettes would have made them twenty.
+  function nativeGround() {
+    if (elementNow && ELEMENT_GROUND[elementNow]) return ELEMENT_GROUND[elementNow];
+    if (workshopRealm) return WORKSHOP_GROUND;
+    if (undeadRealm) return UNDEAD_GROUND;
+    if (demonRealm) return DEMON_GROUND;
+    return null;
+  }
 
   function terrainColor(type, isDark) {
     switch (type) {
@@ -2343,6 +2377,14 @@ const Renderer = (function () {
         return isDark ? '#33301f' : '#4a4529'; // a brass plate, dull and inviting
       case 'generator':
         return isDark ? '#1d2a33' : '#2a3d4a'; // cold machine-blue: this thing is not stone
+      case 'gloom':
+        return isDark ? '#0a0a0e' : '#111117'; // a standing darkness — the blackest tile in the game
+      case 'tombstone':
+        return isDark ? '#3a3a42' : '#4d4d57'; // weathered grave-stone
+      case 'crusheropen':
+        return isDark ? '#2b2620' : '#3d362d'; // the pit under a raised press — dark, and worth noticing
+      case 'crushershut':
+        return isDark ? '#4a4238' : '#635749'; // the ram, down
       case 'metaldoor':
       case 'metalgate':
       case 'metaldooropen':
@@ -2352,22 +2394,36 @@ const Renderer = (function () {
         // In the undead realm even the masonry is drained — near-black basalt, barely lighter than
         // the ground it stands on, so the whole floor reads as one cold dark mass.
         if (undeadRealm) return isDark ? '#2c2c33' : '#3b3b44';
+        // On the EARTH floor, an ordinary wall is packed earth rather than masonry — warm and soft,
+        // so that the bedrock beside it (see 'stone') reads as the harder of the two at a glance.
+        if (elementNow === 'earth') return isDark ? '#5a4530' : '#6f573d';
         return isDark ? '#54535a' : '#6a696f'; // neutral grey stone (cool, desaturated)
+      case 'stone':
+        // BEDROCK. Deliberately the coldest, flattest, most lifeless grey on the board and noticeably
+        // DARKER than the earth wall it sits next to: the player has to be able to tell at a glance
+        // which of the two he can dig, phase, shove or tunnel through — because one of them has an
+        // answer and this one has none at all. Read the difference wrong and a Sorcerer walks into a
+        // dead end, so the contrast here is a gameplay requirement, not decoration.
+        return isDark ? '#33343a' : '#43444b';
       case 'pit':
         return isDark ? '#0b0b12' : '#15151d'; // a dark void
       case 'ice':
         // The slab is drawn as a translucent inset CUBE by drawTexture, so the tile's BASE is the
         // native floor — it shows around the cube's edges, rather than a pane of ice filling the
         // whole square.
-        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
-        if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
+        {
+          const g = nativeGround();
+          if (g) return isDark ? g.dark : g.light;
+        }
         return isDark ? '#71481d' : '#e8c589';
       case 'geyser':
         // A vent in the hellfloor: the tile's BASE is the realm's own ground (drawTexture lays the
         // crusted rim and the gas plume over it), so it reads as a hole in the floor, not a tile of
         // its own colour. Geysers only occur in the demon realm; the fallback is just defensive.
-        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
-        if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
+        {
+          const g = nativeGround();
+          if (g) return isDark ? g.dark : g.light;
+        }
         return isDark ? '#3a2c40' : '#54415c';
       case 'devilgrass':
         // The same terrain everywhere — only the look changes. Living GRASS on the mortal floors;
@@ -2378,8 +2434,10 @@ const Renderer = (function () {
         // The bars sit on the NATIVE FLOOR of the realm — sepia ground up top, ashen violet in
         // hell — so the floor shows between them, exactly like the room they guard. (drawTexture
         // lays the ironwork over the top.) It used to be a slab of dark slate all its own.
-        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
-        if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
+        {
+          const g = nativeGround();
+          if (g) return isDark ? g.dark : g.light;
+        }
         return isDark ? '#71481d' : '#e8c589';
       case 'tree':
         // The ground a trunk stands on: leaf litter, not stone — and dead brown in the demon realm,
@@ -2395,15 +2453,19 @@ const Renderer = (function () {
         // An OPEN / half-closing doorway: the floor of the threshold shows through (a leaf/frame is
         // drawn over it). It used to hand back sunny sepia on EVERY floor, which is why an open
         // doorway in hell glowed like a patch of daylight in the middle of the red marble.
-        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
-        if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light;
+        {
+          const g = nativeGround();
+          if (g) return isDark ? g.dark : g.light;
+        }
         return isDark ? '#71481d' : '#e8c589';
       default:
         // boulder + normal both sit on ground (the boulder rock is drawn over it). In the DEMON
         // REALM (floor 5+) that ground is dark RED MARBLE instead of the upper floors' warm sepia —
         // and since a pit lays this same floor before sinking its shaft, pit rims turn to marble too.
-        if (undeadRealm) return isDark ? UNDEAD_GROUND.dark : UNDEAD_GROUND.light;
-        if (demonRealm) return isDark ? DEMON_GROUND.dark : DEMON_GROUND.light; // ashen hellfloor
+        {
+          const g = nativeGround(); // ashen hellfloor / undead ash / workshop plate / this element's ground
+          if (g) return isDark ? g.dark : g.light;
+        }
         return isDark ? '#71481d' : '#e8c589'; // warm SEPIA ground (so fogged floor never reads as wall)
     }
   }
@@ -2495,6 +2557,98 @@ const Renderer = (function () {
         ctx.arc(cx, cy - tileSize * 0.06, tileSize * (imminent ? 0.62 : 0.4), 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+        break;
+      }
+      case 'gloom': {
+        // A standing darkness. It CHURNS slowly — enough to read as a living thing rather than a
+        // hole in the floor — and it swallows the tile: no grit, no speckle, nothing under it.
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(px, py, tileSize, tileSize);
+        for (let i = 0; i < 4; i += 1) {
+          const ang = (i / 4) * Math.PI * 2 + clock * 0.18 + tileHash(x + i, y) * 6.28;
+          const d = tileSize * (0.1 + 0.12 * (0.5 + 0.5 * Math.sin(clock * 0.3 + i + x)));
+          const r = tileSize * (0.26 + 0.1 * tileHash(x, y + i));
+          ctx.fillStyle = 'rgba(30, 20, 45, 0.5)';
+          ctx.beginPath();
+          ctx.arc(px + tileSize / 2 + Math.cos(ang) * d, py + tileSize / 2 + Math.sin(ang) * d, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      case 'tombstone': {
+        // A slab with a rounded head, leaning very slightly. Drawn plain and heavy: it is one of the
+        // few things on any floor the player has no answer to at all.
+        const cx = px + tileSize / 2;
+        const w = tileSize * 0.5;
+        const top = py + tileSize * 0.22;
+        const bottom = py + tileSize * 0.86;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.beginPath();
+        ctx.ellipse(cx, bottom, w * 0.6, tileSize * 0.07, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#6d6d78';
+        ctx.beginPath();
+        ctx.moveTo(cx - w / 2, bottom);
+        ctx.lineTo(cx - w / 2, top + w * 0.35);
+        ctx.arc(cx, top + w * 0.35, w / 2, Math.PI, 0);
+        ctx.lineTo(cx + w / 2, bottom);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#3f3f48';
+        ctx.lineWidth = Math.max(1, tileSize * 0.025);
+        ctx.stroke();
+        // A cut cross, so it reads as a grave and not a boulder.
+        ctx.strokeStyle = 'rgba(30, 30, 36, 0.8)';
+        ctx.lineWidth = Math.max(1, tileSize * 0.045);
+        ctx.beginPath();
+        ctx.moveTo(cx, top + w * 0.25); ctx.lineTo(cx, top + w * 0.85);
+        ctx.moveTo(cx - w * 0.22, top + w * 0.45); ctx.lineTo(cx + w * 0.22, top + w * 0.45);
+        ctx.stroke();
+        break;
+      }
+      case 'crusheropen':
+      case 'crushershut': {
+        // A PRESS. Raised, you see the empty shaft and the teeth waiting above it — the tile is
+        // walkable and looks it, but it plainly wants to come down. Lowered, it is a solid slab with
+        // the seam still visible, so you can tell a shut crusher from a wall at a glance and know it
+        // is a thing that can be opened again.
+        const shut = type === 'crushershut';
+        const inset = tileSize * 0.1;
+        if (shut) {
+          ctx.fillStyle = '#7a6c59';
+          ctx.fillRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
+          ctx.strokeStyle = '#a3927a';
+          ctx.lineWidth = Math.max(1, tileSize * 0.04);
+          ctx.strokeRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
+          // The seam across the middle: this came DOWN, and it can go back up.
+          ctx.strokeStyle = 'rgba(20, 16, 12, 0.85)';
+          ctx.lineWidth = Math.max(1, tileSize * 0.05);
+          ctx.beginPath();
+          ctx.moveTo(px + inset, py + tileSize / 2);
+          ctx.lineTo(px + tileSize - inset, py + tileSize / 2);
+          ctx.stroke();
+        } else {
+          // The open shaft, with the teeth of the ram showing at the top and bottom edges.
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+          ctx.fillRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
+          ctx.fillStyle = '#8d7c66';
+          const tooth = tileSize * 0.12;
+          for (let i = 0; i < 4; i += 1) {
+            const tx = px + inset + (i + 0.5) * ((tileSize - inset * 2) / 4) - tooth / 2;
+            ctx.beginPath();
+            ctx.moveTo(tx, py + inset);
+            ctx.lineTo(tx + tooth, py + inset);
+            ctx.lineTo(tx + tooth / 2, py + inset + tooth);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(tx, py + tileSize - inset);
+            ctx.lineTo(tx + tooth, py + tileSize - inset);
+            ctx.lineTo(tx + tooth / 2, py + tileSize - inset - tooth);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
         break;
       }
       case 'metaldoor':
@@ -3114,6 +3268,42 @@ const Renderer = (function () {
         }
         break;
       }
+      case 'stone': {
+        // BEDROCK, and pointedly NOT masonry: no courses, no mortar, no bricks. Two or three long
+        // irregular fracture lines across an otherwise blank face — the look of rock that was never
+        // built and therefore cannot be taken apart. The wall beside it is laid in neat little
+        // courses, so the two are legible as different substances even at a glance, which is the
+        // whole point: one of them has an answer and this one does not.
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.38)';
+        ctx.lineWidth = Math.max(1, tileSize * 0.045);
+        ctx.beginPath();
+        for (let i = 0; i < 3; i += 1) {
+          const a = tileHash(x * 5 + i, y * 11 + 3);
+          const b = tileHash(x * 13 + 1, y * 7 + i);
+          const c = tileHash(x + i * 3, y - i * 2);
+          // A seam entering one edge and leaving another, kinked once in the middle so it reads as a
+          // fracture rather than a drawn line.
+          const sx = px + tileSize * (i % 2 ? a : 0.02);
+          const sy = py + tileSize * (i % 2 ? 0.02 : a);
+          const mx = px + tileSize * (0.3 + b * 0.4);
+          const my = py + tileSize * (0.3 + c * 0.4);
+          const ex = px + tileSize * (i % 2 ? c : 0.98);
+          const ey = py + tileSize * (i % 2 ? 0.98 : c);
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(mx, my);
+          ctx.lineTo(ex, ey);
+        }
+        ctx.stroke();
+        // A cold highlight along the top edge: bedrock catching what little light there is, which
+        // keeps the flat face from reading as a hole in the floor.
+        ctx.strokeStyle = 'rgba(190, 195, 205, 0.16)';
+        ctx.lineWidth = Math.max(1, tileSize * 0.06);
+        ctx.beginPath();
+        ctx.moveTo(px + tileSize * 0.08, py + tileSize * 0.1);
+        ctx.lineTo(px + tileSize * 0.92, py + tileSize * 0.1);
+        ctx.stroke();
+        break;
+      }
       case 'door': {
         const m = tileSize * 0.14;
         if (demonRealm) {
@@ -3273,6 +3463,25 @@ const Renderer = (function () {
   // A wall-mounted TORCH: a short sconce with a layered, glowing flame that flickers off the render
   // clock (seeded per tile so neighbours dance out of phase). Marks a wall that sears any creature
   // phased into it — a hazard for the Phase-perk king.
+  // THE REALM'S FIRE. One palette per place, used by its torches, its casters' bolts and the flash
+  // where those bolts land — so everything burning on a floor agrees about what kind of place it is.
+  //   overworld : honest orange firelight
+  //   demon     : PINK — hellfire, and unmistakably not a lantern
+  //   undead    : cold BLUE — corpse-light
+  //   workshop  : yellow-white ELECTRICAL glare, because nothing there is actually on fire
+  function realmFire() {
+    if (undeadRealm) return { glow: 'rgba(70, 150, 255, 0.95)', outer: '#1d4ed8', mid: '#60a5fa', core: '#ecfeff' };
+    if (workshopRealm) return { glow: 'rgba(255, 225, 90, 0.95)', outer: '#ca8a04', mid: '#fde047', core: '#fffbeb' };
+    if (demonRealm) return { glow: 'rgba(255, 90, 200, 0.95)', outer: '#be185d', mid: '#f472b6', core: '#fdf2f8' };
+    return { glow: 'rgba(255, 140, 30, 0.95)', outer: '#f97316', mid: '#fbbf24', core: '#fff7ed' };
+  }
+  // A Workshop light that has been switched off. Stored as the string 'off' in `state.torches` so
+  // the existing truthy map keeps working everywhere else (see hasTorch).
+  function lightIsOff(x, y) {
+    const t = torchesNow;
+    return Boolean(t && t[`${x},${y}`] === 'off');
+  }
+
   function drawTorch(px, py, x, y) {
     const seed = x * 7.3 + y * 3.1;
     const flick = Math.sin(clock * 8 + seed) * 0.5 + Math.sin(clock * 19 + seed * 1.7) * 0.5; // -1..1
@@ -3290,9 +3499,21 @@ const Renderer = (function () {
     // Glowing flame — three nested teardrops, hot core last. In the demon realm the fire burns COLD
     // BLUE: it marks the torches as something other than honest firelight, and (usefully) stops a
     // wall-torch from reading as a splash of lava now that the floor beside it is ash.
-    const fire = demonRealm
-      ? { glow: 'rgba(70, 150, 255, 0.95)', outer: '#1d4ed8', mid: '#60a5fa', core: '#ecfeff' }
-      : { glow: 'rgba(255, 140, 30, 0.95)', outer: '#f97316', mid: '#fbbf24', core: '#fff7ed' };
+    // Each REALM burns its own colour, and the same colour its casters throw (see REALM_FIRE). One
+    // palette per place means a bolt in flight, the light on the walls and the ash on the floor all
+    // agree about where you are — and a wall-torch never reads as a splash of lava.
+    const fire = realmFire();
+    // A workshop LIGHT that has been switched off is dark iron and nothing else. Drawn before the
+    // flame so an unlit sconce still shows as a fitting rather than vanishing off the wall.
+    if (lightIsOff(x, y)) {
+      ctx.strokeStyle = '#3c3c44';
+      ctx.lineWidth = Math.max(1, tileSize * 0.05);
+      ctx.beginPath();
+      ctx.arc(cx, baseY - tileSize * 0.12, tileSize * 0.1, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     ctx.shadowBlur = tileSize * (0.45 + 0.18 * flick);
     ctx.shadowColor = fire.glow;
     const h = tileSize * (0.3 + 0.05 * flick);
@@ -3556,6 +3777,7 @@ const Renderer = (function () {
     tileSize = L.tile;     // drawPiece/drawExit/drawKey/drawTorch read this
     demonRealm = false;    // the splash is the warm mortal board, never hell
     undeadRealm = false;
+    workshopRealm = false;
     treeHp = null;
     burnTrees = null;
     ctx.fillStyle = '#020617';
@@ -4177,7 +4399,16 @@ const Renderer = (function () {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     undeadRealm = (state.realm === 'undead');
-    demonRealm = !undeadRealm && (state.floor || 1) >= DEMON_FLOOR; // the demon realm is floored in ash, and burns blue
+    workshopRealm = (state.realm === 'workshop');
+    // THE ELEMENTAL REALM has no single look: each of its four floors is a different element, so the
+    // palette is chosen per FLOOR here rather than per realm. Everything downstream reads
+    // `elementNow` — never `state.realm === 'elemental'` — because "which realm" answers nothing
+    // useful about what this floor looks like.
+    elementNow = (state.realm === 'elemental' && typeof elementForFloor === 'function')
+      ? elementForFloor(state.floor || 1, state.realm)
+      : null;
+    torchesNow = state.torches || null;
+    demonRealm = !undeadRealm && !elementNow && (state.floor || 1) >= DEMON_FLOOR; // the demon realm is floored in ash, and burns blue
     treeHp = state.treeHp || null;
     burnTrees = state.burningTrees || null;
     geyserStage = (typeof geyserErupting === 'function' && geyserErupting(state)) ? 'erupting'

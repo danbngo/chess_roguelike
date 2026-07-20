@@ -544,6 +544,10 @@ function getCardMoves(state, card) {
           if (!inBounds(x, y)) break;
           const t = terrainAt(state, x, y);
           if (blocksArrow(t) && !shootWalls) break; // an arrow will not fly through a pane of ice, however well you can SEE through it
+          // A SWITCH is a legitimate thing to shoot: putting an arrow through the housing throws it
+          // from across the room, which is the archer's whole answer to a wired floor he does not
+          // want to walk into. The arrow stops there, as it would on any solid fitting.
+          if (t === 'switch') { add(x, y, false, true); break; }
           const occ = enemyAt(x, y);
           if (occ) {
             if (occ.summonCircle) continue; // a rune on the FLOOR — the arrow flies OVER it (never a target, never a block)

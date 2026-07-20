@@ -26,6 +26,101 @@ function createEnemy(type, x, y) {
   };
 }
 
+// ---- THE UNDEAD REALM'S FURNITURE ---------------------------------------------------------------
+// Three things the Boneyard has that nowhere else does.
+//
+//   COFFIN    — a summoning circle you cannot end with a footstep. Three blows, like a gate.
+//   GLOOM     — a standing darkness that never lifts. It blocks the look, the player can do NOTHING
+//               about it, and only a TORCH drives it back. It is the one hazard on any floor that
+//               cannot be burned, frozen, shoved or spelled away, which is precisely the point of a
+//               realm built on things you cannot get rid of.
+//   TOMBSTONE — stand next to one and it starts to rattle. Two turns of that and it BURSTS, leaving
+//               a hole in the floor and something new standing beside it. Walk away and it settles.
+const COFFIN_HP = 3;
+const TOMBSTONE_FUSE = 2; // turns of rattling before it goes
+
+// GLOOM is terrain, not a fog bank: it has no clock and nothing thins it. `state.gloom` would have
+// been a second parallel map to keep in step with terrain through every carve, scatter and sweep —
+// making it a tile type means every existing path already handles it.
+function isGloom(t) { return t === 'gloom'; }
+
+// A torch beside it burns it off. Checked each phase because torches can ARRIVE (a dread event, a
+// set-piece brazier) long after the gloom was laid.
+function tickGloom(state) {
+  if (!realmDef(realmOf(state)).undeadRoster) return;
+  for (const k of Object.keys(state.terrain)) {
+    if (state.terrain[k] !== 'gloom') continue;
+    const [x, y] = k.split(',').map(Number);
+    let lit = false;
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      if (hasTorch(state, x + dx, y + dy)) { lit = true; break; }
+    }
+    if (lit) {
+      delete state.terrain[k];
+      if (inLineOfSight(state, x, y)) {
+        state.message = state.message
+          ? `${state.message} The gloom shrinks back from the flame.`
+          : 'The gloom shrinks back from the flame.';
+      }
+    }
+  }
+}
+
+// TOMBSTONES. Their whole tension is that the clock only runs while he is beside one — so the
+// question is never "can I disarm this" (he cannot) but "how long dare I stand here".
+function tickTombstones(state) {
+  if (!Array.isArray(state.tombstones) || !state.tombstones.length) return;
+  const p = state.player;
+  const burst = [];
+  for (const tomb of state.tombstones) {
+    const near = chebyshev(tomb.x, tomb.y, p.x, p.y) <= 1;
+    if (!near) {
+      if (tomb.rattle) {
+        tomb.rattle = 0; // he stepped away: it settles, and the count starts over if he comes back
+        if (inLineOfSight(state, tomb.x, tomb.y)) {
+          state.message = state.message ? `${state.message} The tombstone settles.` : 'The tombstone settles.';
+        }
+      }
+      continue;
+    }
+    tomb.rattle = (tomb.rattle || 0) + 1;
+    if (tomb.rattle >= TOMBSTONE_FUSE) burst.push(tomb);
+    else {
+      cue(state, 'rumble');
+      state.message = state.message
+        ? `${state.message} The tombstone beside you begins to rattle...`
+        : 'The tombstone beside you begins to rattle...';
+    }
+  }
+  for (const tomb of burst) {
+    state.tombstones = state.tombstones.filter((t) => t !== tomb);
+    delete state.terrain[`${tomb.x},${tomb.y}`];
+    state.terrain[`${tomb.x},${tomb.y}`] = 'pit'; // the stone goes, and the grave it marked stays open
+    cue(state, 'crush');
+    // ...and whatever it was holding down gets up beside it.
+    const spots = [];
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const x = tomb.x + dx;
+      const y = tomb.y + dy;
+      if (!standableAt(state, x, y, {})) continue;
+      if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+      if (p.x === x && p.y === y) continue;
+      spots.push({ x, y });
+    }
+    if (spots.length) {
+      const at = spots[randomInt(spots.length)];
+      const risen = makeUndead(createEnemy(randomEnemyKind(state.floor), at.x, at.y));
+      risen.awake = true;
+      risen.provoked = true;
+      state.enemies.push(risen);
+      addSmoke(state, at.x, at.y);
+    }
+    state.message = state.message
+      ? `${state.message} The tombstone bursts — something climbs out of the grave!`
+      : 'The tombstone bursts — something climbs out of the grave!';
+  }
+}
+
 // ---- THE UNDEAD ---------------------------------------------------------------------------------
 // The undead realm does NOT introduce new piece kinds. Its natives are the ordinary chess pieces you
 // already know how to read — a rook still moves like a rook — wearing one of three afflictions. That
@@ -137,6 +232,13 @@ function isCrusher(t) { return t === 'crusheropen' || t === 'crushershut'; }
 
 // Flip one metal fitting. Shut → open is free; open → SHUT crushes whatever is in the way.
 function toggleMetalAt(state, x, y) {
+  // ELECTRICAL LIGHTS answer the same jolt the doors do — a current through a room turns its lamps
+  // on or off along with everything else, which is often how the player discovers the room's wiring.
+  if (realmDef(realmOf(state)).metalDoors && hasLightFitting(state, x, y)) {
+    const key = `${x},${y}`;
+    state.torches[key] = state.torches[key] === 'off' ? true : 'off';
+    return true;
+  }
   const t = terrainAt(state, x, y);
   if (!isMetal(t)) return false;
   const key = `${x},${y}`;
@@ -235,6 +337,9 @@ const ELECTRIC_DAMAGE = 1;
 function conductsAt(state, x, y) {
   const t = terrainAt(state, x, y);
   if (t === 'wire' || isMetal(t)) return true; // wires, metal doors/gates AND crushers all conduct
+  // An ELECTRICAL LIGHT is wired into the same circuit as everything else on a workshop floor — so a
+  // row of sconces along a wall is a cable, and the current runs down it whether they are lit or not.
+  if (realmDef(realmOf(state)).metalDoors && hasLightFitting(state, x, y)) return true;
   if (t === 'generator') return true;
   if (state.enemies.some((e) => e.x === x && e.y === y)) return true; // a body is a cable
   if (allyAt(state, x, y)) return true;
@@ -404,6 +509,68 @@ function electricTurretAim(state, turret) {
   return null;
 }
 
+// ---- WISPS --------------------------------------------------------------------------------------
+// A knot of loose current drifting through the Workshop. It flies — terrain means nothing to it — and
+// it sees through everything, so there is no hiding from one and no wall to put between you. What it
+// does when it reaches you is discharge, and doing so ENDS it.
+//
+// That single-use nature is the whole design. A wisp is not a fight; it is a countdown you can either
+// outrun or spend a turn deleting. And because its blow is a discharge rather than a strike, it goes
+// through the network — a wisp that reaches a golem standing next to you has still got you.
+function isWisp(unit) { return Boolean(unit && unit.wisp); }
+
+// Would drifting onto this tile SET A WISP OFF? Anything solid enough to earth it does — a body, a
+// machine, a shut door, the key on its plinth. The one exception is a WIRE: current runs happily
+// along a cable, which is the whole reason the Workshop's wiring is worth reading. Open ground and an
+// open doorway are likewise nothing to it.
+function wispTriggerAt(state, x, y) {
+  const p = state.player;
+  if (p.x === x && p.y === y) return true;
+  if (state.enemies.some((e) => !e.wisp && e.x === x && e.y === y)) return true; // foes, guns, fabricators, golems
+  if (allyAt(state, x, y)) return true;
+  if (keyTileAt(state, x, y)) return true;
+  const t = terrainAt(state, x, y);
+  if (t === 'wire') return false; // a cable simply carries it onward
+  if (t === 'generator' || t === 'switch') return true;
+  if (isCrusher(t)) return true; // a press, open or shut
+  if (isMetalShut(t)) return true; // a SHUT door or gate earths it; an open one is a doorway
+  return false;
+}
+
+function tickWisps(state) {
+  const p = state.player;
+  for (const w of state.enemies.filter(isWisp)) {
+    if (w.spent) continue;
+    // It always knows where he is — nothing about sight applies to a thing made of current.
+    w.awake = true;
+    w.surprised = false;
+    // IT IS DUMB. It goes STRAIGHT at him and earths itself on the first thing it touches, which is
+    // the whole counterplay: a wisp is not unavoidable, it is BAITABLE. Put a golem, a gun, a press —
+    // anything at all but a stretch of cable — between yourself and one, and it spends itself on that
+    // instead of on you. (And whatever it earths through gets whatever the current does: a press
+    // comes down, a fabricator stamps, a door swings.)
+    const step = { x: w.x + Math.sign(p.x - w.x), y: w.y + Math.sign(p.y - w.y) };
+    if (step.x === w.x && step.y === w.y) continue; // already on him (should not happen)
+    const offBoard = step.x < 1 || step.y < 1 || step.x >= WORLD_SIZE - 1 || step.y >= WORLD_SIZE - 1;
+    if (offBoard) continue;
+    if (!wispTriggerAt(state, step.x, step.y)) {
+      w.x = step.x; // nothing in the way — it drifts on, through wall or wire alike
+      w.y = step.y;
+      continue;
+    }
+    // IT GOES OFF, where it stands, into whatever it just touched. The arc runs the network from
+    // there, so it may still reach him — but it no longer has to be him that it hits.
+    w.spent = true;
+    state.enemies = state.enemies.filter((e) => e.id !== w.id);
+    addSmoke(state, w.x, w.y);
+    dischargeElectricity(state, step.x, step.y, { skipOrigin: false });
+    const onHim = step.x === p.x && step.y === p.y;
+    state.message = state.message
+      ? `${state.message} ${onHim ? 'A wisp bursts against you in a sheet of current!' : 'A wisp earths itself with a crack!'}`
+      : (onHim ? 'A wisp bursts against you in a sheet of current!' : 'A wisp earths itself with a crack!');
+  }
+}
+
 // ---- GENERATORS ---------------------------------------------------------------------------------
 // A humming lump of machinery you can SHOVE, exactly like a boulder — and every fourth turn it lets
 // go, arcing into everything around it. That makes it the one hazard in the game the player can pick
@@ -467,6 +634,8 @@ function fitOutWorkshop(state) {
 // only reachable that way, open the metal gates on the route until it is honestly reachable. It
 // leaves the floor's ironmongery intact everywhere it was not load-bearing.
 function openMetalUntilReachable(state) {
+  // Named for metal, but it clears ANY unanswerable blocker (see the flood below) — the undead
+  // realm's tombstones seal a corridor exactly as a metal gate does.
   const targets = [];
   if (state.exit) targets.push(state.exit);
   if (state.key && !state.key.collected) targets.push(state.key);
@@ -490,7 +659,11 @@ function openMetalUntilReachable(state) {
         // Treat every one of the Workshop's IMPASSABLE fittings as notionally passable while we look
         // for a route: a switch housing and a generator seal a one-wide corridor exactly as a metal
         // gate does, and none of the three can be cut through.
-        if (!isStandable(t) && !isMetalShut(t) && t !== 'switch' && t !== 'generator') continue; // isMetalShut covers crushers
+        // Every IMPASSABLE fitting the player has no answer to. A metal gate cannot be cut, a switch
+        // housing and a generator cannot be destroyed, a crusher needs current, and a TOMBSTONE is
+        // simply beyond him. Any one of them across the only approach makes a floor unwinnable, so
+        // all of them are notionally passable while we hunt for a route.
+        if (!isStandable(t) && !isMetalShut(t) && t !== 'switch' && t !== 'generator' && t !== 'tombstone') continue;
         seen.add(key);
         from.set(key, `${cur.x},${cur.y}`);
         queue.push({ x: nx, y: ny });
@@ -507,7 +680,7 @@ function openMetalUntilReachable(state) {
       if (isMetalShut(t)) {
         state.terrain[cursor] = t === 'metaldoor' ? 'metaldooropen' : 'metalgateopen';
         opened += 1;
-      } else if (t === 'switch' || t === 'generator') {
+      } else if (t === 'switch' || t === 'generator' || t === 'tombstone') {
         // LOAD-BEARING machinery. A switch cannot be destroyed and a generator can only be shoved
         // (which needs room the corridor does not have), so one of either across the only approach
         // is as final as a metal gate. Clear it back to floor — the floor being crossable outranks
@@ -813,7 +986,10 @@ function rollBossPerks(count, kind) {
 //   * one live portal per realm still open to him.
 //   * one WAY OUT: accept the victory he already holds and end the run here.
 // Built by hand rather than generated, because every tile of it is doing a job.
-const PORTAL_ROOM_W = 15;
+// Widened from 15 when the third NG+ realm landed: at 15 the live portals fell on x=10,13,15 — a gap
+// of 3 then a gap of 2 — which read as a wall of portals rather than as three separate choices. The
+// room has to hold NG_PLUS_REALMS.length gates on one row with air between them.
+const PORTAL_ROOM_W = 21;
 const PORTAL_ROOM_H = 11;
 
 function buildPortalRoom(carryPlayer, score, cleared) {
@@ -839,10 +1015,25 @@ function buildPortalRoom(carryPlayer, score, cleared) {
   // The live ones, across the middle — plus any NG+ realm he has already finished, now dark too.
   const midY = by + 5;
   const open = NG_PLUS_REALMS;
-  const span = PORTAL_ROOM_W - 6;
+  // Lay them on a fixed CENTRED STRIDE rather than at fractions of the span. The fractional form
+  // rounded unevenly — with three realms it produced gaps of 3 and 2 — so the row looked accidental.
+  // A stride guarantees identical spacing whatever NG_PLUS_REALMS grows to; it only narrows if the
+  // room genuinely cannot hold them, and never below 2 (adjacent-but-not-touching).
+  const inner = PORTAL_ROOM_W - 6; // usable width, keeping 3 clear tiles at each wall
+  const stride = Math.max(2, Math.min(4, Math.floor(inner / Math.max(1, open.length - 1 || 1))));
+  const rowW = stride * (open.length - 1);
+  let startX = bx + Math.floor((PORTAL_ROOM_W - rowW) / 2);
+  // KEEP THE CENTRE AISLE CLEAR. The live portals sit in a row BETWEEN the entrance and the dead
+  // gates on the back wall, so a king walking straight up the room to read them would otherwise step
+  // through whichever portal happened to land on his own column — with an odd count and a centred
+  // row, that is exactly what happens. Nudge the row one tile sideways so the column he starts on
+  // stays empty: every gate then has to be walked to on purpose, which is the whole point of a room
+  // of doors rather than a menu.
+  const aisle = player.x;
+  const onAisle = (sx) => open.some((_, i) => sx + i * stride === aisle);
+  if (onAisle(startX)) startX += 1;
   open.forEach((realm, i) => {
-    const x = bx + 3 + Math.round(((i + 1) / (open.length + 1)) * span);
-    gates.push({ x, y: midY, realm, collapsed: done.has(realm) });
+    gates.push({ x: startX + i * stride, y: midY, realm, collapsed: done.has(realm) });
   });
   // ...and the door home, at his feet.
   gates.push({ x: player.x, y: by + PORTAL_ROOM_H - 4, realm: null, accept: true, collapsed: false });
@@ -964,11 +1155,16 @@ function createBoss(floor, x, y, realm) {
   // The DEMON REALM's guardians are doubly cursed — two perks each. The FINAL guardian wears three
   // and is a thing apart (see finalBoss: its own black-and-fire livery and worse threats).
   boss.finalBoss = isFinalFloor(floor, realm);
-  // NEW GAME+ guardians are ALL three-perk monsters. Their wound pools are flat across the realm
-  // (see the level table), so traits are the whole of the escalation down here — the fourth-floor
-  // guardian is not tougher than the first, it is nastier.
+  // NEW GAME+ guardians RAMP: 2 traits, 2, 3, then 4 for the realm's last. Flat 3 across all four
+  // floors made the realm a wall rather than a curve — the first guardian he met was already as
+  // nasty as the last, so there was nothing to read as progress. Their wound pools stay flat (see
+  // the level table), so traits and piece weight ARE the whole escalation; ramping them is the only
+  // place a curve can live. The last one gets four, which no guardian anywhere else ever wears.
   const ngPlus = realmDef(realm).newGamePlus;
-  const perkCount = ngPlus ? 3 : (boss.finalBoss ? 3 : (floor >= DEMON_FLOOR ? 2 : 1));
+  const NG_TRAIT_RAMP = [2, 2, 3, 4];
+  const perkCount = ngPlus
+    ? NG_TRAIT_RAMP[Math.min(NG_TRAIT_RAMP.length - 1, floor - 1)]
+    : (boss.finalBoss ? 3 : (floor >= DEMON_FLOOR ? 2 : 1));
   boss.bossPerks = rollBossPerks(perkCount, kind);
   boss.bossPerk = boss.bossPerks[0]; // the PRIMARY — drives its crown, epithet and one-line summary
   boss.bossName = bossNameFor(kind, boss.bossPerks); // named for what it is, once its traits are known
@@ -1818,7 +2014,12 @@ function rebuildWithPerks(player, perkIds) {
   // `createInitialState`. Rebuilding without re-applying it silently handed a Nightmare warrior the
   // easy-mode body: measured, 5/5 became 9/9 the first time he touched an altar, on every rite.
   fresh.difficulty = player.difficulty || 'hard';
-  fresh.maxHp = startingHpFor(fresh.className, fresh.difficulty);
+  // HEARTS TRADED AT ALTARS are a running total carried on the player, NOT a one-off tweak to maxHp.
+  // They have to be, because this rebuild recomputes maxHp from the difficulty table every time: a
+  // heart bought at one altar was silently wiped by the next, so selling a perk for a heart and
+  // buying it back left him a heart DOWN. Measured 3 perks/5hp → 2/6 → 3/4.
+  fresh.heartsTraded = player.heartsTraded || 0;
+  fresh.maxHp = Math.max(1, startingHpFor(fresh.className, fresh.difficulty) + fresh.heartsTraded);
   fresh.hp = fresh.maxHp;
   const cls = CLASSES[player.className] || CLASSES.warrior;
   const kept = [];
@@ -1836,7 +2037,8 @@ function rebuildWithPerks(player, perkIds) {
     'seenStructures', 'seenTerrain', 'seenTurret', 'killStreak', 'bestKillStreak', 'killsThisFloor',
     'killsThisTurn', 'maxKillsInTurn', 'bossesSlain', 'miniBossesSlain', 'miniBossesSpawned',
     'turretsDestroyed', 'turretsThisFloor', 'maxTurretsOnFloor', 'minisThisFloor', 'slainBossTraits',
-    'killedFinalBoss', 'bossKilledAsBeast', 'hitThisFloor', 'extraLifeUsed', 'lastTileX', 'lastTileY'];
+    'killedFinalBoss', 'bossKilledAsBeast', 'hitThisFloor', 'extraLifeUsed', 'lastTileX', 'lastTileY',
+    'orbs', 'heartsTraded'];
   for (const field of LEDGER) {
     if (player[field] !== undefined) fresh[field] = player[field];
   }
@@ -1932,11 +2134,11 @@ function takeAltarOffer(state, offer) {
   const p = state.player;
   const held = (p.takenPerks || []).filter((id) => id !== offer.dropId);
   if (offer.gainId) held.push(offer.gainId);
-  const rebuilt = rebuildWithPerks(p, held);
-  if (offer.hearts) {
-    rebuilt.maxHp = Math.max(1, rebuilt.maxHp + offer.hearts);
-    rebuilt.hp = Math.min(rebuilt.maxHp, offer.hearts > 0 ? rebuilt.hp + offer.hearts : rebuilt.hp);
-  }
+  // Record the trade BEFORE rebuilding, so the running total is what the rebuild reads. Doing it
+  // afterwards is what made hearts evaporate at the next altar.
+  const traded = { ...p, heartsTraded: (p.heartsTraded || 0) + (offer.hearts || 0) };
+  const rebuilt = rebuildWithPerks(traded, held);
+  if (offer.hearts > 0) rebuilt.hp = Math.min(rebuilt.maxHp, rebuilt.hp + offer.hearts); // the new heart comes full
   state.player = rebuilt;
   const gained = offer.gainId ? perkById(offer.gainId) : null;
   if (offer.hearts > 0) return 'Something is taken out of you, and the hollow fills with blood.';
@@ -2446,6 +2648,12 @@ function pruneUselessDoors(state) {
     if (t !== 'door' && t !== 'dooropen' && t !== 'doorajar' && t !== 'gate') continue;
     if (state.fixedDoors && state.fixedDoors.has(key)) continue; // a hand-built structure's own door
     const [x, y] = key.split(',').map(Number);
+    // NB: this pass deliberately does NOT spare a tile something is standing on. It once did — to
+    // avoid entombing whoever was in the doorway — but that left USELESS DOORS standing wherever a
+    // piece happened to be, breaking the older and more important invariant that no door leads
+    // nowhere. Both are satisfied by letting the prune do its job and relocating the occupant
+    // afterwards: `freeEntombedAtGeneration` runs at the very end of generateFloor and frees anyone
+    // this (or the chamber ring, or the stair dressing) walled in.
     state.terrain[key] = 'wall'; // judge it as the wall it was cut from...
     if (isDoorwaySpot(at, x, y)) state.terrain[key] = t; // ...a real doorway: put the door/gate back
   }
@@ -3682,6 +3890,37 @@ function generateTerrain(floor, player, garrison, keepDoors, realm) {
   const formations = 2 + randomInt(2); // 2-3 colonnade attempts (open floors get more; cramped ones fewer)
   for (let i = 0; i < formations; i += 1) colonnade();
 
+  // ---- THE UNDEAD REALM'S FURNITURE -------------------------------------------------------------
+  if (realmDef(realm).undeadRoster) {
+    // GLOOM, in patches rather than confetti. A single dark tile is a curiosity; a bank of them is a
+    // room you have to walk into blind, which is the whole idea. Never laid beside a torch — the two
+    // cannot coexist, and laying one next to the other would just delete it on turn one.
+    const nearTorch = (x, y) => [...ORTHO, ...DIAG, [0, 0]]
+      .some(([dx, dy]) => atT(x + dx, y + dy) === 'wall' && garrison
+        && garrison.some((g) => g.kind === 'torch' && g.x === x + dx && g.y === y + dy));
+    for (let patch = 0; patch < 4 + randomInt(4); patch += 1) {
+      const cx = 2 + randomInt(WORLD_SIZE - 4);
+      const cy = 2 + randomInt(WORLD_SIZE - 4);
+      for (let i = 0; i < 3 + randomInt(5); i += 1) {
+        const gx = cx + randomInt(3) - 1;
+        const gy = cy + randomInt(3) - 1;
+        if (gx < 1 || gy < 1 || gx >= WORLD_SIZE - 1 || gy >= WORLD_SIZE - 1) continue;
+        if (atT(gx, gy) !== 'normal' || nearStart(gx, gy) || nearTorch(gx, gy)) continue;
+        terrain[`${gx},${gy}`] = 'gloom';
+      }
+    }
+    // TOMBSTONES, scattered singly. Each is a timer he chooses whether to start.
+    for (let i = 0; i < 4 + randomInt(4); i += 1) {
+      for (let tries = 0; tries < 40; tries += 1) {
+        const tx = 2 + randomInt(WORLD_SIZE - 4);
+        const ty = 2 + randomInt(WORLD_SIZE - 4);
+        if (atT(tx, ty) !== 'normal' || nearStart(tx, ty)) continue;
+        terrain[`${tx},${ty}`] = 'tombstone';
+        break;
+      }
+    }
+  }
+
   // ---- THE WORKSHOP'S FITTINGS ------------------------------------------------------------------
   // Laid LAST, over whatever the floor turned out to be, for the same reason the undead realm's water
   // is converted here: set-pieces write their own doors and gates by the dozen, and patching each of
@@ -3812,6 +4051,13 @@ function buildChamber(state, cx, cy, style, toward) {
       const ry = cy + dy;
       if (rx < 1 || rx >= WORLD_SIZE - 1 || ry < 1 || ry >= WORLD_SIZE - 1) continue;
       if (chebyshev(rx, ry, doorX, doorY) === 0) continue;
+      // NEVER lay the ring over something STANDING there. The chamber is built AFTER the roster is
+      // placed, so a piece caught on the ring line was simply entombed — measured at ~0.9 per floor,
+      // and the single biggest source of "a king spawned inside a wall". A gun is the worst case:
+      // the runtime dislodge sweep skips turrets, so one walled in here never gets out.
+      if (state.enemies.some((e) => e.x === rx && e.y === ry)) continue;
+      if (allyAt(state, rx, ry)) continue;
+      if (state.player.x === rx && state.player.y === ry) continue;
       state.terrain[`${rx},${ry}`] = ring;
       if (state.treeHp) delete state.treeHp[`${rx},${ry}`]; // a fresh ring-tree starts whole
     }
@@ -3982,6 +4228,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
       const c = createEnemy(k, post.x, post.y);
       c.summonCircle = true;
       if (realmDef(realm).golemRoster) c.fabricator = true; // the Workshop stamps golems, it does not conjure
+      if (realmDef(realm).undeadRoster) { c.coffin = true; c.hp = COFFIN_HP; c.maxHp = COFFIN_HP; } // a box, not a rune
       state.enemies.push(c);
     } else if (post.kind === 'bones') {
       // The catacomb's dead: real corpses on the real decay clock, so they fade like any other body
@@ -4250,6 +4497,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
         const c = createEnemy(kind, spot.x, spot.y);
         c.summonCircle = true;
         if (realmDef(realm).golemRoster) c.fabricator = true;
+        if (realmDef(realm).undeadRoster) { c.coffin = true; c.hp = COFFIN_HP; c.maxHp = COFFIN_HP; }
         state.enemies.push(c);
       }
     }
@@ -4382,6 +4630,20 @@ function generateFloor(floor, carryPlayer, score, realm) {
       if (e.turret || e.summonCircle || e.boss) continue;
       if (!e.golem) makeGolem(e);
     }
+    // A FEW WISPS adrift on top of the golems. Deliberately few: each is a one-shot countdown that
+    // walks through walls, and a floor with many would be a floor with no safe corner at all.
+    for (let i = 0; i < 2 + randomInt(3); i += 1) {
+      const spot = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 7);
+      if (!spot) break;
+      // Moves like a KING — one step in any direction. A wisp is a drifting light, not a piece: giving
+      // it a real chess pattern (a berolina's diagonals) made it crab sideways toward him instead of
+      // simply coming, which read as indecision rather than menace.
+      const w = createEnemy('king', spot.x, spot.y);
+      w.wisp = true;
+      w.golem = false; // it is not a machine — nothing to switch off, nothing to crush
+      w.awake = true;
+      state.enemies.push(w);
+    }
   }
   // ONE ALTAR, half the time, on a New Game+ floor. Placed well clear of his arrival so finding it is
   // a thing he does rather than a thing that happens to him, and never on the key or the way out.
@@ -4395,6 +4657,20 @@ function generateFloor(floor, carryPlayer, score, realm) {
   // The Workshop's ironmongery goes on LAST of all — after the chamber, the stair dressing and the
   // reachability carve have each written their own doors.
   if (realmDef(realm).metalDoors) fitOutWorkshop(state);
+  // Each TOMBSTONE needs a rattle-clock of its own, so the state carries a list alongside the tiles.
+  // Built here rather than during terrain generation because set-pieces and the reachability carve
+  // can still remove one, and a clock for a stone that is no longer there would rattle at nothing.
+  if (realmDef(realm).undeadRoster) {
+    // TOMBSTONES are impassable and the player has no answer to one, so the same guarantee the
+    // Workshop's ironmongery needs applies here: clear any that turned out to be load-bearing.
+    openMetalUntilReachable(state);
+    state.tombstones = [];
+    for (const k of Object.keys(state.terrain)) {
+      if (state.terrain[k] !== 'tombstone') continue;
+      const [tx, ty] = k.split(',').map(Number);
+      state.tombstones.push({ x: tx, y: ty, rattle: 0 });
+    }
+  }
   // ...and the same sweep for the WATER, here at the very end. generateTerrain has its own pass, but
   // plenty is written after it returns — the boss chamber's moat, the stair dressing, the pocket
   // connector. Measured: the terrain-side pass alone still left 251 tiles of ordinary water.
@@ -4403,8 +4679,78 @@ function generateFloor(floor, carryPlayer, score, realm) {
       if (state.terrain[k] === 'water') state.terrain[k] = 'deathwater';
     }
   }
+  petrifyEarthFloor(state, realm);
+  // NOTHING ENDS GENERATION INSIDE A WALL. Half a dozen passes write terrain after the roster is
+  // placed — the boss chamber's ring, the decoy chambers, the stair dressing, the door prune, the
+  // Workshop's ironmongery — and each one buried whoever happened to be standing there. Guarding
+  // them individually got it from ~1.2 per floor to ~0.3, but a pass added next month would
+  // reintroduce it. So this is the belt: one sweep at the very end, after everything has written.
+  // (The runtime `dislodgeWalledEnemies` cannot cover this — it deliberately skips TURRETS, so a gun
+  // walled in at generation would stay walled in for the whole floor.)
+  freeEntombedAtGeneration(state);
   updateDiscovery(state);
   return state;
+}
+
+// THE EARTH FLOOR'S BEDROCK. A share of the floor's walls turn to STONE — the one terrain with no
+// answer to it at all (see standableFor).
+//
+// This runs at the END of generation, and it converts WALLS ONLY. Both halves of that matter:
+//   - END, because half a dozen passes write walls after the recipe does (chambers, stair dressing,
+//     the door prune), and converting at the source left most of the floor un-petrified — the same
+//     way the undead realm's water conversion did (measured 251 tiles missed). See rule 1.
+//   - WALLS ONLY, because a wall already stops every ordinary walker, so turning one to stone CANNOT
+//     change the reachable set and cannot strand the key or the stair. The only route it closes is
+//     the PHASER's, which is exactly the point of the floor: on the Deepstone the Sorcerer's shortcut
+//     through the map stops working, and he has to walk it like everybody else.
+// Torched walls are spared: a fitting on a face of bedrock reads as a mistake, and hasTorch is keyed
+// to 'wall' anyway, so a petrified torch would silently go dark.
+const STONE_SHARE = 0.45;
+function petrifyEarthFloor(state, realm) {
+  if (elementForFloor(state.floor || 1, realm) !== 'earth') return;
+  for (const k of Object.keys(state.terrain)) {
+    if (state.terrain[k] !== 'wall') continue;
+    const [x, y] = k.split(',').map(Number);
+    if (isBorderStone(x, y)) continue; // already bedrock by coordinate; leave it as 'wall' as everything expects
+    if (hasLightFitting(state, x, y)) continue;
+    if (Math.random() < STONE_SHARE) state.terrain[k] = 'stone';
+  }
+}
+
+// Move any piece generation left inside solid terrain to the nearest tile it could stand on.
+// Deliberately covers turrets too, which the per-turn sweep skips.
+function freeEntombedAtGeneration(state) {
+  const entombing = (t) => t === 'wall' || t === 'boulder' || t === 'ice' || t === 'tree'
+    || t === 'gate' || t === 'metalgate' || t === 'metaldoor' || t === 'crushershut' || t === 'tombstone';
+  for (const e of [...state.enemies]) {
+    // A CAGED occupant is sealed in ON PURPOSE (a gaol prisoner, the thing in the outhouse). That is
+    // the design, not an accident — and its cell tile is open ground anyway.
+    if (e.caged || e.prisoner) continue;
+    if (!entombing(terrainAt(state, e.x, e.y))) continue;
+    let moved = false;
+    for (let r = 1; r <= 4 && !moved; r += 1) {
+      for (let dx = -r; dx <= r && !moved; dx += 1) {
+        for (let dy = -r; dy <= r && !moved; dy += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const nx = e.x + dx;
+          const ny = e.y + dy;
+          if (!standableAt(state, nx, ny, {})) continue;
+          // NEVER onto a VENT. A geyser is walkable, so `standableAt` says yes — but a piece that
+          // begins the floor on one is cooked by the shared clock through nobody's decision, which
+          // is the same invariant every seeding predicate already honours. This sweep runs after
+          // `scatterGeysers`, so it was the one path that could still put someone on one.
+          if (terrainAt(state, nx, ny) === 'geyser') continue;
+          if (state.enemies.some((o) => o !== e && o.x === nx && o.y === ny)) continue;
+          if (allyAt(state, nx, ny)) continue;
+          if (state.player.x === nx && state.player.y === ny) continue;
+          if (keyTileAt(state, nx, ny)) continue;
+          e.x = nx; e.y = ny; moved = true;
+        }
+      }
+    }
+    // Nowhere at all to put it: it was never really on the board. Better absent than entombed.
+    if (!moved) state.enemies = state.enemies.filter((o) => o !== e);
+  }
 }
 
 // GEYSERS are a DEMON-REALM hazard: the deeper floors of each cycle (6, 7, 8 — the Hedge Maze, the
@@ -5689,6 +6035,19 @@ function resolveKill(state, enemy, opts) {
   // to a sword. `opts.fire` marks spellfire, a burning tree, lava: fire is the counter to two of
   // the three, and the reason to carry a torch into a realm that has none of its own.
   const byFire = Boolean(opts && (opts.fire || opts.ash));
+  // A COFFIN is not a rune scratched on the floor — it is a box, and you do not dispel a box by
+  // standing on it. It takes THREE blows, exactly like a gate, which is the whole difference: a
+  // summoning circle is a race you can end in one step, a coffin is a job you have to commit to
+  // while whatever it has already let out is still walking around behind you.
+  if (enemy.coffin) {
+    enemy.hp = (enemy.hp || COFFIN_HP) - 1;
+    if (enemy.hp > 0) {
+      cue(state, 'crush');
+      state.message = `The coffin splinters (${enemy.hp}/${enemy.maxHp || COFFIN_HP}).`;
+      state.lastAction = 'combat';
+      return false; // still standing: no on-kill, and he does NOT move onto it
+    }
+  }
   if (isUndead(enemy)) {
     const undeadOutcome = resolveUndeadBlow(state, enemy, byFire, opts);
     if (undeadOutcome !== null) return undeadOutcome;
@@ -5738,6 +6097,14 @@ function resolveKill(state, enemy, opts) {
 // Strike a tile WITHOUT moving the king (spell path, ranged shot, cleave). Handles
 // bosses (HP) and ordinary foes. Returns the slain enemy (or null if nothing fell).
 function attackTile(state, tx, ty, opts) {
+  // A SWITCH is worked by anything that can land a blow on it — his own weapon, an archer's arrow,
+  // a hexed piece lashing out at the nearest thing. SPELLFIRE is the exception: a bolt washes over
+  // the housing without moving the lever, so a mage cannot solve a wired room from across it. The
+  // housing has no HP and is never destroyed; the only effect a hit has is to throw it.
+  if (terrainAt(state, tx, ty) === 'switch') {
+    if (!(opts && opts.ash)) throwSwitch(state, tx, ty); // `ash` marks a SPELL kill — see resolveKill
+    return null;
+  }
   const e = state.enemies.find((en) => en.x === tx && en.y === ty);
   if (e && isCapturable(state, e)) {
     // A summoning circle is a structure you can only break by STEPPING onto it (or being
@@ -5847,7 +6214,12 @@ function confusedChopTargets(piece, state) {
     const x = piece.x + dx;
     const y = piece.y + dy;
     if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
-    if (isChoppable(terrainAt(state, x, y))) out.push({ x, y, chop: true });
+    const t = terrainAt(state, x, y);
+    if (isChoppable(t)) out.push({ x, y, chop: true });
+    // A hexed piece will lash at a SWITCH as readily as at a tree — it has no idea what it is hitting,
+    // which is exactly the joke: the Workshop's machinery gets thrown by something that has lost its
+    // wits, and the room rearranges itself around a player who did not ask for it.
+    else if (t === 'switch') out.push({ x, y, hitSwitch: true });
   }
   return out;
 }
@@ -5902,6 +6274,12 @@ function confusedTurn(state, enemy) {
   if (doStrike && canStrike) {
     const target = pick(strikes);
     const king = state.player;
+    if (target.hitSwitch) {
+      throwSwitch(state, target.x, target.y);
+      state.message = `A confused ${enemy.kind} slams into a switch!`;
+      state.lastAction = 'enemy';
+      return state;
+    }
     if (target.chop) {
       // It swings at the tree. Same three wounds as anyone else's axe — a confused rook is not a
       // better woodsman than the king.
@@ -7815,7 +8193,10 @@ function beginEnemyPhase(state) {
   tickFog(next); // ...and only THEN thins by a turn, so every bank burns for its full advertised life
   tickDeathWater(next); // the river of death drinks at anything still alive standing in it
   tickUndead(next); // broken skeletons knit themselves back together; bats settle back into vampires
+  tickGloom(next); // a torch brought near burns the standing darkness back
+  tickTombstones(next); // ...and a grave he lingers beside opens
   tickGolems(next); // ...and switched-off golems count down and grind back into motion
+  tickWisps(next); // loose current drifts at him through walls, and bursts when it arrives
   tickGenerators(next); // every fourth turn the Workshop's machinery lets go into the network
   tickLavaEncroachment(next); // past max dread: the floor turns molten and closes in on a lingering king
   dislodgeWalledEnemies(next); // SAFETY NET: nudge any ordinary piece a terrain change closed a wall over
@@ -7828,7 +8209,7 @@ function beginEnemyPhase(state) {
     // spent its turn flitting (or settling) in tickUndead. Both are handled above; neither is a
     // mover, and neither should fall through into the awareness reckoning and start hunting.
     // A switched-off GOLEM is likewise so much scrap until its clock runs out.
-    if (enemy.broken || enemy.bat || enemy.inert) continue;
+    if (enemy.broken || enemy.bat || enemy.inert || isWisp(enemy)) continue; // wisps move in tickWisps
     // A ZOMBIE LUMBERS. Like a guardian, the turn after it exerts itself it only recovers — which is
     // what makes a three-wound piece fair to be in a room with.
     if (enemy.slow && enemy.recovering) {
@@ -9807,9 +10188,10 @@ function makeMiniBoss(next, kind, x, y) {
   // the old rate (was floor/3, topping out at 4). A rogue piece should be a nasty surprise, not a
   // second boss fight — and at the old rate a late-game mini outlasted an early guardian.
   b.maxHp = 2 + Math.floor(next.floor / 6); // clearly fewer wounds than a floor guardian
-  // A mini stays LESSER — one perk, never the Hardened bonus. In a New Game+ realm it carries TWO:
-  // still short of a full guardian's three, but no longer a speed bump on floors this hostile.
-  b.bossPerks = rollBossPerks(realmDef(realmOf(next)).newGamePlus ? 2 : 1, kind);
+  // A mini stays LESSER — one perk, never the Hardened bonus. In a New Game+ realm it RAMPS with the
+  // floor like the guardians do (1 on the first two, 2 after), so the realm's opening is not already
+  // its hardest. Always at least one short of the guardian it shares a floor with.
+  b.bossPerks = rollBossPerks(realmDef(realmOf(next)).newGamePlus ? ((next.floor || 1) >= 3 ? 2 : 1) : 1, kind);
   b.bossPerk = b.bossPerks[0];
   b.hp = b.maxHp;
   b.lavaImmune = isDemonKind(kind);

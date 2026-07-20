@@ -162,7 +162,7 @@ const LEVELS = [
 //
 // The floor number restarts at 1 inside each realm, so `(floor - 1) % FINAL_FLOOR` — which the whole
 // engine used to be built on — is now `(floor - 1) % realmFinalFloor(realm)`.
-const NG_PLUS_REALMS = ['undead', 'workshop'];
+const NG_PLUS_REALMS = ['undead', 'workshop', 'elemental'];
 
 // THE WORKSHOP. Somebody's forge, still running long after they stopped. Half the usual population,
 // because every one of them is a GOLEM that cannot be killed — only switched off — and a room of
@@ -198,6 +198,33 @@ const UNDEAD_ANCHORS = [
   { x: 20, y: 4 },
   { x: 4, y: 20 },
 ];
+// THE ELEMENTAL REALM. The other two realms each pick one idea and hold it for four floors; this one
+// changes underfoot every time he takes a stair. Earth, then water, then fire, then air — four
+// distinct terrains, four distinct rosters, four distinct ways to die, and almost nothing carries
+// over between them. A king cannot settle into it.
+//
+// The ELEMENTALS are its spine, and the rule they share is that DAMAGE IS NOT THE ANSWER. Each one
+// has exactly one counter and no HP bar: the earth elemental is shoved like a boulder, the ice one
+// wants spellfire, the fire one wants water, the electric one wants to be walked into. A player who
+// arrives here swinging finds that swinging does nothing at all.
+const ELEMENTAL_LEVELS = [
+  // EARTH: dense, closed, heavy. Boulders and pits, and stone that will not yield to anything.
+  { name: 'The Deepstone', element: 'earth', recipe: { wall: 7, rooms: 4, boulder: 6 }, boss: { hp: 7 } },
+  // WATER: open and drowning. Ice, geysers, and depths that take him if he stops moving.
+  { name: 'The Sunken Reach', element: 'water', recipe: { wall: 3, rooms: 3, water: 8, ice: 4 }, boss: { hp: 7 } },
+  // FIRE: bright and lethal. Lava, torchlight everywhere, trees that never stop burning.
+  { name: 'The Emberworks', element: 'fire', recipe: { wall: 4, rooms: 4, lava: 7, tree: 4 }, boss: { hp: 7 } },
+  // AIR: nearly nothing. Islands over void, and the only ground is what he can reach.
+  { name: 'The Riven Sky', element: 'air', recipe: { wall: 1, rooms: 2 }, boss: { hp: 7 } },
+];
+const ELEMENTAL_ANCHORS = [
+  { x: 4, y: 4 },
+  { x: 20, y: 20 },
+  { x: 4, y: 20 },
+  { x: 20, y: 4 },
+];
+const ELEMENTS = ['earth', 'water', 'fire', 'air'];
+
 // Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of the king's central
 // start and spread around the board's edges. Declared HERE, above REALMS, because the realm registry
 // holds a reference to it — a `const` below its use would be a temporal-dead-zone error at load.
@@ -253,6 +280,21 @@ const REALMS = {
     orb: { name: 'Orb of Making', short: 'Making', glyph: '⚙', color: '#7dd3fc' },
     newGamePlus: true,
   },
+  elemental: {
+    name: 'The Elemental Realm',
+    levels: ELEMENTAL_LEVELS,
+    anchors: ELEMENTAL_ANCHORS,
+    finalFloor: 4,
+    demonFrom: 0,
+    // NOTE: this realm carries no realm-wide terrain flag, because it has no realm-wide terrain. Its
+    // character is per-FLOOR: ask `elementForFloor(floor, realm)`, never `realmDef(realm).element`.
+    // The fire floor is the only one that wants lava and the water floor actively forbids it, so a
+    // realm-level `noLava` would be wrong in both directions.
+    elementalRoster: true,
+    theme: 'elemental',
+    orb: { name: 'Orb of the Elements', short: 'Elements', glyph: '❈', color: '#c4b5fd' },
+    newGamePlus: true,
+  },
 };
 const DEFAULT_REALM = 'overworld';
 // The realms a New Game+ king may actually walk into, in the order the portal room lists them. The
@@ -267,6 +309,18 @@ function realmDef(realm) {
 }
 function realmFinalFloor(realm) {
   return realmDef(realm).finalFloor;
+}
+
+// WHICH ELEMENT IS UNDERFOOT. The elemental realm is the first whose floors differ from one another,
+// so every hazard, roster and palette decision there routes through here rather than through a realm
+// flag. Returns null everywhere else, and callers must treat null as "the ordinary rules apply" —
+// that keeps the other three realms (and every old save) on exactly the path they were on before.
+function elementForFloor(floor, realm) {
+  const level = levelForFloor(floor, realm);
+  return (level && level.element) || null;
+}
+function isElementFloor(floor, realm, element) {
+  return elementForFloor(floor, realm) === element;
 }
 
 function levelForFloor(floor, realm) {
