@@ -215,6 +215,16 @@ function wouldSeverLocally(state, x, y) {
 // into ~96 pits in 60 turns, which stopped reading as "the ground is going" and started reading as
 // "the floor has been deleted". Occasional holes are a creeping problem; constant ones are a wall.
 const MOLEFOLK_DIG_CHANCE = 0.34;
+// Has the floor stopped being winnable? Asked after a dig, and the only question that actually
+// matters: can he still WALK to the key and the way out? Note it floods from the KING rather than
+// from anywhere fixed — a hole behind him is his problem to have made, but a hole between him and
+// the stair is the game refusing to be finished.
+function molefolkCutTheFloor(state) {
+  const reach = playerReachable(state, state.player.x, state.player.y);
+  if (state.exit && !reach.has(`${state.exit.x},${state.exit.y}`)) return true;
+  if (state.key && !state.key.collected && !reach.has(`${state.key.x},${state.key.y}`)) return true;
+  return false;
+}
 function tickMolefolk(state) {
   for (const e of state.enemies) {
     if (!e || e.elemental !== 'molefolk' || e.inert || e.broken) continue;
@@ -228,9 +238,24 @@ function tickMolefolk(state) {
     if (state.enemies.some((o) => o !== e && o.x === prev.x && o.y === prev.y)) continue;
     if (allyAt(state, prev.x, prev.y)) continue;
     if (state.player.x === prev.x && state.player.y === prev.y) continue;
-    if (wouldSeverLocally(state, prev.x, prev.y)) continue; // never dig away the only way through
+    if (wouldSeverLocally(state, prev.x, prev.y)) continue; // cheap check: never dig away a chokepoint
     if (Math.random() >= MOLEFOLK_DIG_CHANCE) continue;
-    state.terrain[`${prev.x},${prev.y}`] = 'pit';
+    // DIG, THEN PROVE IT. The local check above is cheap and catches the overwhelming majority, but
+    // it only ever looks at the ring around one tile — it cannot see a cut made by several pits that
+    // are individually harmless. Measured under forced wandering it still stranded ~1 floor in 200.
+    //
+    // So the hole is opened and the floor is then actually re-flooded; if the key or the stair is no
+    // longer walkable-to, the dig is taken back. This runs only on a SUCCESSFUL dig (~20 a floor),
+    // not per digger per turn, which is what makes an honest reachability check affordable here.
+    // Cheap-guess-then-verify beats either half alone: the local test keeps the cost down, the flood
+    // makes the guarantee absolute.
+    const key = `${prev.x},${prev.y}`;
+    const was = state.terrain[key];
+    state.terrain[key] = 'pit';
+    if (molefolkCutTheFloor(state)) {
+      if (was === undefined) delete state.terrain[key];
+      else state.terrain[key] = was;
+    }
   }
 }
 
@@ -273,7 +298,109 @@ function resolveElementalBlow(state, enemy, byFire, opts) {
     return false;
   }
 
+  // WATER ELEMENTAL: a sword goes through it and closes again. FIRE is the answer — it flashes to
+  // steam and is gone. That puts the drowned floor's one solution in the hands of spellfire on a
+  // level that has deliberately been stripped of every torch and fire turret, so the player has to
+  // bring the fire with him.
+  if (kind === 'watery') {
+    if (byFire) {
+      // It boils away, and leaves the steam behind — which SCALDS, so killing one badly placed is
+      // its own small punishment.
+      addFog(state, enemy.x, enemy.y, 2);
+      addSmoke(state, enemy.x, enemy.y);
+      state.message = `The water ${enemy.kind} flashes into a cloud of scalding steam!`;
+      return null; // let it die properly
+    }
+    state.message = `The blow passes through the water ${enemy.kind} and closes again — it needs FIRE.`;
+    state.lastAction = 'combat';
+    return false;
+  }
+
+  // ICE ELEMENTAL: hitting it does nothing at all. SPELLFIRE does not destroy it either — it MELTS
+  // it, into a water elemental, which then needs fire again. So the ice one is a two-stage problem
+  // and the honest answer to it is "the same answer, twice": thaw it, then boil it.
+  if (kind === 'icy') {
+    if (byFire) {
+      enemy.elemental = 'watery';
+      enemy.slow = false;
+      state.terrain[`${enemy.x},${enemy.y}`] = terrainAt(state, enemy.x, enemy.y) === 'normal'
+        ? 'water' : terrainAt(state, enemy.x, enemy.y);
+      state.message = `The ice ${enemy.kind} MELTS — and what is left of it is still moving.`;
+      state.lastAction = 'combat';
+      return false;
+    }
+    state.message = `The ice ${enemy.kind} shrugs the blow off — steel will not do it.`;
+    state.lastAction = 'combat';
+    return false;
+  }
+
   return null;
+}
+
+// ---- INK ----------------------------------------------------------------------------------------
+// A merfolk's parting shot. Killing one blacks out the water around it for two turns: you cannot see
+// through ink, and neither can anything else. Deliberately NOT routed through the fog map, because
+// fog SCALDS — ink must cost him the room and never a heart. The price of the kill is that you lose
+// track of what else is coming.
+const INK_TURNS = 2;
+function addInk(state, x, y, turns) {
+  if (!state.ink) state.ink = {};
+  const k = `${x},${y}`;
+  state.ink[k] = Math.max(state.ink[k] || 0, turns || INK_TURNS);
+}
+function inkAt(state, x, y) {
+  return Boolean(state && state.ink && state.ink[`${x},${y}`] > 0);
+}
+function tickInk(state) {
+  if (!state.ink) return;
+  for (const k of Object.keys(state.ink)) {
+    state.ink[k] -= 1;
+    if (state.ink[k] <= 0) delete state.ink[k];
+  }
+}
+// Called from the kill path when a merfolk goes down: it clouds the water it dies in and every
+// watery tile touching it. Only WATER takes ink — a cloud hanging over dry stone would read as smoke,
+// and this is a thing that happens in the sea.
+function spillInk(state, x, y) {
+  const watery = (tx, ty) => {
+    const t = terrainAt(state, tx, ty);
+    return t === 'water' || t === 'deepwater';
+  };
+  if (watery(x, y)) addInk(state, x, y, INK_TURNS);
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 1 || ny < 1 || nx >= WORLD_SIZE - 1 || ny >= WORLD_SIZE - 1) continue;
+    if (watery(nx, ny)) addInk(state, nx, ny, INK_TURNS);
+  }
+}
+
+// ---- ELEMENTAL TRAILS ---------------------------------------------------------------------------
+// A thing made of an element leaves that element behind it. A water elemental drags a wake, deepening
+// water it crosses; an ice elemental freezes its own path. Both are slow, cumulative changes to the
+// floor rather than attacks — the same idea as the molefolk's pits, and the reason this realm's
+// floors feel like they are being rewritten under him rather than merely occupied.
+function tickElementalTrails(state) {
+  // Scans UNITS (rule 5), so no realm guard.
+  for (const e of state.enemies) {
+    if (!e || !e.elemental || e.inert || e.broken) continue;
+    const prev = e.lastTrail;
+    e.lastTrail = { x: e.x, y: e.y };
+    if (!prev || (prev.x === e.x && prev.y === e.y)) continue;
+    if (isObjectiveTile(state, prev.x, prev.y) || isBorderStone(prev.x, prev.y)) continue;
+    const t = terrainAt(state, prev.x, prev.y);
+    if (e.elemental === 'watery') {
+      // A WAKE. Dry ground it crosses is left wet; water it crosses is left DEEPER. So a water
+      // elemental patrolling a shallow strait quietly turns it into something he can no longer
+      // wade — it never has to touch him to take ground away from him.
+      if (t === 'normal') state.terrain[`${prev.x},${prev.y}`] = 'water';
+      else if (t === 'water') state.terrain[`${prev.x},${prev.y}`] = 'deepwater';
+    } else if (e.elemental === 'icy') {
+      // IT FREEZES WHAT IT WALKS ON. Ice is slick — every tile it has crossed is a tile he will
+      // skid across — so an ice elemental is laying down the surface it wants to fight him on.
+      if (t === 'normal' || t === 'water') state.terrain[`${prev.x},${prev.y}`] = 'ice';
+    }
+  }
 }
 
 // ---- DEEP WATER ---------------------------------------------------------------------------------
@@ -301,7 +428,19 @@ function tickDrowning(state) {
   // there is no perk that grants gills, on purpose. This floor is the one place his build cannot
   // answer the ground, only his planning can.
   p.drowning = (p.drowning || 0) + DROWN_STEP;
-  const bite = p.drowning;
+  // THE FIRST TURN UNDER IS FREE — he takes a breath and goes in. Suffocation begins on the SECOND
+  // turn (1), then 2, then 3. This is the difference between a hazard and a toll: at a cost from
+  // turn one, every single tile of deep water is a wound and he simply routes around the whole lake,
+  // which makes the largest terrain on the floor into scenery. Free for one turn means a one-tile
+  // channel is a free crossing, a two-tile channel costs 1, and a wide one is a real decision — so
+  // the player is reading the SHAPE of the water rather than avoiding the colour of it.
+  const bite = p.drowning - 1;
+  if (bite <= 0) {
+    state.message = state.message
+      ? `${state.message} The king takes a breath and goes under.`
+      : 'The king takes a breath and goes under — he cannot stay down here long.';
+    return;
+  }
   hurtBy(state, 'deepwater');
   p.hp -= bite;
   p.wasHit = true; p.hitThisFloor = true;
@@ -1842,8 +1981,7 @@ function makeTurret(state, kind, x, y) {
     if (element === 'earth') t.boulder = true; // throws rock: it walls the lane it is shooting down
     else if (element === 'fire') t.fire = true; // the Emberworks fields nothing else
     else if (element === 'air') t.electric = true;
-    // WATER deliberately fields PLAIN guns for now — its water-spraying turret is not built yet, and
-    // a fire turret on the drowned floor would contradict the whole level (no fire there at all).
+    else if (element === 'water') t.jet = true; // a water jet: it wounds, and it DEEPENS what it hits
     return t;
   }
   if (realmDef(realmOf(state)).metalDoors) {
@@ -5013,14 +5151,38 @@ function generateFloor(floor, carryPlayer, score, realm) {
 // one would be a hit he had no way to read coming.
 const DEEP_SHARE = 0.4;
 const DEEP_SAFE_RADIUS = 3;
+// CORAL grows where the Sunken Reach's walls would be. A share of them, not all: the floor still
+// needs masonry it cannot open, or every wall becomes a three-turn door and the level has no shape.
+//
+// This is the deliberate mirror of the earth floor. There, 45% of walls harden into bedrock that
+// answers to nothing; here, a share of them SOFTEN into something three blows will open. Same
+// conversion, opposite direction, and the two floors ask opposite questions of the player: on the
+// Deepstone, what do I route around? On the Reach, what do I spend three turns opening?
+const CORAL_SHARE = 0.4;
 function drownWaterFloor(state, realm) {
   if (elementForFloor(state.floor || 1, realm) !== 'water') return;
   for (const k of Object.keys(state.terrain)) {
-    if (state.terrain[k] !== 'water') continue;
+    const t = state.terrain[k];
     const [x, y] = k.split(',').map(Number);
-    if (chebyshev(x, y, state.player.x, state.player.y) <= DEEP_SAFE_RADIUS) continue;
-    if (isObjectiveTile(state, x, y)) continue;
-    if (Math.random() < DEEP_SHARE) state.terrain[k] = 'deepwater';
+    if (t === 'water') {
+      if (chebyshev(x, y, state.player.x, state.player.y) <= DEEP_SAFE_RADIUS) continue;
+      if (isObjectiveTile(state, x, y)) continue;
+      if (Math.random() < DEEP_SHARE) state.terrain[k] = 'deepwater';
+      continue;
+    }
+    if (t !== 'wall') continue;
+    if (isBorderStone(x, y)) continue; // the world's rim is not a reef
+    if (hasLightFitting(state, x, y)) continue; // and no fittings down here anyway (see below)
+    // Softening a wall can only ever OPEN the floor, never close it, so this needs no reachability
+    // check — the same argument that makes petrifying walls safe, running the other way.
+    if (Math.random() < CORAL_SHARE) state.terrain[k] = 'coral';
+  }
+  // NO FIRE ON THE DROWNED FLOOR, at all. Torches are wall fittings, and a wall fitting burning
+  // underwater is the one thing that would break the level's whole premise. Swept here rather than
+  // guarded at each torch site because torches are laid by the recipe, by set-pieces AND by the
+  // stair dressing (rule 1) — patching one site would leave the others lit.
+  if (state.torches) {
+    for (const k of Object.keys(state.torches)) delete state.torches[k];
   }
 }
 
@@ -5724,7 +5886,7 @@ function isChoppable(t) {
   // at all, so it is never offered as a chop. Walking into one therefore costs NOTHING — the move is
   // simply not generated, exactly as it is not against a wall. Offering a swing that can never land
   // would be the worst of both: a turn spent, and nothing to show for it.
-  return t === 'tree' || t === 'mushroom' || t === 'gate';
+  return t === 'tree' || t === 'mushroom' || t === 'coral' || t === 'gate';
 }
 function treeHpAt(state, x, y) {
   if (!isChoppable(terrainAt(state, x, y))) return 0;
@@ -6382,6 +6544,9 @@ function resolveKill(state, enemy, opts) {
   if (isElemental(enemy)) {
     const elemOutcome = resolveElementalBlow(state, enemy, byFire, opts);
     if (elemOutcome !== null) return elemOutcome;
+    // MERFOLK INK, spilled as it dies — read here, just before the piece is removed, because after
+    // the filter below there is nothing left to ask where it died.
+    if (enemy.elemental === 'merfolk') spillInk(state, enemy.x, enemy.y);
   }
   // A GOLEM cannot be killed by a blow at all — it is switched off, and it will get up again. Only a
   // PIT is final (`opts.pit`, passed by the fall paths), because a hole is the one thing a machine
@@ -8528,6 +8693,8 @@ function beginEnemyPhase(state) {
   tickTombstones(next); // ...and a grave he lingers beside opens
   tickGolems(next); // ...and switched-off golems count down and grind back into motion
   tickWisps(next); // loose current drifts at him through walls, and bursts when it arrives
+  tickElementalTrails(next); // wakes and frost — the elementals rewrite the ground they cross
+  tickInk(next); // a dead merfolk's cloud thins
   tickDrowning(next); // the deep takes anything that stays under too long
   tickTrueBats(next); // cave bats drift and bite — and never settle into anything worse
   tickMolefolk(next); // the diggers leave the floor behind them full of holes
@@ -8965,6 +9132,35 @@ function fireTurret(state, turret) {
       ? 'An electric turret earths its bolt through the king!'
       : 'An electric turret fires into the machinery — the current finds its way!';
     state.lastAction = 'enemy';
+    return state;
+  }
+  // WATER JET (the drowned floor's gun): it wounds him, and it makes the ground under him WETTER —
+  // dry floor becomes water, water becomes deep water. It never has to kill him: left alone, a jet
+  // patiently turns the tile he is standing and fighting on into somewhere he cannot breathe. The
+  // counter is to keep moving, which is exactly what this floor already wants of him.
+  if (turret.jet) {
+    turret.aiming = false;
+    state.lastShot = { fromX: turret.x, fromY: turret.y, toX: state.player.x, toY: state.player.y, role: 'turret' };
+    const mit = rollMitigation(state, turret);
+    const px = state.player.x;
+    const py = state.player.y;
+    if (!mit) {
+      hurtBy(state, 'turret');
+      state.player.hp -= 1;
+      state.player.wasHit = true; state.player.hitThisFloor = true;
+      addSpatter(state, px, py);
+      checkDeath(state);
+    }
+    // The ground gets wetter whether or not the wound landed — the water arrived either way.
+    if (!terrainLocked(state, px, py)) {
+      const t = terrainAt(state, px, py);
+      if (t === 'normal') state.terrain[`${px},${py}`] = 'water';
+      else if (t === 'water') state.terrain[`${px},${py}`] = 'deepwater';
+    }
+    state.message = mit
+      ? mitigationMessage(mit, `${turret.kind} turret`)
+      : 'A water jet slams into the king — and the water is rising around him!';
+    state.lastAction = mit ? 'enemy' : 'hit';
     return state;
   }
   // BOULDER TURRET (the earth floor's gun): it does not shoot a bolt, it THROWS A ROCK. The rock

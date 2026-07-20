@@ -48,7 +48,7 @@ function blocksSight(type) {
   // absolutely everything — see standableFor.
   // A MUSHROOM is the earth floor's tree: a fat cap on a thick stalk, tall enough to hide what is
   // behind it, and it comes down to the same three blows.
-  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'boulder' || type === 'devilgrass' || type === 'gloom'
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'boulder' || type === 'devilgrass' || type === 'gloom'
     || type === 'door' || type === 'metaldoor' || type === 'crushershut' || type === 'tombstone';
 }
 
@@ -112,7 +112,7 @@ function standableFor(type, opts) {
   if (type === 'metaldoor' || type === 'metalgate' || type === 'crushershut') return false;
   // Solid timber — only Pathfinder walks through it. A MUSHROOM is timber too: same rule, so the
   // Druid threads a fungal thicket exactly as he threads a wood.
-  if (type === 'tree' || type === 'mushroom') return Boolean(o.pathfinder);
+  if (type === 'tree' || type === 'mushroom' || type === 'coral') return Boolean(o.pathfinder);
   // STONE: the bedrock of the earth floor, and the ONE terrain with no answer at all. It is what the
   // border ring is made of, brought inside the map — a phaser cannot slip it, a Pathfinder cannot
   // thread it, it cannot be cut, shoved, burned, dug or blasted, and the molefolk who tunnel through
@@ -152,8 +152,13 @@ function standableAt(state, x, y, opts) {
 // each one of them would silently have treated a mushroom as thin air — a turret shooting through a
 // fungal thicket, a boulder rolling clean over it. The same class of bug as the leapers perching in
 // treetops, which is what isSolidBarrier was written to fix.
+// CORAL is the water floor's timber: a wall you can break through, over three blows, exactly like a
+// tree or a mushroom. Grouped here rather than with `isRock` on purpose — the whole point of the
+// Sunken Reach is that its walls YIELD, where the Deepstone's bedrock never does. The two floors
+// pose opposite questions: on earth you route around what you cannot move; underwater you decide
+// what to spend three turns opening.
 function isTimber(type) {
-  return type === 'tree' || type === 'mushroom';
+  return type === 'tree' || type === 'mushroom' || type === 'coral';
 }
 
 // ROCK that stops a shot and hides what is behind it: masonry, and the earth floor's BEDROCK. Same
@@ -164,7 +169,7 @@ function isRock(type) {
 }
 
 function isSolidBarrier(type) {
-  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'gate';
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'gate';
 }
 
 // Slow terrain: a mover wades ONE tile of it per move and must stop there — no sliding clean
@@ -232,6 +237,13 @@ function hasLineOfSight(state, x0, y0, x1, y1, seeMode) {
     // FOG: a drifting cloud that blocks the look while it lingers. It too is HAZE — soft-sight sees
     // through it (that is the Oracle's Premonition), and full x-ray sight of course does.
     if (typeof fogAt === 'function' && fogAt(state, x, y) && !seesSoft) {
+      return false;
+    }
+    // INK: what a dying merfolk lets go into the water. It blocks the look for two turns exactly as
+    // haze does — and, unlike steam, it does not burn. That distinction is the whole point of giving
+    // it its own map instead of reusing the fog one: the killing blow costs you the room, not hearts,
+    // so a merfolk's revenge is that you lose track of what else is swimming at you.
+    if (typeof inkAt === 'function' && inkAt(state, x, y) && !seesSoft) {
       return false;
     }
   }

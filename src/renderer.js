@@ -23,6 +23,7 @@ const Renderer = (function () {
   // from state.geyserPhase, since drawTexture gets no route to `state`.
   let geyserStage = 'calm';
   let fogNow = null; // per-frame ref to state.fog ("x,y" -> turns left), set in draw()
+  let inkNow = null; // per-frame ref to state.ink — a merfolk's cloud: blocks the look, never burns
   let seeThroughHaze = false; // Premonition / Sixth Sense: the king sees CLEAR through haze — draw no veil
 
   let playerRender = { x: 0, y: 0, targetX: 0, targetY: 0 };
@@ -333,6 +334,7 @@ const Renderer = (function () {
       // colour branch in drawPiece that had never once run. Every realm variant that re-colours a
       // piece needs its flag added here as well as at the call site.
       boulderGun: Boolean(enemy.boulder),
+      jetGun: Boolean(enemy.jet),
       wisp: Boolean(enemy.wisp),
       summoned: Boolean(enemy.summoned),
       elemental: enemy.elemental || null,
@@ -389,7 +391,8 @@ const Renderer = (function () {
       render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.summoned = Boolean(enemy.summoned); // conjured — drawn violet, like an ally is drawn green
-      render.boulderGun = Boolean(enemy.boulder); // a rock-throwing gun: brown stone, not steel
+      render.boulderGun = Boolean(enemy.boulder);
+      render.jetGun = Boolean(enemy.jet); // a water jet: sea-green, never fire-red // a rock-throwing gun: brown stone, not steel
       render.wisp = Boolean(enemy.wisp);
       render.elemental = enemy.elemental || null; // its element's livery (piece art, new paint) // a mote of current: piece silhouette, electric livery + glow
       render.boss = Boolean(enemy.boss);
@@ -619,7 +622,13 @@ const Renderer = (function () {
     // The king's glyph flips to ink on light class colours (e.g. lime) so it stays legible.
     let glyph = isPlayer ? contrastInk(fill) : '#17171d';
     if (role === 'turret') {
-      if (o.boulder) {
+      if (o.jet) {
+        // A WATER JET: pale sea-green, wet-looking, and clearly not a fire gun — on a floor with no
+        // fire on it at all, a red turret would be a lie about what is about to happen.
+        fill = '#0b2f38';
+        stroke = '#5fd0c8';
+        glyph = '#d6fbf6';
+      } else if (o.boulder) {
         // A BOULDER GUN: rough brown stone rather than steel, so it reads as part of the earth floor
         // it is bolted to — and as something that throws rock rather than fire.
         fill = '#3a2a1a';
@@ -2527,6 +2536,11 @@ const Renderer = (function () {
         // Damp dark loam — the ground a cap comes up out of. Warmer and browner than the earth
         // floor around it, so a thicket reads as a patch of different ground at a distance.
         return isDark ? '#2b2116' : '#3f3122';
+      case 'coral':
+        // LIVING REEF. Warm pink-coral against the cold blue floor — the only warm colour on the
+        // Sunken Reach, and deliberately so: it is the one thing down here he can break through, and
+        // it has to advertise that from across the room. A grey-blue reef would read as more wall.
+        return isDark ? '#5c2440' : '#8a3757';
       case 'door':
         // Warm timber up top; in the realm it is BLACK IRON — cold, dark, and studded (see below).
         if (demonRealm) return isDark ? '#17161b' : '#2b2930';
@@ -3348,6 +3362,47 @@ const Renderer = (function () {
             : (demonRealm ? 'rgba(90,80,90,0.28)' : 'rgba(200,195,190,0.22)'); // a pale spalled patch
           ctx.beginPath();
           ctx.ellipse(cx2, cy2, cr, cr * (0.6 + 0.5 * hx), hy * Math.PI, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      case 'coral': {
+        // BRANCHING FANS rather than courses of brick — a reef is grown, not built, and the shape
+        // has to say so. Splits and thins as it takes wounds, exactly as a canopy does.
+        const cx = px + tileSize / 2;
+        const hp = (treeHp && treeHp[`${x},${y}`] != null) ? treeHp[`${x},${y}`] : 3;
+        const health = Math.max(1, Math.min(3, hp)) / 3;
+        ctx.strokeStyle = `rgba(255, 176, 196, ${(0.55 + 0.3 * health).toFixed(2)})`;
+        ctx.lineCap = 'round';
+        // Three stems from the base, each forking twice — a small deterministic tree per tile.
+        for (let s = 0; s < 3; s += 1) {
+          const rootX = cx + (s - 1) * tileSize * 0.24;
+          const rootY = py + tileSize * 0.92;
+          const lean = (tileHash(x * 7 + s, y * 3) - 0.5) * 0.5;
+          const h = tileSize * (0.34 + 0.24 * health);
+          ctx.lineWidth = Math.max(1.2, tileSize * 0.055 * health);
+          ctx.beginPath();
+          ctx.moveTo(rootX, rootY);
+          const midX = rootX + lean * tileSize * 0.4;
+          const midY = rootY - h * 0.55;
+          ctx.lineTo(midX, midY);
+          ctx.stroke();
+          // Two branches off the fork.
+          ctx.lineWidth = Math.max(1, tileSize * 0.035 * health);
+          for (const dir of [-1, 1]) {
+            ctx.beginPath();
+            ctx.moveTo(midX, midY);
+            ctx.lineTo(midX + dir * tileSize * 0.16, midY - h * 0.42);
+            ctx.stroke();
+          }
+        }
+        // A few polyp specks, fixed per tile.
+        ctx.fillStyle = 'rgba(255, 224, 232, 0.5)';
+        for (let i = 0; i < 4; i += 1) {
+          const sx = px + tileSize * (0.15 + 0.7 * tileHash(x * 5 + i, y + i));
+          const sy = py + tileSize * (0.25 + 0.5 * tileHash(x + i, y * 5 + i));
+          ctx.beginPath();
+          ctx.arc(sx, sy, tileSize * 0.02, 0, Math.PI * 2);
           ctx.fill();
         }
         break;
@@ -4541,6 +4596,7 @@ const Renderer = (function () {
     geyserStage = (typeof geyserErupting === 'function' && geyserErupting(state)) ? 'erupting'
       : (typeof geyserImminent === 'function' && geyserImminent(state)) ? 'imminent'
         : 'calm';
+    inkNow = state.ink || null; // merfolk ink: same job as fog to the LOOK, but it does not scald
     fogNow = state.fog || null; // drifting fog banks (spellfire steam, lava/ice steam, a Steamweaver)
     // Premonition (soft-sight) and Sixth Sense (x-ray) both see CLEAR through HAZE — grass, fog and
     // geyser steam. When either is on, the view draws no haze veil at all over what he can see, so the
@@ -5035,7 +5091,7 @@ const Renderer = (function () {
         ctx.stroke();
         ctx.restore();
       }
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, boulder: enemy.boulderGun, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, boulder: enemy.boulderGun, jet: enemy.jetGun, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
         // A guardian UNMADE — every perk torn off it by the Hexer — wears NO crown at all. That
         // bare head is the tell that there is nothing left of it but the piece.
@@ -5141,6 +5197,8 @@ const Renderer = (function () {
     drawBursts();
     drawPuffs();
     drawFog(lit);
+    drawInk(lit); // over the steam: ink is heavier than it is
+
     drawShouts();
 
     ctx.restore();
@@ -5168,6 +5226,33 @@ const Renderer = (function () {
   // Drifting FOG banks: a soft gray haze over every fogged tile the king can currently SEE (only the
   // near edge of a bank is lit — the fog blocks the look past it). Semi-transparent, so pieces caught
   // in the near fog still show through, and animated on the tile clock so it rolls rather than sits.
+  // INK: what a merfolk leaves in the water when it dies. Drawn like fog because it does the same
+  // job to the LOOK, but in near-black rather than boiling white — it must never be mistaken for
+  // steam, because steam burns and ink does not. Slow and heavy where steam roils.
+  function drawInk(litFn) {
+    if (!inkNow || seeThroughHaze) return;
+    ctx.save();
+    for (const key in inkNow) {
+      if (inkNow[key] <= 0) continue;
+      const comma = key.indexOf(',');
+      const fx = Number(key.slice(0, comma));
+      const fy = Number(key.slice(comma + 1));
+      if (litFn && !litFn(fx, fy)) continue;
+      const cx = (fx + 0.5) * tileSize;
+      const cy = (fy + 0.5) * tileSize;
+      for (let i = 0; i < 6; i += 1) {
+        const ang = (i / 6) * Math.PI * 2 + clock * 0.12 + tileHash(fx + i, fy) * 6.28;
+        const dist = tileSize * (0.1 + 0.16 * (0.5 + 0.5 * Math.sin(clock * 0.2 + i + fx)));
+        const r = tileSize * (0.36 + 0.12 * tileHash(fx, fy + i));
+        ctx.fillStyle = 'rgba(8, 10, 22, 0.62)';
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(ang) * dist, cy + Math.sin(ang) * dist, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
   function drawFog(litFn) {
     if (!fogNow || seeThroughHaze) return; // Premonition/Sixth Sense: no veil — he sees clear through it
     ctx.save();
