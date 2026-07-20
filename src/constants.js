@@ -209,7 +209,10 @@ const UNDEAD_ANCHORS = [
 // arrives here swinging finds that swinging does nothing at all.
 const ELEMENTAL_LEVELS = [
   // EARTH: dense, closed, heavy. Boulders and pits, and stone that will not yield to anything.
-  { name: 'The Deepstone', element: 'earth', recipe: { wall: 7, rooms: 4, boulder: 6 }, boss: { hp: 7 } },
+  // NB the `tree` entry: on this floor every tree is converted to a MUSHROOM at the end of
+  // generation, so this is the mushroom crop. Without it the floor generated ~0.3 caps and the
+  // headline mechanic (caps closing the holes the molefolk dig) effectively never came up.
+  { name: 'The Deepstone', element: 'earth', recipe: { wall: 7, rooms: 4, boulder: 6, tree: 4 }, boss: { hp: 7 } },
   // WATER: open and drowning. Ice, geysers, and depths that take him if he stops moving.
   { name: 'The Sunken Reach', element: 'water', recipe: { wall: 3, rooms: 3, water: 8, ice: 4 }, boss: { hp: 7 } },
   // FIRE: bright and lethal. Lava, torchlight everywhere, trees that never stop burning.
@@ -224,6 +227,41 @@ const ELEMENTAL_ANCHORS = [
   { x: 20, y: 4 },
 ];
 const ELEMENTS = ['earth', 'water', 'fire', 'air'];
+
+// THE REALM'S NATIVES, by floor. Each is a FLAVOUR OF PIECE, never a bespoke mover: it keeps whatever
+// chess kind it was rolled as (tougher kinds deeper in), moves by generateMoves like anything else,
+// and differs only in a terrain mask (see elementalTerrainMask), a rule layer, and its paint. A thing
+// whose moves you cannot guess by looking at it would be the one unfair enemy in a game of perfect
+// information — so nothing here gets its own movement.
+//
+// Two of every floor's three are ELEMENTALS, which share one principle: DAMAGE IS NOT THE ANSWER.
+// Each has exactly one counter and no HP bar. The third is a FOLK — an ordinary mortal at home in
+// terrain that kills the king, which is a different kind of pressure: it can be killed, it just gets
+// to use the floor in a way he cannot.
+const ELEMENTAL_TYPES = {
+  earth: ['earthen', 'stonen', 'molefolk'],
+  water: ['watery', 'icy', 'merfolk'],
+  fire: ['lavan', 'fiery', 'salamander'],
+  air: ['electric', 'steamy', 'tengu'],
+};
+// What each native ignores underfoot. Deliberately expressed as the SAME opts mask every other piece
+// in the game uses, so none of this is a special case at the movement layer.
+// NB molefolk need no 'stone' exclusion: standableFor rejects bedrock BEFORE it consults phaseWalls,
+// so "through walls and boulders but never stone" falls straight out of the existing rules.
+const ELEMENTAL_MASKS = {
+  earthen: {},
+  stonen: {},
+  molefolk: { phaseWalls: true }, // tunnels rock — and leaves a pit behind it (see tickMolefolk)
+  watery: { lavaOk: false },
+  icy: { lavaOk: false },
+  merfolk: { deepWaterOk: true },
+  lavan: { lavaOk: true, pitOk: false },
+  fiery: { lavaOk: true },
+  salamander: { lavaOk: true },
+  electric: { flying: true, phaseWalls: true }, // flies and sees over anything
+  steamy: { flying: true },
+  tengu: { flying: true, pitOk: true, lavaOk: true }, // at home on any ground at all
+};
 
 // Fixed exit / boss-chamber anchors, one per floor (never random). Kept clear of the king's central
 // start and spread around the board's edges. Declared HERE, above REALMS, because the realm registry

@@ -323,6 +323,13 @@ const Renderer = (function () {
       rush: Boolean(enemy.rush),
       finalBoss: Boolean(enemy.finalBoss),
       mini: Boolean(enemy.mini),
+      // FLAVOUR FLAGS. The render object is a WHITELIST — anything not copied here is invisible to
+      // drawPiece no matter what the call site passes, which is how `summoned` came to have a violet
+      // colour branch in drawPiece that had never once run. Every realm variant that re-colours a
+      // piece needs its flag added here as well as at the call site.
+      wisp: Boolean(enemy.wisp),
+      summoned: Boolean(enemy.summoned),
+      elemental: enemy.elemental || null,
       bossPerk: enemy.bossPerk || null,
       hp: enemy.hp,
       maxHp: enemy.maxHp,
@@ -376,6 +383,8 @@ const Renderer = (function () {
       render.charged = enemy.charged !== false;
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.summoned = Boolean(enemy.summoned); // conjured — drawn violet, like an ally is drawn green
+      render.wisp = Boolean(enemy.wisp);
+      render.elemental = enemy.elemental || null; // its element's livery (piece art, new paint) // a mote of current: piece silhouette, electric livery + glow
       render.boss = Boolean(enemy.boss);
       render.rush = Boolean(enemy.rush);
       render.finalBoss = Boolean(enemy.finalBoss); // the last guardian: its own black-and-fire livery // a finale rush-boss (drawn ashen, not royal)
@@ -645,6 +654,39 @@ const Renderer = (function () {
       stroke = '#c084fc';
       glyph = '#e9d5ff';
     }
+    // A WISP is a PIECE, not a bespoke sprite: it keeps whatever silhouette its kind gives it and is
+    // only re-coloured — live electric blue, lit from inside. That is deliberate. Everything in this
+    // game moves on a chess pattern, so everything should read as a chessman first and as its flavour
+    // second; a wisp that looked like a ball of light would be the one thing on the board whose moves
+    // you could not guess by looking at it. Its glow (below) is what marks it as current rather than
+    // bone. Same principle for every realm variant: zombie, golem, elemental — piece art, new paint.
+    if (o.wisp) {
+      fill = '#06283d'; // deep charged blue-black
+      stroke = '#38e8ff'; // arc-bright cyan
+      glyph = '#c8f7ff';
+    }
+    // AN ELEMENTAL REALM NATIVE keeps its piece silhouette and takes its element's colours — the same
+    // "flavour of a piece" rule as the wisp. The ELEMENTALS proper get saturated, lit liveries (they
+    // are made of the stuff); the FOLK get muted earthy ones, because they merely live here. That
+    // split is doing real work: an elemental has one counter and shrugs off damage, a folk dies to a
+    // sword like anything else, and the player must be able to tell which he is looking at.
+    const ELEM_PAINT = {
+      earthen: ['#2e2013', '#c8873f', '#f0d2a8'],
+      stonen: ['#1d1f24', '#8b93a3', '#dfe4ec'],
+      molefolk: ['#241a14', '#7a5c42', '#d8c3ac'],
+      watery: ['#04222e', '#3aa8d8', '#c4ecff'],
+      icy: ['#0d2430', '#8fe0ff', '#e6f8ff'],
+      merfolk: ['#10262a', '#4f8f86', '#cfe8e0'],
+      lavan: ['#2a0a05', '#ff6a2a', '#ffd0ab'],
+      fiery: ['#300d04', '#ffab2e', '#ffe6b8'],
+      salamander: ['#2b1508', '#a5673a', '#e8c9a8'],
+      electric: ['#08243a', '#5fd8ff', '#d4f4ff'],
+      steamy: ['#22303a', '#b8d4e0', '#eef6fa'],
+      tengu: ['#1c2230', '#7d8aa8', '#d6dcea'],
+    };
+    if (o.elemental && ELEM_PAINT[o.elemental] && role === 'normal') {
+      [fill, stroke, glyph] = ELEM_PAINT[o.elemental];
+    }
 
     // A FERZ (what the Hexer's curse warps a foe into) is a harmless, dazed little blob — drawn
     // small and goofy in pale pink so it never reads as a real threat. It keeps that shape in EVERY
@@ -658,6 +700,24 @@ const Renderer = (function () {
     // it the ONE ally on the board not wearing the king's green — his risen familiar read as a third
     // faction standing next to his skeleton rook. Its SHAPE is what makes it distinct now (a skull;
     // see getPieceLabel), and its colour says whose side it is on, which is the job colour should do.
+
+    // WISP GLOW: a soft halo of current around the token, pulsing on the frame clock so it reads as
+    // live rather than painted. Drawn BEFORE the body so the piece sits inside its own light.
+    if (o.wisp) {
+      ctx.save();
+      // Offset by tile so two wisps on screen never pulse in lockstep — synchronised glows read as
+      // one animated decoration rather than as two separate live things.
+      const pulse = 0.75 + 0.25 * Math.sin(clock * 5 + tileX * 1.7 + tileY * 0.9);
+      const halo = ctx.createRadialGradient(cx, cy, radius * 0.2, cx, cy, radius * 1.9);
+      halo.addColorStop(0, `rgba(56, 232, 255, ${0.5 * pulse})`);
+      halo.addColorStop(0.55, `rgba(56, 232, 255, ${0.2 * pulse})`);
+      halo.addColorStop(1, 'rgba(56, 232, 255, 0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 1.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     // Boss aura: a soft outer ring — gold for a true guardian, sickly green for a rush boss.
     if (role === 'boss') {
@@ -2444,6 +2504,10 @@ const Renderer = (function () {
         // matching devilgrass's living/withered split.
         if (demonRealm) return isDark ? '#3a2b22' : '#5a453a';
         return isDark ? '#23351f' : '#3a5233';
+      case 'mushroom':
+        // Damp dark loam — the ground a cap comes up out of. Warmer and browner than the earth
+        // floor around it, so a thicket reads as a patch of different ground at a distance.
+        return isDark ? '#2b2116' : '#3f3122';
       case 'door':
         // Warm timber up top; in the realm it is BLACK IRON — cold, dark, and studded (see below).
         if (demonRealm) return isDark ? '#17161b' : '#2b2930';
@@ -3264,6 +3328,49 @@ const Renderer = (function () {
             : (demonRealm ? 'rgba(90,80,90,0.28)' : 'rgba(200,195,190,0.22)'); // a pale spalled patch
           ctx.beginPath();
           ctx.ellipse(cx2, cy2, cr, cr * (0.6 + 0.5 * hx), hy * Math.PI, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      case 'mushroom': {
+        // A FAT PALE CAP on a short thick stalk — squat and bulbous where a tree is tall and ragged,
+        // so the two never read as the same obstacle even though they obey the same rules. It wears
+        // its wounds the way a tree does: chopped once or twice, the cap is visibly smaller.
+        const cx = px + tileSize / 2;
+        const hp = (treeHp && treeHp[`${x},${y}`] != null) ? treeHp[`${x},${y}`] : 3;
+        const health = Math.max(1, Math.min(3, hp)) / 3;
+        const capW = tileSize * (0.30 + 0.24 * health);
+        const capH = tileSize * (0.17 + 0.11 * health);
+        const baseY = py + tileSize * 0.70;
+        // The stalk first, so the cap overhangs it.
+        ctx.fillStyle = '#d9cdb4';
+        ctx.beginPath();
+        ctx.moveTo(cx - tileSize * 0.075, baseY);
+        ctx.lineTo(cx - tileSize * 0.055, baseY - tileSize * 0.22);
+        ctx.lineTo(cx + tileSize * 0.055, baseY - tileSize * 0.22);
+        ctx.lineTo(cx + tileSize * 0.075, baseY);
+        ctx.closePath();
+        ctx.fill();
+        // The cap: a dome, in the sickly pale violet that says fungus rather than foliage.
+        const capY = baseY - tileSize * 0.21;
+        const grad = ctx.createLinearGradient(0, capY - capH, 0, capY + capH * 0.3);
+        grad.addColorStop(0, '#cdb6d8');
+        grad.addColorStop(1, '#8d6f9e');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.ellipse(cx, capY, capW, capH, 0, Math.PI, Math.PI * 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(40, 28, 48, 0.55)';
+        ctx.lineWidth = Math.max(1, tileSize * 0.03);
+        ctx.stroke();
+        // A couple of pale speckles on the cap, fixed per tile so they never crawl.
+        ctx.fillStyle = 'rgba(245, 240, 250, 0.75)';
+        for (let i = 0; i < 3; i += 1) {
+          const sx = cx + (tileHash(x * 3 + i, y * 5 + 1) - 0.5) * capW * 1.3;
+          const sy = capY - capH * (0.25 + 0.45 * tileHash(x + i, y * 2 + i));
+          ctx.beginPath();
+          ctx.arc(sx, sy, tileSize * 0.022, 0, Math.PI * 2);
           ctx.fill();
         }
         break;
@@ -4908,7 +5015,7 @@ const Renderer = (function () {
         ctx.stroke();
         ctx.restore();
       }
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
         // A guardian UNMADE — every perk torn off it by the Hexer — wears NO crown at all. That
         // bare head is the tell that there is nothing left of it but the piece.

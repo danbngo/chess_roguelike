@@ -12,9 +12,11 @@ const LOGIC_FILES = ['constants.js', 'utils.js', 'terrain.js', 'pieces.js', 'boa
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, isElementFloor, petrifyEarthFloor, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
 )();
 const {
+  pieceTerrainOpts,
+  makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS,
   elementForFloor, isElementFloor, petrifyEarthFloor,
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
   getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
@@ -1264,7 +1266,12 @@ test('a storeroom is a ROOM, never a sealed block of stone', () => {
   // 0 of them ever sealed.) Keep drawing until a handful have been examined, then stop.
   let rooms = 0; let unreachable = 0;
   const WANT_ROOMS = 4;
-  for (let i = 0; i < 400 && rooms < WANT_ROOMS; i += 1) {
+  // BUDGET, re-measured 2026-07-19: fully-intact storerooms turn up at ~6 per 400 floors, so a
+  // 400-floor cap found fewer than the 4 it wants about 15% of the time and failed on `rooms > 0`
+  // rather than on anything real. (Measured over 1200 floors: 18 boxes, 0 doorless, 0 sealed — the
+  // mechanic is sound; only the sample was too small.) The loop stops the moment it has enough, so
+  // the typical cost is ~270 floors either way and a bigger cap is close to free.
+  for (let i = 0; i < 1500 && rooms < WANT_ROOMS; i += 1) {
     const s = generateFloor(4, createPlayer('warrior'), 0);
     if (!(s.player.seenStructures || []).includes('storeroom')) continue; // no storeroom on this one
     const at = (x, y) => terrainAt(s, x, y);
@@ -6309,7 +6316,12 @@ test('a WORKSHOP floor is fitted out — and its indestructible iron never seals
   assert.ok(per('switch') >= 2, `and switches to work them (${per('switch').toFixed(1)}/floor)`);
   assert.ok(per('generator') >= 1, `and machinery to shove (${per('generator').toFixed(1)}/floor)`);
   assert.ok(per('metaldooropen') + per('metaldoor') >= 2, 'the doors are metal');
-  assert.ok(per('metalgate') + per('metalgateopen') >= 1, 'and about half the gates too');
+  // Threshold measured 2026-07-19 over 60 independent 48-floor samples: median 1.81/floor, min 0.90.
+  // A `>= 1` bar therefore failed on ~2% of runs on perfectly good output. 0.5 still catches the
+  // regression this line exists for — metal gates disappearing from the Workshop entirely — without
+  // sitting on the low tail of its own distribution.
+  assert.ok(per('metalgate') + per('metalgateopen') >= 0.5,
+    `and about half the gates too (${(per('metalgate') + per('metalgateopen')).toFixed(2)}/floor)`);
   // THIS PLACE HAS NO TIMBER IN IT. The chamber, the stair dressing and the reachability carve all
   // write doors AFTER generateTerrain returns, so converting there left ~1 wooden door per floor.
   assert.equal(tally.door || 0, 0, 'not one timber door survives anywhere');
@@ -6505,6 +6517,14 @@ test('an ELECTRICAL LIGHT is a fitting, not a fire — it switches, conducts, an
   const ow = createInitialState('warrior', 'easy');
   ow.terrain = { '11,10': 'wall' };
   ow.torches = { '11,10': true };
+  // Clear the floor's own roster first. A BODY IS A CABLE — conductsAt says so deliberately — so a
+  // wandering piece that happens to generate on 11,10 makes this tile conduct, and the assertion
+  // below fails on correct behaviour. It is asking about the TORCH, so nothing else may be standing
+  // there. (Found when an unrelated change shifted the shared RNG and this began failing at random.)
+  ow.enemies = [];
+  ow.allies = [];
+  ow.player.x = 1;
+  ow.player.y = 1;
   assert.equal(hasTorch(ow, 11, 10), true, 'an overworld torch is unchanged');
   assert.equal(conductsAt(ow, 11, 10), false, 'and carries no current');
 });
@@ -7824,4 +7844,67 @@ test('STONE is the one terrain with no answer — and it never seals a floor', (
     const st = generateFloor(floor, createPlayer('warrior', 'nightmare'), 0, realm);
     assert.ok(!Object.values(st.terrain).includes('stone'), `no bedrock on ${realm} floor ${floor}`);
   }
+});
+
+test('ELEMENTAL natives are FLAVOURS OF PIECES, never bespoke movers', () => {
+  // The governing rule of the realm: each native keeps its chess kind and moves by generateMoves
+  // like anything else. All it adds is a terrain mask, a rule layer and its paint. Everything on
+  // this board must read as a chessman first, or its moves cannot be guessed by looking at it.
+  for (const [element, roster] of Object.entries(ELEMENTAL_TYPES)) {
+    for (const type of roster) {
+      assert.ok(ELEMENTAL_MASKS[type], `${type} (${element}) has a declared terrain mask`);
+    }
+  }
+  // The mask must arrive through pieceTerrainOpts — the ONE place every enemy's terrain rules are
+  // built — rather than through a branch of its own somewhere in the movement code.
+  const mole = makeElemental(createEnemy('rook', 5, 5), 'molefolk');
+  assert.equal(pieceTerrainOpts(mole).phaseWalls, true, 'a molefolk rook tunnels rock');
+  const tengu = makeElemental(createEnemy('rook', 5, 5), 'tengu');
+  const t = pieceTerrainOpts(tengu);
+  assert.ok(t.flying && t.pitOk && t.lavaOk, 'a tengu is at home on any ground');
+  // ...and bedrock still stops the tunneller, with NO special-casing: standableFor rejects stone
+  // before it ever consults phaseWalls, so this falls straight out of the existing rules.
+  assert.ok(!standableFor('stone', pieceTerrainOpts(mole)), 'but never through bedrock');
+  assert.ok(standableFor('wall', pieceTerrainOpts(mole)), 'though an ordinary wall is nothing to it');
+
+  // ELEMENTALS proper carry no HP bar (damage is not the answer); the FOLK are mortals and keep one.
+  assert.ok(makeElemental(createEnemy('rook', 5, 5), 'earthen').noHp, 'an earth elemental has no health pool');
+  assert.ok(!makeElemental(createEnemy('rook', 5, 5), 'merfolk').noHp, 'merfolk are ordinary mortals');
+  assert.ok(isElementalFolk('salamander') && !isElementalFolk('lavan'), 'folk and elementals are distinguished');
+
+  // Each floor draws ONLY its own element's natives, and nothing is left un-flavoured.
+  for (let floor = 1; floor <= 4; floor += 1) {
+    const want = new Set(ELEMENTAL_TYPES[elementForFloor(floor, 'elemental')]);
+    const st = generateFloor(floor, createPlayer('warrior', 'nightmare'), 0, 'elemental');
+    for (const e of st.enemies) {
+      if (e.turret || e.summonCircle || e.boss || e.wisp) continue;
+      assert.ok(e.elemental, `every native is flavoured (floor ${floor})`);
+      assert.ok(want.has(e.elemental), `${e.elemental} belongs on floor ${floor}`);
+    }
+  }
+});
+
+test('MOLEFOLK dig the floor away — but can never cut it in two', () => {
+  // A digger leaves a pit on every tile it vacates, so the earth floor is quietly being taken apart
+  // while he walks it. The danger is obvious and was measured: with no guard, forced wandering
+  // stranded the key or the stair on HALF of all floors. The severance check is what makes the
+  // mechanic shippable, so it is the thing worth pinning.
+  const st = generateFloor(1, createPlayer('warrior', 'nightmare'), 0, 'elemental');
+  // A one-wide corridor: floor with walls above and below. Digging the middle must be refused.
+  for (const [x, y, t] of [[6, 5, 'wall'], [6, 7, 'wall'], [5, 5, 'wall'], [5, 7, 'wall'], [7, 5, 'wall'], [7, 7, 'wall']]) {
+    st.terrain[`${x},${y}`] = t;
+  }
+  for (const x of [5, 6, 7]) delete st.terrain[`${x},6`];
+  assert.ok(wouldSeverLocally(st, 6, 6), 'a corridor tile is the join, and is spared');
+  // The middle of an open room joins nothing, so it digs freely.
+  for (let x = 12; x <= 16; x += 1) for (let y = 12; y <= 16; y += 1) delete st.terrain[`${x},${y}`];
+  assert.ok(!wouldSeverLocally(st, 14, 14), 'an open floor tile cuts nothing off');
+
+  // It never eats an objective tile, whatever else it does.
+  const mole = makeElemental(createEnemy('rook', st.exit.x + 1, st.exit.y), 'molefolk');
+  mole.elemental = 'molefolk';
+  st.enemies.push(mole);
+  mole.lastDig = { x: st.exit.x, y: st.exit.y };
+  for (let i = 0; i < 40; i += 1) tickMolefolk(st);
+  assert.notEqual(terrainAt(st, st.exit.x, st.exit.y), 'pit', 'the stair is never dug away');
 });

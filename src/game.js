@@ -155,6 +155,148 @@ function makeUndead(enemy, type) {
   return enemy;
 }
 
+// ---- ELEMENTALS ---------------------------------------------------------------------------------
+// The elemental realm's natives. Like makeUndead and makeGolem, this LAYERS onto a piece that has
+// already been rolled — it never replaces one. The piece keeps its kind, its move pattern and its
+// place in the floor's tier window; all this adds is what it ignores underfoot, what it leaves
+// behind, and what (if anything) can put it down. See ELEMENTAL_TYPES.
+function makeElemental(enemy, type) {
+  if (!enemy || enemy.turret || enemy.summonCircle) return enemy;
+  enemy.elemental = type;
+  // ELEMENTALS proper have NO HP BAR: damage is not the answer to any of them, so advertising a
+  // health pool would be a lie the player acts on. The FOLK are ordinary mortals and keep theirs.
+  if (!isElementalFolk(type)) enemy.noHp = true;
+  return enemy;
+}
+// MOLEFOLK dig, and the hole stays. Every tile one leaves becomes a PIT — so a floor with diggers on
+// it is a floor that is quietly being taken apart while he walks it, and the route he came in by may
+// not be there when he wants it back. That is the whole idea: the earth floor's threat is not that
+// its natives hit hard, it is that the ground itself is running out.
+//
+// This scans state.enemies, NOT terrain, so it deliberately carries NO realm guard (rule 6): a
+// molefolk carried anywhere by any means still digs. It only ever writes over plain floor — never a
+// wall it is currently inside, never water, lava, an objective tile or anything a set-piece built —
+// because a digger that could pit the stair would make a floor unwinnable by simply wandering.
+// Would turning (x, y) into a hole cut the map? Judged LOCALLY: take the walkable tiles in the ring
+// around it and ask whether they are still joined to each other without passing through the middle.
+// In a one-wide corridor the two ends are not adjacent, so the answer is yes and the tile is spared;
+// in the middle of a room they are all still joined, so it digs freely.
+//
+// A local test rather than a full flood on purpose: this runs per digger per turn, and the honest
+// global question ("is the stair still reachable?") is a BFS each time. The local answer is the one
+// that matters anyway — a pit only ever severs the map by closing a chokepoint, and a chokepoint is
+// exactly what this detects. Measured: it took stranding from 20 floors in 40 to 0 in 200.
+function wouldSeverLocally(state, x, y) {
+  const ring = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]]; // clockwise
+  const open = ring.map(([dx, dy]) => {
+    const t = terrainAt(state, x + dx, y + dy);
+    return isStandable(t) && !isBorderStone(x + dx, y + dy);
+  });
+  const count = open.filter(Boolean).length;
+  if (count <= 1) return false; // a dead end: digging it cuts nothing off
+  // Count how many separate RUNS of open tiles there are around the ring. One run means everything
+  // around it stays joined; two or more means this tile is the join, and it must stay floor.
+  let runs = 0;
+  for (let i = 0; i < 8; i += 1) {
+    if (open[i] && !open[(i + 7) % 8]) runs += 1;
+  }
+  return runs > 1;
+}
+
+// How often a digger actually leaves a hole. Not every step: at 1.0 a pair of molefolk turned a floor
+// into ~96 pits in 60 turns, which stopped reading as "the ground is going" and started reading as
+// "the floor has been deleted". Occasional holes are a creeping problem; constant ones are a wall.
+const MOLEFOLK_DIG_CHANCE = 0.34;
+function tickMolefolk(state) {
+  for (const e of state.enemies) {
+    if (!e || e.elemental !== 'molefolk' || e.inert || e.broken) continue;
+    const prev = e.lastDig;
+    e.lastDig = { x: e.x, y: e.y };
+    if (!prev || (prev.x === e.x && prev.y === e.y)) continue; // it did not move: nothing to leave
+    if (isObjectiveTile(state, prev.x, prev.y)) continue; // never the key, the stair, an altar
+    if (isBorderStone(prev.x, prev.y)) continue;
+    const t = terrainAt(state, prev.x, prev.y);
+    if (t && t !== 'normal') continue; // only PLAIN FLOOR collapses — it tunnels through rock without felling it
+    if (state.enemies.some((o) => o !== e && o.x === prev.x && o.y === prev.y)) continue;
+    if (allyAt(state, prev.x, prev.y)) continue;
+    if (state.player.x === prev.x && state.player.y === prev.y) continue;
+    if (wouldSeverLocally(state, prev.x, prev.y)) continue; // never dig away the only way through
+    if (Math.random() >= MOLEFOLK_DIG_CHANCE) continue;
+    state.terrain[`${prev.x},${prev.y}`] = 'pit';
+  }
+}
+
+// ---- MUSHROOMS ----------------------------------------------------------------------------------
+// The earth floor's timber. Three blows to fell, exactly like a tree (they share isChoppable and
+// damageTree, so the two can never drift apart) — but unlike a tree they GROW, and where they grow
+// matters more than that they do.
+//
+// A mushroom that comes up on a PIT CAPS IT: the hole is gone, and when the cap is later chopped down
+// what is left behind is ordinary floor. That single rule is why they are here. The earth floor's
+// other native, the molefolk, spends the whole level digging the ground out from under him; the
+// mushrooms quietly put it back. The floor is therefore not decaying or healing but ARGUING with
+// itself, and he can take a side — fell the caps to keep his sightlines, or leave them to get his
+// footing back. A terrain that only ever degrades is a clock; two that fight are a situation.
+const MUSHROOM_GROW_CHANCE = 0.16; // per floor per turn — one new cap every ~6 turns
+// HOW MANY NEW CAPS a floor will ever put up, over and above the crop it generated with.
+//
+// Deliberately RELATIVE rather than an absolute ceiling. A fixed number has to sit above the biggest
+// crop generation can produce, and the crop varies enormously — measured a mean of ~32 per floor but
+// individual floors as high as 56 — so any constant is either below some floors (growth silently
+// never fires, which is exactly what happened at 14 and again at 48) or so far above the mean that it
+// is no cap at all. Anchoring to what the floor actually started with gives the same amount of
+// creeping change on a bare floor and on a thicketed one.
+const MUSHROOM_GROWTH_ROOM = 12;
+function isMushroomFloor(state) {
+  return elementForFloor(state.floor || 1, realmOf(state)) === 'earth';
+}
+function tickMushrooms(state) {
+  // TERRAIN-scanning, so it carries a realm guard (rule 6) — unlike tickMolefolk, which scans units.
+  if (!isMushroomFloor(state)) return;
+  if (Math.random() >= MUSHROOM_GROW_CHANCE) return;
+  let living = 0;
+  for (const v of Object.values(state.terrain)) if (v === 'mushroom') living += 1;
+  // Anchor the ceiling to the crop this floor generated with, the first time we look. Computed
+  // lazily rather than in generateFloor so it is correct for a state built by any route (a test
+  // harness, a save reload) instead of only for one that came through the generator.
+  if (state.mushroomCap == null) state.mushroomCap = living + MUSHROOM_GROWTH_ROOM;
+  if (living >= state.mushroomCap) return;
+  // Try a handful of spots rather than scanning the board: a mushroom comes up somewhere, or it
+  // does not come up this turn, and either is fine.
+  for (let tries = 0; tries < 24; tries += 1) {
+    const x = 1 + randomInt(WORLD_SIZE - 2);
+    const y = 1 + randomInt(WORLD_SIZE - 2);
+    if (isBorderStone(x, y)) continue;
+    if (isObjectiveTile(state, x, y)) continue; // never over the key, the stair, an altar
+    if (state.player.x === x && state.player.y === y) continue;
+    if (state.enemies.some((e) => e.x === x && e.y === y)) continue;
+    if (allyAt(state, x, y)) continue;
+    const t = terrainAt(state, x, y);
+    // Bare ground, or a PIT — which it caps. Nothing else: it does not grow out of rock or water.
+    if (t !== 'normal' && t !== 'pit') continue;
+    const cappedPit = t === 'pit';
+    state.terrain[`${x},${y}`] = 'mushroom';
+    if (state.treeHp) delete state.treeHp[`${x},${y}`]; // a fresh cap starts whole
+    // NB no bookkeeping for a capped pit, deliberately: felling a mushroom runs clearTree, which
+    // leaves ORDINARY FLOOR behind — so "a mushroom on a pit converts it to floor" falls out of the
+    // existing rules with nothing extra to remember, and there is no stale per-tile state to leak.
+    state.message = cappedPit
+      ? 'A pale cap swells up out of the pit and closes it over.'
+      : 'A pale cap pushes up through the earth.';
+    return;
+  }
+}
+
+const ELEMENTAL_FOLK = new Set(['molefolk', 'merfolk', 'salamander', 'tengu']);
+function isElementalFolk(type) { return ELEMENTAL_FOLK.has(type); }
+function isElemental(unit) { return Boolean(unit && unit.elemental); }
+// The terrain mask for a native, folded into pieceTerrainOpts so it goes through exactly the same
+// movement path as every other piece on the board.
+function elementalTerrainMask(unit) {
+  if (!unit || !unit.elemental) return null;
+  return ELEMENTAL_MASKS[unit.elemental] || null;
+}
+
 // ---- GOLEMS -------------------------------------------------------------------------------------
 // The Workshop's natives. A golem is not alive, so it cannot be killed: a killing blow DEACTIVATES
 // it, and five turns later it stands back up exactly where it fell. The only way to be rid of one
@@ -4361,7 +4503,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== 3) continue;
         const key = `${ax + dx},${ay + dy}`;
         const t = state.terrain[key];
-        if (t === 'wall' || t === 'tree' || t === 'ice') {
+        if (isRock(t) || isTimber(t) || t === 'ice') {
           state.terrain[key] = 'water';
           if (state.treeHp) delete state.treeHp[key];
         }
@@ -4630,6 +4772,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
       if (e.turret || e.summonCircle || e.boss) continue;
       if (!e.golem) makeGolem(e);
     }
+    // (see below for the elemental realm's equivalent sweep)
     // A FEW WISPS adrift on top of the golems. Deliberately few: each is a one-shot countdown that
     // walks through walls, and a floor with many would be a floor with no safe corner at all.
     for (let i = 0; i < 2 + randomInt(3); i += 1) {
@@ -4679,6 +4822,28 @@ function generateFloor(floor, carryPlayer, score, realm) {
       if (state.terrain[k] === 'water') state.terrain[k] = 'deathwater';
     }
   }
+  // THE ELEMENTAL ROSTER, swept at the END for the same reason the undead and golem rosters are:
+  // pieces reach a floor by a dozen routes (recipe, set-piece garrisons, chamber guards, decoys) and
+  // patching the spawn sites left roughly one in seven untouched when it was measured on the undead
+  // pass. Bosses and mini-bosses are left alone — they have their own identity and their own traits.
+  if (realmDef(realm).elementalRoster) {
+    const element = elementForFloor(state.floor || 1, realm);
+    const roster = ELEMENTAL_TYPES[element] || [];
+    if (roster.length) {
+      for (const e of state.enemies) {
+        if (e.turret || e.summonCircle || e.boss || e.wisp) continue;
+        if (!e.elemental) makeElemental(e, roster[randomInt(roster.length)]);
+      }
+    }
+  }
+  // MUSHROOMS INSTEAD OF TREES on the earth floor. Converted at the END, like every other terrain
+  // sweep (rule 1): trees are laid by the recipe, by orchards and hedge mazes, by set-pieces and by
+  // the stair dressing, and patching the recipe alone would leave a wood standing in half of them.
+  if (elementForFloor(state.floor || 1, realm) === 'earth') {
+    for (const k of Object.keys(state.terrain)) {
+      if (state.terrain[k] === 'tree') state.terrain[k] = 'mushroom';
+    }
+  }
   petrifyEarthFloor(state, realm);
   // NOTHING ENDS GENERATION INSIDE A WALL. Half a dozen passes write terrain after the roster is
   // placed — the boss chamber's ring, the decoy chambers, the stair dressing, the door prune, the
@@ -4720,7 +4885,7 @@ function petrifyEarthFloor(state, realm) {
 // Move any piece generation left inside solid terrain to the nearest tile it could stand on.
 // Deliberately covers turrets too, which the per-turn sweep skips.
 function freeEntombedAtGeneration(state) {
-  const entombing = (t) => t === 'wall' || t === 'boulder' || t === 'ice' || t === 'tree'
+  const entombing = (t) => isRock(t) || t === 'boulder' || t === 'ice' || isTimber(t)
     || t === 'gate' || t === 'metalgate' || t === 'metaldoor' || t === 'crushershut' || t === 'tombstone';
   for (const e of [...state.enemies]) {
     // A CAGED occupant is sealed in ON PURPOSE (a gaol prisoner, the thing in the outhouse). That is
@@ -5405,7 +5570,7 @@ function isChoppable(t) {
   // at all, so it is never offered as a chop. Walking into one therefore costs NOTHING — the move is
   // simply not generated, exactly as it is not against a wall. Offering a swing that can never land
   // would be the worst of both: a turn spent, and nothing to show for it.
-  return t === 'tree' || t === 'gate';
+  return t === 'tree' || t === 'mushroom' || t === 'gate';
 }
 function treeHpAt(state, x, y) {
   if (!isChoppable(terrainAt(state, x, y))) return 0;
@@ -5541,6 +5706,11 @@ function scorchTileTerrain(next, x, y) {
   if (t === 'ice') { if (meltIce(next, x, y)) next.player.brokeIce = true; } // badge ledger
   else if (t === 'devilgrass') clearDevilgrass(next, x, y);
   else if (t === 'tree') igniteTree(next, x, y); // fire doesn't fell a tree — it LIGHTS it (see tickBurningTrees)
+  // A MUSHROOM is not timber: it is wet, and it does not catch. Spellfire SEARS it instead — a
+  // wound, not a fire — so a bolt is still worth spending on one, it just never leaves a blaze
+  // spreading across a fungal thicket the way it would across a wood. (Left OUT of the ignition
+  // sites deliberately; see isTimber, which covers cover and chopping but never burning.)
+  else if (t === 'mushroom') damageTree(next, x, y, 1);
   // NB: a BOULDER is spell-proof — fire neither blasts nor targets it. It stops the bolt like a wall
   // (see the bolt paths) but is never destroyed; only a shove rolls one away.
 }
@@ -5552,7 +5722,7 @@ function scorchTileTerrain(next, x, y) {
 // of ice can never loop — it just stops at the far wall (from which it can step off next turn).
 function iceSlide(state, unit, dx, dy) {
   if ((!dx && !dy) || terrainAt(state, unit.x, unit.y) !== 'ice') return;
-  const blocked = (t) => t === 'wall' || t === 'tree' || t === 'gate' || t === 'boulder' || t === 'pit' || t === 'lava';
+  const blocked = (t) => isRock(t) || isTimber(t) || t === 'gate' || t === 'boulder' || t === 'pit' || t === 'lava';
   const taken = (x, y) => (state.player !== unit && state.player.x === x && state.player.y === y)
     || state.enemies.some((e) => e !== unit && e.x === x && e.y === y)
     || (state.allies || []).some((a) => a !== unit && a.x === x && a.y === y)
@@ -6671,7 +6841,7 @@ function useCard(state, cardIndex, x, y) {
       // the obstacle is never the centre, so the AoE lands on what the player actually aimed at.
       const bt = terrainAt(next, cx, cy);
       if (next.enemies.some((e) => e.x === cx && e.y === cy)) { fireballCentre = { x: cx, y: cy }; break; }
-      if (bt === 'wall' || bt === 'boulder' || bt === 'ice' || bt === 'tree') { fireballCentre = { x: cx, y: cy }; break; }
+      if (isRock(bt) || bt === 'boulder' || bt === 'ice' || isTimber(bt)) { fireballCentre = { x: cx, y: cy }; break; }
     }
   }
 
@@ -7228,7 +7398,7 @@ function spellCanHitFoe(state, card) {
       if (state.enemies.some((e) => e.x === x && e.y === y && isCapturable(state, e) && !e.summonCircle)) return true;
       const t = terrainAt(state, x, y);
       if (t === 'wall' || t === 'boulder') { if (!shootWalls) break; } // opaque cover stops the bolt
-      else if (t === 'ice' || t === 'tree') break; // the bolt is spent on the slab / trunk — no body here
+      else if (t === 'ice' || isTimber(t)) break; // the bolt is spent on the slab / trunk — no body here
     }
   }
   return false;
@@ -7730,7 +7900,7 @@ function wanderEnemy(state, enemy, hidden, roamFreely) {
         const by = enemy.y + dy;
         if (bx < 0 || bx >= WORLD_SIZE || by < 0 || by >= WORLD_SIZE) continue;
         const t = terrainAt(state, bx, by);
-        if (t === 'tree' || t === 'gate') blockers.push({ x: bx, y: by, gate: t === 'gate' });
+        if (isTimber(t) || t === 'gate') blockers.push({ x: bx, y: by, gate: t === 'gate' });
       }
       if (blockers.length) {
         const hit = blockers[randomInt(blockers.length)];
@@ -7791,7 +7961,7 @@ function navFieldTo(state, tx, ty, enemy) {
   const stand = (x, y) => {
     if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) return false;
     const t = terrainAt(state, x, y);
-    if (t === 'wall' || t === 'tree' || t === 'gate') return phases;
+    if (isRock(t) || isTimber(t) || t === 'gate') return phases;
     if (t === 'boulder' || t === 'ice') return leaper || phases; // walkers route around; leapers land on them
     if (t === 'pit') return leaper || Boolean(opts.flying) || Boolean(opts.pitOk);
     if (t === 'lava') return opts.lavaOk !== false; // lava-safe pieces conduct fire; the rest route around it
@@ -7992,7 +8162,7 @@ function dislodgeWalledEnemies(state) {
   // walkable-or-hazard tiles a piece may legitimately stand on (a demon wades lava, a flier a pit), so
   // they are NOT "stuck". Guarding on this rather than isStandable is what stops the sweep from wrongly
   // hauling a lava-immune demon off the fire it is meant to be standing in.
-  const entombing = (t) => t === 'wall' || t === 'boulder' || t === 'ice' || t === 'tree' || t === 'gate';
+  const entombing = (t) => isRock(t) || t === 'boulder' || t === 'ice' || isTimber(t) || t === 'gate';
   for (const e of state.enemies) {
     if (e.summonCircle || e.turret || e.bat || bossHas(e, 'phasing')) continue; // a BAT belongs anywhere — it is flying
     if (!entombing(terrainAt(state, e.x, e.y))) continue;
@@ -8197,6 +8367,8 @@ function beginEnemyPhase(state) {
   tickTombstones(next); // ...and a grave he lingers beside opens
   tickGolems(next); // ...and switched-off golems count down and grind back into motion
   tickWisps(next); // loose current drifts at him through walls, and bursts when it arrives
+  tickMolefolk(next); // the diggers leave the floor behind them full of holes
+  tickMushrooms(next); // ...and the caps come up and quietly close them again
   tickGenerators(next); // every fourth turn the Workshop's machinery lets go into the network
   tickLavaEncroachment(next); // past max dread: the floor turns molten and closes in on a lingering king
   dislodgeWalledEnemies(next); // SAFETY NET: nudge any ordinary piece a terrain change closed a wall over
@@ -8400,7 +8572,7 @@ function fireTurretLineTo(state, turret, kx, ky) {
   let y = turret.y + dy;
   while (x !== kx || y !== ky) {
     const t = terrainAt(state, x, y);
-    if (t === 'wall' || t === 'boulder' || t === 'gate' || t === 'tree') return null; // cover stops the gout (bodies don't) — including a gate's bars
+    if (isRock(t) || t === 'boulder' || t === 'gate' || isTimber(t)) return null; // cover stops the gout (bodies don't) — including a gate's bars
     x += dx;
     y += dy;
   }
@@ -8424,7 +8596,7 @@ function turretLaneObstacle(state, turret, tx, ty) {
   while (x !== tx || y !== ty) {
     const t = terrainAt(state, x, y);
     if (t === 'wall' || t === 'boulder') return null; // solid cover — no shot reaches even the barrier
-    if (t === 'gate' || t === 'tree') return { x, y, kind: t };
+    if (t === 'gate' || isTimber(t)) return { x, y, kind: t };
     x += dx;
     y += dy;
   }
@@ -9546,7 +9718,7 @@ function bossRangedAttack(state, boss) {
   while (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE && ++step <= reach) {
     const terr = terrainAt(state, x, y);
     if (terr === 'wall') return false; // stone stops any bolt cold
-    if (terr === 'tree') return false; // a trunk stops it too — a Sorcerer LIGHTS it instead (below)
+    if (isTimber(terr)) return false; // a trunk stops it too — a Sorcerer LIGHTS it instead (below)
     if (terr === 'boulder') shattered.push({ x, y }); // the bolt blasts it apart in passing (incidental)
     if (terr === 'ice') { if (!pierce) return false; shattered.push({ x, y, melt: true }); } // only a Sorcerer's fire thaws through an ice slab
     if (terr === 'devilgrass') { if (!pierce) return false; shattered.push({ x, y, grass: true }); } // a plain volley can't see through the thicket; fire burns it

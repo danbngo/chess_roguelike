@@ -46,7 +46,9 @@ function blocksSight(type) {
   // through it (see blocksSightSoft). Nothing else the player has will shift it.
   // STONE is the earth floor's bedrock: opaque exactly like a wall, and (unlike a wall) proof against
   // absolutely everything — see standableFor.
-  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'boulder' || type === 'devilgrass' || type === 'gloom'
+  // A MUSHROOM is the earth floor's tree: a fat cap on a thick stalk, tall enough to hide what is
+  // behind it, and it comes down to the same three blows.
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'boulder' || type === 'devilgrass' || type === 'gloom'
     || type === 'door' || type === 'metaldoor' || type === 'crushershut' || type === 'tombstone';
 }
 
@@ -108,7 +110,9 @@ function standableFor(type, opts) {
   // phaser, and unlike ordinary iron it cannot be cut, so there is nothing to be gained by trying.
   if (type === 'metaldooropen' || type === 'metalgateopen' || type === 'crusheropen') return true;
   if (type === 'metaldoor' || type === 'metalgate' || type === 'crushershut') return false;
-  if (type === 'tree') return Boolean(o.pathfinder); // solid timber — only Pathfinder walks through it
+  // Solid timber — only Pathfinder walks through it. A MUSHROOM is timber too: same rule, so the
+  // Druid threads a fungal thicket exactly as he threads a wood.
+  if (type === 'tree' || type === 'mushroom') return Boolean(o.pathfinder);
   // STONE: the bedrock of the earth floor, and the ONE terrain with no answer at all. It is what the
   // border ring is made of, brought inside the map — a phaser cannot slip it, a Pathfinder cannot
   // thread it, it cannot be cut, shoved, burned, dug or blasted, and the molefolk who tunnel through
@@ -142,8 +146,25 @@ function standableAt(state, x, y, opts) {
 // gets to be inside one. They must be named in ONE place, because the leapers each carried their own
 // hand-written list of terrain names, and trees and gates were added long after those lists were
 // written: nothing pointed a knight at them, so it would happily perch in a treetop.
+// TIMBER: something growing that stands in the way and can be cut down. A tree, and the earth
+// floor's MUSHROOM, which obeys every one of a tree's rules (three blows, blocks the look, threaded
+// only by a Pathfinder). Named because a dozen call sites had hand-written `t === 'tree'` checks, and
+// each one of them would silently have treated a mushroom as thin air — a turret shooting through a
+// fungal thicket, a boulder rolling clean over it. The same class of bug as the leapers perching in
+// treetops, which is what isSolidBarrier was written to fix.
+function isTimber(type) {
+  return type === 'tree' || type === 'mushroom';
+}
+
+// ROCK that stops a shot and hides what is behind it: masonry, and the earth floor's BEDROCK. Same
+// reasoning as isTimber — `t === 'wall'` appears all over, and stone must never be the one wall a
+// turret can shoot through.
+function isRock(type) {
+  return type === 'wall' || type === 'stone';
+}
+
 function isSolidBarrier(type) {
-  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'gate';
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'gate';
 }
 
 // Slow terrain: a mover wades ONE tile of it per move and must stop there — no sliding clean

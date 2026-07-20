@@ -158,6 +158,14 @@ function pieceTerrainOpts(piece) {
     if (!isLavaSafe(piece)) opts.torchAverse = true; // a non-immune phaser routes around burning wall-torches
   }
   if (bossHas(piece, 'burrower')) opts.pitOk = true; // a Burrower treads the void as solid ground
+  // AN ELEMENTAL REALM NATIVE ignores whatever its element ignores. Folded in HERE, at the one place
+  // every enemy's terrain mask is built, precisely so that none of them becomes a special case at the
+  // movement layer: a molefolk rook is a rook that happens to tunnel, and it is still moved, threat-
+  // mapped and previewed by the same code as any other rook.
+  if (typeof elementalTerrainMask === 'function') {
+    const mask = elementalTerrainMask(piece);
+    if (mask) Object.assign(opts, mask);
+  }
   return opts;
 }
 
