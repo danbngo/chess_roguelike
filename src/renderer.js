@@ -11,7 +11,16 @@ const Renderer = (function () {
   let demonRealm = false; // floor >= DEMON_FLOOR: the ground turns to dark RED MARBLE
   let undeadRealm = false; // a New Game+ undead floor: blacker still (see UNDEAD_GROUND)
   let workshopRealm = false; // a New Game+ workshop floor: its lights are electric, not fire
+  let portalRoomNow = false; // the room between realms: starfield walls, marble floor — its own tileset
   let elementNow = null; // 'earth'|'water'|'fire'|'air' on an elemental floor — per FLOOR, not per realm
+  // A per-frame handle on the STATE, for the few tile textures that need to look at their
+  // neighbours (a wire joins to adjacent wires) or at a global clock (a generator's warning beat).
+  // drawTexture is called per tile and takes no state, so it referenced a `state` that does not
+  // exist in this scope — a ReferenceError on every WIRE tile, i.e. the whole Workshop. It went
+  // unseen because the smoke harness passed no animation delta, which left the clock NaN and meant
+  // drawTexture never actually ran. Set in draw(), exactly like torchesNow.
+  let stateNow = null;
+  let switchesNow = null; // per-frame ref to state.switches — which levers are thrown
   let torchesNow = null; // per-frame ref to state.torches, so drawTorch can read a light's on/off state
   // Per-frame handles on the tree state, so drawTexture can size a canopy to its wounds and set it
   // ablaze. Set in draw(), exactly like demonRealm — drawTexture is called per tile and has no
@@ -23,6 +32,7 @@ const Renderer = (function () {
   // from state.geyserPhase, since drawTexture gets no route to `state`.
   let geyserStage = 'calm';
   let fogNow = null; // per-frame ref to state.fog ("x,y" -> turns left), set in draw()
+  let springsNow = null; // per-frame ref to state.springs — which PIECE each launch pad throws him as
   let inkNow = null; // per-frame ref to state.ink — a merfolk's cloud: blocks the look, never burns
   let seeThroughHaze = false; // Premonition / Sixth Sense: the king sees CLEAR through haze — draw no veil
 
@@ -335,9 +345,12 @@ const Renderer = (function () {
       // piece needs its flag added here as well as at the call site.
       boulderGun: Boolean(enemy.boulder),
       jetGun: Boolean(enemy.jet),
+      lavaGun: Boolean(enemy.lava),
       wisp: Boolean(enemy.wisp),
       summoned: Boolean(enemy.summoned),
       elemental: enemy.elemental || null,
+      undeadType: enemy.undeadType || null,
+      bat: Boolean(enemy.bat),
       bossPerk: enemy.bossPerk || null,
       hp: enemy.hp,
       maxHp: enemy.maxHp,
@@ -392,9 +405,12 @@ const Renderer = (function () {
       render.role = typeof enemyRole === 'function' ? enemyRole(enemy) : 'normal';
       render.summoned = Boolean(enemy.summoned); // conjured — drawn violet, like an ally is drawn green
       render.boulderGun = Boolean(enemy.boulder);
-      render.jetGun = Boolean(enemy.jet); // a water jet: sea-green, never fire-red // a rock-throwing gun: brown stone, not steel
+      render.jetGun = Boolean(enemy.jet);
+      render.lavaGun = Boolean(enemy.lava); // a lava spitter: molten orange, not charred red // a water jet: sea-green, never fire-red // a rock-throwing gun: brown stone, not steel
       render.wisp = Boolean(enemy.wisp);
-      render.elemental = enemy.elemental || null; // its element's livery (piece art, new paint) // a mote of current: piece silhouette, electric livery + glow
+      render.elemental = enemy.elemental || null; // its element's livery (piece art, new paint)
+      render.undeadType = enemy.undeadType || null; // zombie / skeleton / vampire — each its own colour
+      render.bat = Boolean(enemy.bat); // a vampire currently scattered into bats // a mote of current: piece silhouette, electric livery + glow
       render.boss = Boolean(enemy.boss);
       render.rush = Boolean(enemy.rush);
       render.finalBoss = Boolean(enemy.finalBoss); // the last guardian: its own black-and-fire livery // a finale rush-boss (drawn ashen, not royal)
@@ -622,7 +638,13 @@ const Renderer = (function () {
     // The king's glyph flips to ink on light class colours (e.g. lime) so it stays legible.
     let glyph = isPlayer ? contrastInk(fill) : '#17171d';
     if (role === 'turret') {
-      if (o.jet) {
+      if (o.lavaGun) {
+        // A LAVA SPITTER: molten orange in a black casing — hotter and more liquid-looking than the
+        // fire turret's charred red, because what it leaves behind is ground, not a burn.
+        fill = '#2a0f04';
+        stroke = '#ff8a1a';
+        glyph = '#ffe0b0';
+      } else if (o.jet) {
         // A WATER JET: pale sea-green, wet-looking, and clearly not a fire gun — on a floor with no
         // fire on it at all, a red turret would be a lie about what is about to happen.
         fill = '#0b2f38';
@@ -708,6 +730,25 @@ const Renderer = (function () {
     };
     if (o.elemental && ELEM_PAINT[o.elemental] && role === 'normal') {
       [fill, stroke, glyph] = ELEM_PAINT[o.elemental];
+    }
+    // THE UNDEAD, likewise — piece art, new paint. Every native of that realm was drawn in the same
+    // bone-white as an ordinary foe, so a zombie that soaks three blows, a skeleton that gets back
+    // up and a vampire that bursts into bats were visually identical. That is the worst case for a
+    // realm whose whole idea is "nothing stays down": he cannot plan around a rule he cannot see.
+    //
+    // Each is the colour of what it is made of — rotten flesh, dry bone, old blood — and all three
+    // are DARKER than a living piece, so the realm reads as a drained one at a glance.
+    const UNDEAD_PAINT = {
+      zombie: ['#243018', '#7f9e4a', '#d4e6a8'],   // grave-mould green, bloated and sickly
+      skeleton: ['#2b2a26', '#ded8c4', '#f5f1e4'], // dry bone, the palest thing in a black realm
+      vampire: ['#2a0713', '#c0304f', '#ffd0da'],  // old blood — the only red down there
+    };
+    if (o.undeadType && UNDEAD_PAINT[o.undeadType] && role === 'normal') {
+      [fill, stroke, glyph] = UNDEAD_PAINT[o.undeadType];
+      // A VAMPIRE IN BAT FORM is a cloud, not a body: washed out and paler, so "it is currently a
+      // bat" — the state in which it cannot be killed and drifts at random — is legible without
+      // reading the log. It is the same creature, so it keeps the same crimson family.
+      if (o.bat) { fill = '#1b1020'; stroke = '#9a7fb0'; glyph = '#e6dcf2'; }
     }
 
     // A FERZ (what the Hexer's curse warps a foe into) is a harmless, dazed little blob — drawn
@@ -1733,7 +1774,116 @@ const Renderer = (function () {
   // lies dark and barred until the Orb of Victory is taken, then blazes open.
   // A DEAD portal: the ring still stands, the light in it does not. Drawn cold and static — no turn,
   // no glow — so a room of them reads at a glance as a list of places already spent.
-  function drawCollapsedPortal(tileX, tileY) {
+  // '#rrggbb' -> 'rgba(r, g, b, a)'. Needed because the portal colours live in constants as hex
+  // (they are shared with the orb shelf and the log), and canvas gradients need alpha.
+  function hexToRgba(hex, alpha) {
+    const h = String(hex).replace('#', '');
+    const n = Number.parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  // Blend two hex colours; `t` is how much of the SECOND to take.
+  //
+  // RETURNS HEX, deliberately — it used to return `rgb(...)`, and every call site feeds its result
+  // straight into hexToRgba, which parses hex. That produced `rgba(NaN, NaN, NaN, a)`; canvas
+  // SILENTLY IGNORES an unparsable strokeStyle rather than throwing, so the portals' swirling arcs
+  // — the whole visible body of a portal — simply never painted and every live door rendered as a
+  // black disc. Keeping both helpers in the same colour space is what stops that recurring.
+  function mixHex(a, b, t) {
+    const parse = (hex) => {
+      const h = String(hex).replace('#', '');
+      const n = Number.parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    const [r1, g1, b1] = parse(a);
+    const [r2, g2, b2] = parse(b);
+    const m = (x, y) => Math.round(x + (y - x) * t);
+    const hex2 = (v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0');
+    return `#${hex2(m(r1, r2))}${hex2(m(g1, g2))}${hex2(m(b1, b2))}`;
+  }
+
+  // THE WAY HOME. Every other door is a swirling hole that takes you somewhere worse; this one is an
+  // ARCH — a standing gateway of light with a threshold under it, rays streaming up, and a crown of
+  // stars. It is drawn as architecture rather than as a vortex because it is the only gate that ENDS
+  // things: it should look like a door out of the world, not another way further into it.
+  function drawHomeGate(tileX, tileY) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const s = tileSize;
+    const pulse = 0.5 + 0.5 * Math.sin(clock * 1.6);
+    ctx.save();
+    // A broad halo — far wider than a portal's, so it reads as the brightest thing in the room.
+    const halo = ctx.createRadialGradient(cx, cy, s * 0.05, cx, cy, s * 0.85);
+    halo.addColorStop(0, `rgba(255, 244, 200, ${(0.55 + 0.2 * pulse).toFixed(3)})`);
+    halo.addColorStop(0.45, `rgba(251, 191, 36, ${(0.30 + 0.12 * pulse).toFixed(3)})`);
+    halo.addColorStop(1, 'rgba(251, 191, 36, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, s * 0.85, 0, Math.PI * 2);
+    ctx.fill();
+    // RAYS climbing out of it, slowly turning — the light is going somewhere, unlike a portal's
+    // swirl, which only ever goes round.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * Math.PI * 2 + clock * 0.25;
+      const len = s * (0.42 + 0.12 * Math.sin(clock * 2 + i));
+      ctx.strokeStyle = `rgba(255, 236, 170, ${(0.16 + 0.10 * pulse).toFixed(3)})`;
+      ctx.lineWidth = Math.max(1, s * 0.035);
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * s * 0.16, cy + Math.sin(a) * s * 0.16);
+      ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // THE ARCH itself: two piers and a round head, in pale gold.
+    const w = s * 0.42;
+    const h = s * 0.62;
+    ctx.strokeStyle = '#f8e39b';
+    ctx.lineWidth = Math.max(2, s * 0.075);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2, cy + h / 2);
+    ctx.lineTo(cx - w / 2, cy - h * 0.1);
+    ctx.arc(cx, cy - h * 0.1, w / 2, Math.PI, 0);
+    ctx.lineTo(cx + w / 2, cy + h / 2);
+    ctx.stroke();
+    // The light standing IN the archway — brightest at the threshold.
+    const fill = ctx.createLinearGradient(cx, cy - h * 0.6, cx, cy + h / 2);
+    fill.addColorStop(0, 'rgba(255, 252, 235, 0.30)');
+    fill.addColorStop(1, `rgba(255, 236, 170, ${(0.55 + 0.2 * pulse).toFixed(3)})`);
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2 + 1, cy + h / 2);
+    ctx.lineTo(cx - w / 2 + 1, cy - h * 0.1);
+    ctx.arc(cx, cy - h * 0.1, w / 2 - 1, Math.PI, 0);
+    ctx.lineTo(cx + w / 2 - 1, cy + h / 2);
+    ctx.closePath();
+    ctx.fill();
+    // The THRESHOLD — a bright step at its foot, so it reads as something you walk through rather
+    // than something you fall into.
+    ctx.strokeStyle = `rgba(255, 250, 220, ${(0.7 + 0.3 * pulse).toFixed(3)})`;
+    ctx.lineWidth = Math.max(2, s * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.62, cy + h / 2);
+    ctx.lineTo(cx + w * 0.62, cy + h / 2);
+    ctx.stroke();
+    // A CROWN of three small stars over the keystone — the flourish that says "this one is special"
+    // without another colour.
+    ctx.fillStyle = `rgba(255, 250, 225, ${(0.75 + 0.25 * pulse).toFixed(3)})`;
+    for (let i = 0; i < 3; i += 1) {
+      const sx = cx + (i - 1) * s * 0.15;
+      const sy = cy - h * 0.62 - (i === 1 ? s * 0.05 : 0);
+      ctx.beginPath();
+      ctx.arc(sx, sy, s * (i === 1 ? 0.035 : 0.025), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawCollapsedPortal(tileX, tileY, realmColor) {
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
     const r = tileSize * 0.34;
@@ -1743,8 +1893,35 @@ const Renderer = (function () {
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
-    // A broken ring: arcs with gaps, so it reads as fallen rather than merely unlit.
-    ctx.strokeStyle = '#4b4453';
+    // A DEAD PORTAL KEEPS ITS COLOUR, banked down to an ember. Faint embers guttering inside the
+    // broken ring, and a whisper of its light on the stones — enough that he can tell WHICH door is
+    // spent at a glance, rather than seeing a row of identical grey holes and having to remember.
+    // "Where I have been" should be something he can look at.
+    if (realmColor) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const ember = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 1.15);
+      ember.addColorStop(0, hexToRgba(realmColor, 0.30));
+      ember.addColorStop(0.6, hexToRgba(realmColor, 0.10));
+      ember.addColorStop(1, hexToRgba(realmColor, 0));
+      ctx.fillStyle = ember;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+      // Three cinders drifting in the dark, fixed per tile so they never crawl.
+      ctx.fillStyle = hexToRgba(realmColor, 0.5);
+      for (let i = 0; i < 3; i += 1) {
+        const a = tileHash(tileX * 3 + i, tileY * 5) * Math.PI * 2;
+        const d = r * (0.2 + 0.45 * tileHash(tileX, tileY + i));
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, tileSize * 0.028, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    // A broken ring: arcs with gaps, so it reads as fallen rather than merely unlit. Tinted toward
+    // the realm's colour rather than neutral grey — dead, but recognisably ITS dead.
+    ctx.strokeStyle = realmColor ? mixHex(realmColor, '#4b4453', 0.65) : '#4b4453';
     ctx.lineWidth = Math.max(1.5, tileSize * 0.07);
     ctx.lineCap = 'butt';
     for (const [from, to] of [[0.15, 1.25], [1.6, 2.7], [3.2, 4.4], [4.9, 5.8]]) {
@@ -1764,7 +1941,10 @@ const Renderer = (function () {
     ctx.restore();
   }
 
-  function drawPortal(tileX, tileY, faded, locked) {
+  // `tint` (optional) is the REALM's own colour — see PORTAL_REALMS. A row of identical violet rings
+  // tells him nothing about where any of them go; giving each door its own light makes the rank
+  // readable at a glance. Defaults to the arcane violet every other portal in the game uses.
+  function drawPortal(tileX, tileY, faded, locked, tint) {
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
     const s = tileSize;
@@ -1776,9 +1956,11 @@ const Renderer = (function () {
     if (!locked && !faded) {
       const pulse = 0.5 + 0.5 * Math.sin(clock * 3);
       const grad = ctx.createRadialGradient(cx, cy, s * 0.05, cx, cy, s * 0.5);
-      grad.addColorStop(0, `rgba(196, 132, 252, ${0.55 * (0.6 + 0.4 * pulse)})`);
-      grad.addColorStop(0.6, `rgba(129, 60, 217, ${0.28 * (0.6 + 0.4 * pulse)})`);
-      grad.addColorStop(1, 'rgba(129, 60, 217, 0)');
+      const hot = tint || '#c484fc';
+      const deep = tint ? mixHex(tint, '#000000', 0.35) : '#813cd9';
+      grad.addColorStop(0, hexToRgba(hot, 0.55 * (0.6 + 0.4 * pulse)));
+      grad.addColorStop(0.6, hexToRgba(deep, 0.28 * (0.6 + 0.4 * pulse)));
+      grad.addColorStop(1, hexToRgba(deep, 0));
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(cx, cy, s * 0.5, 0, Math.PI * 2);
@@ -1795,7 +1977,8 @@ const Renderer = (function () {
     for (let i = 0; i < 3; i += 1) {
       const r = s * (0.14 + i * 0.08);
       const a0 = spin + (i * Math.PI * 0.7);
-      ctx.strokeStyle = `rgba(${168 + i * 20}, ${85 + i * 30}, ${247}, ${open})`;
+      // Each arc a shade brighter than the last, around whatever colour this door burns.
+      ctx.strokeStyle = hexToRgba(mixHex(tint || '#a855f7', '#ffffff', i * 0.18), open);
       ctx.beginPath();
       ctx.arc(cx, cy, r, a0, a0 + Math.PI * 1.3);
       ctx.stroke();
@@ -2246,6 +2429,40 @@ const Renderer = (function () {
     const seed = st.seed || 0;
     ctx.save();
     ctx.globalAlpha = a;
+    // A FELLED MUSHROOM leaves torn pale FLESH, not sticks and leaves: wedge-shaped cap scraps and a
+    // scatter of spores. Same for CORAL — broken pink stubs. Each is what that thing is made of; a
+    // drift of oak leaves behind either was the same mistake the iron gate used to make.
+    if (st.kind === 'mushroom' || st.kind === 'coral') {
+      const shroom = st.kind === 'mushroom';
+      const meat = shroom ? '#cdb6d8' : '#c96f8d';
+      const pale = shroom ? '#efe6f3' : '#ffd8e2';
+      for (let i = 0; i < 6; i += 1) {
+        const a0 = tileHash(seed + i, st.y * 3) * Math.PI * 2;
+        const d = tileSize * (0.08 + 0.28 * tileHash(seed + i * 3, st.x + i));
+        const cx = px + tileSize / 2 + Math.cos(a0) * d;
+        const cy = py + tileSize * 0.62 + Math.sin(a0) * d * 0.5;
+        const w = tileSize * (0.06 + 0.07 * tileHash(seed + i, st.x - i));
+        ctx.fillStyle = i % 2 ? meat : pale;
+        // A torn WEDGE rather than a stick — chunks ripped out of something soft.
+        ctx.beginPath();
+        ctx.moveTo(cx - w, cy);
+        ctx.lineTo(cx, cy - w * 0.9);
+        ctx.lineTo(cx + w, cy + w * 0.2);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // Spores / grit settling around the wreck.
+      ctx.fillStyle = shroom ? 'rgba(240, 232, 248, 0.6)' : 'rgba(255, 216, 226, 0.55)';
+      for (let i = 0; i < 5; i += 1) {
+        const sx = px + tileSize * (0.15 + 0.7 * tileHash(seed + i * 7, st.y + i));
+        const sy = py + tileSize * (0.45 + 0.45 * tileHash(seed + i, st.x * 2 + i));
+        ctx.beginPath();
+        ctx.arc(sx, sy, tileSize * 0.022, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      return;
+    }
     // THE WRECK OF A GATE: snapped bar-ends and scattered rivets. Iron does not shed leaves, and a
     // drift of greenery behind a felled iron gate was the tell that this drew one thing for both.
     if (st.iron) {
@@ -2479,6 +2696,10 @@ const Renderer = (function () {
       case 'metalgateopen':
         return isDark ? '#3f434b' : '#565b66'; // gunmetal plate
       case 'wall':
+        // THE ROOM AT THE END OF THE WORLD has no walls — what surrounds it is SPACE. Near-black,
+        // faintly blue, so the marble floor appears to float in it rather than to be walled in.
+        // (drawTexture scatters the stars over the top.)
+        if (portalRoomNow) return isDark ? '#05040d' : '#080714';
         // In the undead realm even the masonry is drained — near-black basalt, barely lighter than
         // the ground it stands on, so the whole floor reads as one cold dark mass.
         if (undeadRealm) return isDark ? '#2c2c33' : '#3b3b44';
@@ -2495,6 +2716,16 @@ const Renderer = (function () {
         return isDark ? '#33343a' : '#43444b';
       case 'pit':
         return isDark ? '#0b0b12' : '#15151d'; // a dark void
+      case 'spring':
+        // A launch pad: pale metal against the dark sky-floor, so it reads as something BUILT on a
+        // level where everything else is absence.
+        return isDark ? '#3c4658' : '#54607a';
+      case 'void':
+        // OPEN SKY, not a hole. A pit is drawn as blackness with a rim, because it has a bottom and
+        // walls; this has neither. Pure unlit black with no rim at all — so a player reads "there is
+        // nothing there" rather than "there is a hole there", which matters because his Pathfinder
+        // answer to a hole does not work on it.
+        return '#000000';
       case 'ice':
         // The slab is drawn as a translucent inset CUBE by drawTexture, so the tile's BASE is the
         // native floor — it shows around the cube's edges, rather than a pane of ice filling the
@@ -2532,6 +2763,10 @@ const Renderer = (function () {
         // matching devilgrass's living/withered split.
         if (demonRealm) return isDark ? '#3a2b22' : '#5a453a';
         return isDark ? '#23351f' : '#3a5233';
+      case 'everburn':
+        // Scorched black earth around a trunk that never stops burning — darker than the fire floor
+        // around it, so a grove reads as a band of ash rather than more lava.
+        return isDark ? '#1e1008' : '#2e1a0e';
       case 'mushroom':
         // Damp dark loam — the ground a cap comes up out of. Warmer and browner than the earth
         // floor around it, so a thicket reads as a patch of different ground at a distance.
@@ -2559,6 +2794,10 @@ const Renderer = (function () {
         // boulder + normal both sit on ground (the boulder rock is drawn over it). In the DEMON
         // REALM (floor 5+) that ground is dark RED MARBLE instead of the upper floors' warm sepia —
         // and since a pit lays this same floor before sinking its shaft, pit rims turn to marble too.
+        // WHITE AND GREY MARBLE, checked — the floor of somewhere far too grand for the dungeon it
+        // is attached to. Deliberately the LIGHTEST ground in the game: everywhere else he has been
+        // is dim and underground, so arriving somewhere bright and polished is the whole arrival.
+        if (portalRoomNow) return isDark ? '#8e8e9c' : '#e9e9f2';
         {
           const g = nativeGround(); // ashen hellfloor / undead ash / workshop plate / this element's ground
           if (g) return isDark ? g.dark : g.light;
@@ -2577,6 +2816,57 @@ const Renderer = (function () {
   // A light dusting of per-terrain detail painted over the flat base color.
   function drawTexture(type, px, py, isDark, x, y) {
     ctx.save();
+    // THE ROOM AT THE END OF THE WORLD gets its own two textures and skips the dungeon's entirely —
+    // no brickwork, no leaf litter, no mortar. A WALL out here is deep space; the FLOOR is polished
+    // marble. Handled before the switch because it replaces those cases rather than adding to them.
+    if (portalRoomNow && (type === 'wall' || type === 'normal')) {
+      if (type === 'wall') {
+        // STARFIELD. Fixed per tile so it never crawls, but each star breathes on its own phase —
+        // the sky should be alive without being busy.
+        for (let i = 0; i < 7; i += 1) {
+          const sx = px + tileSize * (0.08 + 0.84 * tileHash(x * 7 + i, y * 3 + 1));
+          const sy = py + tileSize * (0.08 + 0.84 * tileHash(x * 3 + 2, y * 7 + i));
+          const tw = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(clock * 1.4 + tileHash(x + i, y - i) * 6.28));
+          const r = tileSize * (0.012 + 0.022 * tileHash(x - i, y + i));
+          ctx.fillStyle = `rgba(228, 232, 255, ${(0.35 * tw).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(sx, sy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // One tile in five carries a faint nebula bloom, so the void has depth rather than being
+        // black paper with dots on it.
+        if (tileHash(x * 11, y * 13) > 0.8) {
+          const nb = ctx.createRadialGradient(px + tileSize * 0.5, py + tileSize * 0.5, 0,
+            px + tileSize * 0.5, py + tileSize * 0.5, tileSize * 0.6);
+          const hue = tileHash(x, y) > 0.5 ? '129, 90, 200' : '60, 90, 170';
+          nb.addColorStop(0, `rgba(${hue}, 0.16)`);
+          nb.addColorStop(1, `rgba(${hue}, 0)`);
+          ctx.fillStyle = nb;
+          ctx.fillRect(px, py, tileSize, tileSize);
+        }
+      } else {
+        // MARBLE VEINING — a couple of pale grey threads wandering across the slab, and a soft
+        // sheen. Subtle: the floor should read as expensive, not as cracked.
+        ctx.strokeStyle = 'rgba(120, 122, 140, 0.28)';
+        ctx.lineWidth = Math.max(1, tileSize * 0.02);
+        for (let i = 0; i < 2; i += 1) {
+          const a = tileHash(x * 5 + i, y * 9);
+          const b = tileHash(x * 9, y * 5 + i);
+          ctx.beginPath();
+          ctx.moveTo(px, py + tileSize * (0.15 + 0.7 * a));
+          ctx.quadraticCurveTo(px + tileSize * 0.5, py + tileSize * (0.1 + 0.8 * b),
+            px + tileSize, py + tileSize * (0.15 + 0.7 * ((a + b) % 1)));
+          ctx.stroke();
+        }
+        const sheen = ctx.createLinearGradient(px, py, px + tileSize, py + tileSize);
+        sheen.addColorStop(0, 'rgba(255, 255, 255, 0.10)');
+        sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = sheen;
+        ctx.fillRect(px, py, tileSize, tileSize);
+      }
+      ctx.restore();
+      return;
+    }
     switch (type) {
       case 'lava': {
         // A slow molten BREATH: the whole tile swells with heat and fades back. Each tile is given
@@ -2605,7 +2895,7 @@ const Renderer = (function () {
         // realm is about reading a circuit, and a dead-looking wire would hide the one fact that
         // matters. Drawn along whichever axis its neighbours run, so runs join up rather than
         // reading as a row of unconnected dashes.
-        const horiz = terrainAt(state, x - 1, y) === 'wire' || terrainAt(state, x + 1, y) === 'wire';
+        const horiz = terrainAt(stateNow, x - 1, y) === 'wire' || terrainAt(stateNow, x + 1, y) === 'wire';
         const live = 0.5 + 0.5 * Math.sin(clock * 2.2 + (x + y) * 0.4);
         ctx.strokeStyle = 'rgba(12, 14, 18, 0.9)';
         ctx.lineWidth = Math.max(2, tileSize * 0.16);
@@ -2619,16 +2909,49 @@ const Renderer = (function () {
         break;
       }
       case 'switch': {
-        // A pressure plate: a recessed square with a bevel, so it reads as something you STAND on
-        // rather than something you walk round.
+        // A LEVER IN A HOUSING — and it visibly THROWS. The old art was a fixed upright bar, so the
+        // one object in the room the player had just struck was the only one that did not respond;
+        // he had to infer he had done anything from what happened elsewhere on screen. The handle
+        // now leans left when off and right when on, and lights up when on.
+        const on = Boolean(switchesNow && switchesNow[`${x},${y}`] === 'on');
         const inset = tileSize * 0.18;
+        const cx = px + tileSize / 2;
+        const cy = py + tileSize / 2;
         ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
         ctx.fillRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
-        ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)';
+        ctx.strokeStyle = on ? 'rgba(250, 204, 21, 0.95)' : 'rgba(160, 140, 60, 0.7)';
         ctx.lineWidth = Math.max(1, tileSize * 0.035);
         ctx.strokeRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
-        ctx.fillStyle = 'rgba(250, 204, 21, 0.5)';
-        ctx.fillRect(px + tileSize * 0.42, py + tileSize * 0.3, tileSize * 0.16, tileSize * 0.4);
+        // The pivot, and the handle leaning to one side or the other.
+        const lean = on ? 1 : -1;
+        ctx.strokeStyle = on ? '#fde68a' : '#8a7c4a';
+        ctx.lineWidth = Math.max(2, tileSize * 0.075);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy + tileSize * 0.16);
+        ctx.lineTo(cx + lean * tileSize * 0.17, cy - tileSize * 0.17);
+        ctx.stroke();
+        ctx.fillStyle = on ? '#fff7cc' : '#6f6540';
+        ctx.beginPath();
+        ctx.arc(cx + lean * tileSize * 0.17, cy - tileSize * 0.17, tileSize * 0.055, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#3a3320';
+        ctx.beginPath();
+        ctx.arc(cx, cy + tileSize * 0.16, tileSize * 0.045, 0, Math.PI * 2);
+        ctx.fill();
+        // A live switch throws a little light, so "this one is ON" carries at a distance.
+        if (on) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const gl = ctx.createRadialGradient(cx, cy, 0, cx, cy, tileSize * 0.5);
+          gl.addColorStop(0, 'rgba(250, 204, 21, 0.28)');
+          gl.addColorStop(1, 'rgba(250, 204, 21, 0)');
+          ctx.fillStyle = gl;
+          ctx.beginPath();
+          ctx.arc(cx, cy, tileSize * 0.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
         break;
       }
       case 'generator': {
@@ -2636,7 +2959,7 @@ const Renderer = (function () {
         // IS the tell, exactly as the geysers' plume is.
         const cx = px + tileSize / 2;
         const cy = py + tileSize / 2;
-        const imminent = typeof generatorImminent === 'function' && generatorImminent(state);
+        const imminent = typeof generatorImminent === 'function' && generatorImminent(stateNow);
         const hum = 0.5 + 0.5 * Math.sin(clock * (imminent ? 6 : 2));
         ctx.fillStyle = '#28323c';
         ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.28, tileSize * 0.6, tileSize * 0.5);
@@ -2942,6 +3265,7 @@ const Renderer = (function () {
         }
         break;
       }
+      case 'everburn':
       case 'tree': {
         // A trunk with a canopy over it. The canopy SHRINKS as the tree is chopped, so its wounds
         // are readable at a glance without a health bar; once lit by spellfire it burns orange and
@@ -2949,7 +3273,9 @@ const Renderer = (function () {
         const cx = px + tileSize / 2;
         const groundY = py + tileSize * 0.82;
         const hp = treeHp ? (treeHp[`${x},${y}`] ?? 3) : 3;
-        const burning = burnTrees ? Boolean(burnTrees[`${x},${y}`]) : false;
+        // An EVERBURNING tree is alight by its very type — it is never in `burningTrees` (that map is
+        // a countdown to being consumed, and this one is never consumed), so ask the terrain instead.
+        const burning = type === 'everburn' || (burnTrees ? Boolean(burnTrees[`${x},${y}`]) : false);
         const health = Math.max(0.34, Math.min(1, hp / 3));
         ctx.fillStyle = 'rgba(0,0,0,0.26)'; // the shadow it throws
         ctx.beginPath();
@@ -3366,6 +3692,28 @@ const Renderer = (function () {
         }
         break;
       }
+      case 'spring': {
+        // The pad wears the GLYPH of the piece it throws him as — the whole mechanic is unreadable
+        // otherwise, since which shape is on which pad is exactly what he has to plan his route
+        // around. A coiled ring underneath says "launcher"; the letter says which launcher.
+        const cx = px + tileSize / 2;
+        const cy = py + tileSize / 2;
+        ctx.strokeStyle = 'rgba(180, 200, 235, 0.8)';
+        ctx.lineWidth = Math.max(1.5, tileSize * 0.05);
+        for (const r of [0.34, 0.24]) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, tileSize * r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        const kind = (springsNow && springsNow[`${x},${y}`]) || 'rook';
+        const glyphFor = { rook: '♜', bishop: '♝', knight: '♞', queen: '♛' };
+        ctx.fillStyle = '#eaf2ff';
+        ctx.font = `${Math.round(tileSize * 0.44)}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(glyphFor[kind] || '♜', cx, cy + tileSize * 0.02);
+        break;
+      }
       case 'coral': {
         // BRANCHING FANS rather than courses of brick — a reef is grown, not built, and the shape
         // has to say so. Splits and thins as it takes wounds, exactly as a canopy does.
@@ -3439,6 +3787,38 @@ const Renderer = (function () {
         ctx.strokeStyle = 'rgba(40, 28, 48, 0.55)';
         ctx.lineWidth = Math.max(1, tileSize * 0.03);
         ctx.stroke();
+        // WOUNDS ARE BITES TAKEN OUT OF IT, not just a smaller cap. A tree shows its damage as
+        // hacked-away canopy and chips on the ground; a mushroom that merely shrank read as "further
+        // away" rather than "hurt", so there was no way to tell a fresh cap from one blow off dying.
+        // Each missing wound gouges a notch out of the rim and spills pale flesh below it.
+        const wounds = 3 - Math.max(1, Math.min(3, hp));
+        for (let i = 0; i < wounds; i += 1) {
+          const side = i % 2 ? 1 : -1;
+          const gx = cx + side * capW * (0.35 + 0.3 * tileHash(x + i, y * 3 + i));
+          const gy = capY - capH * 0.1;
+          const gr = tileSize * (0.07 + 0.03 * tileHash(x * 2 + i, y + i));
+          // Punch the notch in the GROUND colour so it reads as absence, not decoration.
+          ctx.fillStyle = terrainColor('mushroom', isDark);
+          ctx.beginPath();
+          ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+          ctx.fill();
+          // Torn pale flesh around the bite.
+          ctx.strokeStyle = 'rgba(238, 228, 245, 0.8)';
+          ctx.lineWidth = Math.max(1, tileSize * 0.022);
+          ctx.beginPath();
+          ctx.arc(gx, gy, gr, Math.PI * 0.15, Math.PI * 0.85);
+          ctx.stroke();
+          // ...and a scrap of it fallen at the stalk's foot.
+          ctx.fillStyle = 'rgba(205, 182, 216, 0.85)';
+          const fx = cx + side * tileSize * (0.16 + 0.1 * tileHash(x + i * 5, y - i));
+          const fy = baseY + tileSize * 0.03;
+          ctx.beginPath();
+          ctx.moveTo(fx - tileSize * 0.05, fy);
+          ctx.lineTo(fx, fy - tileSize * 0.045);
+          ctx.lineTo(fx + tileSize * 0.05, fy + tileSize * 0.01);
+          ctx.closePath();
+          ctx.fill();
+        }
         // A couple of pale speckles on the cap, fixed per tile so they never crawl.
         ctx.fillStyle = 'rgba(245, 240, 250, 0.75)';
         for (let i = 0; i < 3; i += 1) {
@@ -3861,8 +4241,39 @@ const Renderer = (function () {
     const cells = [
       [midc - 2, midr], [midc + 2, midr],         // New Game / Continue, flanking the throne
       [midc - 2, midr + 2], [midc + 2, midr + 2], // Trophies / Options, the rank below
+      // A FIFTH cell, below the king, used only by the debug tile (CONFIG.debugMenu). Deliberately
+      // off the tidy 2x2 and directly under the throne: it should look like the intruder it is, and
+      // it must never sit where a shipping option sits.
+      [midc, midr + 3],
     ];
     return { W, H, tile, cols, rows, midc, midr, cells };
+  }
+
+  // A violet PORTAL RING — the debug warp tile (CONFIG.debugMenu only). Deliberately the same arcane
+  // violet the portals themselves use, and deliberately not gold: it should read as a hole punched
+  // in the menu rather than as one of the game's own doors.
+  function drawDebugIcon(col, row, tile) {
+    const cx = col * tile + tile / 2;
+    const cy = row * tile + tile / 2;
+    const r = tile * 0.28;
+    ctx.save();
+    const glow = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.5);
+    glow.addColorStop(0, 'rgba(168, 85, 247, 0.55)');
+    glow.addColorStop(1, 'rgba(168, 85, 247, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#c084fc';
+    ctx.lineWidth = Math.max(2, tile * 0.06);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.72, r, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#241733';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.5, r * 0.74, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // A gold goblet — the Trophies tile.
@@ -3937,6 +4348,7 @@ const Renderer = (function () {
     else if (opt.icon === 'key') drawKey(col, row, false);
     else if (opt.icon === 'trophy') drawTrophyIcon(col, row, tile);
     else if (opt.icon === 'gear') drawGearIcon(col, row, tile);
+    else if (opt.icon === 'debug') drawDebugIcon(col, row, tile);
     // The label, carved under the tile.
     ctx.globalAlpha = opt.enabled ? 1 : 0.5;
     ctx.textAlign = 'center';
@@ -4580,6 +4992,9 @@ const Renderer = (function () {
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    stateNow = state;
+    switchesNow = state.switches || null;
+    portalRoomNow = Boolean(state.portalRoom);
     undeadRealm = (state.realm === 'undead');
     workshopRealm = (state.realm === 'workshop');
     // THE ELEMENTAL REALM has no single look: each of its four floors is a different element, so the
@@ -4596,6 +5011,7 @@ const Renderer = (function () {
     geyserStage = (typeof geyserErupting === 'function' && geyserErupting(state)) ? 'erupting'
       : (typeof geyserImminent === 'function' && geyserImminent(state)) ? 'imminent'
         : 'calm';
+    springsNow = state.springs || null;
     inkNow = state.ink || null; // merfolk ink: same job as fog to the LOOK, but it does not scald
     fogNow = state.fog || null; // drifting fog banks (spellfire steam, lava/ice steam, a Steamweaver)
     // Premonition (soft-sight) and Sixth Sense (x-ray) both see CLEAR through HAZE — grass, fog and
@@ -4645,7 +5061,13 @@ const Renderer = (function () {
     // A move that STRIKES rather than steps — capturing a foe/turret, or chopping a tree/gate. A
     // boulder SHOVE is deliberately NOT here: it is a push, not an attack. Its border reads WHITE so
     // the player can tell "I will hit something" from "I will step onto empty ground" (green).
-    const attackKeys = new Set(playerMoves.filter((m) => m.capture || m.chop).map((m) => `${m.x},${m.y}`));
+    // hitSwitch and openDoor belong here too: both are ACTIONS against a tile he cannot stand on,
+    // exactly like a chop. Without them a switch and a metal door were drawn as ordinary green
+    // "step here" ground — which is the one thing they are not. He cannot step there at all, and
+    // what the move does is nothing like moving.
+    const attackKeys = new Set(playerMoves
+      .filter((m) => m.capture || m.chop || m.hitSwitch || m.openDoor)
+      .map((m) => `${m.x},${m.y}`));
     // A WARDED target (a Guardian's retinue, `parry`) turns the first blow aside — striking it costs a
     // turn and does not kill. Its border reads STEEL rather than white, matching the shield the ward is
     // drawn with, so "this one soaks a hit" is legible BEFORE you commit the swing.
@@ -4655,7 +5077,7 @@ const Renderer = (function () {
     // by wading or phasing). Its border reads YELLOW: safe from foes, but the floor itself will hurt.
     const harmfulKeys = new Set();
     for (const m of playerMoves) {
-      if (m.capture || m.chop || m.push) continue; // he does not END his move on these
+      if (m.capture || m.chop || m.push || m.hitSwitch || m.openDoor) continue; // he does not END his move on these
       const t = terrainAt(state, m.x, m.y);
       const ablaze = t === 'tree' && state.burningTrees && state.burningTrees[`${m.x},${m.y}`];
       // STEAM scalds anything standing in it at the end of the turn, so a tile under a bank is exactly
@@ -4959,25 +5381,17 @@ const Renderer = (function () {
     // and cannot go back to. The way home (`accept`) is drawn gold rather than violet, because it is
     // the one door on the board that ends things rather than opening them.
     for (const gate of (state.portalGates || [])) {
+      // Every door burns its realm's own colour — dead ones included, banked to an ember. The way
+      // home (`accept`) keeps the gold it has always had: it is the one gate that ends things rather
+      // than opening them, so it should not look like a fifth destination.
+      const tint = gate.realm && typeof portalRealmColor === 'function'
+        ? portalRealmColor(gate.realm) : null;
       if (gate.collapsed) {
-        drawCollapsedPortal(gate.x, gate.y);
+        drawCollapsedPortal(gate.x, gate.y, tint);
         continue;
       }
-      drawPortal(gate.x, gate.y, false, false);
-      if (gate.accept) {
-        const cx = gate.x * tileSize + tileSize / 2;
-        const cy = gate.y * tileSize + tileSize / 2;
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-        const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, tileSize * 0.7);
-        glow.addColorStop(0, `rgba(255, 236, 170, ${(0.30 + 0.12 * Math.sin(clock * 2)).toFixed(3)})`);
-        glow.addColorStop(1, 'rgba(255, 200, 90, 0)');
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(cx, cy, tileSize * 0.7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
+      if (gate.accept) { drawHomeGate(gate.x, gate.y); continue; }
+      drawPortal(gate.x, gate.y, false, false, tint);
     }
 
     // The floor key / Orb of Victory: shown when in sight, or faded once discovered (persists in fog).
@@ -5091,7 +5505,7 @@ const Renderer = (function () {
         ctx.stroke();
         ctx.restore();
       }
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, boulder: enemy.boulderGun, jet: enemy.jetGun, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, boulder: enemy.boulderGun, jet: enemy.jetGun, lavaGun: enemy.lavaGun, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, undeadType: enemy.undeadType, bat: enemy.bat, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
         // A guardian UNMADE — every perk torn off it by the Hexer — wears NO crown at all. That
         // bare head is the tell that there is nothing left of it but the piece.

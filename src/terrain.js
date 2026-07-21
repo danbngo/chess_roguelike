@@ -48,7 +48,7 @@ function blocksSight(type) {
   // absolutely everything — see standableFor.
   // A MUSHROOM is the earth floor's tree: a fat cap on a thick stalk, tall enough to hide what is
   // behind it, and it comes down to the same three blows.
-  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'boulder' || type === 'devilgrass' || type === 'gloom'
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'everburn' || type === 'boulder' || type === 'devilgrass' || type === 'gloom'
     || type === 'door' || type === 'metaldoor' || type === 'crushershut' || type === 'tombstone';
 }
 
@@ -112,7 +112,7 @@ function standableFor(type, opts) {
   if (type === 'metaldoor' || type === 'metalgate' || type === 'crushershut') return false;
   // Solid timber — only Pathfinder walks through it. A MUSHROOM is timber too: same rule, so the
   // Druid threads a fungal thicket exactly as he threads a wood.
-  if (type === 'tree' || type === 'mushroom' || type === 'coral') return Boolean(o.pathfinder);
+  if (type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'everburn') return Boolean(o.pathfinder);
   // STONE: the bedrock of the earth floor, and the ONE terrain with no answer at all. It is what the
   // border ring is made of, brought inside the map — a phaser cannot slip it, a Pathfinder cannot
   // thread it, it cannot be cut, shoved, burned, dug or blasted, and the molefolk who tunnel through
@@ -122,6 +122,12 @@ function standableFor(type, opts) {
   if (type === 'gate') return Boolean(o.phaseWalls); // barred iron — only Phase slips the bars (see-through, though; see blocksSight)
   if (type === 'wall' || type === 'boulder' || type === 'ice') return Boolean(o.phaseWalls); // stone, rock & ice slabs — only a phasing mover
   if (type === 'pit') return Boolean(o.flying || o.pitOk || o.pathfinder); // Pathfinder treads the void; a FLYING mover soars it; a BURROWER walks it as solid ground
+  // THE VOID: open sky, not a hole in the ground. A pit has a bottom and walls, which is why a
+  // Pathfinder can pick his way across one and a burrower can tread it as floor — there is something
+  // there. Here there is nothing at all, so ONLY a flier crosses it. That single exclusion is what
+  // makes the air floor a different puzzle from the earth floor rather than a re-skin of it: the
+  // Druid's answer to a hole stops working the moment the hole becomes a drop.
+  if (type === 'void') return Boolean(o.flying);
   if (type === 'lava') return o.lavaOk !== false; // walkable (it sears) unless a caller forbids it — NEITHER immunity gives a lava pass
   return true; // water & normal are walkable
 }
@@ -157,8 +163,17 @@ function standableAt(state, x, y, opts) {
 // Sunken Reach is that its walls YIELD, where the Deepstone's bedrock never does. The two floors
 // pose opposite questions: on earth you route around what you cannot move; underwater you decide
 // what to spend three turns opening.
+// A GAP in the floor: a pit, or the air floor's VOID. Anything that falls, halts a slide, or stops a
+// leap short treats the two alike — what differs is only WHO can cross (see standableFor: a pit
+// admits a Pathfinder and a burrower, the void admits nobody but a flier). Named for the same reason
+// isTimber and isRock are: a dozen sites carried their own `t === 'pit'` test, and every one of them
+// would have let a king stroll over open sky.
+function isGap(type) {
+  return type === 'pit' || type === 'void';
+}
+
 function isTimber(type) {
-  return type === 'tree' || type === 'mushroom' || type === 'coral';
+  return type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'everburn';
 }
 
 // ROCK that stops a shot and hides what is behind it: masonry, and the earth floor's BEDROCK. Same
@@ -169,7 +184,7 @@ function isRock(type) {
 }
 
 function isSolidBarrier(type) {
-  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'gate';
+  return type === 'wall' || type === 'stone' || type === 'tree' || type === 'mushroom' || type === 'coral' || type === 'everburn' || type === 'gate';
 }
 
 // Slow terrain: a mover wades ONE tile of it per move and must stop there — no sliding clean
@@ -403,7 +418,8 @@ function jumpTargets(state, fromX, fromY, unitAt, isTarget, opts) {
     }
     const terrain = terrainAt(state, x, y);
     if (terrain === 'lava' && !flying) continue; // never land in lava unless FLYING — Pathfinder gets no lava pass
-    if (terrain === 'pit' && !flying && !pathfinder) continue; // a pit swallows all but a Flying/Pathfinder lander
+    // A gap swallows all but a Flying/Pathfinder lander — and the VOID takes even the Pathfinder.
+    if (isGap(terrain) && !flying && !(pathfinder && terrain === 'pit')) continue;
     const unit = unitAt(x, y);
     if (unit && !isTarget(x, y)) {
       continue; // Friendly piece in the way.
@@ -470,7 +486,7 @@ function riderLeapTargets(state, fromX, fromY, steps, unitAt, isTarget, opts) {
       if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) break;
       const terrain = terrainAt(state, x, y);
       if (terrain === 'lava' && !flying) break; // lava halts the ride for all but a Flying mover
-      if (terrain === 'pit' && !flying && !pathfinder) break; // a pit halts it bar Flying / Pathfinder
+      if (isGap(terrain) && !flying && !(pathfinder && terrain === 'pit')) break; // a gap halts the ride
       const unit = unitAt(x, y);
       const capHere = Boolean(unit) && isTarget(x, y);
       if (torchAverse && terrain === 'wall' && hasTorch(state, x, y)) break;
@@ -504,7 +520,7 @@ function leapTargets(state, fromX, fromY, steps, unitAt, isTarget) {
       continue;
     }
     const terrain = terrainAt(state, x, y);
-    if (isSolidBarrier(terrain) || terrain === 'lava' || terrain === 'pit') {
+    if (isSolidBarrier(terrain) || terrain === 'lava' || isGap(terrain)) {
       continue; // can't land on stone/timber/iron, in lava, or in a bottomless pit (a boulder IS landable — a leaper crushes it)
     }
     const unit = unitAt(x, y);

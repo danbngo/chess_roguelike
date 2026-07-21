@@ -169,7 +169,7 @@ function makeElemental(enemy, type) {
   // A STONE ELEMENTAL moves every OTHER turn (the same `slow` flag a zombie carries: a recovery turn
   // after every exertion — see moveEnemy). Something with exactly one answer and no way to be hurt
   // has to give him the time to arrange that answer, or it is not a puzzle, it is a countdown.
-  if (type === 'stonen') enemy.slow = true;
+  if (type === 'stonen' || type === 'steamy') enemy.slow = true;
   // CAVE BATS are born as bats and stay that way. `bat` gives them the existing airborne drift-and-
   // bite behaviour for free; `trueBat` is what stops the undead clock ever settling one into a
   // vampire, which is the ONE thing the user asked to be different about them.
@@ -334,7 +334,185 @@ function resolveElementalBlow(state, enemy, byFire, opts) {
     return false;
   }
 
+  // LAVA ELEMENTAL: the exact inversion of the water one, and the point of putting them on adjacent
+  // floors. Fire does NOTHING to it — not spellfire, not a fire turret — so every trick the drowned
+  // floor just taught him is dead weight here. STEEL is what answers it: an ordinary blow or a leap
+  // kills it outright. The catch is that striking one in melee costs him 1 HP, because he is putting
+  // his hand into it; so the answer is known, cheap to execute, and never free.
+  if (kind === 'lavan') {
+    if (byFire) {
+      state.message = `The lava ${enemy.kind} drinks the flame — fire is no use against it.`;
+      state.lastAction = 'combat';
+      return false;
+    }
+    // A blow lands, and it burns him as it does. Not on a LEAP: he comes down on it from above
+    // rather than reaching into it, which is the one clean way to take one.
+    if (!(opts && opts.crush) && !state.gameOver) {
+      hurtBy(state, 'lava');
+      state.player.hp -= 1;
+      state.player.wasHit = true; state.player.hitThisFloor = true;
+      state.message = `The king strikes the lava ${enemy.kind} apart — and is scorched doing it!`;
+      checkDeath(state);
+    }
+    return null; // steel kills it
+  }
+
+  // FIRE ELEMENTAL: as the lava one, and likewise immune to fire — but it is not a body he can cut,
+  // so a blow costs him the heart and does not put it down. WATER is its answer: knocked (or lured)
+  // into it, it goes up as steam. That keeps the drowned floor's lesson alive one level later, but
+  // demands he carry the water rather than the fire.
+  if (kind === 'fiery') {
+    const wet = ['water', 'deepwater'].includes(terrainAt(state, enemy.x, enemy.y));
+    if (wet) {
+      addFog(state, enemy.x, enemy.y, 2);
+      addSmoke(state, enemy.x, enemy.y);
+      state.message = `The fire ${enemy.kind} hits the water and goes up in a roar of steam!`;
+      return null; // it dies here
+    }
+    if (byFire) {
+      state.message = `The fire ${enemy.kind} feeds on the flame — that only makes it brighter.`;
+      state.lastAction = 'combat';
+      return false;
+    }
+    if (!state.gameOver) {
+      hurtBy(state, 'lava');
+      state.player.hp -= 1;
+      state.player.wasHit = true; state.player.hitThisFloor = true;
+      state.message = `The king's blow passes through the fire ${enemy.kind} and sears him — it must be QUENCHED.`;
+      checkDeath(state);
+    }
+    state.lastAction = 'combat';
+    return false;
+  }
+
+  // ELECTRIC ELEMENTAL: current given a shape. Immune to its own element (so the Workshop's answer
+  // is no answer at all), and when it is struck it EARTHS ITSELF through whatever is touching it —
+  // which, since he had to walk up to it, is him. Steel does put one down; the question is what the
+  // blow costs, and next to a wire or a companion it costs a great deal more than a heart.
+  if (kind === 'electric') {
+    if (opts && opts.electric) {
+      state.message = `The current washes over the electric ${enemy.kind} — it is made of the stuff.`;
+      state.lastAction = 'combat';
+      return false;
+    }
+    if (typeof dischargeElectricity === 'function' && !state.gameOver) {
+      state.message = `The electric ${enemy.kind} comes apart in a sheet of current!`;
+      dischargeElectricity(state, enemy.x, enemy.y, { skipOrigin: true });
+    }
+    return null; // it dies — but the room finds out about it
+  }
+
+  // STEAM ELEMENTAL: a boiling cloud. Immune to current like the electric one, and a blow SCALDS
+  // him rather than landing — there is nothing in there to cut. It is put out the same way any steam
+  // is: it must be denied its heat, so COLD ground (ice, water) is where it finally comes apart.
+  if (kind === 'steamy') {
+    if (opts && opts.electric) {
+      state.message = `The current passes harmlessly through the steam ${enemy.kind}.`;
+      state.lastAction = 'combat';
+      return false;
+    }
+    const cold = ['water', 'deepwater', 'ice'].includes(terrainAt(state, enemy.x, enemy.y));
+    if (cold) {
+      state.message = `The steam ${enemy.kind} hits the cold and condenses away to nothing.`;
+      return null;
+    }
+    if (!state.gameOver) {
+      hurtBy(state, 'steam');
+      state.player.hp -= 1;
+      state.player.wasHit = true; state.player.hitThisFloor = true;
+      state.message = `The king swings through the steam ${enemy.kind} and is scalded — it must be COOLED.`;
+      checkDeath(state);
+    }
+    state.lastAction = 'combat';
+    return false;
+  }
+
   return null;
+}
+
+// The three that are stepped INTO rather than struck. (The stone, earth and ice elementals are not
+// here: they are solid, and walking at one gets you nowhere at all.)
+const ENTERABLE_ELEMENTALS = new Set(['watery', 'fiery', 'electric']);
+
+// He wades into one. It is surprised and displaced; he takes the tile and pays for standing in it.
+function enterElemental(state, e, x, y, fromX, fromY) {
+  const p = state.player;
+  e.surprised = true;   // it did not expect to be walked into — the free turn is his
+  e.awake = true;
+  e.asleep = false;
+  const kind = e.elemental;
+
+  if (kind === 'electric') {
+    // It cannot be held. It jumps to somewhere else he can see — chosen from ground he can actually
+    // watch, so it never vanishes into the dark and reappears behind him without warning.
+    const spots = [];
+    const b = getAwarenessBounds(state);
+    for (let tx = b.minX; tx <= b.maxX; tx += 1) {
+      for (let ty = b.minY; ty <= b.maxY; ty += 1) {
+        if (tx === x && ty === y) continue;
+        if (!standableAt(state, tx, ty, {})) continue;
+        if (state.enemies.some((o) => o.x === tx && o.y === ty)) continue;
+        if (allyAt(state, tx, ty) || (p.x === tx && p.y === ty)) continue;
+        if (isObjectiveTile(state, tx, ty)) continue;
+        spots.push({ x: tx, y: ty });
+      }
+    }
+    if (spots.length) {
+      const to = spots[randomInt(spots.length)];
+      e.x = to.x;
+      e.y = to.y;
+    } else {
+      // Nowhere at all to go: shove it aside rather than leaving two things on one tile.
+      const beside = freeAdjacentTile(state, x, y);
+      if (beside) { e.x = beside.x; e.y = beside.y; }
+    }
+    p.x = x; p.y = y;
+    state.message = 'The king steps into the electric elemental — it snaps away across the floor!';
+    collectKeyIfHere(state);
+    return;
+  }
+
+  // WATER and FIRE: shove it to a free tile beside, take its ground, and become what it was made of.
+  const beside = freeAdjacentTile(state, x, y);
+  if (beside) { e.x = beside.x; e.y = beside.y; }
+  p.x = x; p.y = y;
+  if (!terrainLocked(state, x, y)) {
+    if (kind === 'watery') {
+      // He is IN it now — deep enough that his lungs start counting (see tickDrowning).
+      state.terrain[`${x},${y}`] = 'deepwater';
+    } else if (kind === 'fiery') {
+      state.terrain[`${x},${y}`] = 'lava';
+    }
+  }
+  // NB NEITHER case deals damage here, deliberately. The tile he is now standing on does it: the
+  // lava sears him on this same turn's `tickLavaDamage`, and the deep water starts his drowning
+  // clock. Charging a heart HERE as well double-billed the fire case — measured 2 damage for one
+  // step — and, worse, it would have been a second rule that could drift from what standing in fire
+  // costs everywhere else. The terrain is the single source of truth for what the terrain does.
+  state.message = kind === 'watery'
+    ? 'The king wades into the water elemental — it recoils, and the water closes over him!'
+    : 'The king steps into the fire elemental — it scatters, and he is standing in the flames!';
+  if (!state.gameOver) collectKeyIfHere(state);
+}
+
+// THE STEAM ELEMENTAL'S OWN CLOCK. It boils: every turn it fills some of the tiles around it with
+// scalding steam. That makes it the one native that is dangerous to be NEAR rather than dangerous to
+// be next to — it does not need a move or a line of sight, only proximity and time. Slow (`slow`), so
+// the ground it is poisoning is ground he can still get out of if he starts early.
+const STEAM_ELEMENTAL_TURNS = 2;
+function tickSteamElementals(state) {
+  // Scans UNITS (rule 5) — no realm guard.
+  for (const e of state.enemies) {
+    if (!e || e.elemental !== 'steamy' || e.inert || e.broken) continue;
+    const spots = [...ORTHO, ...DIAG].filter(() => Math.random() < 0.5);
+    for (const [dx, dy] of spots) {
+      const nx = e.x + dx;
+      const ny = e.y + dy;
+      if (nx < 1 || ny < 1 || nx >= WORLD_SIZE - 1 || ny >= WORLD_SIZE - 1) continue;
+      if (isBorderStone(nx, ny)) continue;
+      addFog(state, nx, ny, STEAM_ELEMENTAL_TURNS);
+    }
+  }
 }
 
 // ---- INK ----------------------------------------------------------------------------------------
@@ -395,6 +573,12 @@ function tickElementalTrails(state) {
       // wade — it never has to touch him to take ground away from him.
       if (t === 'normal') state.terrain[`${prev.x},${prev.y}`] = 'water';
       else if (t === 'water') state.terrain[`${prev.x},${prev.y}`] = 'deepwater';
+    } else if (e.elemental === 'lavan') {
+      // IT LEAVES THE FLOOR MOLTEN behind it. The mirror of the water elemental's wake, and the
+      // reason the Emberworks closes in on him over time: every patrol route slowly becomes a river
+      // he cannot cross without burning. Never over water (it would put itself out) — that stays a
+      // refuge, which is what makes the fire elemental's answer findable.
+      if (t === 'normal') state.terrain[`${prev.x},${prev.y}`] = 'lava';
     } else if (e.elemental === 'icy') {
       // IT FREEZES WHAT IT WALKS ON. Ice is slick — every tile it has crossed is a tile he will
       // skid across — so an ice elemental is laying down the surface it wants to fight him on.
@@ -926,7 +1110,11 @@ function isWisp(unit) { return Boolean(unit && unit.wisp); }
 function wispTriggerAt(state, x, y) {
   const p = state.player;
   if (p.x === x && p.y === y) return true;
-  if (state.enemies.some((e) => !e.wisp && e.x === x && e.y === y)) return true; // foes, guns, fabricators, golems
+  // ANY body at all, INCLUDING ANOTHER WISP. They used to be transparent to each other, which meant
+  // a pack of them converged on the king along the same line and arrived together with nothing able
+  // to stop them — the worst case, since a wisp is a one-shot countdown you are supposed to be able
+  // to bait. Now the leading one earths itself on its neighbour and the pack takes each other out.
+  if (state.enemies.some((e) => e.x === x && e.y === y)) return true; // foes, guns, fabricators, golems — and wisps
   if (allyAt(state, x, y)) return true;
   if (keyTileAt(state, x, y)) return true;
   const t = terrainAt(state, x, y);
@@ -944,6 +1132,14 @@ function tickWisps(state) {
     // It always knows where he is — nothing about sight applies to a thing made of current.
     w.awake = true;
     w.surprised = false;
+    // IT GATHERS BEFORE IT MOVES. A wisp drifts every OTHER turn, spending the turn between winding
+    // up — the same `slow` beat a zombie and a stone elemental keep, and drawn with the same windup
+    // mark. Without it a wisp closed as fast as he could walk, so once one had a clear line there
+    // was no arrangement of the room that beat it: outrunning it was impossible and baiting it took
+    // a turn he did not have. At half speed the bait is affordable, which is the whole counterplay.
+    w.slow = true;
+    w.winding = !w.winding;
+    if (w.winding) continue; // this turn is the windup — it gathers and does not move
     // IT IS DUMB. It goes STRAIGHT at him and earths itself on the first thing it touches, which is
     // the whole counterplay: a wisp is not unavoidable, it is BAITABLE. Put a golem, a gun, a press —
     // anything at all but a stretch of cable — between yourself and one, and it spends itself on that
@@ -1111,6 +1307,18 @@ function openMetalUntilReachable(state) {
 // It is NOT worked by electricity, and NOT by another switch. If it were, one arc across a wired
 // floor would flip every fitting on it at once and the whole machine would resolve itself.
 function throwSwitch(state, x, y) {
+  // THE SWITCH ITSELF FLIPS. It has no terrain of its own to change (a thrown switch is still a
+  // switch), so its position is kept beside the map in `state.switches` — the same trick `torches`
+  // and `treeHp` use for per-tile data terrain has nowhere to hang.
+  //
+  // Without this the lever was the ONE thing in the room that did not visibly respond to being
+  // thrown: doors banged, golems stopped, guns died — and the switch he had just hit looked exactly
+  // as it had a moment ago. Feedback on the thing you touched is worth more than feedback on the
+  // things it touched, because it is the only one guaranteed to be on screen.
+  if (!state.switches) state.switches = {};
+  const key = `${x},${y}`;
+  state.switches[key] = state.switches[key] === 'on' ? 'off' : 'on';
+
   const bounds = getAwarenessBounds(state);
   let touched = 0;
   for (let ny = bounds.y; ny < bounds.y + bounds.height; ny += 1) {
@@ -1386,11 +1594,13 @@ function rollBossPerks(count, kind) {
 //   * one live portal per realm still open to him.
 //   * one WAY OUT: accept the victory he already holds and end the run here.
 // Built by hand rather than generated, because every tile of it is doing a job.
-// Widened from 15 when the third NG+ realm landed: at 15 the live portals fell on x=10,13,15 — a gap
-// of 3 then a gap of 2 — which read as a wall of portals rather than as three separate choices. The
-// room has to hold NG_PLUS_REALMS.length gates on one row with air between them.
-const PORTAL_ROOM_W = 21;
-const PORTAL_ROOM_H = 11;
+// SMALL, on purpose. The room is one decision, not a hall to march down — every extra tile is a tile
+// he walks across with nothing happening. It needs to hold ONE rank of portals (2 dead + every NG+
+// realm, on a stride of 2) with a tile of air at each end, and a near row to arrive on. At 5 gates
+// that is 8 tiles of rank inside a 13-wide room, and the height is just entrance row + rank + a
+// little breathing space above.
+const PORTAL_ROOM_W = 13;
+const PORTAL_ROOM_H = 7;
 
 function buildPortalRoom(carryPlayer, score, cleared) {
   const player = { ...carryPlayer };
@@ -1405,38 +1615,37 @@ function buildPortalRoom(carryPlayer, score, cleared) {
       if (!inside) terrain[`${x},${y}`] = 'wall';
     }
   }
-  player.x = bx + Math.floor(PORTAL_ROOM_W / 2);
-  player.y = by + PORTAL_ROOM_H - 2; // he arrives at the near wall, facing the portals
-  // The dead ones, along the back: where he has already been.
+  // EVERY DOOR IN ONE STRAIGHT LINE, in the order he met them: the overworld he came up from, the
+  // demon realm beneath it, then the three that are still open. A single rank reads as a JOURNEY —
+  // left to right, behind him to ahead of him — where the old two-row arrangement read as two
+  // unrelated groups and left him walking through a live portal to go and look at a dead one.
+  //
+  // The dead ones are first BECAUSE they are dead. He passes what he has already done on the way to
+  // what he has not, which is the right shape for a room whose whole job is "where next?".
   const gates = [];
-  const backY = by + 2;
-  gates.push({ x: bx + 3, y: backY, realm: 'overworld', collapsed: true });
-  gates.push({ x: bx + PORTAL_ROOM_W - 4, y: backY, realm: 'demon', collapsed: true });
-  // The live ones, across the middle — plus any NG+ realm he has already finished, now dark too.
-  const midY = by + 5;
-  const open = NG_PLUS_REALMS;
-  // Lay them on a fixed CENTRED STRIDE rather than at fractions of the span. The fractional form
-  // rounded unevenly — with three realms it produced gaps of 3 and 2 — so the row looked accidental.
-  // A stride guarantees identical spacing whatever NG_PLUS_REALMS grows to; it only narrows if the
-  // room genuinely cannot hold them, and never below 2 (adjacent-but-not-touching).
-  const inner = PORTAL_ROOM_W - 6; // usable width, keeping 3 clear tiles at each wall
-  const stride = Math.max(2, Math.min(4, Math.floor(inner / Math.max(1, open.length - 1 || 1))));
-  const rowW = stride * (open.length - 1);
-  let startX = bx + Math.floor((PORTAL_ROOM_W - rowW) / 2);
-  // KEEP THE CENTRE AISLE CLEAR. The live portals sit in a row BETWEEN the entrance and the dead
-  // gates on the back wall, so a king walking straight up the room to read them would otherwise step
-  // through whichever portal happened to land on his own column — with an odd count and a centred
-  // row, that is exactly what happens. Nudge the row one tile sideways so the column he starts on
-  // stays empty: every gate then has to be walked to on purpose, which is the whole point of a room
-  // of doors rather than a menu.
-  const aisle = player.x;
-  const onAisle = (sx) => open.some((_, i) => sx + i * stride === aisle);
-  if (onAisle(startX)) startX += 1;
-  open.forEach((realm, i) => {
-    gates.push({ x: startX + i * stride, y: midY, realm, collapsed: done.has(realm) });
+  const order = [
+    { realm: 'overworld', collapsed: true }, // always spent — he came out of it to get here
+    { realm: 'demon', collapsed: true },     // likewise: floors 6-8 of the run behind him
+    ...NG_PLUS_REALMS.map((realm) => ({ realm, collapsed: done.has(realm) })),
+  ];
+  // A fixed stride of 2 — one clear tile between neighbours. Tight enough that the whole rank fits a
+  // small room, loose enough that no two rings touch.
+  const stride = 2;
+  const rowW = stride * (order.length - 1);
+  const startX = bx + Math.floor((PORTAL_ROOM_W - rowW) / 2);
+  const rowY = by + 2;
+  order.forEach((g, i) => {
+    gates.push({ x: startX + i * stride, y: rowY, realm: g.realm, collapsed: g.collapsed });
   });
-  // ...and the door home, at his feet.
-  gates.push({ x: player.x, y: by + PORTAL_ROOM_H - 4, realm: null, accept: true, collapsed: false });
+
+  // He arrives on the near wall, facing the rank — and DELIBERATELY on a column that holds no
+  // portal, so his first step is never into a door he did not choose. With an even stride the gaps
+  // are the odd columns, so startX + 1 is always clear.
+  player.x = startX + 1;
+  player.y = by + PORTAL_ROOM_H - 2;
+  // ...and the door home, on his own row, off to one side. It is the one gate he must not fall
+  // through while reading the others, so it does not share the rank.
+  gates.push({ x: bx + PORTAL_ROOM_W - 3, y: player.y, realm: null, accept: true, collapsed: false });
 
   const state = {
     worldSize: WORLD_SIZE,
@@ -1489,6 +1698,46 @@ function portalGateUnderKing(state) {
 // ENTER a realm from the portal room: floor 1 of that realm, build intact. The king keeps everything
 // — perks, cards, level, the lot — because New Game+ is not a fresh run, it is the same king walking
 // somewhere worse. His HEARTS are refilled, exactly as they are on any descent.
+// ---- DEBUG: STRAIGHT TO THE PORTAL ROOM -----------------------------------------------------------
+// Builds the king a nightmare clear would have produced and drops him in the room between realms.
+// Gated entirely by CONFIG.debugMenu — see src/config.js.
+//
+// This is a TESTING tool, and it is built out of the real functions on purpose: the perks are learned
+// through `learnPerk`, not stitched onto the player object, so a debug king is indistinguishable from
+// an earned one. A hand-assembled player would drift from the real thing and quietly invalidate
+// every NG+ test done with it, which would make the tool worse than useless.
+function debugPortalRoom(className, difficulty) {
+  const cls = CLASSES[className] ? className : 'warrior';
+  // DIFFICULTY IS A PARAMETER now that New Game+ is open at every setting. It is the single biggest
+  // lever on how an NG+ floor actually plays — it sets his starting hearts, and a realm that is a
+  // fair fight at 12 HP is a different level entirely at 5 — so testing one setting would be testing
+  // one quarter of the thing. Defaults to nightmare: the thinnest skin is where a floor's problems
+  // show up first.
+  const diff = ['easy', 'hard', 'nightmare'].includes(difficulty) ? difficulty : 'nightmare';
+  let state = createInitialState(cls, diff);
+
+  // A FULL, VALID PERK SET. Learned one at a time through the real path, re-rolling the offer each
+  // time, so every chain prerequisite is honoured exactly as it would be in a run. Random rather
+  // than fixed: the point of the tool is to see NG+ against a build you did not choose.
+  for (let i = 0; i < MAX_BOONS; i += 1) {
+    const offers = rollLevelPerks(state.player, 3);
+    if (!offers.length) break; // the class pool is exhausted — fewer than seven is correct, not a bug
+    state = learnPerk(state, offers[randomInt(offers.length)].id);
+  }
+
+  const player = { ...state.player };
+  player.hp = player.maxHp;
+  // THE ORB OF VICTORY: he has beaten the overworld, which is what earned him the portal room.
+  player.orbs = [REALMS.overworld.orb.name];
+  player.clearedRealms = [];
+  player.difficulty = diff;
+
+  const room = buildPortalRoom(player, 0, []);
+  room.debugRun = true; // a marker, so a screenshot of a debug run is identifiable later
+  room.message = `DEBUG: a ${diff} ${CLASSES[cls].name} with ${player.takenPerks.length} boons stands between realms.`;
+  return room;
+}
+
 function enterRealm(state, realm) {
   const player = { ...state.player, hp: state.player.maxHp };
   player.clearedRealms = [...(state.player.clearedRealms || [])];
@@ -1979,7 +2228,7 @@ function makeTurret(state, kind, x, y) {
   const element = elementForFloor(state.floor || 1, realmOf(state));
   if (element) {
     if (element === 'earth') t.boulder = true; // throws rock: it walls the lane it is shooting down
-    else if (element === 'fire') t.fire = true; // the Emberworks fields nothing else
+    else if (element === 'fire') { if (Math.random() < 0.5) t.lava = true; else t.fire = true; } // half spit LAVA, half spellfire
     else if (element === 'air') t.electric = true;
     else if (element === 'water') t.jet = true; // a water jet: it wounds, and it DEEPENS what it hits
     return t;
@@ -5057,6 +5306,21 @@ function generateFloor(floor, carryPlayer, score, realm) {
       state.enemies.push(w);
     }
   }
+  // WISPS ON THE RIVEN SKY TOO — the user asked for the Workshop's wisp on the air floor, and it is
+  // the same object: a mote of loose current that drifts straight at him and earths on the first
+  // thing it touches. It belongs here for a different reason, though. The Workshop is full of things
+  // to bait one into; a floor of islands over open void is not, so the same enemy asks a harder
+  // question with no new code behind it.
+  if (elementForFloor(state.floor || 1, realm) === 'air') {
+    for (let i = 0; i < 2 + randomInt(2); i += 1) {
+      const spot = place((x, y) => standable(x, y) && chebyshev(x, y, player.x, player.y) >= 7);
+      if (!spot) break;
+      const w = createEnemy('king', spot.x, spot.y);
+      w.wisp = true;
+      w.awake = true;
+      state.enemies.push(w);
+    }
+  }
   // ONE ALTAR, half the time, on a New Game+ floor. Placed well clear of his arrival so finding it is
   // a thing he does rather than a thing that happens to him, and never on the key or the way out.
   if (realmDef(realm).newGamePlus && Math.random() < ALTAR_CHANCE) {
@@ -5113,6 +5377,8 @@ function generateFloor(floor, carryPlayer, score, realm) {
       if (state.terrain[k] === 'tree') state.terrain[k] = 'mushroom';
     }
   }
+  riftAirFloor(state, realm);
+  kindleFireFloor(state, realm);
   drownWaterFloor(state, realm);
   petrifyEarthFloor(state, realm);
   // NOTHING ENDS GENERATION INSIDE A WALL. Half a dozen passes write terrain after the roster is
@@ -5149,6 +5415,129 @@ function generateFloor(floor, carryPlayer, score, realm) {
 //
 // Deliberately NOT applied near his arrival: opening a run out of his depth under his feet on turn
 // one would be a hit he had no way to read coming.
+// THE EMBERWORKS. Its trees are EVERBURNING: alight for good, and they never burn away. That single
+// change turns fire from a weapon into scenery — on any other floor a lit tree is a one-turn event
+// that clears itself and spreads; here it is a permanent wall of flame you must go round or cut down.
+// Only an axe answers one, which is a deliberate joke at the player's expense: the floor made of fire
+// is the floor where fire is useless to him.
+//
+// Its walls are also thick with TORCHES — the exact opposite sweep to the drowned floor, which has
+// every torch stripped. The two floors are lit and unlit versions of the same masonry.
+// THE RIVEN SKY. The floor is opened out into ISLANDS over open void — and unlike every other terrain
+// sweep in this realm, this one CAN cut the map, because void admits nobody but a flier. So it is
+// built the other way round from the rest: rather than carving holes and hoping, it drops the void in
+// and then guarantees the result, tile by tile, against the one question that matters.
+//
+// The method is deliberately conservative: void is only ever opened where doing so leaves the key and
+// the stair walkable-to. That is the molefolk lesson applied at generation time — cheap to state,
+// exact to check, and it makes an unwinnable Riven Sky impossible rather than unlikely.
+const VOID_SHARE = 0.5;
+function riftAirFloor(state, realm) {
+  if (elementForFloor(state.floor || 1, realm) !== 'air') return;
+  const candidates = [];
+  for (let x = 1; x < WORLD_SIZE - 1; x += 1) {
+    for (let y = 1; y < WORLD_SIZE - 1; y += 1) {
+      if (isBorderStone(x, y)) continue;
+      if (isObjectiveTile(state, x, y) || terrainLocked(state, x, y)) continue;
+      if (state.player.x === x && state.player.y === y) continue;
+      const t = terrainAt(state, x, y);
+      // Only OPEN GROUND falls away. Walls stay walls (they are the islands' spines), and nothing
+      // already special — a door, a gate, an altar's plinth — is swallowed.
+      if (t !== 'normal' && t !== 'water' && t !== 'devilgrass') continue;
+      candidates.push({ x, y });
+    }
+  }
+  // Shuffle so the rift is not a diagonal artefact of scan order.
+  for (let i = candidates.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1);
+    const tmp = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tmp;
+  }
+  const want = Math.floor(candidates.length * VOID_SHARE);
+  let opened = 0;
+  for (const c of candidates) {
+    if (opened >= want) break;
+    const key = `${c.x},${c.y}`;
+    const was = state.terrain[key];
+    state.terrain[key] = 'void';
+    // Anything standing there when the ground goes must come with it — otherwise the piece is left
+    // hanging in the air and the entombment sweep cannot help (it looks for solid terrain, not sky).
+    const occupied = state.enemies.some((e) => e.x === c.x && e.y === c.y) || allyAt(state, c.x, c.y);
+    if (occupied || molefolkCutTheFloor(state)) {
+      if (was === undefined) delete state.terrain[key];
+      else state.terrain[key] = was;
+      continue;
+    }
+    opened += 1;
+  }
+  // SPRING PADS, laid on the ground that survived. They are the map's connective tissue on a floor
+  // of islands — a bishop pad is a bridge to the island on the diagonal, a knight pad reaches one
+  // nothing else does — so they go on the EDGES of ground, facing the gaps, rather than in the
+  // middle of a plaza where they would only ever throw him into a wall.
+  if (!state.springs) state.springs = {};
+  const rim = [];
+  for (let x = 1; x < WORLD_SIZE - 1; x += 1) {
+    for (let y = 1; y < WORLD_SIZE - 1; y += 1) {
+      if (terrainAt(state, x, y) !== 'normal') continue;
+      if (isObjectiveTile(state, x, y) || terrainLocked(state, x, y)) continue;
+      if (state.player.x === x && state.player.y === y) continue;
+      if (state.enemies.some((e) => e.x === x && e.y === y) || allyAt(state, x, y)) continue;
+      const facesVoid = [...ORTHO, ...DIAG].some(([dx, dy]) => terrainAt(state, x + dx, y + dy) === 'void');
+      if (facesVoid) rim.push({ x, y });
+    }
+  }
+  for (let i = rim.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1);
+    const tmp = rim[i]; rim[i] = rim[j]; rim[j] = tmp;
+  }
+  // FERRIES: a few slabs set adrift on the open sky, each starting somewhere in the void so it has
+  // room to run its circuit. The slab itself is standable ground; `tickPlatforms` moves it.
+  state.platforms = [];
+  const sky = [];
+  for (let x = 2; x < WORLD_SIZE - 2; x += 1) {
+    for (let y = 2; y < WORLD_SIZE - 2; y += 1) {
+      if (terrainAt(state, x, y) === 'void') sky.push({ x, y });
+    }
+  }
+  for (let i = sky.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1);
+    const tmp = sky[i]; sky[i] = sky[j]; sky[j] = tmp;
+  }
+  const ferries = Math.min(sky.length, 3 + randomInt(3));
+  for (let i = 0; i < ferries; i += 1) {
+    const s = sky[i];
+    state.terrain[`${s.x},${s.y}`] = 'normal';
+    state.platforms.push({ x: s.x, y: s.y, dir: randomInt(4) });
+  }
+
+  const pads = Math.min(rim.length, 5 + randomInt(4));
+  for (let i = 0; i < pads; i += 1) {
+    const spot = rim[i];
+    state.terrain[`${spot.x},${spot.y}`] = 'spring';
+    state.springs[`${spot.x},${spot.y}`] = SPRING_KINDS[randomInt(SPRING_KINDS.length)];
+  }
+}
+
+const EVERBURN_TORCH_SHARE = 0.3;
+function kindleFireFloor(state, realm) {
+  if (elementForFloor(state.floor || 1, realm) !== 'fire') return;
+  if (!state.torches) state.torches = {};
+  for (const k of Object.keys(state.terrain)) {
+    const t = state.terrain[k];
+    const [x, y] = k.split(',').map(Number);
+    // Every tree on this floor is already alight and always will be.
+    if (t === 'tree') { state.terrain[k] = 'everburn'; continue; }
+    if (t !== 'wall' || isBorderStone(x, y)) continue;
+    if (!state.torches[k] && Math.random() < EVERBURN_TORCH_SHARE) state.torches[k] = true;
+  }
+  // A tree that was ALREADY alight when this ran would otherwise keep its entry in `burningTrees`
+  // and be consumed on the next tick — the one thing an everburning tree must never do.
+  if (state.burningTrees) {
+    for (const k of Object.keys(state.burningTrees)) {
+      if (state.terrain[k] === 'everburn') delete state.burningTrees[k];
+    }
+  }
+}
+
 const DEEP_SHARE = 0.4;
 const DEEP_SAFE_RADIUS = 3;
 // CORAL grows where the Sunken Reach's walls would be. A share of them, not all: the floor still
@@ -5471,16 +5860,21 @@ function addRubble(state, x, y) {
 // coloured apart from grey wall/boulder rubble.
 // A felled tree leaves sticks and leaves — the same fading-debris idea as a broken wall's rubble
 // or a wrecked turret's scrap, with its own look.
-function addSticks(state, x, y, iron) {
+function addSticks(state, x, y, iron, kind) {
   if (!Array.isArray(state.sticks)) state.sticks = [];
   // `iron` marks the wreck of a GATE rather than a tree: twisted bar-ends and rivets, not branches
   // and leaves. It was leaving a drift of green leaves behind a felled iron gate.
-  state.sticks.push({ x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, seed: randomInt(1000), iron: Boolean(iron) });
+  // `kind` names the timber for anything that is neither: a felled MUSHROOM leaves torn pale flesh
+  // and cap-scraps, and a smashed CORAL leaves broken pink stubs — a drift of oak leaves behind
+  // either one reads as the wrong thing having been destroyed.
+  state.sticks.push({
+    x, y, life: CORPSE_LIFE, max: CORPSE_LIFE, seed: randomInt(1000), iron: Boolean(iron), kind: kind || null,
+  });
 }
 // What a felled TREE or GATE leaves behind. Read the terrain BEFORE it is cleared: by the time the
 // debris is laid the tile is already bare, so the caller has to say which it was.
-function addTreeDebris(state, x, y, iron) {
-  addSticks(state, x, y, iron);
+function addTreeDebris(state, x, y, iron, kind) {
+  addSticks(state, x, y, iron, kind);
 }
 
 function addScrap(state, x, y) {
@@ -5886,7 +6280,7 @@ function isChoppable(t) {
   // at all, so it is never offered as a chop. Walking into one therefore costs NOTHING — the move is
   // simply not generated, exactly as it is not against a wall. Offering a swing that can never land
   // would be the worst of both: a turn spent, and nothing to show for it.
-  return t === 'tree' || t === 'mushroom' || t === 'coral' || t === 'gate';
+  return t === 'tree' || t === 'mushroom' || t === 'coral' || t === 'everburn' || t === 'gate';
 }
 function treeHpAt(state, x, y) {
   if (!isChoppable(terrainAt(state, x, y))) return 0;
@@ -5912,10 +6306,13 @@ function damageTree(state, x, y, amount) {
     cue(state, 'chop'); // a bite out of the trunk — it still stands
     return 'hurt';
   }
-  const wasIron = terrainAt(state, x, y) === 'gate'; // read it BEFORE clearTree wipes the tile
+  // Read the terrain BEFORE clearTree wipes it: by the time the debris is laid the tile is bare, so
+  // what fell has to be remembered here.
+  const felledType = terrainAt(state, x, y);
+  const wasIron = felledType === 'gate';
   clearTree(state, x, y);
   cue(state, 'timber'); // it comes DOWN — a crash, not the chip of another axe blow
-  addTreeDebris(state, x, y, wasIron); // sticks and leaves, or twisted bar-ends
+  addTreeDebris(state, x, y, wasIron, felledType); // leaves, bar-ends, cap-scraps or coral stubs
   return 'felled';
 }
 // Spellfire doesn't chop — it LIGHTS. The tree stands and burns for a turn (still blocking the
@@ -6060,6 +6457,127 @@ function settleLeapOnIce(state, unit, fromX, fromY) {
   iceSlide(state, unit, Math.sign(unit.x - fromX), Math.sign(unit.y - fromY));
 }
 
+// ---- MOVING PLATFORMS ---------------------------------------------------------------------------
+// Slabs of floor adrift over the void. Each has a heading; every turn it slides one tile that way,
+// and when its way is blocked by anything that is NOT void it TURNS RIGHT. So each one runs a fixed,
+// readable circuit around the island it started beside — never random, always learnable.
+//
+// They are the only moving GROUND in the game, and they carry whatever is standing on them. That is
+// the whole appeal on a floor of islands: a platform is a ferry he has to time rather than a bridge
+// he can take whenever he likes, and waiting for one is a real cost on a level that is also trying
+// to shoot him. Stored as objects (not terrain) because terrain has nowhere to hang a heading — the
+// same reason `treeHp` and `springs` live beside the map rather than in it.
+const PLATFORM_DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // clockwise: turning "right" is +1 here
+function tickPlatforms(state) {
+  if (!state.platforms || !state.platforms.length) return;
+  for (const p of state.platforms) {
+    const [dx, dy] = PLATFORM_DIRS[p.dir % 4];
+    const nx = p.x + dx;
+    const ny = p.y + dy;
+    const offBoard = nx < 1 || ny < 1 || nx >= WORLD_SIZE - 1 || ny >= WORLD_SIZE - 1;
+    // It may only travel over open sky. Anything else — ground, a wall, the board's rim — turns it.
+    if (offBoard || terrainAt(state, nx, ny) !== 'void') {
+      p.dir = (p.dir + 1) % 4;
+      continue;
+    }
+    // Carry the passengers. Read them BEFORE the slab moves, or they are left standing on the sky
+    // it just vacated — which on this floor means falling.
+    const riders = [];
+    if (state.player.x === p.x && state.player.y === p.y) riders.push(state.player);
+    for (const e of state.enemies) if (e.x === p.x && e.y === p.y) riders.push(e);
+    for (const a of state.allies || []) if (a.x === p.x && a.y === p.y) riders.push(a);
+    // The tile it is leaving goes back to void; the tile it arrives on becomes floor.
+    if (!terrainLocked(state, p.x, p.y)) state.terrain[`${p.x},${p.y}`] = 'void';
+    p.x = nx;
+    p.y = ny;
+    state.terrain[`${nx},${ny}`] = 'normal';
+    for (const r of riders) { r.x = nx; r.y = ny; }
+    if (riders.includes(state.player)) collectKeyIfHere(state);
+  }
+}
+
+// ---- SPRINGS ------------------------------------------------------------------------------------
+// The Riven Sky's launchers. Each one is set to a PIECE SHAPE, and stepping on it throws him across
+// the floor the way that piece moves, in the direction he was already travelling.
+//
+// The point is that it hands him a piece's movement for exactly one step. A board of islands is a
+// board where his own one-tile king-step cannot get him anywhere; a bishop spring is a bridge to the
+// island on the diagonal, and a knight spring is a bridge to one nothing else reaches. So the springs
+// ARE the map's connective tissue, and reading which shape is on which pad is how he plans a route.
+// He does not choose the direction — momentum does — which keeps it a puzzle about approach angle
+// rather than a free teleport.
+const SPRING_KINDS = ['rook', 'bishop', 'knight', 'queen'];
+function springKindAt(state, x, y) {
+  if (terrainAt(state, x, y) !== 'spring') return null;
+  return (state.springs && state.springs[`${x},${y}`]) || 'rook';
+}
+// Launch `unit` off the spring it is standing on, along its entry heading (dx, dy).
+function launchFromSpring(state, unit, dx, dy) {
+  const kind = springKindAt(state, unit.x, unit.y);
+  if (!kind) return false;
+  if (dx === 0 && dy === 0) return false; // it needs momentum: a piece that materialised here is safe
+  const opts = { flying: true }; // in FLIGHT — the whole point is that he sails over the void
+  const landable = (x, y) => {
+    if (x < 1 || y < 1 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) return false;
+    if (!standableAt(state, x, y, opts)) return false;
+    if (terrainAt(state, x, y) === 'void') return false; // he must come down on GROUND, never sky
+    if (state.enemies.some((e) => e.x === x && e.y === y)) return false;
+    if (allyAt(state, x, y)) return false;
+    return true;
+  };
+  if (kind === 'knight') {
+    // A knight's leap, taking the L that most nearly continues his heading.
+    const candidates = KNIGHT_STEPS
+      .map(([kx, ky]) => ({ kx, ky, dot: kx * dx + ky * dy }))
+      .sort((a, b) => b.dot - a.dot);
+    for (const c of candidates) {
+      if (c.dot <= 0) break; // never fling him backwards
+      if (landable(unit.x + c.kx, unit.y + c.ky)) {
+        unit.x += c.kx;
+        unit.y += c.ky;
+        return true;
+      }
+    }
+    return false;
+  }
+  // A SLIDER. A bishop must go diagonally and a rook orthogonally, so his heading is bent onto the
+  // nearest line the piece is allowed — a rook spring taken at a diagonal throws him along whichever
+  // axis he had more of, which reads as the pad straightening him out.
+  let sx = dx;
+  let sy = dy;
+  if (kind === 'bishop') {
+    if (sx === 0) sx = Math.random() < 0.5 ? 1 : -1;
+    if (sy === 0) sy = Math.random() < 0.5 ? 1 : -1;
+  } else if (kind === 'rook') {
+    if (sx !== 0 && sy !== 0) { if (Math.abs(dx) >= Math.abs(dy)) sy = 0; else sx = 0; }
+  }
+  let lastX = unit.x;
+  let lastY = unit.y;
+  for (let step = 0; step < WORLD_SIZE; step += 1) {
+    const nx = lastX + sx;
+    const ny = lastY + sy;
+    if (!landable(nx, ny)) break;
+    lastX = nx;
+    lastY = ny;
+  }
+  if (lastX === unit.x && lastY === unit.y) return false; // nowhere to go — the pad just fizzles
+  unit.x = lastX;
+  unit.y = lastY;
+  return true;
+}
+// The king has arrived somewhere; if it was a spring, throw him. Runs BEFORE the ice skid for the
+// same reason the skid runs at all: what matters is where he actually ends up.
+function settleOnSpring(state, unit, fromX, fromY) {
+  if (terrainAt(state, unit.x, unit.y) !== 'spring') return false;
+  const kind = springKindAt(state, unit.x, unit.y);
+  const flung = launchFromSpring(state, unit, Math.sign(unit.x - fromX), Math.sign(unit.y - fromY));
+  if (flung && unit === state.player) {
+    cue(state, 'leap');
+    state.message = `The pad throws the king across the sky like ${aWord(kind)}!`;
+  }
+  return flung;
+}
+
 // Resolve the king arriving on (x, y): attack a boss in place, destroy a summoning
 // circle / capture a foe, grab an item, and take the stair.
 function applyArrival(next, x, y, embedded) {
@@ -6186,6 +6704,71 @@ function applyArrival(next, x, y, embedded) {
     return next;
   }
 
+  // WALKING INTO AN ELEMENTAL. Three of them are not bodies to be cut but VOLUMES to be stepped
+  // into — a column of water, a sheet of flame, a knot of current. Moving onto one does not attack
+  // it: he wades in, it is SURPRISED (it did not expect to be occupied), and it is shoved aside.
+  //
+  // He then pays the price of being inside the thing rather than beside it, and the price is simply
+  // the terrain it was made of, which is why no new damage rule is needed for any of them:
+  //   WATER    — the tile becomes DEEP, so his drowning clock starts. He suffocates, exactly as the
+  //              spec asks, and the escalating 1/2/3 already written does the work.
+  //   FIRE     — the tile becomes LAVA and it sears him at once. Standing in fire costs what
+  //              standing in fire has always cost.
+  //   ELECTRIC — it cannot be pinned at all: it WARPS to a random tile he can see and leaves him
+  //              holding nothing. He gains the ground and loses the fight.
+  // The shared idea is that these three cannot be beaten by walking at them, only displaced — and
+  // that displacing one always costs him position, footing or hearts.
+  // AN ICE ELEMENTAL CANNOT BE POUNCED ON. It is a smooth block: he comes down on it and slides
+  // straight off onto the ground beyond, having achieved nothing but a change of address. Handled
+  // here rather than in resolveElementalBlow because the whole point is where he ENDS UP, and only
+  // the movement path knows that. (Striking one on foot is dealt with by the blow rules; this is
+  // only the leap.)
+  const icyHere = next.enemies.find((e) => e.x === x && e.y === y && e.elemental === 'icy'
+    && !e.boss && !e.turret && !e.summonCircle);
+  if (icyHere && viaLeap) {
+    pl.attacked = true;
+    icyHere.surprised = true;
+    icyHere.awake = true;
+    // He carries on in the direction of the leap and fetches up on the first tile he can hold.
+    const dx = Math.sign(x - fromX);
+    const dy = Math.sign(y - fromY);
+    let sx = x;
+    let sy = y;
+    for (let step = 0; step < WORLD_SIZE; step += 1) {
+      const nx = sx + dx;
+      const ny = sy + dy;
+      if (nx < 1 || ny < 1 || nx >= WORLD_SIZE - 1 || ny >= WORLD_SIZE - 1) break;
+      if (!standableAt(next, nx, ny, { phaseWalls: Boolean(pl.phase), pathfinder: Boolean(pl.pathfinder) })) break;
+      if (next.enemies.some((o) => o.x === nx && o.y === ny) || allyAt(next, nx, ny)) break;
+      sx = nx; sy = ny;
+      break; // one tile of skid: enough to say "he slid off", never a free ride across the floor
+    }
+    if (sx !== x || sy !== y) { pl.x = sx; pl.y = sy; }
+    else {
+      const beside = freeAdjacentTile(next, x, y);
+      if (beside) { pl.x = beside.x; pl.y = beside.y; }
+    }
+    next.message = 'The king comes down on the ice elemental and slides straight off it!';
+    collectKeyIfHere(next);
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+
+  const enterable = next.enemies.find((e) => e.x === x && e.y === y && ENTERABLE_ELEMENTALS.has(e.elemental)
+    && !e.boss && !e.turret && !e.summonCircle);
+  if (enterable) {
+    pl.attacked = true;
+    enterElemental(next, enterable, x, y, fromX, fromY);
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
+
   // A WARDED foe (a Guardian's retinue) turns the first blow aside: struck IN PLACE like a turret,
   // its guard drops, and the king lands beside it rather than striding onto a tile it still holds.
   const parriedHere = next.enemies.find((e) => e.x === x && e.y === y && e.parry && !e.boss && !e.turret && !e.summonCircle);
@@ -6246,20 +6829,37 @@ function applyArrival(next, x, y, embedded) {
   // unicorn riding like a nightrider onto ice. It skids off, same as a card leap does. A PHASING king
   // grips the slab (he can stand in it deliberately), so he never skids.
   if (!next.player.phase) settleLeapOnIce(next, next.player, fromX, fromY);
+  // A SPRING PAD throws him onward before anything else resolves — where he ends up is the only
+  // thing the rest of this function should be reasoning about.
+  settleOnSpring(next, next.player, fromX, fromY);
 
   const enemy = next.enemies.find((e) => e.x === x && e.y === y);
   let realKill = false;
   if (enemy) {
     realKill = isKillablePiece(enemy); // a circle is destroyed, but not an on-kill trigger
-    resolveKill(next, enemy);
+    const felled = resolveKill(next, enemy) !== false;
     pl.attacked = true; pl.usedNormalAttack = true; // badge ledger: struck without a card
     const adx = Math.abs(x - fromX);
     const ady = Math.abs(y - fromY);
     const leapt = (adx === 2 && ady === 1) || (adx === 1 && ady === 2); // a knight-style pounce (e.g. Animal Form)
-    next.message = enemy.summonCircle
-      ? 'The king shatters a summoning circle!'
-      : `The king ${leapt ? 'crushes' : 'cuts down'} ${aWord(enemy.kind)}!`;
-    next.lastAction = 'combat';
+    if (!felled) {
+      // IT IS STILL STANDING — a zombie soaking the blow, a skeleton clattering into a heap, a
+      // coffin splintering. He must NOT take its tile: his position was set optimistically above,
+      // and leaving it there put the king and a living foe on the same square, so stepping off next
+      // turn handed it a free swing at his back. Land him beside it, exactly as a warded foe, a boss
+      // and a turret already do.
+      landBesideSurvivor(next, enemy, x, y, fromX, fromY, leapt);
+      realKill = false;
+      // ...and leave the message the blow itself wrote ("shrugs off the blow", "pulls itself back
+      // together"). Overwriting it with "cuts down" announced a kill that did not happen — the log
+      // said the thing was dead while it was visibly still there.
+      next.lastAction = 'combat';
+    } else {
+      next.message = enemy.summonCircle
+        ? 'The king shatters a summoning circle!'
+        : `The king ${leapt ? 'crushes' : 'cuts down'} ${aWord(enemy.kind)}!`;
+      next.lastAction = 'combat';
+    }
   }
 
   // A kill by moving fans out the Warrior's on-kill perks (Cleave/Pierce/Leech/Flourish);
@@ -6917,8 +7517,11 @@ function tryDescend(next) {
     const gate = portalGateUnderKing(next);
     if (!gate) return false;
     if (gate.collapsed) {
+      // portalRealmName, NOT realmDef: the latter falls back to the overworld for anything it does
+      // not know, and 'demon' is not a REALMS entry — so this used to announce the demon portal as
+      // "The Overworld" and give him two dead doors claiming to be the same place.
       next.message = gate.realm
-        ? `${realmDef(gate.realm).name || 'That realm'} is spent — its portal is dark and cold.`
+        ? `${portalRealmName(gate.realm)} is spent — its portal is dark and cold.`
         : 'Nothing but dead stone.';
       return false;
     }
@@ -7414,6 +8017,7 @@ function useCard(state, cardIndex, x, y) {
       p.y = y;
       next.message = 'The king repositions.';
       if (isLeap && !p.phase) settleLeapOnIce(next, p, fromX, fromY); // a leap that lands on ice SKIDS off it (a phaser grips it)
+      settleOnSpring(next, p, fromX, fromY); // ...and a spring pad flings him on regardless of how he arrived
     }
     // En Passant: after the step, strike one foe "in passing" (a piece that flanked the
     // ORIGIN square). `move.flanks[0]` is that target.
@@ -8289,6 +8893,7 @@ function navFieldTo(state, tx, ty, enemy) {
     const t = terrainAt(state, x, y);
     if (isRock(t) || isTimber(t) || t === 'gate') return phases;
     if (t === 'boulder' || t === 'ice') return leaper || phases; // walkers route around; leapers land on them
+    if (t === 'void') return Boolean(opts.flying);
     if (t === 'pit') return leaper || Boolean(opts.flying) || Boolean(opts.pitOk);
     if (t === 'lava') return opts.lavaOk !== false; // lava-safe pieces conduct fire; the rest route around it
     return true; // normal / water / door / grass / geyser all conduct
@@ -8518,7 +9123,15 @@ function dislodgeWalledEnemies(state) {
 // onto lava burns (it used to perch on the hole, harmless). A shove already drops them elsewhere.
 function tickPitFalls(state) {
   // A BAT is airborne: the ground has nothing to say to it. Same exemption as a flying guardian.
-  const falls = (u) => terrainAt(state, u.x, u.y) === 'pit' && !u.bat && !bossHas(u, 'flying') && !bossHas(u, 'burrower') && !u.pathfinder;
+  // THE VOID takes anyone who is not flying — a Pathfinder's sure footing and a burrower's tunnels
+  // are both answers to a HOLE, and open sky is not a hole.
+  const falls = (u) => {
+    const t = terrainAt(state, u.x, u.y);
+    if (!isGap(t)) return false;
+    if (u.bat || bossHas(u, 'flying')) return false;
+    if (t === 'void') return true;
+    return !bossHas(u, 'burrower') && !u.pathfinder;
+  };
   const doomedFoes = state.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle && falls(e));
   if (doomedFoes.length) {
     cue(state, 'fall');
@@ -8693,6 +9306,8 @@ function beginEnemyPhase(state) {
   tickTombstones(next); // ...and a grave he lingers beside opens
   tickGolems(next); // ...and switched-off golems count down and grind back into motion
   tickWisps(next); // loose current drifts at him through walls, and bursts when it arrives
+  tickPlatforms(next); // the ferries slide on, carrying whatever stands on them
+  tickSteamElementals(next); // the boiling ones fill the air around them
   tickElementalTrails(next); // wakes and frost — the elementals rewrite the ground they cross
   tickInk(next); // a dead merfolk's cloud thins
   tickDrowning(next); // the deep takes anything that stays under too long
@@ -9132,6 +9747,34 @@ function fireTurret(state, turret) {
       ? 'An electric turret earths its bolt through the king!'
       : 'An electric turret fires into the machinery — the current finds its way!';
     state.lastAction = 'enemy';
+    return state;
+  }
+  // LAVA SPITTER (the Emberworks' gun): it wounds, and it leaves the tile he is standing on MOLTEN.
+  // The exact mirror of the water jet — one drowns the ground under him, the other sets it alight —
+  // and both work the same way on the player: they do not need to beat him, only to make the square
+  // he chose to stand on the wrong one. Standing still is the mistake on both floors.
+  if (turret.lava) {
+    turret.aiming = false;
+    state.lastShot = { fromX: turret.x, fromY: turret.y, toX: state.player.x, toY: state.player.y, role: 'turret' };
+    const mit = rollMitigation(state, turret);
+    const px = state.player.x;
+    const py = state.player.y;
+    if (!mit) {
+      hurtBy(state, 'turret');
+      state.player.hp -= 1;
+      state.player.wasHit = true; state.player.hitThisFloor = true;
+      addSpatter(state, px, py);
+      checkDeath(state);
+    }
+    // The molten spatter lands whether or not the wound did. Never on an objective tile (rule 6) —
+    // and never on a tile that is already something worse.
+    if (!terrainLocked(state, px, py) && terrainAt(state, px, py) === 'normal') {
+      state.terrain[`${px},${py}`] = 'lava';
+    }
+    state.message = mit
+      ? mitigationMessage(mit, `${turret.kind} turret`)
+      : 'A lava spitter hits the king — the ground under him turns molten!';
+    state.lastAction = mit ? 'enemy' : 'hit';
     return state;
   }
   // WATER JET (the drowned floor's gun): it wounds him, and it makes the ground under him WETTER —
@@ -9611,7 +10254,7 @@ function knockbackBoulder(state, bx, by, dx, dy) {
         state.message = `${capitalize(aWord(foeLabel(foe)))} is flattened by a rolling boulder!`;
       }
     } else if (allyAt(state, nx, ny)) { rest(); return; } // it won't crush your own ally — it stops short
-    if (t === 'pit' || t === 'lava' || t === 'water') { cueHazardFill(state, t, nx, ny); delete state.terrain[`${nx},${ny}`]; return; } // rolls in, fills the hazard, consumed
+    if (isGap(t) || t === 'lava' || t === 'water') { cueHazardFill(state, t, nx, ny); delete state.terrain[`,`]; return; } // rolls in and fills it — a boulder BRIDGES the void // rolls in, fills the hazard, consumed
     clearDevilgrass(state, nx, ny); // flattens any thicket it rolls over
     cx = nx;
     cy = ny;

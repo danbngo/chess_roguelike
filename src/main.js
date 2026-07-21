@@ -127,6 +127,18 @@
       ],
     };
   }
+  // THE DEBUG TILE, appended only when CONFIG.debugMenu is on. It has to live in THIS list rather
+  // than in the DOM: the title screen is diegetic — drawn on the board — and the `#title-screen`
+  // overlay is hidden the moment the game starts, so a DOM button there is never seen.
+  function withDebugOption(model) {
+    if (!(typeof CONFIG !== 'undefined' && CONFIG.debugMenu)) return model;
+    return {
+      ...model,
+      options: [...model.options, {
+        id: 'debug', icon: 'debug', label: 'Debug: NG+', enabled: true, action: promptDebugWarp,
+      }],
+    };
+  }
   let gameState = null;
 
   // Card targeting: the index of the card currently awaiting a destination, or
@@ -142,6 +154,9 @@
   // The enemy turn is resolved one piece at a time so each move animates.
   let enemyQueue = [];
   let animTimer = 0;
+  // The portal gate awaiting a yes/no, or null. Stepping through is the one irreversible move in the
+  // game, so it is confirmed rather than taken on contact (see openPortalConfirm).
+  let pendingPortal = null;
   let pendingAction = null; // null | 'floor' | 'shot' | 'enemyshot' (resolve after the projectile lands)
   let pendingShot = null; // the player state to resolve once a ranged/spell projectile lands
   let pendingEnemyShot = null; // { state, hpBefore } — an ENEMY's volley in flight; its blow lands with it
@@ -751,8 +766,36 @@
 
   /* ------------------------------ tile popover --------------------------- */
 
+  // EVERY terrain the game can put on a tile needs an entry here. `terrainLabel` falls back to the
+  // RAW INTERNAL NAME, so a missing one shows the player "crushershut" — which is how this was
+  // found. When it was audited, TWENTY types had no entry: every New Game+ terrain ever added had
+  // been shipping its variable name to the tooltip. If you add a terrain, add it here in the same
+  // commit; there is a test that fails otherwise.
   const TERRAIN_NAMES = {
     normal: 'Open ground',
+    // --- the undead realm ---
+    deathwater: 'River of death — it drinks at anything still alive that ends a turn in it (the undead wade it freely)',
+    gloom: 'Gloom — a standing darkness. You cannot see out of it; only carrying a TORCH near burns it back',
+    tombstone: 'Tombstone — solid stone. Linger beside one and it bursts open, leaving a pit and whatever climbed out',
+    // --- the Workshop ---
+    wire: 'Wire — cable laid in the floor. Walk it freely; current runs down it and through anything touching it',
+    switch: 'Switch — a housing, not a plate. STRIKE it to throw it: every metal fitting, golem and gun in sight flips',
+    generator: 'Generator — machinery. Impassable, but SHOVE it like a boulder; every 4th turn it lets go into the network',
+    metaldoor: 'Metal door (shut) — step into it to HAUL IT OPEN. It never swings shut again',
+    metaldooropen: 'Metal door (open) — hauled open for good; a clear passage',
+    metalgate: 'Metal gate (shut) — bars you cannot cut. You can see through it, but not walk or shoot through. Only CURRENT or a switch works it',
+    metalgateopen: 'Metal gate (open) — a clear passage until something flips it back',
+    crushershut: 'Crusher (shut) — a press at rest. Current opens it',
+    crusheropen: 'Crusher (open) — a press standing open. Current brings it DOWN: it flattens a golem, and wounds and throws anything else',
+    // --- the elemental realm ---
+    stone: 'Bedrock — the one wall with no answer at all: it cannot be cut, phased, tunnelled, burned or shoved',
+    mushroom: 'Mushroom — the earth floor’s timber: three blows to fell. One that grew over a PIT leaves open floor when cut down',
+    coral: 'Coral — a reef wall. Three blows opens a way through',
+    everburn: 'Everburning tree — alight for good and never consumed. Only an axe answers it (three blows)',
+    deepwater: 'Deep water — out of your depth. The FIRST turn under is free; after that it drowns you for 1, then 2, then 3… Surfacing anywhere resets it',
+    void: 'The void — open sky, not a hole. Nothing crosses it but a flier (not even a Pathfinder, who treads ordinary pits)',
+    spring: 'Spring pad — steps onto it are LAUNCHED as the piece shown, along the direction you were already moving',
+    gateopen: 'Gate (open) — a clear passage',
     wall: 'Wall — blocks sight & movement',
     lava: 'Lava — crossable, but burns you 1 HP per turn you end on it (enemies wade free); clear to see through',
     water: 'Water — slow (cross one per move); no cards while wading',
@@ -794,6 +837,20 @@
     const lines = [];
     if (gameState.player.x === tx && gameState.player.y === ty) {
       lines.push('Your king');
+    }
+    // A PORTAL is an object standing ON the floor, not a terrain type — so without this the tile
+    // under a door described itself as "Open ground", which is exactly what it was doing in the
+    // room whose entire content is doors. Named before the terrain line, because in that room the
+    // door IS the tile as far as the player is concerned.
+    const gate = (gameState.portalGates || []).find((g) => g.x === tx && g.y === ty);
+    if (gate) {
+      if (gate.accept) {
+        lines.push('THE WAY HOME — step through to end the run here and keep everything you have won');
+      } else if (gate.collapsed) {
+        lines.push(`${portalRealmName(gate.realm)} — SPENT. Its portal is dark and cold; you have already walked it`);
+      } else {
+        lines.push(`${portalRealmName(gate.realm)} — an open portal. Step through to enter it`);
+      }
     }
     lines.push(terrainLabel(tx, ty));
     // STEAM sits ON the terrain rather than being terrain, so it has its own line — without it, a tile
@@ -1886,9 +1943,56 @@
     pendingAction = null;
     saveGame(gameState);
   }
+  // DEBUG ONLY (CONFIG.debugMenu — see src/config.js). Skip the nightmare run and stand in the room
+  // between realms at once, as a finished king of the chosen class.
+  //
+  // Deliberately built on the SAME path a real arrival takes (`applyState` + `saveGame`), so a debug
+  // session behaves like a real one in every respect that matters for testing: the save is real, the
+  // camera settles the same way, and the portal gates read the same player object.
+  function debugToPortalRoom(className, difficulty) {
+    if (!(typeof CONFIG !== 'undefined' && CONFIG.debugMenu)) return; // belt as well as braces
+    screen = 'playing';
+    document.body.classList.add('in-game');
+    document.body.classList.remove('on-title');
+    hideOverlays();
+    applyState(debugPortalRoom(className, difficulty), false);
+    enemyQueue = [];
+    animTimer = 0;
+    pendingAction = null;
+    saveGame(gameState);
+  }
+
+  // The debug tile's action: ask for a class, then a difficulty, then warp. Plain prompts on
+  // purpose — this is a door that must not ship, and styling it would be effort spent on something
+  // destined for deletion.
+  function promptDebugWarp() {
+    const keys = Object.keys(CLASSES);
+    const menu = keys.map((k, i) => `${i + 1}. ${CLASSES[k].name}`).join('\n');
+    const pick = window.prompt(`DEBUG — warp to the portal room as:\n${menu}\n\nEnter a number:`, '1');
+    if (pick === null) return;
+    const idx = Number.parseInt(pick, 10) - 1;
+    const className = keys[Number.isFinite(idx) && idx >= 0 && idx < keys.length ? idx : 0];
+    // Difficulty matters as much as class: it sets his hearts, and a realm that is a fair fight at
+    // 12 HP is a different level at 5.
+    const diffs = ['easy', 'hard', 'nightmare'];
+    const dMenu = diffs.map((d, i) => `${i + 1}. ${d}`).join('\n');
+    const dPick = window.prompt(`DEBUG — at which difficulty?\n${dMenu}\n\nEnter a number:`, '3');
+    if (dPick === null) return;
+    const dIdx = Number.parseInt(dPick, 10) - 1;
+    const difficulty = diffs[Number.isFinite(dIdx) && dIdx >= 0 && dIdx < diffs.length ? dIdx : 2];
+    debugToPortalRoom(className, difficulty);
+  }
+
   // Whether that door is open to him at all.
+  //
+  // ANY difficulty. It used to require a NIGHTMARE clear, on the reasoning that the hardest win
+  // should earn the extra content — but that got it backwards: it locked three whole realms behind
+  // the one setting the fewest players finish, so the reward for the hardest thing in the game was
+  // the only way to see most of the game. Beating the dungeon is the achievement; New Game+ is where
+  // you go next, and it is difficulty-agnostic because the realms carry their own difficulty with
+  // them. (The MEDALS still differ by setting — that is where the nightmare bragging rights live.)
   function newGamePlusUnlocked() {
-    return Boolean(gameState && gameState.player && gameState.player.difficulty === 'nightmare');
+    return Boolean(gameState && gameState.player);
   }
 
   /* ------------------------------ level up ------------------------------- */
@@ -1954,12 +2058,80 @@
       altarList.append(row);
     });
   }
+  // STEPPING THROUGH A PORTAL IS NOT UNDOABLE, so it asks first. Every other irreversible thing in
+  // this room already does — the altar names its price before he pays it — and a door that swallows
+  // him the instant he brushes it is the one interaction here that could be an accident. Reuses the
+  // altar overlay wholesale: same list, same Skip button, and "walk away" simply leaves him standing
+  // on the portal, exactly as walking away from an altar leaves him standing on that.
+  function renderPortalConfirm() {
+    const gate = pendingPortal;
+    if (!gate) return;
+    const going = gate.accept ? 'end your run here' : portalRealmName(gate.realm);
+    if (altarMessage) {
+      altarMessage.textContent = gate.accept
+        ? 'The way home. Step through and the run is over — everything you have won is yours to keep.'
+        : `${going}. Step through, and there is no coming back until it is cleared.`;
+    }
+    altarList.innerHTML = '';
+    const row = document.createElement('li');
+    row.className = 'shop-item';
+    const info = document.createElement('div');
+    info.className = 'shop-info';
+    const color = gate.accept ? '#fbbf24' : portalRealmColor(gate.realm);
+    info.innerHTML = `<span class="shop-name" style="color:${color}">${gate.accept ? 'End the run' : `Enter ${going}`}</span>`
+      + `<span class="shop-desc">${gate.accept
+        ? 'Close the book. Your orbs, badges and this run are recorded as they stand.'
+        : 'Your build, your hearts and your orbs all come with you.'}</span>`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'shop-buy';
+    btn.textContent = gate.accept ? 'Finish' : 'Step through';
+    btn.addEventListener('click', () => confirmPortal());
+    row.appendChild(info);
+    row.appendChild(btn);
+    altarList.appendChild(row);
+  }
+  function openPortalConfirm(gate) {
+    pendingPortal = gate;
+    screen = 'altar'; // the overlay's own screen id — Skip routes back through closeAltar
+    renderPortalConfirm();
+    altarScreen.classList.remove('hidden');
+  }
+  function confirmPortal() {
+    const gate = pendingPortal;
+    pendingPortal = null;
+    altarScreen.classList.add('hidden');
+    screen = 'playing';
+    if (!gate) return;
+    if (gate.accept) {
+      GameAudio.play('win');
+      gameState.won = true;
+      onVictory();
+      return;
+    }
+    GameAudio.play('descend');
+    applyState(enterRealm(gameState, gate.realm), false);
+    enemyQueue = []; animTimer = 0;
+    saveGame(gameState);
+    scanVisibleTips(gameState);
+  }
+
   function openAltar() {
     screen = 'altar';
     renderAltar();
     altarScreen.classList.remove('hidden');
   }
   function closeAltar() {
+    // A PORTAL CONFIRM shares this overlay: cancelling simply leaves him standing on the door, with
+    // nothing spent and the altar bookkeeping below deliberately skipped.
+    if (pendingPortal) {
+      pendingPortal = null;
+      altarScreen.classList.add('hidden');
+      screen = 'playing';
+      logMessage('You step back from the portal.');
+      updateHud();
+      return;
+    }
     // Walking away is always allowed, and always spends the altar — it is a decision, not a shop.
     if (gameState && gameState.pendingAltar) {
       gameState.pendingAltar = false;
@@ -2150,6 +2322,18 @@
     }
     // He stepped onto a portal IN that room — into a realm, or into the light.
     if (nextState.lastAction === 'portal-enter' || nextState.lastAction === 'portal-accept') {
+      // ASK FIRST — this is the one move in the game that cannot be taken back. He has walked onto
+      // the tile; the overlay decides whether he walks THROUGH. Cancelling leaves him standing on it
+      // (see closeAltar), exactly as walking away from an altar does.
+      const gate = (nextState.portalGates || []).find(
+        (g) => g.x === nextState.player.x && g.y === nextState.player.y,
+      );
+      if (gate) {
+        openPortalConfirm(gate);
+        return;
+      }
+      // No gate found (should not happen) — fall back to the old immediate behaviour rather than
+      // stranding him on a tile that does nothing.
       GameAudio.play(nextState.lastAction === 'portal-accept' ? 'win' : 'descend');
       pendingAction = nextState.lastAction === 'portal-accept' ? 'accept-victory' : 'enter-realm';
       animTimer = PLAYER_MOVE_TIME;
@@ -2529,7 +2713,7 @@
     Renderer.update(delta);
     if (screen === 'title') {
       // The whole title screen is the board now — the menu options are tiles on it.
-      Renderer.drawTitle(titleMenuModel());
+      Renderer.drawTitle(withDebugOption(titleMenuModel()));
     } else if (screen === 'class' && !gameState && typeof Renderer.drawPickScene === 'function') {
       // CHARACTER CREATION: three kings on the board, one per class (then per difficulty) — pick one.
       Renderer.drawPickScene(classPickModel());
@@ -2582,7 +2766,7 @@
     // Options down-right). A pressed DIRECTION lands on the icon that lies that way from the centre —
     // press left → the left icon, down-left → the down-left icon — rather than rotating through a list.
     if (screen === 'title') {
-      const opts = titleMenuModel().options.filter((o) => o.enabled);
+      const opts = withDebugOption(titleMenuModel()).options.filter((o) => o.enabled);
       if (!opts.length) return;
       const dir = menuDir(event);
       if (dir) {
@@ -2765,7 +2949,7 @@
       const scale = canvas.width / rect.width;
       const id = Renderer.titleOptionAt((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
       if (id) {
-        const opt = titleMenuModel().options.find((o) => o.id === id);
+        const opt = withDebugOption(titleMenuModel()).options.find((o) => o.id === id);
         if (opt && opt.enabled && opt.action) opt.action();
       }
       return;

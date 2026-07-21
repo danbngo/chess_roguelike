@@ -190,6 +190,8 @@
     <canvas id="minimap" width="240" height="240"></canvas>
     <!-- Plain classic scripts, loaded in dependency order, so the game runs
          straight off the filesystem (no server / ES modules required). -->
+    <!-- config FIRST: it is read at definition time by everything after it -->
+    <script src="src/config.js"></script>
     <script src="src/constants.js"></script>
     <script src="src/utils.js"></script>
     <script src="src/terrain.js"></script>

@@ -338,6 +338,31 @@ const REALMS = {
     newGamePlus: true,
   },
 };
+// EVERY DOOR IN THE PORTAL ROOM, by the realm it leads to: what to call it, and what colour it burns.
+//
+// This exists because `realmDef` falls back to the overworld for anything it does not know, and the
+// DEMON realm is not a REALMS entry — it is floors 6-8 of the overworld. So `realmDef('demon').name`
+// answered "The Overworld", and the demon portal introduced itself as the overworld's twin. Two dead
+// doors side by side, both claiming to be the same place.
+//
+// Colour is the other half. A row of identical rings tells him nothing about where any of them go;
+// giving each realm its own light makes the row readable at a glance and makes a DEAD portal legible
+// too — a collapsed door keeps its colour, banked down to an ember, so "where I have been" is a
+// thing he can see rather than a thing he has to remember.
+const PORTAL_REALMS = {
+  overworld: { name: 'The Overworld', color: '#fbbf24' }, // gold — where it all started
+  demon: { name: 'The Demon Realm', color: '#ef4444' },   // furnace red — the deep floors of it
+  undead: { name: 'The Undead Realm', color: '#7dd3a0' }, // sick green, matching its river
+  workshop: { name: 'The Workshop', color: '#7dd3fc' },   // electric blue, matching its current
+  elemental: { name: 'The Elemental Realm', color: '#c4b5fd' }, // shifting violet — it is four places
+};
+function portalRealmName(realm) {
+  return (PORTAL_REALMS[realm] && PORTAL_REALMS[realm].name) || 'That realm';
+}
+function portalRealmColor(realm) {
+  return (PORTAL_REALMS[realm] && PORTAL_REALMS[realm].color) || '#a855f7';
+}
+
 const DEFAULT_REALM = 'overworld';
 // The realms a New Game+ king may actually walk into, in the order the portal room lists them. The
 // overworld and the demon realm are NOT here: he has already been through both, and their portals
