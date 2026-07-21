@@ -136,7 +136,11 @@ function tickTombstones(state) {
 const UNDEAD_TYPES = ['zombie', 'skeleton', 'vampire'];
 const ZOMBIE_HP = 3;
 const SKELETON_REKNIT_TURNS = 3;
-const BAT_REFORM_CHANCE = 1 / 3; // one turn in three, and only on ground it could stand on
+// Blows needed to scatter a DOWNED skeleton for good. Two, not one: finishing a heap used to be a
+// single free swing, so the re-knit clock never really threatened him.
+const SKELETON_CRUSH_BLOWS = 2;
+// NB: a bat never re-forms of its own accord — only blood does that (see tickUndead). How it MOVES
+// lives with `batStep`, beside the code that uses it.
 
 function isUndead(unit) {
   return Boolean(unit && unit.undeadType);
@@ -169,7 +173,10 @@ function makeElemental(enemy, type) {
   // A STONE ELEMENTAL moves every OTHER turn (the same `slow` flag a zombie carries: a recovery turn
   // after every exertion — see moveEnemy). Something with exactly one answer and no way to be hurt
   // has to give him the time to arrange that answer, or it is not a puzzle, it is a countdown.
-  if (type === 'stonen' || type === 'steamy') enemy.slow = true;
+  // EARTH is slow too. It is not killable by blows, so the only answer is to shove it somewhere
+  // that swallows it — and at full speed it simply followed him about while he tried to line that
+  // up. A thing whose counter takes arranging has to give him the turns to arrange it.
+  if (type === 'stonen' || type === 'steamy' || type === 'earthen') enemy.slow = true;
   // CAVE BATS are born as bats and stay that way. `bat` gives them the existing airborne drift-and-
   // bite behaviour for free; `trueBat` is what stops the undead clock ever settling one into a
   // vampire, which is the ONE thing the user asked to be different about them.
@@ -722,12 +729,9 @@ function tickTrueBats(state) {
       }
       continue;
     }
-    const moves = batMoves(state, e);
-    if (moves.length) {
-      const to = moves[randomInt(moves.length)];
-      e.x = to.x;
-      e.y = to.y;
-    }
+    // The SAME step a vampire's cloud takes: half toward him, half at random. These used to drift
+    // purely at random, which made them scenery — a cave bat that never closes is never a threat.
+    batStep(state, e);
   }
 }
 function isElementalFolk(type) { return ELEMENTAL_FOLK.has(type); }
@@ -874,7 +878,7 @@ function toggleMetalAt(state, x, y) {
       if (occupant.boss) damageBoss(state, occupant, 1, { ground: true, cause: 'crush' });
       else if (occupant.turret) damageTurret(state, occupant, 1);
       else if (state.enemies.includes(occupant)) {
-        addSpatter(state, x, y, 0, 0, isDemonKind(occupant.kind));
+        bleedFor(state, occupant, x, y, 0, 0);
         tallyKill(state, occupant);
         state.enemies = state.enemies.filter((e) => e.id !== occupant.id);
       } else damageAlly(state, occupant, 1);
@@ -886,7 +890,7 @@ function toggleMetalAt(state, x, y) {
       damageBoss(state, occupant, 1, { ground: true, cause: 'crush' });
       occupant.x = to.x; occupant.y = to.y;
     } else if (state.enemies.includes(occupant)) {
-      addSpatter(state, x, y, 0, 0, isDemonKind(occupant.kind));
+      bleedFor(state, occupant, x, y, 0, 0);
       tallyKill(state, occupant);
       state.enemies = state.enemies.filter((e) => e.id !== occupant.id);
     } else {
@@ -1003,7 +1007,7 @@ function dischargeElectricity(state, x, y, opts) {
       ledger[foe.id] = true;
       bit = true;
       if (foe.boss) damageBoss(state, foe, ELECTRIC_DAMAGE, { ground: true, cause: 'shock' });
-      else { addSpatter(state, cx, cy, 0, 0, isDemonKind(foe.kind)); tallyKill(state, foe); state.enemies = state.enemies.filter((e) => e.id !== foe.id); }
+      else { bleedFor(state, foe, cx, cy, 0, 0); tallyKill(state, foe); state.enemies = state.enemies.filter((e) => e.id !== foe.id); }
     }
   }
   if (charged.size) {
@@ -1132,14 +1136,34 @@ function tickWisps(state) {
     // It always knows where he is — nothing about sight applies to a thing made of current.
     w.awake = true;
     w.surprised = false;
-    // IT GATHERS BEFORE IT MOVES. A wisp drifts every OTHER turn, spending the turn between winding
-    // up — the same `slow` beat a zombie and a stone elemental keep, and drawn with the same windup
-    // mark. Without it a wisp closed as fast as he could walk, so once one had a clear line there
-    // was no arrangement of the room that beat it: outrunning it was impossible and baiting it took
-    // a turn he did not have. At half speed the bait is affordable, which is the whole counterplay.
-    w.slow = true;
-    w.winding = !w.winding;
-    if (w.winding) continue; // this turn is the windup — it gathers and does not move
+    // IT DRIFTS LIKE A BAT: one beat at random, the next straight at him, alternating. It used to
+    // be `slow` — stationary every other turn — which worked but read as a machine pausing rather
+    // than as loose current wandering the room. Alternating keeps the same average approach speed
+    // while making it look like the drifting thing it is, and it stays COUNTABLE: the turn after it
+    // wanders is the turn it comes.
+    // Same beat counter as a bat, and for the same reason: it must DRIFT on the turn it appears
+    // rather than lunging the instant it exists.
+    w.beats = (w.beats || 0) + 1;
+    if (w.beats % 2 === 1) {
+      // The random beat. It still earths itself on whatever it touches, so a wisp blundering
+      // sideways into a golem is as spent as one that flew at him.
+      const wander = [...ORTHO, ...DIAG]
+        .map(([dx, dy]) => ({ x: w.x + dx, y: w.y + dy }))
+        .filter((t) => t.x >= 1 && t.y >= 1 && t.x < WORLD_SIZE - 1 && t.y < WORLD_SIZE - 1);
+      if (wander.length) {
+        const drift = wander[randomInt(wander.length)];
+        if (!wispTriggerAt(state, drift.x, drift.y)) { w.x = drift.x; w.y = drift.y; continue; }
+        // It blundered into something — that earths it exactly as arriving at him would.
+        w.spent = true;
+        state.enemies = state.enemies.filter((e) => e.id !== w.id);
+        addSmoke(state, w.x, w.y);
+        dischargeElectricity(state, drift.x, drift.y, { skipOrigin: false });
+        state.message = state.message
+          ? `${state.message} A wisp blunders into something and earths itself with a crack!`
+          : 'A wisp blunders into something and earths itself with a crack!';
+      }
+      continue;
+    }
     // IT IS DUMB. It goes STRAIGHT at him and earths itself on the first thing it touches, which is
     // the whole counterplay: a wisp is not unavoidable, it is BAITABLE. Put a golem, a gun, a press —
     // anything at all but a stretch of cable — between yourself and one, and it spends itself on that
@@ -1783,13 +1807,17 @@ function bossPoolForFloor(floor, realm) {
 // A guardian's name, derived wholly from what it IS: an epithet from its primary perk over a noun
 // hashed from kind + traits. No per-floor authoring, and the same monster always earns the same
 // name. Falls back to a bare noun if the perk has no epithet.
-function bossNameFor(kind, perks) {
-  const nouns = BOSS_NOUNS[kind] || ['Guardian'];
+function bossNameFor(kind, perks, realm) {
+  // Each NG+ realm names its guardians in its own register — see REALM_BOSS_NAMES. The dungeon's
+  // vocabulary is the fallback, and remains right for the overworld and the demon floors.
+  const set = REALM_BOSS_NAMES[realm];
+  const nouns = (set && set.nouns[kind]) || BOSS_NOUNS[kind] || ['Guardian'];
   const tag = `${kind}|${[...(perks || [])].sort().join(',')}`;
   let hash = 0;
   for (let i = 0; i < tag.length; i += 1) hash = (hash * 31 + tag.charCodeAt(i)) >>> 0;
   const noun = nouns[hash % nouns.length];
-  const epithet = BOSS_EPITHETS[(perks || [])[0]];
+  const primary = (perks || [])[0];
+  const epithet = (set && set.epithets[primary]) || BOSS_EPITHETS[primary];
   return epithet ? `the ${epithet} ${noun}` : `the ${noun}`;
 }
 
@@ -1816,7 +1844,7 @@ function createBoss(floor, x, y, realm) {
     : (boss.finalBoss ? 3 : (floor >= DEMON_FLOOR ? 2 : 1));
   boss.bossPerks = rollBossPerks(perkCount, kind);
   boss.bossPerk = boss.bossPerks[0]; // the PRIMARY — drives its crown, epithet and one-line summary
-  boss.bossName = bossNameFor(kind, boss.bossPerks); // named for what it is, once its traits are known
+  boss.bossName = bossNameFor(kind, boss.bossPerks, realm); // named for what it is AND where it is
   // Hardened scales with the guardian rather than adding a flat +3. That flat bonus was written
   // against a 14-HP finale (a ~20% bump); once the HP curve was halved it became +75% on a floor-4
   // boss — the single biggest swing in the game, decided by one perk roll.
@@ -1838,6 +1866,22 @@ function bossDamage(boss) {
 // HP). Call this only when a boss's blow ACTUALLY lands (not when it's warded/deflected).
 function bossLeech(boss) {
   if (boss && bossHas(boss, 'leech') && boss.hp < boss.maxHp) boss.hp += 1;
+}
+
+// A ZOMBIE EATS. Every blow it lands on the king or one of his pieces knits one of its own wounds
+// closed — never above the three it started with.
+//
+// This is what stops "just whittle it down" being the whole answer to a three-wound piece: trading
+// hits with a zombie is a losing exchange, because it heals what you spend a turn taking off it. He
+// has to either finish it in a burst or not start — and the HP bar it now wears is what makes that
+// arithmetic visible rather than a nasty surprise.
+function zombieFeed(state, enemy) {
+  if (!enemy || enemy.undeadType !== 'zombie') return;
+  if (!enemy.maxHp || enemy.hp >= enemy.maxHp) return;
+  enemy.hp += 1;
+  if (inLineOfSight(state, enemy.x, enemy.y)) {
+    state.message = `${state.message || ''} The zombie feeds, and its wounds close (${enemy.hp}/${enemy.maxHp}).`.trim();
+  }
 }
 
 // A wounded boss's reaction: Shifting bosses morph to a lesser form; Blinkborn
@@ -5547,9 +5591,20 @@ const DEEP_SAFE_RADIUS = 3;
 // answers to nothing; here, a share of them SOFTEN into something three blows will open. Same
 // conversion, opposite direction, and the two floors ask opposite questions of the player: on the
 // Deepstone, what do I route around? On the Reach, what do I spend three turns opening?
-const CORAL_SHARE = 0.4;
+// MOST of the drowned floor's walls are reef. At 0.4 the level still read as a dungeon that happened
+// to be underwater — masonry everywhere with coral as a garnish. The floor should be the other way
+// round: a reef with a few built walls left standing in it, which is also what makes the surviving
+// masonry mean something (a wall you CANNOT open, in a place where most of them open).
+const CORAL_SHARE = 0.93;
 function drownWaterFloor(state, realm) {
   if (elementForFloor(state.floor || 1, realm) !== 'water') return;
+  // DOUSE THE TORCHES FIRST. Nothing burns underwater, and this used to run at the END — which meant
+  // the coral pass below still saw every torch-bearing wall as a lit fitting and spared it, and only
+  // then were the torches deleted. The floor came out 61% reef instead of 85% for no visible reason:
+  // it was preserving masonry to protect lights that were about to be removed anyway.
+  if (state.torches) {
+    for (const k of Object.keys(state.torches)) delete state.torches[k];
+  }
   for (const k of Object.keys(state.terrain)) {
     const t = state.terrain[k];
     const [x, y] = k.split(',').map(Number);
@@ -5562,16 +5617,20 @@ function drownWaterFloor(state, realm) {
     if (t !== 'wall') continue;
     if (isBorderStone(x, y)) continue; // the world's rim is not a reef
     if (hasLightFitting(state, x, y)) continue; // and no fittings down here anyway (see below)
+    // A WALL BESIDE A DOORWAY stays masonry. At 85% conversion the shells of the set-piece rooms
+    // dissolved into reef around their own doors, which left doors standing in open water leading
+    // nowhere — the rooms were still "there" but had stopped reading as rooms. Sparing the tiles
+    // that frame a door keeps every built structure legible while the rest of the floor turns to reef.
+    // ORTHOGONAL neighbours only — the two tiles that actually FRAME a doorway. Sparing all eight
+    // kept ~38 built walls a floor, which is a dungeon with reef in it rather than the other way
+    // round; the frame alone keeps a door legible for about a third of that.
+    if (ORTHO.some(([dx, dy]) => {
+      const nt = terrainAt(state, x + dx, y + dy);
+      return nt === 'door' || nt === 'dooropen' || nt === 'doorajar' || nt === 'gate';
+    })) continue;
     // Softening a wall can only ever OPEN the floor, never close it, so this needs no reachability
     // check — the same argument that makes petrifying walls safe, running the other way.
     if (Math.random() < CORAL_SHARE) state.terrain[k] = 'coral';
-  }
-  // NO FIRE ON THE DROWNED FLOOR, at all. Torches are wall fittings, and a wall fitting burning
-  // underwater is the one thing that would break the level's whole premise. Swept here rather than
-  // guarded at each torch site because torches are laid by the recipe, by set-pieces AND by the
-  // stair dressing (rule 1) — patching one site would leave the others lit.
-  if (state.torches) {
-    for (const k of Object.keys(state.torches)) delete state.torches[k];
   }
 }
 
@@ -5766,11 +5825,91 @@ function nextFloor(state) {
 // The satellites lean toward `momX,momY` (the way the blow carried — e.g. hit from the
 // left, blood sprays right), but not every time, for a natural scatter. Satellites may
 // land on walls, where they render as downward smears.
-function addSpatter(state, x, y, momX, momY, ichor) {
+// WHAT A THING LEAVES WHEN IT IS STRUCK. One function, because "what bleeds out of this" is a fact
+// about the creature and it was previously decided at a dozen separate call sites — every one of
+// which only knew how to ask "is it a demon?".
+//
+// Most of these are pure feedback, and that is the point: half the creatures in the New Game+ realms
+// cannot be killed by hitting them, so the spray is often the ONLY thing telling him his blow landed
+// at all. A golem that sheds nothing reads exactly like a golem that ignored you.
+//
+// Returns null when the caller should do nothing whatsoever.
+function bleedFor(state, unit, x, y, momX, momY) {
+  if (!unit) { addSpatter(state, x, y, momX, momY, false); return; }
+
+  // A WISP is a mote of current with nothing inside it. No residue, ever.
+  if (unit.wisp) return;
+
+  // A SKELETON has no blood — it sheds BONE. Every hit knocks another piece off it, which is also
+  // the tell that a "killing" blow only broke it.
+  if (unit.undeadType === 'skeleton') { addSticks(state, x, y, false, 'bone'); return; }
+
+  // ELEMENTALS are made of their element, and they bleed it. Four are obvious enough to be terrain;
+  // the rest are feedback only (settled with the user 2026-07-21).
+  if (unit.elemental) {
+    switch (unit.elemental) {
+      case 'watery': // it is water: it splashes, and the floor is wetter for it
+        if (!terrainLocked(state, x, y) && terrainAt(state, x, y) === 'normal') state.terrain[`${x},${y}`] = 'water';
+        addSpatter(state, x, y, momX, momY, false, 'water');
+        return;
+      case 'icy':
+        if (!terrainLocked(state, x, y) && terrainAt(state, x, y) === 'normal') state.terrain[`${x},${y}`] = 'ice';
+        addSpatter(state, x, y, momX, momY, false, 'ice');
+        return;
+      case 'lavan': // molten spatter — the same idea as a Hot-Blooded guardian
+        if (!terrainLocked(state, x, y) && terrainAt(state, x, y) === 'normal') state.terrain[`${x},${y}`] = 'lava';
+        addSpatter(state, x, y, momX, momY, false, 'lava');
+        return;
+      case 'steamy': // it boils off where it is hit
+        addFog(state, x, y, 2);
+        addSpatter(state, x, y, momX, momY, false, 'steam');
+        return;
+      case 'stonen': {
+        // A STONE elemental sheds a BOULDER — a real lump of it comes away. Placed on a free tile
+        // beside it, never under anyone and never on an objective, so it can obstruct but never
+        // strand: a boulder is shovable, so the worst case is a nuisance he can push out of the way.
+        const spot = freeAdjacentTile(state, x, y);
+        if (spot && terrainAt(state, spot.x, spot.y) === 'normal'
+            && !boulderBlockedTile(state, spot.x, spot.y)
+            && !(state.player.x === spot.x && state.player.y === spot.y)) {
+          state.terrain[`${spot.x},${spot.y}`] = 'boulder';
+        }
+        addSpatter(state, x, y, momX, momY, false, 'grit');
+        return;
+      }
+      case 'earthen': addSpatter(state, x, y, momX, momY, false, 'grit'); return; // dirt and clods
+      case 'fiery': addSpatter(state, x, y, momX, momY, false, 'ember'); return; // embers, no lava
+      case 'electric':
+        // A small arc every time it is struck — it earths a little of itself through whatever is
+        // touching it. The FULL discharge is still reserved for its death.
+        addSpatter(state, x, y, momX, momY, false, 'spark');
+        if (typeof dischargeElectricity === 'function' && !state.gameOver) {
+          dischargeElectricity(state, x, y, { skipOrigin: true });
+        }
+        return;
+      default: break; // the FOLK — molefolk, merfolk, salamander, tengu, cave bats — are flesh
+    }
+  }
+
+  // A GOLEM is a machine: black oil, not blood.
+  if (typeof isGolem === 'function' && isGolem(unit)) { addSpatter(state, x, y, momX, momY, false, 'oil'); return; }
+  // A ZOMBIE runs with something yellow-green and rotten. (A VAMPIRE bleeds ordinary red — it is the
+  // one undead that is still, recognisably, full of blood.)
+  if (unit.undeadType === 'zombie') { addSpatter(state, x, y, momX, momY, false, 'rot'); return; }
+
+  addSpatter(state, x, y, momX, momY, isDemonKind(unit.kind));
+}
+
+function addSpatter(state, x, y, momX, momY, ichor, fluid) {
   if (!Array.isArray(state.spatters)) state.spatters = [];
   // `ichor`: a DEMON bleeds dark green, not red. Pass isDemonKind(bleeder.kind) wherever the
   // bleeder is known; the king and mortal pieces leave the default red.
-  state.spatters.push({ x, y, life: SPATTER_LIFE, max: SPATTER_LIFE, seed: randomInt(1000), ichor: Boolean(ichor) });
+  // `fluid` names anything else that is not blood at all — see `bleedFor`. Kept alongside `ichor`
+  // rather than replacing it because a dozen call sites pass the boolean and none of them are wrong.
+  state.spatters.push({
+    x, y, life: SPATTER_LIFE, max: SPATTER_LIFE, seed: randomInt(1000),
+    ichor: Boolean(ichor), fluid: fluid || null,
+  });
   const extras = 1 + randomInt(2); // 1-2 satellite spatters
   const dirs = [...ORTHO, ...DIAG];
   const hasMomentum = Boolean(momX || momY);
@@ -6855,9 +6994,13 @@ function applyArrival(next, x, y, embedded) {
       // said the thing was dead while it was visibly still there.
       next.lastAction = 'combat';
     } else {
-      next.message = enemy.summonCircle
+      // A kill path may leave its OWN line when the death is special enough to say so (catching a
+      // vampire's bats is final, where every other blow on one merely bursts it). Prefer it, and
+      // clear it so it can never leak onto the next kill.
+      next.message = next.killLine || (enemy.summonCircle
         ? 'The king shatters a summoning circle!'
-        : `The king ${leapt ? 'crushes' : 'cuts down'} ${aWord(enemy.kind)}!`;
+        : `The king ${leapt ? 'crushes' : 'cuts down'} ${aWord(enemy.kind)}!`);
+      next.killLine = null;
       next.lastAction = 'combat';
     }
   }
@@ -6933,18 +7076,47 @@ function resolveUndeadBlow(state, enemy, byFire, opts) {
       enemy.awake = true;
       enemy.provoked = true;
       enemy.asleep = false;
+      enemy.crushed = 0; // how far through breaking the heap he has got
       cue(state, 'crush'); // the clatter of a body coming apart
-      addSpatter(state, enemy.x, enemy.y, 0, 0, false);
+      addSticks(state, enemy.x, enemy.y, false, 'bone');
       state.message = `The skeleton ${enemy.kind} clatters apart — but the bones are already stirring!`;
       state.lastAction = 'combat';
       return false; // it is DOWN, not dead: no on-kill, no boon
     }
-    return null; // struck again while broken — that finishes it
+    // BREAKING THE HEAP TAKES TWO BLOWS, not one. Finishing a downed skeleton was a single free
+    // swing, so the re-knit clock never actually threatened him: knock it down, tap it, done. At two
+    // it is a real commitment — two turns spent standing over a heap while whatever else is in the
+    // room walks up behind him — which is the whole point of a realm where nothing stays dead.
+    enemy.crushed = (enemy.crushed || 0) + 1;
+    if (enemy.crushed < SKELETON_CRUSH_BLOWS) {
+      enemy.reknit = SKELETON_REKNIT_TURNS; // it is not knitting while he is breaking it
+      cue(state, 'crush');
+      addSticks(state, enemy.x, enemy.y, false, 'bone');
+      state.message = `The king smashes at the bones (${enemy.crushed}/${SKELETON_CRUSH_BLOWS}) — they are still moving.`;
+      state.lastAction = 'combat';
+      return false;
+    }
+    return null; // the heap is finally scattered for good
   }
 
   // VAMPIRE: struck, it bursts into a BAT rather than dying — except by FIRE, which ends it where it
   // stands. The bat flits away IMMEDIATELY (see becomeBat), so the blow that made it never lands on it.
   if (kind === 'vampire') {
+    // CATCH THE CLOUD AND IT IS OVER. A blow that lands on the BATS kills the vampire for good —
+    // there is no second transformation to fall back on.
+    //
+    // This is the point of the whole two-stage creature, and it was missing: the branch below burst
+    // it unconditionally, so striking a bat simply burst it into bats AGAIN and flitted it clear.
+    // A vampire could never be killed at all except by fire, and the bat form — which is supposed to
+    // be its vulnerable state, the reprieve he has earned — was actually its invulnerable one.
+    // Hitting the bats is now the reward for having driven it into them.
+    if (enemy.bat) {
+      // `killLine` rather than `message`: the mover overwrites `message` with its own "cuts down"
+      // on any real kill, which would swallow the one line that tells him this was permanent — and
+      // "the king cuts down a pawn" is exactly the wrong thing to read after catching a vampire.
+      state.killLine = `The king catches the cloud mid-flight — the bats scatter, and the ${enemy.kind} is gone for good!`;
+      return null; // it dies here, permanently
+    }
     if (byFire) {
       state.message = `The vampire ${enemy.kind} shrieks and burns away — no time to take wing!`;
       return null; // fire is the answer: it dies here
@@ -6967,7 +7139,12 @@ function becomeBat(state, vamp) {
   addSpatter(state, vamp.x, vamp.y, 0, 0, false);
   state.message = `The vampire ${vamp.kind} bursts into a cloud of bats!`;
   state.lastAction = 'combat';
-  batFlit(state, vamp); // away at once — the blow that made it does not get to land twice
+  batFlit(state, vamp); // away at once, onto an ADJACENT tile — never the corpse's own square
+  // IT DOES NOT ACT ON THE TURN IT BURSTS. Without this the cloud forms during his blow and then
+  // gets its bite in during the very same turn's enemy phase — so a vampire struck while adjacent
+  // burst and re-formed instantly, and the log printed both halves as one line. The transformation
+  // has to cost it a turn, or it is not a transformation at all.
+  vamp.justBurst = true;
   return vamp;
 }
 
@@ -6982,6 +7159,7 @@ function tickUndead(state) {
       if (e.reknit <= 0) {
         e.broken = false;
         e.reknit = 0;
+        e.crushed = 0; // it stood back up whole — the blows he landed on the heap are undone
         e.awake = true;
         e.provoked = true;
         cue(state, 'crush');
@@ -6994,10 +7172,13 @@ function tickUndead(state) {
       continue; // a heap of bones does nothing else this turn
     }
     if (e.bat) {
-      // A BAT IS NOT A HUNTER. It flits about at random — it does not close on the king the way
-      // everything else on the board does — with one exception: if from where it stands it CAN bite
-      // him or a living companion of his, it does, and the blood puts it back together. That is the
-      // whole shape of the thing: harmless while it drifts, and a vampire again the moment it feeds.
+      // THE TURN IT BURST IS NOT ITS TURN. The cloud forms during his blow, so without this it would
+      // act in the same turn's enemy phase — bursting and feeding in one breath.
+      if (e.justBurst) { e.justBurst = false; continue; }
+      // A BAT HUNTS, badly. It beats toward him most turns and blunders off at random the rest, and
+      // if from where it stands it CAN bite him or a living companion of his, it does — and THAT is
+      // the only thing that puts it back together. Harmless-ish while it drifts, a vampire again the
+      // moment it feeds; nothing else re-forms it, however long it is left alone.
       const prey = batPrey(state, e);
       if (prey.length) {
         const bite = prey[randomInt(prey.length)];
@@ -7015,25 +7196,15 @@ function tickUndead(state) {
         }
         continue;
       }
-      // Otherwise it drifts. One turn in three it settles back into a vampire of its own accord —
-      // but only on ground it could actually STAND on: a bat hanging over a pit or a lava field has
-      // nowhere to re-form to, so it stays a bat until it has drifted somewhere solid.
-      const solid = isStandable(terrainAt(state, e.x, e.y));
-      if (solid && Math.random() < BAT_REFORM_CHANCE) {
-        e.bat = false;
-        if (inLineOfSight(state, e.x, e.y)) {
-          state.message = state.message
-            ? `${state.message} The bats settle back into a vampire ${e.kind}!`
-            : `The bats settle back into a vampire ${e.kind}!`;
-        }
-      } else {
-        const moves = batMoves(state, e);
-        if (moves.length) {
-          const to = moves[randomInt(moves.length)]; // RANDOM, not toward him
-          e.x = to.x;
-          e.y = to.y;
-        }
-      }
+      // IT ONLY RE-FORMS ON BLOOD. It used to settle back of its own accord one turn in three, which
+      // made the whole transformation meaningless: a vampire could burst and be a vampire again on
+      // the very next tick — often in the same breath, so the log read "bursts into a cloud of bats!
+      // The bats settle back into a vampire!" as one event. Now the ONLY road back is feeding, which
+      // is what makes bursting one a real reprieve: he has bought himself time, and he keeps it for
+      // as long as he can keep the thing from reaching him or his familiar.
+      //
+      // OTHERWISE IT HUNTS — half the time. See batStep, shared with the earth floor's cave bats.
+      batStep(state, e);
     }
   }
 }
@@ -7075,27 +7246,82 @@ function batPrey(state, bat) {
 
 // A bat's move: anywhere in the 3x3 around it. Terrain is no object (it is flying) and so is anything
 // standing there — except that it will not share a tile with another piece, the king, or the key.
+// WHERE THE CLOUD APPEARS when a vampire bursts. Three tiers, in order:
+//   1. beside the body and FURTHER FROM THE KING than the body was — it recoils from the blow;
+//   2. failing that, any free tile beside the body — at least it is off the corpse;
+//   3. failing even that, the corpse's own square.
+//
+// The last tier matters: `batFlit` used to simply fail when it was hemmed in, which left the bat
+// standing exactly where the vampire fell — indistinguishable from not having transformed at all.
+// Landing on the corpse is the honest fallback, because the tier that was actually chosen is
+// visible: he can see it recoil, or shuffle sideways, or not move at all.
 function batFlit(state, bat) {
-  const spots = [];
+  const fromX = bat.x;
+  const fromY = bat.y;
+  const free = [];
   for (let dx = -1; dx <= 1; dx += 1) {
     for (let dy = -1; dy <= 1; dy += 1) {
-      if (!dx && !dy) continue; // NEVER its own tile: the whole point is that it is GONE from the
-      // square he just struck. Leaving (0,0) in the candidate list meant one flit in nine went
-      // nowhere at all, handing him a free second swing at the thing he had just burst.
-      const x = bat.x + dx;
-      const y = bat.y + dy;
+      if (!dx && !dy) continue; // its own tile is the LAST resort, handled below — not a candidate here
+      const x = fromX + dx;
+      const y = fromY + dy;
       if (x < 1 || y < 1 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) continue;
       if (x === state.player.x && y === state.player.y) continue;
       if (keyTileAt(state, x, y)) continue;
       if (allyAt(state, x, y)) continue;
       if (state.enemies.some((e) => e.id !== bat.id && e.x === x && e.y === y)) continue;
-      spots.push({ x, y });
+      free.push({ x, y });
     }
   }
-  if (!spots.length) return false;
-  const t = spots[randomInt(spots.length)];
-  bat.x = t.x;
-  bat.y = t.y;
+  if (free.length) {
+    const here = chebyshev(fromX, fromY, state.player.x, state.player.y);
+    // Tier 1: strictly further from him than the body was.
+    const away = free.filter((s) => chebyshev(s.x, s.y, state.player.x, state.player.y) > here);
+    const pool = away.length ? away : free; // tier 2 is simply "anywhere free beside the body"
+    const t = pool[randomInt(pool.length)];
+    bat.x = t.x;
+    bat.y = t.y;
+    return true;
+  }
+  return false; // tier 3: hemmed in on all sides — it stays on the corpse, and that is legible
+}
+
+// BATTY MOVEMENT, shared by every erratic flier: the vampire's cloud, the earth floor's cave bats
+// and the Workshop's wisps.
+//
+// It ALTERNATES — one wingbeat at random, the next straight at him, over and over — rather than
+// flipping a coin each turn. Two reasons, and the second is the important one:
+//   * it always opens with the RANDOM beat, so a thing that has just appeared never lunges the
+//     instant it arrives;
+//   * because it remembers what it did last turn, the player can COUNT it. A coin flip is merely
+//     unpredictable, which reads as unfair when it goes badly three times running; an alternation is
+//     legible — "it drifted, so it comes for me next" — and the whole skill is spending the drift
+//     turn well. Same average speed, completely different to play against.
+function batStep(state, bat) {
+  const moves = batMoves(state, bat);
+  if (!moves.length) return false;
+  // A BEAT COUNTER rather than a toggled flag: `!undefined` is TRUE, so a naive toggle made the
+  // very first wingbeat a hunt — the exact thing this is meant to prevent. Counting from zero makes
+  // the odd beats (1st, 3rd, …) the random ones and the even beats the hunts, so a thing that has
+  // just appeared always drifts first.
+  bat.beats = (bat.beats || 0) + 1;
+  const hunting = bat.beats % 2 === 0;
+  let to;
+  if (!hunting) {
+    to = moves[randomInt(moves.length)]; // a wingbeat in the wrong direction
+  } else {
+    // Closest approach to the king, ties broken at random so it never traces the same line twice
+    // from the same place.
+    let best = Infinity;
+    const front = [];
+    for (const m of moves) {
+      const d = chebyshev(m.x, m.y, state.player.x, state.player.y);
+      if (d < best) { best = d; front.length = 0; }
+      if (d === best) front.push(m);
+    }
+    to = front[randomInt(front.length)];
+  }
+  bat.x = to.x;
+  bat.y = to.y;
   return true;
 }
 
@@ -7172,7 +7398,7 @@ function resolveKill(state, enemy, opts) {
   // is a puff of arcane smoke over a scar, and nothing else. And a foe burnt down by SPELLFIRE is
   // reduced to ASH — there is no blood to fling, so it leaves an ash pile alone, not a stain under it.
   if (!enemy.summonCircle && !bySpell) {
-    addSpatter(state, enemy.x, enemy.y, Math.sign(enemy.x - p.x), Math.sign(enemy.y - p.y), isDemonKind(enemy.kind)); // blood flings away from the king
+    bleedFor(state, enemy, enemy.x, enemy.y, Math.sign(enemy.x - p.x), Math.sign(enemy.y - p.y)); // blood flings away from the king
   }
   // A shattered summoning circle leaves a permanent scar so its ruin stays visible; a foe
   // burnt down by a spell leaves an ash pile; an ordinary slain piece leaves a fading
@@ -7324,7 +7550,7 @@ function confusedChopTargets(piece, state) {
 // the king's name ("The king strikes...") and pay him the score, the on-kill perks and the boons.
 // He did not do this — he only started it — so it fells the piece and nothing more.
 function confusedFriendlyFire(state, attacker, target) {
-  addSpatter(state, target.x, target.y, Math.sign(target.x - attacker.x), Math.sign(target.y - attacker.y), isDemonKind(target.kind));
+  bleedFor(state, target, target.x, target.y, Math.sign(target.x - attacker.x), Math.sign(target.y - attacker.y));
   if (target.maxHp) { // a guardian or a turret soaks it
     target.hp -= 1;
     if (target.hp > 0) {
@@ -7448,7 +7674,7 @@ function confusedBlunderHarm(state, enemy) {
     }
     return slain;
   }
-  if (!enemy.turret) addSpatter(state, enemy.x, enemy.y, 0, 0, isDemonKind(enemy.kind));
+  if (!enemy.turret) bleedFor(state, enemy, enemy.x, enemy.y, 0, 0);
   state.enemies = state.enemies.filter((e) => e.id !== enemy.id);
   state.message = `A confused ${enemy.turret ? 'turret' : enemy.kind} staggers into a pit — gone!`;
   return true;
@@ -10649,7 +10875,9 @@ function meleeMove(state, enemy) {
     const a = allyAt(state, allyHit.x, allyHit.y);
     addSpatter(state, allyHit.x, allyHit.y, 0, 0, isDemonKind(a.kind));
     // A General soaks the blow and holds its ground; a wisp falls and the foe takes its tile.
-    if (!damageAlly(state, a, 1)) {
+    const felledAlly = damageAlly(state, a, 1);
+    zombieFeed(state, enemy); // blood is blood — his familiar's counts too
+    if (!felledAlly) {
       state.message = `A ${enemy.kind} hammers your ${a.kind} (${a.hp}/${a.maxHp}).`;
       state.lastAction = 'enemy';
       return state;
@@ -10713,6 +10941,7 @@ function strikeKing(state, enemy) {
     bloody(enemy, BLOOD_STRIKE); // the striker is flecked (the king shows HP wounds)
     addSpatter(state, state.player.x, state.player.y, Math.sign(state.player.x - enemy.x), Math.sign(state.player.y - enemy.y));
     state.message = `A ${enemy.kind} strikes the king!`;
+    zombieFeed(state, enemy); // it eats, and knits a wound closed
     state.lastAction = 'hit';
     checkDeath(state);
   } else {

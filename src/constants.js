@@ -498,6 +498,58 @@ const BOSS_EPITHETS = {
   sorcerer: 'Burning', knockback: 'Hammering', shapeshifter: 'Shifting', tough: 'Hardened',
   leech: 'Thirsting', flying: 'Winged', phasing: 'Phantom', regen: 'Undying',
 };
+// GUARDIANS OF THE NEW GAME+ REALMS speak in their realm's register rather than the dungeon's.
+// A "Thirsting Juggernaut" is exactly right at the foot of the overworld and completely wrong as the
+// thing waiting at the end of a drowned catacomb or a machine shop — the name is the first thing he
+// reads about a boss, and using the same vocabulary everywhere flattened three realms into one.
+//
+// THE UNDEAD REALM speaks like what it is: something very old that has been dead a long time and
+// resents being disturbed. Titles, not job descriptions — it used to rule.
+const BOSS_NOUNS_UNDEAD = {
+  knight: ['Barrow-Knight', 'Cairn-Rider', 'Deathless'],
+  bishop: ['Bone Prelate', 'Grave-Cantor', 'Sepulchre'],
+  rook: ['Mausoleum', 'Charnel Bastion', 'Tomb-Warden'],
+  queen: ['Pale Empress', 'Grave-Sovereign', 'Crypt-Queen'],
+  nightrider: ['Bone Dragon', 'Cerement Wyrm', 'Gravecaller'],
+  archbishop: ['Lich', 'Necrarch', 'Undying Hierophant'],
+  chancellor: ['Marshal of Ash', 'Bone Marshal', 'Keeper of Graves'],
+  amazon: ['Devourer of Rites', 'Eater of Names', 'Archlich'],
+  pawn: ['Revenant', 'Grave-Thrall', 'Risen'],
+  berolina: ['Shambler', 'Cerement', 'Husk'],
+};
+const BOSS_EPITHETS_UNDEAD = {
+  summoner: 'Grave-Calling', blinker: 'Unquiet', brutal: 'Merciless', ranged: 'Withering',
+  sepulchral: 'Sepulchral', sorcerer: 'Grave-Lit', knockback: 'Sundering', shapeshifter: 'Manyshaped',
+  tough: 'Sepulchral', leech: 'Ever-Thirsting', flying: 'Shroud-Winged', phasing: 'Bodiless',
+  regen: 'Deathless',
+};
+// THE WORKSHOP does not have monsters, it has UNITS. Flat, catalogued, technical — a thing that was
+// built to a spec and is still running to it. No menace in the words at all, which is its own kind.
+const BOSS_NOUNS_WORKSHOP = {
+  knight: ['Ambulator', 'Kine-Frame', 'Stride Unit'],
+  bishop: ['Calculator', 'Logic Engine', 'Cogitator'],
+  rook: ['Bulkhead', 'Press Frame', 'Load-Bearer'],
+  queen: ['Prime Engine', 'Central Cogitator', 'Overseer'],
+  nightrider: ['Long-Frame', 'Traverse Unit', 'Gantry'],
+  archbishop: ['Analytical Engine', 'Arbiter', 'Adjudicator'],
+  chancellor: ['Foreman', 'Assembly Marshal', 'Line Warden'],
+  amazon: ['Master Assembler', 'Prime Fabricator', 'Chief Engine'],
+  pawn: ['Servitor', 'Tool-Frame', 'Drudge'],
+  berolina: ['Hauler', 'Conveyor', 'Trolley'],
+};
+const BOSS_EPITHETS_WORKSHOP = {
+  summoner: 'Replicating', blinker: 'Displacing', brutal: 'High-Torque', ranged: 'Ranged',
+  sorcerer: 'Arc-Fed', knockback: 'Piston-Driven', shapeshifter: 'Reconfiguring', tough: 'Reinforced',
+  leech: 'Self-Repairing', flying: 'Gantry-Borne', phasing: 'Out-of-Phase', regen: 'Self-Repairing',
+};
+// NB: no elemental set yet — deferred with the user until that realm's bosses have properties of
+// their own to name. It falls back to the dungeon's vocabulary until then, which is at least not
+// wrong the way a Cogitator in a catacomb would be.
+const REALM_BOSS_NAMES = {
+  undead: { nouns: BOSS_NOUNS_UNDEAD, epithets: BOSS_EPITHETS_UNDEAD },
+  workshop: { nouns: BOSS_NOUNS_WORKSHOP, epithets: BOSS_EPITHETS_WORKSHOP },
+};
+
 // Ordered weakest→strongest; a Shifting boss never becomes a form ranked above its origin.
 const PIECE_RANK = ['pawn', 'knight', 'bishop', 'rook', 'berolina', 'nightrider', 'archbishop', 'chancellor', 'queen', 'amazon'];
 

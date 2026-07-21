@@ -347,9 +347,12 @@ const Renderer = (function () {
       jetGun: Boolean(enemy.jet),
       lavaGun: Boolean(enemy.lava),
       wisp: Boolean(enemy.wisp),
+      crushed: enemy.crushed || 0,
+      broken: Boolean(enemy.broken),
       summoned: Boolean(enemy.summoned),
       elemental: enemy.elemental || null,
       undeadType: enemy.undeadType || null,
+      golem: Boolean(enemy.golem),
       bat: Boolean(enemy.bat),
       bossPerk: enemy.bossPerk || null,
       hp: enemy.hp,
@@ -408,8 +411,11 @@ const Renderer = (function () {
       render.jetGun = Boolean(enemy.jet);
       render.lavaGun = Boolean(enemy.lava); // a lava spitter: molten orange, not charred red // a water jet: sea-green, never fire-red // a rock-throwing gun: brown stone, not steel
       render.wisp = Boolean(enemy.wisp);
+      render.crushed = enemy.crushed || 0; // blows landed on the heap: 1 of 2 shows the 'breaking' mark
+      render.broken = Boolean(enemy.broken); // a collapsed skeleton is drawn dark and drained
       render.elemental = enemy.elemental || null; // its element's livery (piece art, new paint)
       render.undeadType = enemy.undeadType || null; // zombie / skeleton / vampire — each its own colour
+      render.golem = Boolean(enemy.golem); // machinery: a metal sheen and rivets, never flesh
       render.bat = Boolean(enemy.bat); // a vampire currently scattered into bats // a mote of current: piece silhouette, electric livery + glow
       render.boss = Boolean(enemy.boss);
       render.rush = Boolean(enemy.rush);
@@ -579,6 +585,196 @@ const Renderer = (function () {
   function isDemonKind(kind) { return Object.prototype.hasOwnProperty.call(DEMON_BASE_GLYPH, kind); }
   function pieceGlyph(kind) { return DEMON_BASE_GLYPH[kind] || getPieceLabel(kind); }
 
+  // SPECIES MARKS — the same idea as the demons' horns and wings, extended to every realm.
+  //
+  // Colour alone turned out not to be enough: a green token and a bone-white one look like two
+  // pieces until you learn what they mean, whereas HORNS say "demon" before you have learned
+  // anything. So each creature grows the thing it obviously is — fangs, a skull, wings, a trident —
+  // drawn BEHIND/AROUND the token so the piece silhouette (and therefore its moves) stays readable.
+  //
+  // Deliberately drawn from a small vocabulary of shapes rather than per-creature art: what he needs
+  // is to tell them apart at a glance across a dim board, not to admire them.
+  // The haze an elemental stands in: [inner, outer] of its element. The FOLK (molefolk, merfolk,
+  // salamander, tengu, cave bats) deliberately have none — they are flesh, and the haze is precisely
+  // the mark that says "this one is made of something, and steel is not the answer".
+  const ELEM_HAZE = {
+    earthen: ['#c8873f', '#5a3a18'],
+    stonen: ['#aab3c4', '#3a3f4a'],
+    watery: ['#5fd0e8', '#12506e'],
+    icy: ['#bfe9ff', '#3d7fa8'],
+    lavan: ['#ff8a3a', '#7a1b04'],
+    fiery: ['#ffc24a', '#9a3d04'],
+    electric: ['#7fe9ff', '#1b5f8a'],
+    steamy: ['#e8eef5', '#7d8b99'],
+  };
+
+  function drawSpeciesMarks(cx, cy, radius, o) {
+    const r = radius;
+    ctx.save();
+
+    // BAT WINGS — a vampire's cloud, and the earth floor's cave bats. Ragged and half-furled, in
+    // whatever colour the creature already wears, so a bat never reads as a demon.
+    if (o.bat || o.elemental === 'batkin') {
+      ctx.fillStyle = 'rgba(150, 128, 176, 0.9)';
+      ctx.strokeStyle = 'rgba(40, 26, 54, 0.9)';
+      ctx.lineWidth = Math.max(1, r * 0.05);
+      const flap = 0.85 + 0.15 * Math.sin(clock * 6 + cx * 0.05); // it is never quite still
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(cx + s * r * 0.55, cy - r * 0.2);
+        ctx.lineTo(cx + s * r * 1.3 * flap, cy - r * 0.7);
+        ctx.lineTo(cx + s * r * 1.05 * flap, cy - r * 0.2);
+        ctx.lineTo(cx + s * r * 1.25 * flap, cy + r * 0.1);
+        ctx.lineTo(cx + s * r * 0.95 * flap, cy + r * 0.2);
+        ctx.lineTo(cx + s * r * 1.05 * flap, cy + r * 0.45);
+        ctx.lineTo(cx + s * r * 0.55, cy + r * 0.25);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    // FEATHERED WINGS — a tengu. Layered pinions rather than a bat's membrane, so the two fliers on
+    // different floors never blur.
+    if (o.elemental === 'tengu') {
+      ctx.strokeStyle = 'rgba(190, 200, 220, 0.9)';
+      ctx.lineWidth = Math.max(1, r * 0.07);
+      ctx.lineCap = 'round';
+      for (const s of [-1, 1]) {
+        for (let i = 0; i < 3; i += 1) {
+          const spread = 0.75 + i * 0.22;
+          ctx.beginPath();
+          ctx.moveTo(cx + s * r * 0.5, cy - r * 0.1 + i * r * 0.18);
+          ctx.quadraticCurveTo(
+            cx + s * r * spread * 1.1, cy - r * 0.5 + i * r * 0.2,
+            cx + s * r * spread * 1.35, cy + i * r * 0.16,
+          );
+          ctx.stroke();
+        }
+      }
+    }
+
+    // A SKULL riding the crown — a skeleton, and nothing else.
+    if (o.undeadType === 'skeleton') {
+      const sx = cx;
+      const sy = cy - r * 1.05;
+      ctx.fillStyle = '#f2ecdc';
+      ctx.strokeStyle = 'rgba(40, 38, 32, 0.85)';
+      ctx.lineWidth = Math.max(1, r * 0.045);
+      ctx.beginPath();
+      ctx.arc(sx, sy, r * 0.32, Math.PI, 0);
+      ctx.lineTo(sx + r * 0.22, sy + r * 0.26);
+      ctx.lineTo(sx - r * 0.22, sy + r * 0.26);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#1a1814'; // two sockets
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.arc(sx + s * r * 0.13, sy - r * 0.02, r * 0.075, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // FANGS — a vampire in its own body (a cloud of bats has no mouth to speak of).
+    if (o.undeadType === 'vampire' && !o.bat) {
+      ctx.fillStyle = '#fff4f6';
+      ctx.strokeStyle = 'rgba(70, 10, 24, 0.8)';
+      ctx.lineWidth = Math.max(1, r * 0.03);
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(cx + s * r * 0.16, cy + r * 0.30);
+        ctx.lineTo(cx + s * r * 0.30, cy + r * 0.28);
+        ctx.lineTo(cx + s * r * 0.23, cy + r * 0.68); // the point
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    // A TRIDENT and a fluked TAIL — merfolk.
+    if (o.elemental === 'merfolk') {
+      ctx.strokeStyle = '#cfe8e0';
+      ctx.lineWidth = Math.max(1.5, r * 0.08);
+      ctx.lineCap = 'round';
+      ctx.beginPath(); // the haft, over its shoulder
+      ctx.moveTo(cx + r * 0.85, cy + r * 0.75);
+      ctx.lineTo(cx + r * 0.85, cy - r * 0.85);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1, r * 0.06);
+      for (const d of [-1, 0, 1]) { // three prongs
+        ctx.beginPath();
+        ctx.moveTo(cx + r * (0.85 + d * 0.22), cy - r * 0.6);
+        ctx.lineTo(cx + r * (0.85 + d * 0.22), cy - r * 1.15);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(79, 143, 134, 0.9)'; // the tail fluke, behind and below
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 0.55, cy + r * 0.55);
+      ctx.lineTo(cx - r * 1.25, cy + r * 0.9);
+      ctx.lineTo(cx - r * 0.95, cy + r * 0.45);
+      ctx.lineTo(cx - r * 1.3, cy + r * 0.1);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // A MOLEFOLK carries the claws it digs with.
+    if (o.elemental === 'molefolk') {
+      ctx.strokeStyle = '#e8d9c4';
+      ctx.lineWidth = Math.max(1, r * 0.055);
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 3; i += 1) {
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 1.0, cy + r * (0.1 + i * 0.22));
+        ctx.lineTo(cx - r * 0.55, cy + r * (0.2 + i * 0.22));
+        ctx.stroke();
+      }
+    }
+
+    // A SALAMANDER wears a crest of spines.
+    if (o.elemental === 'salamander') {
+      ctx.fillStyle = '#a5673a';
+      for (let i = -2; i <= 2; i += 1) {
+        ctx.beginPath();
+        ctx.moveTo(cx + i * r * 0.28, cy - r * 0.9);
+        ctx.lineTo(cx + i * r * 0.28 + r * 0.1, cy - r * 1.3);
+        ctx.lineTo(cx + i * r * 0.28 + r * 0.2, cy - r * 0.88);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // A GOLEM is METAL: a hard specular highlight and a bolted seam. Nothing organic at all.
+    if (o.golem) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const sheen = ctx.createLinearGradient(cx - r, cy - r, cx + r * 0.4, cy + r);
+      sheen.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+      sheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.08)');
+      sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = sheen;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.95, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(200, 210, 225, 0.75)'; // the seam down its face
+      ctx.lineWidth = Math.max(1, r * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r * 0.8);
+      ctx.lineTo(cx, cy + r * 0.8);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(220, 230, 245, 0.85)'; // rivets
+      for (const a of [-0.7, 0.7]) {
+        for (const s of [-1, 1]) {
+          ctx.beginPath();
+          ctx.arc(cx + s * r * 0.55, cy + a * r * 0.5, r * 0.07, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
   // Devil horns (and, for the leapers, bat wings) framing a demon piece's token.
   function drawDemonMarks(cx, cy, radius, kind) {
     const r = radius;
@@ -629,6 +825,9 @@ const Renderer = (function () {
     ctx.save();
     // Spent (recharging) casters are faded.
     if (o.inactive) ctx.globalAlpha = 0.4;
+    // A WISP IS BARELY THERE — loose current, not a body. Drawn translucent so it reads as something
+    // you could put your hand through, which is exactly what it wants you to do.
+    if (o.wisp) ctx.globalAlpha = Math.min(ctx.globalAlpha, 0.62);
 
     // Inverted scheme: the KING is the dark, class-coloured token (his fill is his class
     // or tier-3 subclass colour); ordinary ENEMIES are the light bone-coloured tokens.
@@ -750,6 +949,15 @@ const Renderer = (function () {
       // reading the log. It is the same creature, so it keeps the same crimson family.
       if (o.bat) { fill = '#1b1020'; stroke = '#9a7fb0'; glyph = '#e6dcf2'; }
     }
+    // A COLLAPSED SKELETON is a heap on the floor, and it should look like one: the token goes dark
+    // and drained, as if the thing standing there had fallen out of it. The status mark alone was
+    // too quiet — a broken skeleton read as an ordinary foe wearing a small icon, when it is in fact
+    // the one state in which it can be finished for good.
+    if (o.broken) {
+      fill = mixHex(fill, '#000000', 0.62);
+      stroke = mixHex(stroke, '#000000', 0.45);
+      glyph = mixHex(glyph, '#000000', 0.4);
+    }
 
     // A FERZ (what the Hexer's curse warps a foe into) is a harmless, dazed little blob — drawn
     // small and goofy in pale pink so it never reads as a real threat. It keeps that shape in EVERY
@@ -794,9 +1002,39 @@ const Renderer = (function () {
       ctx.restore();
     }
 
+    // AN ELEMENTAL STANDS IN A HAZE OF ITS OWN ELEMENT — a churning disc behind the token, in the
+    // colour of the thing it is made of. It reads before any detail does, at any zoom, which is what
+    // a creature whose counter is "not your sword" most needs. Drawn FIRST so the piece sits in it.
+    if (!isPlayer && role === 'normal' && o.elemental && ELEM_HAZE[o.elemental]) {
+      const [inner, outer] = ELEM_HAZE[o.elemental];
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const churn = 0.8 + 0.2 * Math.sin(clock * 2.2 + cx * 0.07 + cy * 0.05);
+      const haze = ctx.createRadialGradient(cx, cy, radius * 0.15, cx, cy, radius * 1.6);
+      haze.addColorStop(0, hexToRgba(inner, 0.40 * churn));
+      haze.addColorStop(0.55, hexToRgba(outer, 0.22 * churn));
+      haze.addColorStop(1, hexToRgba(outer, 0));
+      ctx.fillStyle = haze;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      // A few motes orbiting in it, so the haze is clearly ALIVE rather than a coloured shadow.
+      ctx.fillStyle = hexToRgba(inner, 0.7 * churn);
+      for (let i = 0; i < 4; i += 1) {
+        const a = clock * 1.1 + (i / 4) * Math.PI * 2;
+        const d = radius * (1.0 + 0.22 * Math.sin(clock * 1.7 + i));
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d * 0.75, radius * 0.09, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
     // A demon (fairy) enemy/ally sprouts horns and wings behind its token (never the king) — but a
     // summoning CIRCLE is a rune, not a creature, so it grows no horns however demonic its brood.
     if (!isPlayer && role !== 'circle' && isDemonKind(kind)) drawDemonMarks(cx, cy, radius, kind);
+    // ...and every OTHER realm's creatures wear their own tell: fangs, a skull, wings, a trident.
+    if (!isPlayer && role !== 'circle') drawSpeciesMarks(cx, cy, radius, o);
 
     if (role === 'circle') {
       // A SUMMONING CIRCLE is not a creature — it is a rune cut into the floor. Draw the same
@@ -1053,6 +1291,11 @@ const Renderer = (function () {
       drawStatusMark(tileX, tileY, '!', '#ffd400');
     } else if (mainState === 'inert') {
       drawStatusMark(tileX, tileY, '⏻', '#f59e0b'); // a POWER glyph: switched off, and counting down
+    } else if (mainState === 'breaking') {
+      // PART-WAY THROUGH being scattered: he has landed one of the two blows it takes to finish a
+      // heap. A cracked-skull mark in warning amber, so "one more and it is gone" is readable —
+      // otherwise the second blow is an act of faith.
+      drawStatusMark(tileX, tileY, '☠', '#fbbf24');
     } else if (mainState === 'broken') {
       drawStatusMark(tileX, tileY, '☠', '#d4d4d8'); // a heap of bones, knitting itself back together
     } else if (mainState === 'asleep') {
@@ -2174,8 +2417,21 @@ const Renderer = (function () {
     const seed = spatter.seed || 0; // per-spatter offset so stacked marks differ
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, spatter.life / spatter.max)) * 0.85;
-    // A DEMON bleeds dark green ICHOR; mortals (and the king) bleed vivid red.
-    ctx.fillStyle = spatter.ichor ? '#1f6b2e' : '#c81e1e';
+    // WHAT RAN OUT OF IT. A demon bleeds dark green ichor and mortals bleed red — but half the New
+    // Game+ roster is not made of flesh at all, and a machine leaking arterial red was the tell that
+    // this only ever knew two answers. (What each creature sheds is decided in one place: `bleedFor`.)
+    const FLUIDS = {
+      oil: '#0d0d10',    // a GOLEM: black, heavy, faintly iridescent — machinery, not a body
+      rot: '#8a9a2b',    // a ZOMBIE: yellow-green and putrid. NB a VAMPIRE keeps ordinary red
+      water: '#3aa8d8',
+      ice: '#bfe9ff',
+      lava: '#ff6a2a',
+      steam: '#d6dbe4',
+      ember: '#ffab2e',  // a FIRE elemental: sparks, deliberately NOT lava (that is the lava one's)
+      spark: '#7fe9ff',  // an ELECTRIC elemental
+      grit: '#7a5c42',   // EARTH and STONE: dirt, clods and chips
+    };
+    ctx.fillStyle = FLUIDS[spatter.fluid] || (spatter.ichor ? '#1f6b2e' : '#c81e1e');
     if (isWall) {
       // On a wall, blood clings and runs DOWNWARD as a few streaks/smears.
       const streaks = 2 + (seed % 3); // 2-4 streaks
@@ -2432,6 +2688,34 @@ const Renderer = (function () {
     // A FELLED MUSHROOM leaves torn pale FLESH, not sticks and leaves: wedge-shaped cap scraps and a
     // scatter of spores. Same for CORAL — broken pink stubs. Each is what that thing is made of; a
     // drift of oak leaves behind either was the same mistake the iron gate used to make.
+    // BONE. A skeleton has no blood — every hit knocks another piece off it, and the litter is what
+    // tells him a blow landed on something that does not bleed.
+    if (st.kind === 'bone') {
+      ctx.strokeStyle = '#ded8c4';
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 4; i += 1) {
+        const a0 = tileHash(seed + i, st.y * 3) * Math.PI * 2;
+        const d = tileSize * (0.06 + 0.24 * tileHash(seed + i * 3, st.x + i));
+        const cx = px + tileSize / 2 + Math.cos(a0) * d;
+        const cy = py + tileSize * 0.62 + Math.sin(a0) * d * 0.5;
+        const len = tileSize * (0.08 + 0.07 * tileHash(seed + i, st.x - i));
+        const ang = tileHash(seed + i * 5, st.y + i) * Math.PI;
+        ctx.lineWidth = Math.max(1.5, tileSize * 0.035);
+        ctx.beginPath();
+        ctx.moveTo(cx - Math.cos(ang) * len, cy - Math.sin(ang) * len * 0.5);
+        ctx.lineTo(cx + Math.cos(ang) * len, cy + Math.sin(ang) * len * 0.5);
+        ctx.stroke();
+        // The knuckle-ends, so a shard reads as bone rather than as a stick.
+        ctx.fillStyle = '#f2ecdc';
+        for (const s2 of [-1, 1]) {
+          ctx.beginPath();
+          ctx.arc(cx + s2 * Math.cos(ang) * len, cy + s2 * Math.sin(ang) * len * 0.5, tileSize * 0.022, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+      return;
+    }
     if (st.kind === 'mushroom' || st.kind === 'coral') {
       const shroom = st.kind === 'mushroom';
       const meat = shroom ? '#cdb6d8' : '#c96f8d';
@@ -2706,6 +2990,10 @@ const Renderer = (function () {
         // On the EARTH floor, an ordinary wall is packed earth rather than masonry — warm and soft,
         // so that the bedrock beside it (see 'stone') reads as the harder of the two at a glance.
         if (elementNow === 'earth') return isDark ? '#5a4530' : '#6f573d';
+        // On the WATER floor: GREEN SEASTONE, drowned and algae-stained. Most of that floor is reef
+        // now, so the few real walls left are the ones he cannot open — they need to read as built
+        // stone rather than as more coral, while still belonging underwater.
+        if (elementNow === 'water') return isDark ? '#1d3f38' : '#2c584c';
         return isDark ? '#54535a' : '#6a696f'; // neutral grey stone (cool, desaturated)
       case 'stone':
         // BEDROCK. Deliberately the coldest, flattest, most lifeless grey on the board and noticeably
@@ -2779,6 +3067,8 @@ const Renderer = (function () {
       case 'door':
         // Warm timber up top; in the realm it is BLACK IRON — cold, dark, and studded (see below).
         if (demonRealm) return isDark ? '#17161b' : '#2b2930';
+        // Underwater there is no timber: a door is a dense CURTAIN OF SEAWEED, drawn across the gap.
+        if (elementNow === 'water') return isDark ? '#1f3d1c' : '#2f5a26';
         return isDark ? '#5a3a1c' : '#7a5024'; // a SHUT wooden door — warm timber
       case 'doorajar':
       case 'dooropen':
@@ -3868,6 +4158,32 @@ const Renderer = (function () {
       }
       case 'door': {
         const m = tileSize * 0.14;
+        // UNDERWATER a door is a hanging CURTAIN OF SEAWEED — no planks, no hinges, no ring. Long
+        // fronds swaying on the tile clock, dense enough to read as something you must push through.
+        if (elementNow === 'water') {
+          const blades = 7;
+          for (let i = 0; i < blades; i += 1) {
+            const bx = px + tileSize * (0.1 + 0.8 * (i / (blades - 1)));
+            const sway = Math.sin(clock * 0.9 + i * 0.8 + tileHash(x, y) * 6.28) * tileSize * 0.06;
+            ctx.strokeStyle = i % 2 ? 'rgba(78, 140, 62, 0.9)' : 'rgba(52, 104, 44, 0.9)';
+            ctx.lineWidth = Math.max(2, tileSize * 0.075);
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(bx, py + tileSize * 0.06);
+            ctx.quadraticCurveTo(bx + sway, py + tileSize * 0.5, bx + sway * 1.6, py + tileSize * 0.94);
+            ctx.stroke();
+          }
+          // A few bladder-floats caught in the fronds, so it reads as kelp and not as a bead curtain.
+          ctx.fillStyle = 'rgba(150, 200, 120, 0.7)';
+          for (let i = 0; i < 4; i += 1) {
+            const fx = px + tileSize * (0.18 + 0.64 * tileHash(x * 5 + i, y + i));
+            const fy = py + tileSize * (0.2 + 0.6 * tileHash(x + i, y * 5 + i));
+            ctx.beginPath();
+            ctx.arc(fx, fy, tileSize * 0.035, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+        }
         if (demonRealm) {
           // A BLACK IRON door: a heavy frame, two horizontal bands across it, and rows of rivets —
           // no planks, no ring. Cold hardware, not carpentry.
@@ -5505,7 +5821,7 @@ const Renderer = (function () {
         ctx.stroke();
         ctx.restore();
       }
-      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, boulder: enemy.boulderGun, jet: enemy.jetGun, lavaGun: enemy.lavaGun, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, undeadType: enemy.undeadType, bat: enemy.bat, inactive, blood: woundBlood(liveById.get(enemy.id)) });
+      drawPiece(enemy.x, enemy.y, enemy.kind, false, { role, rush: enemy.rush, mini: enemy.mini, fire: enemy.fire, boulder: enemy.boulderGun, jet: enemy.jetGun, lavaGun: enemy.lavaGun, wisp: enemy.wisp, summoned: enemy.summoned, elemental: enemy.elemental, undeadType: enemy.undeadType, bat: enemy.bat, broken: enemy.broken, golem: enemy.golem, inactive, blood: woundBlood(liveById.get(enemy.id)) });
       if (role === 'boss') {
         // A guardian UNMADE — every perk torn off it by the Hexer — wears NO crown at all. That
         // bare head is the tell that there is nothing left of it but the piece.
@@ -5525,7 +5841,10 @@ const Renderer = (function () {
         drawSummonCharge(enemy.x, enemy.y, enemy.kind, (enemy.summonTick % SUMMON_TURNS) / SUMMON_TURNS);
       }
       // A boss (and now a destructible turret) wears a HP bar so its multi-hit state reads.
-      if ((enemy.boss || enemy.turret) && enemy.maxHp) {
+      // A ZOMBIE too: it is an ordinary piece that simply has more HP, and without a bar there was
+      // nothing to say how far through its three wounds he had got — nor that hitting him heals it
+      // back. Anything carrying a real pool should show it.
+      if ((enemy.boss || enemy.turret || enemy.undeadType === 'zombie') && enemy.maxHp) {
         drawBossHpBar(enemy.x, enemy.y, enemy.hp, enemy.maxHp);
       }
       // A WARDED foe (a Guardian's retinue) wears a small cyan shield — it will turn the first blow
@@ -5542,7 +5861,12 @@ const Renderer = (function () {
       // player most needs to see it on.
       if (inSight && live && typeof isConfused === 'function' && isConfused(live)) {
         drawStateIcon(enemy.x, enemy.y, 'confused');
-      } else if (inSight && live && live.recovering && (enemy.boss || enemy.turret)) {
+      // ANYTHING CATCHING ITS BREATH, not just a boss or a gun. This was gated on `boss || turret`,
+      // which silently excluded every SLOW ordinary piece — zombies, stone elementals, steam
+      // elementals — so the one turn they cannot act was invisible. That is precisely the turn the
+      // player is meant to read and use: a zombie is only fair to share a room with BECAUSE it
+      // lumbers, and a mechanic he cannot see is a mechanic he does not have.
+      } else if (inSight && live && live.recovering && (enemy.boss || enemy.turret || live.slow)) {
         drawStateIcon(enemy.x, enemy.y, 'recovering');
       } else if (inSight && role === 'turret') {
         // Show the crosshair ONLY while the king is actually in the turret's line RIGHT NOW (computed
@@ -5569,7 +5893,7 @@ const Renderer = (function () {
         // A switched-off GOLEM outranks every other state — it is not asleep, unaware or hunting,
         // it is SCRAP with a clock running, and the one thing the player needs to read off it is
         // how long he has before it stands up again.
-        const mainState = st.inert ? 'inert' : st.broken ? 'broken' : st.asleep ? 'asleep' : st.surprised ? 'surprised' : st.frustrated ? 'frustrated' : st.awake ? 'hostile' : 'unaware';
+        const mainState = st.inert ? 'inert' : (st.broken && st.crushed > 0) ? 'breaking' : st.broken ? 'broken' : st.asleep ? 'asleep' : st.surprised ? 'surprised' : st.frustrated ? 'frustrated' : st.awake ? 'hostile' : 'unaware';
         if (mainState) drawStateIcon(enemy.x, enemy.y, mainState);
       }
     }

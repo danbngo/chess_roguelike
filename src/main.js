@@ -33,6 +33,15 @@
   const altarScreen = document.getElementById('altar-screen');
   const altarList = document.getElementById('altar-list');
   const altarMessage = document.getElementById('altar-message');
+  // ONE overlay, THREE uses (level-up boons, altars, portal confirmation), so its heading has to be
+  // set per use. It was hardcoded "Level Up" in the markup, which meant an altar — and later a
+  // portal asking him to commit to a realm — both announced themselves as a level-up.
+  const altarTitle = document.getElementById('altar-title');
+  const altarSub = document.getElementById('altar-sub');
+  function setOverlayHeading(title, sub) {
+    if (altarTitle) altarTitle.textContent = title;
+    if (altarSub) altarSub.textContent = sub;
+  }
   const altarCloseButton = document.getElementById('altar-close');
   const cardBar = document.getElementById('card-bar');
   const cardHint = document.getElementById('card-hint');
@@ -826,6 +835,55 @@
   }
 
   // Build a human description of a tile (or null if there is nothing to say).
+  // WHAT A CREATURE IS, and what actually answers it.
+  //
+  // Most of these cannot be dealt with by hitting them, and each has its own counter — so naming the
+  // species without naming the answer would be trivia. A player who reads "Water elemental" learns
+  // nothing; one who reads "steel passes through it — FIRE is the answer" can act.
+  //
+  // Ordered from most specific to least: a thing can be several of these at once (a demonic zombie
+  // rook), and the most surprising fact is the one worth leading with.
+  const ELEMENTAL_FLAVOUR = {
+    earthen: 'Earth elemental — a blow does nothing. SHOVE it, or come down on it from above; a pit is final',
+    stonen: 'Stone elemental — nothing hurts it and it cannot be crushed. Only the GROUND takes it (a pit). Slow: it moves every other turn',
+    molefolk: 'Molefolk — tunnels through walls and boulders (never bedrock), and leaves a PIT on every tile it crosses. Mortal: it dies to a blow',
+    batkin: 'Cave bat — airborne, drifts at random, bites what it can reach. Mortal, and it never becomes anything worse',
+    watery: 'Water elemental — steel passes through it. FIRE is the answer. Its wake deepens water it crosses. Step INTO it to shove it aside (and start drowning)',
+    icy: 'Ice elemental — steel does nothing; spellfire MELTS it into a water elemental (which then needs fire again). It freezes every tile it crosses, and a leap slides off it',
+    merfolk: 'Merfolk — at home in deep water. Mortal, but killing one spills INK that blinds the water for two turns',
+    lavan: 'Lava elemental — FIRE is useless. Steel kills it, but striking it in melee costs you a heart; a LEAP is clean. It leaves the floor molten behind it',
+    fiery: 'Fire elemental — fire feeds it and steel only burns you. WATER quenches it. Step INTO it to shove it aside (and stand in flames)',
+    salamander: 'Salamander — crosses lava and fire unharmed. Otherwise an ordinary mortal',
+    electric: 'Electric elemental — immune to current. Steel kills it, but it EARTHS ITSELF through the room as it dies. Step INTO it and it warps away',
+    steamy: 'Steam elemental — immune to current, and there is nothing in it to cut (a swing only scalds you). COLD condenses it — water or ice. It boils the air around it every turn. Slow',
+    tengu: 'Tengu — sees and moves over any terrain at all. Otherwise an ordinary mortal',
+  };
+  function foeFlavour(enemy) {
+    if (!enemy) return null;
+    if (enemy.wisp) {
+      return 'Wisp — a loose mote of current, and a one-shot countdown. It comes straight on, ignoring cover, and EARTHS ITSELF on the first thing it touches that is not a wire: bait it onto anything (even another wisp). Slow: it winds up, then drifts';
+    }
+    if (enemy.coffin) return 'Coffin — three blows to break open, and something is inside';
+    if (enemy.fabricator) return 'Fabricator — it stamps out a new golem every time current reaches it. Be careful what you switch ON';
+    if (typeof isGolem === 'function' && isGolem(enemy)) {
+      return enemy.inert
+        ? 'Golem (switched off) — it gets back up in a few turns. Only a PIT or a crusher is final'
+        : 'Golem — it cannot be killed, only switched off (a blow, or a switch). Only a PIT or a crusher is final';
+    }
+    if (enemy.elemental && ELEMENTAL_FLAVOUR[enemy.elemental]) return ELEMENTAL_FLAVOUR[enemy.elemental];
+    if (enemy.undeadType === 'zombie') return 'Zombie — three wounds, and it lumbers (a recovery turn after every exertion). FIRE counts double';
+    if (enemy.undeadType === 'skeleton') return 'Skeleton — the first killing blow only BREAKS it; it knits itself back together in three turns unless you finish it while it is down. Fire is no shortcut';
+    if (enemy.undeadType === 'vampire') {
+      return enemy.bat
+        ? 'Vampire (scattered into BATS) — it cannot be killed like this. It drifts at random, and re-forms the moment it feeds'
+        : 'Vampire — a killing blow bursts it into a cloud of BATS rather than killing it. The bats re-form unless you deny them blood';
+    }
+    if (typeof isDemonKind === 'function' && isDemonKind(enemy.kind)) {
+      return 'Demonic — a native of the deep floors. It wades lava as if it were not there';
+    }
+    return null;
+  }
+
   function describeTile(tx, ty) {
     if (!gameState || tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) {
       return null;
@@ -864,9 +922,16 @@
       if (enemy) {
         let tag;
         if (enemy.turret) {
-          tag = enemy.fire
-            ? ` (FIRE turret — piercing spellfire through units; 3-turn cycle; HP ${enemy.hp}/${enemy.maxHp})`
-            : ` (turret — fixed; fires its pattern; HP ${enemy.hp}/${enemy.maxHp})`;
+          // WHICH gun. There are five kinds now and only "fire" was ever named — so a boulder gun, a
+          // water jet and a lava spitter all described themselves as a plain turret, despite doing
+          // three completely different things to the ground he is standing on.
+          const gun = enemy.fire ? 'FIRE turret — piercing spellfire through units; 3-turn cycle'
+            : enemy.electric ? 'ELECTRIC turret — it shoots the CIRCUIT, not you; the current does the rest'
+            : enemy.boulder ? 'BOULDER turret — wounds, shoves you back, and leaves the rock between you and it'
+            : enemy.jet ? 'WATER JET — wounds, and makes the ground under you wetter (dry→water→DEEP)'
+            : enemy.lava ? 'LAVA SPITTER — wounds, and turns the ground under you molten'
+            : 'turret — fixed; fires its pattern';
+          tag = ` (${gun}; HP ${enemy.hp}/${enemy.maxHp})`;
         } else if (enemy.summonCircle) {
           tag = ' (summoning circle — spawns foes; step on it to destroy)';
         } else if (enemy.boss) {
@@ -887,6 +952,13 @@
         if (enemy.confused) tag += ' — CONFUSED';
         if (gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)) tag += ' — neutral (it ignores you; strike it and the truce ends)';
         lines.push(`Enemy: ${enemy.kind}${tag}`);
+        // WHAT IT IS, on its own line. The line above says which PIECE it is and what it is doing;
+        // neither tells him he is looking at a zombie, a golem or a lava elemental. That is the one
+        // fact this realm-heavy game most needs to surface, because half these creatures cannot be
+        // killed by hitting them and the counter is different for each — so the flavour line names
+        // the ANSWER, not just the species.
+        const flavour = foeFlavour(enemy);
+        if (flavour) lines.push(flavour);
       }
     }
     const ally = (gameState.allies || []).find((a) => a.x === tx && a.y === ty);
@@ -1042,7 +1114,15 @@
         const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp}` : null;
         const perkLine = enemy.boss && enemy.bossPerk ? (BOSS_PERK_LABELS[enemy.bossPerk] || null) : null;
         const title = enemy.boss ? `${enemy.mini ? 'Mini-boss' : 'Boss'} — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
-        addExamineBlock(title, [PIECE_INFO[enemy.kind] || '', ROLE_INFO[enemyRole(enemy)] || null, hpLine, perkLine, st]);
+        // WHAT IT IS goes FIRST, above the piece's movement blurb. On a realm floor "it moves like a
+        // rook" is the least surprising thing about a creature that cannot be killed by hitting it —
+        // and for half of these the counter is the only fact worth reading.
+        addExamineBlock(title, [
+          foeFlavour(enemy),
+          PIECE_INFO[enemy.kind] || '',
+          ROLE_INFO[enemyRole(enemy)] || null,
+          hpLine, perkLine, st,
+        ]);
       }
     }
 
@@ -1999,6 +2079,7 @@
 
   // After each descent, choose one of two class boons (reusing the altar overlay).
   function renderLevelUp() {
+    setOverlayHeading('Level Up', 'Choose one boon for your class.');
     if (altarMessage) altarMessage.textContent = `Level ${gameState.player.level} — choose a boon.`;
     altarList.innerHTML = '';
     const perks = gameState.levelPerks || rollLevelPerks(gameState.player, 3);
@@ -2033,6 +2114,7 @@
   // choice, and (unlike a level-up) a Skip that is always the safe answer. Every row here COSTS him
   // something, so the wording leads with what is given up rather than what is gained.
   function renderAltar() {
+    setOverlayHeading('The Altar', 'A bargain, named before you pay it.');
     if (altarMessage) altarMessage.textContent = 'An altar. It names its price — or you may walk away.';
     altarList.innerHTML = '';
     // The offers were rolled the moment he stepped on it and are held on the state, so what is on
@@ -2067,6 +2149,10 @@
     const gate = pendingPortal;
     if (!gate) return;
     const going = gate.accept ? 'end your run here' : portalRealmName(gate.realm);
+    setOverlayHeading(
+      gate.accept ? 'The Way Home' : portalRealmName(gate.realm),
+      gate.accept ? 'Step through and the run is over.' : 'A door standing open. Step through?',
+    );
     if (altarMessage) {
       altarMessage.textContent = gate.accept
         ? 'The way home. Step through and the run is over — everything you have won is yours to keep.'
@@ -2176,7 +2262,11 @@
   // DESCEND the stair while the floor's boss is still alive (the king is slipping past
   // it, forfeiting the boon), confirm first; otherwise apply immediately.
   function commitMove(result) {
-    if (result.lastAction === 'exit' && !bossDefeated(result)) {
+    // ...but NOT in New Game+. The warning's whole content is "you will earn no boon", and a NG+
+    // king is already at the seven-boon ceiling — guardians there pay out nothing. So the prompt was
+    // asking him to confirm a cost that does not exist, on every single stair, for four floors.
+    const ngPlus = typeof realmDef === 'function' && realmDef(result.realm).newGamePlus;
+    if (result.lastAction === 'exit' && !ngPlus && !bossDefeated(result)) {
       openConfirm(
         'Descend without slaying the guardian? You will earn no boon this floor.',
         () => processPlayerResult(result),

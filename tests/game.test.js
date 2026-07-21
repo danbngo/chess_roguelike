@@ -14,9 +14,13 @@ const LOGIC_FILES = ['config.js', 'constants.js', 'utils.js', 'terrain.js', 'pie
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
 )();
 const {
+  batStep, REALM_BOSS_NAMES,
+  wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS,
+  bleedFor,
+  becomeBat, batPrey,
   landBesideSurvivor,
   portalRealmName, portalRealmColor, PORTAL_REALMS,
   NG_PLUS_REALMS,
@@ -1927,6 +1931,11 @@ test('devilgrass blocks sight but not movement; a rolling boulder flattens it', 
   assert.equal(standableFor('devilgrass', {}), true, 'but you can walk right through');
   const s = createInitialState('warrior');
   s.terrain = { '11,10': 'boulder', '12,10': 'devilgrass', '15,10': 'wall' };
+  // Clear the OBJECTIVE tiles (rule 4): wiping `terrain` does not remove the exit/key/upstair/altar,
+  // which live on the state and are protected by `isObjectiveTile` — so whenever one of them landed
+  // in the boulder's path the roll was silently refused and the grass survived.
+  s.exit = { x: 0, y: 0, discovered: false };
+  s.key = null; s.upstair = null; s.altar = null;
   knockbackBoulder(s, 11, 10, 1, 0); // send it rolling east over the grass
   assert.notEqual(terrainAt(s, 12, 10), 'devilgrass', 'the grass is flattened as the boulder rolls over it');
 });
@@ -6417,10 +6426,13 @@ test('a WISP is DUMB — it comes straight on and earths on the first thing it t
     s.enemies.push(Object.assign(createEnemy('king', x, y), { wisp: true, awake: true, id: 'w' }));
   };
   const gone = (s) => !s.enemies.some((e) => e.id === 'w');
-  // TURNS, not steps: a wisp is SLOW — it winds up one turn and drifts the next — so a lane of N
-  // tiles takes about 2N turns to cross. These budgets are doubled from the original for exactly
-  // that reason; they are not a statement about how far it travels, only about giving it time to.
-  const run = (s, n) => { for (let i = 0; i < n * 2 && !gone(s); i += 1) tickWisps(s); };
+  // TURNS, not steps — and generously. A wisp moves like a bat now: one beat at random, the next
+  // straight at him. So crossing N tiles is a random walk with drift, and the number of turns it
+  // takes has a long tail: at 2N it arrived most of the time and failed a run in ten, which is a
+  // flake rather than a finding. The loop EXITS the moment the wisp is spent, so a big budget costs
+  // nothing except in the one case where the wisp genuinely never arrives — which is what these
+  // assertions are actually about.
+  const run = (s, n) => { for (let i = 0; i < n * 12 && !gone(s); i += 1) tickWisps(s); };
 
   // A CLEAR LANE and it walks straight into him. Walls are nothing to it.
   let s = ws();
@@ -6435,12 +6447,16 @@ test('a WISP is DUMB — it comes straight on and earths on the first thing it t
   s = ws();
   for (let x = 11; x <= 13; x += 1) s.terrain[`${x},10`] = 'wire';
   wisp(s, 14, 10);
-  // TWO ticks for one step: the first is the windup. A wisp gathers, then drifts — the same beat a
-  // zombie keeps — so a single tick moves it nowhere and says nothing about the cable.
+  // Asserted as the RULE rather than inferred from a step. A wisp now moves like a bat — one beat at
+  // random, the next straight at him — so which tile it occupies after N ticks is not deterministic,
+  // and a positional assertion would be testing the dice. What actually matters is that a cable does
+  // not earth it, and `wispTriggerAt` is exactly that question.
+  assert.equal(wispTriggerAt(s, 13, 10), false, 'a cable carries it onward rather than earthing it');
+  assert.equal(wispTriggerAt(s, 10, 10), true, 'whereas the king himself stops it');
+  // It must also SURVIVE crossing the cable — drifting onto wire is not a discharge.
   tickWisps(s);
   tickWisps(s);
-  const still = s.enemies.find((e) => e.id === 'w');
-  assert.ok(still && still.x === 13 && still.y === 10, 'it drifts along the cable without going off');
+  assert.ok(s.enemies.some((e) => e.id === 'w'), 'and it is still adrift after crossing it');
 
   // ANYTHING ELSE BAITS IT. This is the counterplay: a wisp is not unavoidable, it is blockable —
   // put a golem (or a gun, or a press) between yourself and one and it spends itself on that.
@@ -6451,20 +6467,34 @@ test('a WISP is DUMB — it comes straight on and earths on the first thing it t
   assert.equal(s.player.hp, 8, 'a golem in the lane takes it instead of him');
   assert.ok(gone(s), 'and the wisp is spent on the screen');
 
-  // ...and whatever it earths through gets whatever the current DOES. A press comes down.
-  s = ws();
-  s.terrain['12,10'] = 'crusheropen';
-  wisp(s, 14, 10);
-  run(s, 4);
-  assert.equal(s.terrain['12,10'], 'crushershut', 'the press it touched slams shut');
-  // A fabricator stamps one out.
-  s = ws();
-  const fab = createEnemy('rook', 12, 10);
-  fab.summonCircle = true; fab.fabricator = true;
-  s.enemies.push(fab);
-  wisp(s, 14, 10);
-  run(s, 4);
-  assert.equal(s.enemies.filter((e) => e.golem).length, 1, 'the fabricator it touched stamps one out');
+  // ...and whatever it earths through gets whatever the current DOES.
+  //
+  // TRIED SEVERAL TIMES, not once. A wisp drifts on every other beat now, so WHICH tile it finally
+  // earths on is not deterministic — it may come at the press from the side and discharge a tile
+  // over. Asserting one run would be testing the dice. What must be true is that a wisp let loose
+  // near a press DOES set it off, so the rule is checked as "this happens", not "this happened".
+  const eventually = (build, check) => {
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const t = ws();
+      build(t);
+      wisp(t, 14, 10);
+      run(t, 4);
+      if (check(t)) return true;
+    }
+    return false;
+  };
+  assert.ok(
+    eventually((t) => { t.terrain['12,10'] = 'crusheropen'; }, (t) => t.terrain['12,10'] === 'crushershut'),
+    'a press it earths through slams shut',
+  );
+  assert.ok(
+    eventually((t) => {
+      const fab = createEnemy('rook', 12, 10);
+      fab.summonCircle = true; fab.fabricator = true;
+      t.enemies.push(fab);
+    }, (t) => t.enemies.filter((e) => e.golem).length === 1),
+    'a fabricator it earths through stamps one out',
+  );
 });
 
 test('CURRENT works every fitting both ways — doors, gates and presses alike', () => {
@@ -7341,11 +7371,17 @@ test('the UNDEAD each answer a killing blow differently — and fire is the coun
   }
   s = beginEnemyPhase(s).state;
   assert.equal(get(s).broken, false, `it is up again after ${SKELETON_REKNIT_TURNS} turns`);
-  // ...unless he finishes it while it is down. Fire is no shortcut here — bones do not burn.
+  // ...unless he finishes it while it is down — which takes TWO blows on the heap, not one. Ending
+  // a downed skeleton used to be a single free swing, so the re-knit clock never really threatened
+  // him: knock it down, tap it, done. At two it is a real commitment — two turns standing over a
+  // heap while whatever else is in the room walks up behind him. Fire is no shortcut: bones do not burn.
   s = arena('skeleton');
+  resolveKill(s, get(s), {}); // breaks it
+  resolveKill(s, get(s), {}); // smashes the heap once
+  assert.ok(alive(s), 'one blow on the heap does NOT finish it');
+  assert.equal(get(s).crushed, 1, 'and it shows how far through breaking it is');
   resolveKill(s, get(s), {});
-  resolveKill(s, get(s), {});
-  assert.ok(!alive(s), 'a second blow while it is broken finishes it');
+  assert.ok(!alive(s), 'the second blow on the heap scatters it for good');
   s = arena('skeleton');
   resolveKill(s, get(s), { fire: true });
   assert.ok(alive(s) && get(s).broken, 'fire only breaks it too — no shortcut');
@@ -8063,8 +8099,12 @@ test('ELEMENTALS cannot be beaten — each has ONE answer, and the folk beside t
     assert.ok(!s.enemies.includes(e), `a pit is final for the ${type} elemental`);
   }
   // ...and the stone one is SLOW, so he is given the turns to arrange it.
+  // BOTH earth-floor elementals are slow. Neither can be killed by a blow, so the only answer to
+  // either is to shove it somewhere that swallows it — and at full speed the earth one simply
+  // followed him about while he tried to line that up. A foe whose counter takes ARRANGING has to
+  // give him the turns to arrange it.
   assert.ok(makeElemental(createEnemy('rook', 1, 1), 'stonen').slow, 'stone moves every other turn');
-  assert.ok(!makeElemental(createEnemy('rook', 1, 1), 'earthen').slow, 'earth moves normally');
+  assert.ok(makeElemental(createEnemy('rook', 1, 1), 'earthen').slow, 'and so does earth');
 });
 
 test('a BOULDER TURRET walls its own lane', () => {
@@ -8870,4 +8910,343 @@ test('striking something that does NOT die never leaves the king standing on it'
   assert.ok(!n.enemies.some((x) => x.id === e.id), 'an ordinary foe dies');
   assert.ok(n.player.x === 11 && n.player.y === 10, 'and he takes its square');
   assert.match(n.message, /cuts down|crushes/i, 'and the log says so');
+});
+
+test('every creature the game can field DESCRIBES ITSELF in the inspector', () => {
+  // The tile inspector named the PIECE (rook, pawn) and its STATE (wandering, asleep) but never its
+  // species — so a zombie, a golem and a lava elemental all read as "Enemy: rook (wandering)". That
+  // is the worst gap in a game with three realms of creatures whose whole point is that hitting them
+  // does not work, and whose counters are all different.
+  //
+  // `foeFlavour` lives inside main.js's IIFE (it is UI, not rules), so this checks the SOURCE — the
+  // table must carry an entry for every species the rules can actually produce. It is deliberately
+  // driven off ELEMENTAL_TYPES rather than a hand-written list, so adding a native to the roster
+  // without describing it fails here.
+  const main = fs.readFileSync(path.join(here, '..', 'src', 'main.js'), 'utf8');
+  for (const type of Object.values(ELEMENTAL_TYPES).flat()) {
+    assert.ok(main.includes(`${type}: '`), `the inspector describes the "${type}" native`);
+  }
+  // The undead realm's three, the Workshop's oddities, and the demon floors.
+  for (const needle of ['zombie', 'skeleton', 'vampire', 'wisp', 'coffin', 'fabricator', 'Golem', 'Demonic']) {
+    assert.ok(main.includes(needle), `the inspector describes ${needle}`);
+  }
+  // And every KIND OF GUN. There are five and only "fire" was ever named, so a boulder gun, a water
+  // jet and a lava spitter all announced themselves as a plain turret despite doing three completely
+  // different things to the ground under him.
+  for (const gun of ['FIRE turret', 'ELECTRIC turret', 'BOULDER turret', 'WATER JET', 'LAVA SPITTER']) {
+    assert.ok(main.includes(gun), `the inspector names the ${gun}`);
+  }
+  // Same rule for TERRAIN: `terrainLabel` falls back to the raw internal name, so a missing entry
+  // ships "crushershut" to the player. Twenty types were missing when this was first audited.
+  for (const t of ['stone', 'mushroom', 'coral', 'everburn', 'deepwater', 'void', 'spring',
+    'wire', 'switch', 'generator', 'metaldoor', 'metalgate', 'crusheropen', 'crushershut',
+    'gloom', 'tombstone', 'deathwater']) {
+    // Matched as `  <type>: '` — a plain substring rather than a regex, because escaping a regex
+    // through this file's template literals silently produced a pattern that matched nothing.
+    assert.ok(main.includes(`  ${t}: '`), `the inspector names the "${t}" terrain`);
+  }
+});
+
+test('a vampire bursting into BATS is a reprieve — only BLOOD puts it back together', () => {
+  const arena = (px, py) => {
+    const s = createInitialState('warrior', 'nightmare');
+    s.enemies = []; s.allies = []; s.terrain = {};
+    s.key = null; s.upstair = null; s.altar = null;
+    s.exit = { x: 0, y: 0, discovered: false };
+    s.player.x = px; s.player.y = py; s.player.hp = 20; s.player.maxHp = 20;
+    return s;
+  };
+  const vamp = (s, x, y) => {
+    const v = makeUndead(createEnemy('pawn', x, y), 'vampire');
+    v.awake = true;
+    s.enemies.push(v);
+    return v;
+  };
+
+  // It appears BESIDE the body, never on the square it burst from.
+  {
+    const s = arena(5, 5);
+    const v = vamp(s, 15, 15);
+    becomeBat(s, v);
+    assert.ok(v.bat, 'it is a cloud of bats');
+    assert.ok(!(v.x === 15 && v.y === 15), 'and has flitted off the square it burst on');
+    assert.equal(chebyshev(v.x, v.y, 15, 15), 1, 'to an adjacent tile');
+  }
+  // IT DOES NOT ACT ON THE TURN IT BURST. Without this the cloud forms during his blow and feeds in
+  // the same turn's enemy phase — so a vampire struck while adjacent burst and re-formed instantly,
+  // and the log printed both halves as a single line.
+  {
+    const s = arena(10, 10);
+    const v = vamp(s, 11, 10); // adjacent — it could bite at once
+    becomeBat(s, v);
+    tickUndead(s);
+    assert.ok(v.bat, 'still a bat after the turn it burst');
+    assert.equal(s.player.hp, 20, 'and it has not fed');
+  }
+  // IT NEVER RE-FORMS OF ITS OWN ACCORD. It used to settle back one turn in three, which made the
+  // transformation meaningless — bursting one bought nothing.
+  {
+    const s = arena(-50, -50); // nothing on the board to feed on
+    const v = vamp(s, 12, 12);
+    becomeBat(s, v);
+    for (let t = 0; t < 300; t += 1) tickUndead(s);
+    assert.ok(v.bat, '300 turns adrift and it is still a bat');
+  }
+  // IT HUNTS, but erratically — a cloud that tracked him perfectly would just be a slower vampire.
+  {
+    let closed = 0;
+    for (let i = 0; i < 20; i += 1) {
+      const s = arena(5, 10);
+      const v = vamp(s, 18, 10);
+      becomeBat(s, v);
+      const d0 = chebyshev(v.x, v.y, 5, 10);
+      for (let t = 0; t < 10; t += 1) tickUndead(s);
+      if (chebyshev(v.x, v.y, 5, 10) < d0) closed += 1;
+    }
+    assert.ok(closed >= 15, `a bat closes on him over time (${closed}/20)`);
+  }
+  // BLOOD is the only road back.
+  {
+    const s = arena(10, 10);
+    const v = vamp(s, 12, 10);
+    becomeBat(s, v);
+    let reformed = false;
+    for (let t = 0; t < 60 && !reformed; t += 1) { tickUndead(s); reformed = !v.bat; }
+    assert.ok(reformed, 'reaching him puts it back together');
+    assert.ok(s.player.hp < 20, 'and it drew blood doing it');
+  }
+});
+
+test('killing the BATS kills the vampire for good', () => {
+  const arena = () => {
+    const s = createInitialState('warrior', 'nightmare');
+    s.enemies = []; s.allies = []; s.terrain = {};
+    s.key = null; s.upstair = null; s.altar = null;
+    s.exit = { x: 0, y: 0, discovered: false };
+    s.player.x = 10; s.player.y = 10; s.player.hp = 20; s.player.maxHp = 20;
+    s.player.moveRange = 1;
+    return s;
+  };
+  const vamp = (s, x, y, asBat) => {
+    const v = makeUndead(createEnemy('pawn', x, y), 'vampire');
+    v.awake = true;
+    if (asBat) v.bat = true;
+    s.enemies.push(v);
+    return v;
+  };
+
+  // The two-stage creature, intact: the FIRST blow only bursts it.
+  {
+    const s = arena();
+    const v = vamp(s, 11, 10, false);
+    assert.equal(resolveKill(s, v), false, 'a blow on the vampire does not kill it');
+    assert.ok(s.enemies.includes(v) && v.bat, 'it bursts into bats instead');
+  }
+  // ...and a blow on the BATS ends it. This is the point of the whole creature, and it was missing:
+  // the vampire branch burst it unconditionally, so striking a bat burst it into bats AGAIN and
+  // flitted it clear. Its supposedly-vulnerable form was in fact its invulnerable one.
+  {
+    const s = arena();
+    const v = vamp(s, 11, 10, true);
+    assert.notEqual(resolveKill(s, v), false, 'a blow on the cloud is a real kill');
+    assert.ok(!s.enemies.includes(v), 'and the vampire is gone');
+  }
+  // Walking into the bats must SAY it was final — "the king cuts down a pawn" is exactly the wrong
+  // thing to read after catching a vampire, and the mover overwrites the message on any real kill.
+  {
+    const s = arena();
+    vamp(s, 11, 10, true);
+    const n = movePlayerTo(s, 11, 10);
+    assert.match(n.message, /gone for good/i, 'the log says the vampire is finished');
+    assert.equal(n.enemies.length, 0, 'and it is');
+  }
+  // The special line must never leak onto the NEXT kill.
+  {
+    const s = arena();
+    vamp(s, 11, 10, true);
+    let n = movePlayerTo(s, 11, 10);
+    const p = createEnemy('rook', n.player.x + 1, n.player.y);
+    p.awake = true;
+    n.enemies.push(p);
+    n = movePlayerTo(n, p.x, p.y);
+    assert.match(n.message, /cuts down/i, 'an ordinary kill reads ordinarily');
+  }
+});
+
+test('every creature sheds what it is MADE of when struck', () => {
+  // Half the New Game+ roster cannot be killed by hitting it, so the spray is often the only thing
+  // telling him the blow landed at all — a golem that sheds nothing reads exactly like a golem that
+  // ignored him. `bleedFor` is the single place this is decided; it used to be settled at a dozen
+  // call sites, every one of which only knew how to ask "is it a demon?".
+  const hit = (build) => {
+    const s = createInitialState('warrior', 'nightmare');
+    s.enemies = []; s.allies = []; s.terrain = {}; s.spatters = []; s.sticks = [];
+    s.key = null; s.upstair = null; s.altar = null;
+    s.exit = { x: 0, y: 0, discovered: false };
+    s.player.x = 5; s.player.y = 5;
+    const e = build();
+    e.x = 12; e.y = 12; e.awake = true;
+    s.enemies.push(e);
+    bleedFor(s, e, e.x, e.y, 0, 0);
+    return s;
+  };
+  const fluid = (s) => (s.spatters[0] || {}).fluid
+    || ((s.spatters[0] || {}).ichor ? 'ichor' : (s.spatters.length ? 'red' : null));
+
+  const el = (t) => () => makeElemental(createEnemy('rook', 0, 0), t);
+  const und = (t) => () => makeUndead(createEnemy('rook', 0, 0), t);
+  for (const [label, build, want] of [
+    ['a golem', () => makeGolem(createEnemy('rook', 0, 0)), 'oil'],     // machinery, not a body
+    ['a zombie', und('zombie'), 'rot'],                                  // yellow-green and putrid
+    ['a vampire', und('vampire'), 'red'],                                // the one undead still full of blood
+    ['molefolk', el('molefolk'), 'red'],                                 // the FOLK are flesh
+    ['merfolk', el('merfolk'), 'red'],
+    ['a tengu', el('tengu'), 'red'],
+    ['a salamander', el('salamander'), 'red'],
+    ['a cave bat', el('batkin'), 'red'],
+    ['an earth elemental', el('earthen'), 'grit'],
+    ['a stone elemental', el('stonen'), 'grit'],
+    ['a fire elemental', el('fiery'), 'ember'],                          // embers, NOT lava
+    ['an electric elemental', el('electric'), 'spark'],
+    ['a water elemental', el('watery'), 'water'],
+    ['an ice elemental', el('icy'), 'ice'],
+    ['a lava elemental', el('lavan'), 'lava'],
+    ['a steam elemental', el('steamy'), 'steam'],
+  ]) {
+    assert.equal(fluid(hit(build)), want, `${label} sheds ${want}`);
+  }
+
+  // A SKELETON has no blood at all — it sheds BONE, which is also the tell that a "killing" blow
+  // only broke it.
+  const bones = hit(und('skeleton'));
+  assert.equal(bones.spatters.length, 0, 'a skeleton does not bleed');
+  assert.ok((bones.sticks || []).some((k) => k.kind === 'bone'), 'it drops bone instead');
+  // A WISP is a mote of current with nothing inside it.
+  const wisp = hit(() => Object.assign(createEnemy('king', 0, 0), { wisp: true }));
+  assert.equal(wisp.spatters.length, 0, 'a wisp leaves no blood');
+  assert.equal((wisp.sticks || []).length, 0, 'and no debris');
+
+  // Four elementals change the FLOOR they bleed on; the rest are feedback only.
+  assert.equal(terrainAt(hit(el('watery')), 12, 12), 'water', 'a water elemental wets the floor');
+  assert.equal(terrainAt(hit(el('icy')), 12, 12), 'ice', 'an ice elemental freezes it');
+  assert.equal(terrainAt(hit(el('lavan')), 12, 12), 'lava', 'a lava elemental melts it');
+  assert.ok(fogAt(hit(el('steamy')), 12, 12), 'a steam elemental boils off where it is hit');
+  assert.notEqual(terrainAt(hit(el('fiery')), 12, 12), 'lava', 'but a FIRE elemental leaves no lava');
+  assert.equal(Object.keys(hit(el('earthen')).terrain).length, 0, 'and an earth elemental no terrain');
+
+  // A STONE elemental sheds an actual lump of itself — beside it, never under it, and never on an
+  // objective. A boulder is shovable, so the worst case is a nuisance he can push aside.
+  const stone = hit(el('stonen'));
+  const spots = Object.keys(stone.terrain).filter((k) => stone.terrain[k] === 'boulder');
+  assert.equal(spots.length, 1, 'a stone elemental sheds one boulder');
+  const [bx, by] = spots[0].split(',').map(Number);
+  assert.equal(chebyshev(bx, by, 12, 12), 1, 'beside it, not under it');
+});
+
+test('a ZOMBIE feeds on every blow it lands, and wears a bar so you can see it', () => {
+  // Three wounds alone is just a slower kill. FEEDING is what makes trading hits with one a losing
+  // exchange: it heals back what you spent a turn taking off it, so he must finish it in a burst or
+  // not start. The HP bar is what makes that arithmetic visible rather than a nasty surprise —
+  // which is why the bar and the healing landed together.
+  const s = createInitialState('warrior', 'nightmare');
+  s.enemies = []; s.allies = []; s.terrain = {};
+  s.key = null; s.upstair = null; s.altar = null;
+  s.exit = { x: 0, y: 0, discovered: false };
+  s.player.x = 10; s.player.y = 10;
+  const z = makeUndead(createEnemy('rook', 11, 10), 'zombie');
+  z.awake = true;
+  s.enemies.push(z);
+  assert.equal(z.maxHp, ZOMBIE_HP, 'it carries a real pool');
+
+  z.hp = 1;
+  zombieFeed(s, z);
+  assert.equal(z.hp, 2, 'landing a blow closes one of its wounds');
+  zombieFeed(s, z);
+  assert.equal(z.hp, 3, 'and another');
+  zombieFeed(s, z);
+  assert.equal(z.hp, ZOMBIE_HP, 'but never above what it started with');
+
+  // Nothing else feeds this way.
+  const sk = makeUndead(createEnemy('rook', 12, 10), 'skeleton');
+  sk.hp = 1;
+  zombieFeed(s, sk);
+  assert.equal(sk.hp, 1, 'a skeleton gains nothing from a blow');
+});
+
+test('BATS and WISPS alternate: drift, then hunt — and always drift first', () => {
+  // An alternation rather than a coin flip, so the player can COUNT it. A coin flip is merely
+  // unpredictable, which reads as unfair when it goes badly three times running; "it drifted, so it
+  // comes for me next" is legible, and spending the drift turn well is the whole skill.
+  const fresh = () => {
+    const s = createInitialState('warrior', 'nightmare');
+    s.enemies = []; s.allies = []; s.terrain = {};
+    s.key = null; s.upstair = null; s.altar = null;
+    s.exit = { x: 0, y: 0, discovered: false };
+    s.player.x = 5; s.player.y = 10;
+    const v = makeUndead(createEnemy('rook', 18, 10), 'vampire');
+    v.awake = true; v.bat = true;
+    s.enemies.push(v);
+    return { s, v };
+  };
+  // A HUNT always closes the gap; a DRIFT closes it only by luck (~1 neighbour in 3). So the branch
+  // taken is measured as a RATE — inferring it from a single step would just be testing the dice.
+  const closeRate = (beat) => {
+    let closed = 0;
+    const N = 400;
+    for (let i = 0; i < N; i += 1) {
+      const { s, v } = fresh();
+      for (let b = 1; b < beat; b += 1) batStep(s, v);
+      const before = chebyshev(v.x, v.y, 5, 10);
+      batStep(s, v);
+      if (chebyshev(v.x, v.y, 5, 10) < before) closed += 1;
+    }
+    return 100 * closed / N;
+  };
+  const first = closeRate(1);
+  const second = closeRate(2);
+  const third = closeRate(3);
+  assert.ok(first < 60, `the FIRST beat is a drift, not a lunge (${first.toFixed(0)}% closed)`);
+  assert.ok(second > 80, `the second beat hunts (${second.toFixed(0)}%)`);
+  assert.ok(third < 60, `and the third drifts again (${third.toFixed(0)}%)`);
+
+  // A WISP moves the same way now, and is no longer stationary every other turn.
+  const s = createInitialState('warrior', 'nightmare');
+  s.realm = 'workshop';
+  s.enemies = []; s.allies = []; s.terrain = {};
+  s.key = null; s.upstair = null; s.altar = null;
+  s.exit = { x: 0, y: 0, discovered: false };
+  s.player.x = 5; s.player.y = 10;
+  const w = Object.assign(createEnemy('king', 18, 10), { wisp: true, awake: true, id: 'w' });
+  s.enemies.push(w);
+  assert.ok(!w.slow, 'a wisp is not slow any more');
+  const seen = new Set();
+  for (let t = 0; t < 4; t += 1) { tickWisps(s); seen.add(`${w.x},${w.y}`); }
+  assert.ok(seen.size >= 3, `and it moves every turn (${[...seen].join(' ')})`);
+});
+
+test('each NG+ realm names its guardians in its OWN register', () => {
+  // The name is the first thing he reads about a boss. "The Thirsting Juggernaut" is exactly right
+  // at the foot of the overworld and completely wrong as the thing waiting at the end of a drowned
+  // catacomb or a machine shop — one vocabulary everywhere flattened three realms into one.
+  const namesFor = (realm, floor) => {
+    const out = new Set();
+    for (let i = 0; i < 40; i += 1) out.add(createBoss(floor, 5, 5, realm).bossName);
+    return [...out];
+  };
+  const dungeon = namesFor('overworld', 7);
+  const undead = namesFor('undead', 4);
+  const workshop = namesFor('workshop', 4);
+  const shared = (a, b) => a.filter((x) => b.includes(x)).length;
+  assert.equal(shared(undead, dungeon), 0, 'the undead realm shares no names with the dungeon');
+  assert.equal(shared(workshop, dungeon), 0, 'nor does the Workshop');
+  assert.equal(shared(undead, workshop), 0, 'and the two realms share none with each other');
+  // The undead speak like something very old that used to rule; the Workshop catalogues units.
+  assert.ok(undead.some((n) => /Lich|Barrow|Grave|Tomb|Crypt|Bone|Charnel|Revenant|Deathless|Sepulchre|Ash|Cerement|Pale/i.test(n)),
+    `undead names sound undead (${undead[0]})`);
+  assert.ok(workshop.some((n) => /Cogitator|Engine|Servitor|Unit|Frame|Assembler|Arbiter|Foreman|Bulkhead|Calculator|Gantry|Hauler|Ambulator|Overseer|Adjudicator|Drudge|Conveyor|Marshal|Warden|Press|Load/i.test(n)),
+    `workshop names sound built (${workshop[0]})`);
+  // The elemental realm deliberately has no set yet — deferred until its bosses have properties of
+  // their own worth naming. It must fall back rather than crash.
+  assert.ok(!REALM_BOSS_NAMES.elemental, 'no elemental set yet (deferred)');
+  assert.ok(createBoss(1, 5, 5, 'elemental').bossName, 'and an elemental guardian still gets a name');
 });

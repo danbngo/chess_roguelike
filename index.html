@@ -100,8 +100,11 @@
 
           <div id="altar-screen" class="overlay hidden">
             <div class="overlay-card shop-card">
-              <h2 class="overlay-title">Level Up</h2>
-              <p class="overlay-sub">Choose one boon for your class.</p>
+              <!-- Title/sub are set per USE: this one overlay serves the level-up boons, the altar
+                   and the portal confirmation. It used to be hardcoded "Level Up", so an altar (and
+                   later a portal) announced itself as a level-up. -->
+              <h2 id="altar-title" class="overlay-title">Level Up</h2>
+              <p id="altar-sub" class="overlay-sub">Choose one boon for your class.</p>
               <ul id="altar-list" class="shop-list"></ul>
               <p id="altar-message" class="shop-message"></p>
               <div class="overlay-buttons">
