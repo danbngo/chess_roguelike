@@ -13,5 +13,13 @@ const CONFIG = {
   //
   // >>> SET THIS TO false BEFORE SHIPPING TO ITCH. <<<
   // Nothing else gates it: the button is drawn if and only if this is true.
-  debugMenu: true,
+  debugMenu: false,
+
+  // NEW GAME+. When false, winning the game just shows the victory screen and returns to the title —
+  // the "Continue" button (into the portal room and its NG+ realms) is never offered. Set false to
+  // ship the base game without the unfinished NG+ content behind the win screen.
+  //
+  // Only gates the DOOR. The realms, the portal room and the debug warp all still exist and work; a
+  // player simply has no in-game route to them, so nothing else needs touching to hide them.
+  newGamePlus: false,
 };

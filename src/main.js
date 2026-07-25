@@ -2012,6 +2012,7 @@
   // realms, where he chooses which worse place to walk into next (or takes the win and stops).
   // Nightmare only, on purpose: this is the reward for the hardest clear, not for any clear.
   function continueAfterVictory() {
+    if (!newGamePlusUnlocked()) return; // belt-and-braces: the button is hidden, but never act if the door is shut
     screen = 'playing';
     gameState.won = false;
     document.body.classList.add('in-game');
@@ -2072,6 +2073,9 @@
   // you go next, and it is difficulty-agnostic because the realms carry their own difficulty with
   // them. (The MEDALS still differ by setting — that is where the nightmare bragging rights live.)
   function newGamePlusUnlocked() {
+    // Gated by the build switch (see src/config.js). With it off, the victory screen's "Continue"
+    // button stays hidden and the run simply ends — no route to the portal room or its NG+ realms.
+    if (!(typeof CONFIG !== 'undefined' && CONFIG.newGamePlus)) return false;
     return Boolean(gameState && gameState.player);
   }
 

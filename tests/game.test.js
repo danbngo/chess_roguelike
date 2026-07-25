@@ -8799,9 +8799,11 @@ test('the debug menu is a BUILD SWITCH, and nothing else gates it', () => {
   // so a shipped build with it off has no route to the warp at all.
   assert.equal(typeof CONFIG, 'object', 'config.js loads alongside the game');
   assert.equal(typeof CONFIG.debugMenu, 'boolean', 'and the switch is a plain boolean');
-  // NB: this asserts the CURRENT build state. It is deliberately loud — when the flag is turned off
-  // for a real itch upload, this line is what reminds you it is a deliberate change.
-  assert.equal(CONFIG.debugMenu, true, 'debug menu is ON in this build (turn OFF before shipping)');
+  // SHIP BUILD: both player-facing back doors are shut — the debug warp and the end-game portal.
+  // These lines assert the CURRENT build state deliberately, so flipping a flag back on for testing
+  // trips the suite and reminds you to flip it off again before the next upload.
+  assert.equal(CONFIG.debugMenu, false, 'debug menu is OFF for shipping (set true only to test)');
+  assert.equal(CONFIG.newGamePlus, false, 'the end-game NG+ portal is OFF for shipping');
 });
 
 test('NEW GAME+ is open at EVERY difficulty, not just nightmare', () => {
