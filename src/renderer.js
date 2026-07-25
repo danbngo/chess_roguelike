@@ -3088,6 +3088,11 @@ const Renderer = (function () {
         // is attached to. Deliberately the LIGHTEST ground in the game: everywhere else he has been
         // is dim and underground, so arriving somewhere bright and polished is the whole arrival.
         if (portalRoomNow) return isDark ? '#8e8e9c' : '#e9e9f2';
+        // THE DROWNED FLOOR'S DRY GROUND IS SAND — pale gold, and deliberately WARM. It was a blue
+        // grey that sat a shade off the water itself, so the single most important question on that
+        // floor ("can I stand here, or do I start drowning?") had to be answered by squinting.
+        // Warm-against-cold is the strongest contrast available and costs nothing to read.
+        if (elementNow === 'water') return isDark ? '#a8935f' : '#ddc98d';
         {
           const g = nativeGround(); // ashen hellfloor / undead ash / workshop plate / this element's ground
           if (g) return isDark ? g.dark : g.light;

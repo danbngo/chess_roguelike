@@ -318,8 +318,15 @@ function resolveElementalBlow(state, enemy, byFire, opts) {
       state.message = `The water ${enemy.kind} flashes into a cloud of scalding steam!`;
       return null; // let it die properly
     }
-    state.message = `The blow passes through the water ${enemy.kind} and closes again — it needs FIRE.`;
-    state.lastAction = 'combat';
+    // A BLOW COLLAPSES IT INTO A PUDDLE. It is not killed and it is not shrugged off: the column
+    // loses cohesion and falls in on itself, leaving a stretch of deep water that ANYTHING may walk
+    // through — and two turns later it gathers itself back up and stands again.
+    //
+    // This is what a blow on water should feel like. "Nothing happens" was flatly unsatisfying, and
+    // killing it would have made fire pointless; a temporary hole in the enemy is a third thing —
+    // the blow buys him TIME and a path, which is exactly what a wall of water is denying him.
+    // Fire remains the only way to be rid of one for good.
+    collapseWaterElemental(state, enemy);
     return false;
   }
 
@@ -469,9 +476,8 @@ function enterElemental(state, e, x, y, fromX, fromY) {
       e.x = to.x;
       e.y = to.y;
     } else {
-      // Nowhere at all to go: shove it aside rather than leaving two things on one tile.
-      const beside = freeAdjacentTile(state, x, y);
-      if (beside) { e.x = beside.x; e.y = beside.y; }
+      // Nowhere in sight to jump to: it simply swaps with him, like the others.
+      e.x = fromX; e.y = fromY;
     }
     p.x = x; p.y = y;
     state.message = 'The king steps into the electric elemental — it snaps away across the floor!';
@@ -479,18 +485,22 @@ function enterElemental(state, e, x, y, fromX, fromY) {
     return;
   }
 
-  // WATER and FIRE: shove it to a free tile beside, take its ground, and become what it was made of.
-  const beside = freeAdjacentTile(state, x, y);
-  if (beside) { e.x = beside.x; e.y = beside.y; }
+  // THEY SWAP. He ends on its tile and it ends on his — rather than it being shoved to some free
+  // tile nearby. A shove had two problems: where it landed depended on what happened to be free, so
+  // the same move gave different results for no reason he could see; and when nothing was free it
+  // did not move at all. A swap is one rule, always available, and always legible: you two changed
+  // places.
+  e.x = fromX; e.y = fromY;
   p.x = x; p.y = y;
-  if (!terrainLocked(state, x, y)) {
-    if (kind === 'watery') {
-      // He is IN it now — deep enough that his lungs start counting (see tickDrowning).
-      state.terrain[`${x},${y}`] = 'deepwater';
-    } else if (kind === 'fiery') {
-      state.terrain[`${x},${y}`] = 'lava';
-    }
+  if (kind === 'fiery' && !terrainLocked(state, x, y)) {
+    // Standing in a fire elemental leaves him standing in FIRE — the lava sears him this same turn.
+    state.terrain[`${x},${y}`] = 'lava';
   }
+  // NB: walking into a WATER elemental no longer floods the tile. It used to leave him in deep water
+  // and start his drowning clock, which was correct-but-cruel: the interesting decision (step into
+  // the thing to get past it) was buried under a second, invisible clock he had to track separately.
+  // The fire and electric ones keep their costs because those are IMMEDIATE and self-explanatory —
+  // you are on fire, or it just discharged. A drowning timer is neither.
   // NB NEITHER case deals damage here, deliberately. The tile he is now standing on does it: the
   // lava sears him on this same turn's `tickLavaDamage`, and the deep water starts his drowning
   // clock. Charging a heart HERE as well double-billed the fire case — measured 2 damage for one
@@ -500,6 +510,53 @@ function enterElemental(state, e, x, y, fromX, fromY) {
     ? 'The king wades into the water elemental — it recoils, and the water closes over him!'
     : 'The king steps into the fire elemental — it scatters, and he is standing in the flames!';
   if (!state.gameOver) collectKeyIfHere(state);
+}
+
+// A STRUCK WATER ELEMENTAL falls in on itself. The piece leaves the board, the tile becomes deep
+// water anything may cross, and after PUDDLE_TURNS it gathers back up on the spot.
+const PUDDLE_TURNS = 2;
+function collapseWaterElemental(state, e) {
+  if (!state.puddles) state.puddles = {};
+  const key = `${e.x},${e.y}`;
+  state.puddles[key] = {
+    turns: PUDDLE_TURNS,
+    was: state.terrain[key], // undefined means plain floor — restored exactly on re-forming
+    kind: e.kind,
+    id: e.id,
+  };
+  if (!terrainLocked(state, e.x, e.y)) state.terrain[key] = 'deepwater';
+  state.enemies = state.enemies.filter((o) => o.id !== e.id);
+  state.message = `The water ${e.kind} loses its shape and falls in on itself — it will gather again.`;
+  state.lastAction = 'combat';
+}
+// ...and gathers back up. Deliberately re-formed from `makeElemental`, so the thing that stands up is
+// an ordinary water elemental in every respect rather than a special case that could drift from one.
+function tickPuddles(state) {
+  if (!state.puddles) return;
+  for (const key of Object.keys(state.puddles)) {
+    const pool = state.puddles[key];
+    pool.turns -= 1;
+    if (pool.turns > 0) continue;
+    const [x, y] = key.split(',').map(Number);
+    // NOT while something is standing in it — a piece would be shoved out of the world, and a king
+    // re-formed under would simply be inside a monster. It waits, which also reads correctly: you
+    // are holding it down by standing on it.
+    const occupied = (state.player.x === x && state.player.y === y)
+      || state.enemies.some((o) => o.x === x && o.y === y)
+      || Boolean(allyAt(state, x, y));
+    if (occupied) { pool.turns = 1; continue; }
+    delete state.puddles[key];
+    if (pool.was === undefined) delete state.terrain[key];
+    else state.terrain[key] = pool.was;
+    const risen = makeElemental(createEnemy(pool.kind || 'pawn', x, y), 'watery');
+    risen.awake = true;
+    state.enemies.push(risen);
+    if (inLineOfSight(state, x, y)) {
+      state.message = state.message
+        ? `${state.message} The water gathers itself back into a ${pool.kind}!`
+        : `The water gathers itself back into a ${pool.kind}!`;
+    }
+  }
 }
 
 // THE STEAM ELEMENTAL'S OWN CLOCK. It boils: every turn it fills some of the tiles around it with
@@ -9533,6 +9590,7 @@ function beginEnemyPhase(state) {
   tickGolems(next); // ...and switched-off golems count down and grind back into motion
   tickWisps(next); // loose current drifts at him through walls, and bursts when it arrives
   tickPlatforms(next); // the ferries slide on, carrying whatever stands on them
+  tickPuddles(next); // collapsed water elementals gather themselves back up
   tickSteamElementals(next); // the boiling ones fill the air around them
   tickElementalTrails(next); // wakes and frost — the elementals rewrite the ground they cross
   tickInk(next); // a dead merfolk's cloud thins
