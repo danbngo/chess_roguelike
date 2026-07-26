@@ -99,6 +99,7 @@ function recordRunScore(entry) {
 
 const TUTORIAL_ENABLED_KEY = 'chess-roguelike-tutorial-enabled';
 const TUTORIAL_SEEN_KEY = 'chess-roguelike-tutorial-seen';
+const TUTORIAL_FLOOR_DONE_KEY = 'chess-roguelike-tutorial-floor-done';
 
 // Tips are on by default; only an explicit opt-out turns them off.
 function tutorialsEnabled() {
@@ -106,6 +107,26 @@ function tutorialsEnabled() {
     return localStorage.getItem(TUTORIAL_ENABLED_KEY) !== 'false';
   } catch {
     return true;
+  }
+}
+
+// Has the player already been GIVEN the training-grounds floor? Set the first time a new game loads
+// it (whether they finish it or take the skip portal), so it never auto-loads again. Distinct from
+// `tutorialsEnabled` (the small in-game tips): a player can have seen the floor but still want tips,
+// or vice versa. Cleared by "Replay tutorial" in Options.
+function tutorialFloorDone() {
+  try {
+    return localStorage.getItem(TUTORIAL_FLOOR_DONE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+function setTutorialFloorDone(done) {
+  try {
+    if (done) localStorage.setItem(TUTORIAL_FLOOR_DONE_KEY, 'true');
+    else localStorage.removeItem(TUTORIAL_FLOOR_DONE_KEY);
+  } catch {
+    /* ignore */
   }
 }
 

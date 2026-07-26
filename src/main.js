@@ -56,6 +56,7 @@
   const optionsScreen = document.getElementById('options-screen');
   const optionsStatus = document.getElementById('options-tutorial-status');
   const optionsToggle = document.getElementById('options-toggle-tutorial');
+  const optionsReplayTutorial = document.getElementById('options-replay-tutorial');
   const optionsSoundToggle = document.getElementById('options-toggle-sound');
   const optionsCharacterButton = document.getElementById('options-character');
 
@@ -176,6 +177,12 @@
 
   // Modal bookkeeping: which screen to return to when a tip / options closes.
   let pendingTips = [];
+  // Tutorial-FLOOR lesson tips (tutWelcome, tutAttack, …) are "volatile": they always show while the
+  // player is on the training grounds — even on a replay — and are never written to the seen-tips
+  // record. Everything else is a one-and-done tip that persists. `lastTutTip` stops the current
+  // lesson tip from re-queuing every turn.
+  let volatileTips = new Set();
+  let lastTutTip = null;
   let screenBeforeModal = 'playing';
   let pendingConfirm = null; // callback to run if the player confirms a yes/no modal
 
@@ -396,8 +403,8 @@
     const held = gameState.player.cards.filter(Boolean);
     // The caption only shows when he actually HAS a card to press.
     if (cardHint && held.length) cardHint.classList.remove('hidden');
-    // The first time a card is armed, spell out what these things are and how to swing them.
-    if (held.some((c) => c.remaining === 0)) queueTip('cards');
+    // NB: no more tip pop-ups in the real game. ALL teaching lives on the tutorial floor now — the
+    // main game is kept clear of interruptions (playtest feedback). See buildTutorialFloor.
   }
 
   // How many turns a card's ONGOING effect still has to run (0 = not currently active). Only cards
@@ -1283,10 +1290,16 @@
 
   // Queue a tip if tips are on and this one hasn't been seen, then show it as
   // soon as no other modal is up. Showing a tip pauses the game.
-  function queueTip(id) {
-    if (!tutorialsEnabled() || tipSeen(id) || pendingTips.includes(id) || !TUTORIALS[id]) {
-      return;
-    }
+  function queueTip(id, opts) {
+    const isVolatile = Boolean(opts && opts.volatile);
+    if (!TUTORIALS[id] || pendingTips.includes(id)) return;
+    // Disabling tutorials silences EVERYTHING, tutorial-floor lessons included — so "Disable Tutorial"
+    // on a lesson pop-up actually stops the rest. (The floor only ever loads while tutorials are on.)
+    if (!tutorialsEnabled()) return;
+    // A volatile (tutorial-floor) lesson ignores only the SEEN record, so a replay re-teaches it;
+    // a normal one-and-done tip is suppressed once seen.
+    if (!isVolatile && tipSeen(id)) return;
+    if (isVolatile) volatileTips.add(id);
     pendingTips.push(id);
     showNextTipIfIdle();
   }
@@ -1309,7 +1322,8 @@
   function dismissTip() {
     const id = pendingTips.shift();
     if (id) {
-      markTipSeen(id);
+      if (volatileTips.has(id)) volatileTips.delete(id); // a tutorial lesson tip — never persisted
+      else markTipSeen(id);
     }
     if (pendingTips.length) {
       presentTip(pendingTips[0]);
@@ -1338,23 +1352,33 @@
     // panel (an always-available codex). Nothing auto-pops merely from SIGHT any more — the one
     // remaining objective tip (the sealed stair / portal) fires only if the king actually steps onto
     // it while it's locked (see maybeShowLockedExitTip), so a player who beelines the key never sees it.
-    void state;
-  }
-
-  // Show the "sealed stair / portal" explainer ONLY the first time the king stands on a locked exit.
-  function maybeShowLockedExitTip(state) {
-    if (!state || !state.exit || !state.exit.locked) return;
-    if (state.player.x === state.exit.x && state.player.y === state.exit.y) {
-      queueTip(state.exit.portal ? 'portalLocked' : 'stairLocked');
+    //
+    // The one exception is the TRAINING GROUNDS, whose whole job is to teach: it drives a `tutTip`
+    // that advances lesson by lesson, and we surface each new one as it changes.
+    if (state && state.tutorial && state.tutTip && state.tutTip !== lastTutTip) {
+      lastTutTip = state.tutTip;
+      queueTip(state.tutTip, { volatile: true });
     }
   }
+
+  // Once an explainer pop-up; now a no-op. The real game shows NO tutorial pop-ups (all teaching is on
+  // the tutorial floor), and a king who steps onto a sealed stair still reads the reason in the log
+  // line tryDescend prints ("The stair is sealed — find the floor key first."). Kept as a stub so its
+  // callers need no change.
+  function maybeShowLockedExitTip() {}
 
   /* ------------------------------- options ------------------------------- */
 
   function refreshOptions() {
     const enabled = tutorialsEnabled();
-    optionsStatus.textContent = `Tutorial tips are currently ${enabled ? 'ON' : 'OFF'}.`;
+    const tutPending = !tutorialFloorDone(); // will the training grounds load on the next new game?
+    optionsStatus.textContent = `Tutorial tips are currently ${enabled ? 'ON' : 'OFF'}.`
+      + (tutPending ? ' The training-grounds floor will play on your next new game.' : '');
     optionsToggle.textContent = enabled ? 'Disable tutorials' : 'Enable tutorials';
+    if (optionsReplayTutorial) {
+      optionsReplayTutorial.textContent = tutPending ? 'Tutorial armed for next new game' : 'Replay tutorial on next new game';
+      optionsReplayTutorial.disabled = tutPending; // nothing to arm if it is already pending
+    }
     if (optionsSoundToggle) optionsSoundToggle.textContent = GameAudio.isEnabled() ? 'Sound: On' : 'Sound: Off';
     // The character sheet only exists mid-run.
     if (optionsCharacterButton) optionsCharacterButton.style.display = gameState ? '' : 'none';
@@ -1783,11 +1807,27 @@
   }
 
   function newGame(classKey, difficulty) {
-    resetSeenTips(); // tutorial tips reset every run, so they play again on a fresh game
-    startGame(createInitialState(classKey || 'warrior', difficulty || 'hard'));
+    const cls = classKey || 'warrior';
+    const diff = difficulty || 'hard';
+    // NB: no `resetSeenTips()` any more. It used to replay EVERY tip on every new game, which is the
+    // "tutorial popup spam" — a one-and-done tip should stay done. Tips now persist for good; the
+    // training grounds carry their own always-on lesson tips instead (volatile, see queueTip).
+    //
+    // THE TRAINING GROUNDS load once, the first time a new game is started with tutorials on. Loading
+    // it marks it done so it never auto-loads again (the player can Replay it from Options). Inside,
+    // a skip portal drops straight to floor 1 for anyone who wants none of it.
+    if (tutorialsEnabled() && !tutorialFloorDone() && typeof buildTutorialFloor === 'function') {
+      setTutorialFloorDone(true);
+      lastTutTip = null;
+      startGame(buildTutorialFloor(cls, diff));
+      saveGame(gameState);
+      scanVisibleTips(gameState); // surfaces the welcome lesson
+      return;
+    }
+    // Straight into the run — no welcome pop-up. A player who has the tutorial off (or skipped it)
+    // has opted out of hand-holding; the real game stays free of interruptions.
+    startGame(createInitialState(cls, diff));
     saveGame(gameState);
-    queueTip('welcome');
-    scanVisibleTips(gameState);
   }
 
   function continueGame() {
@@ -1802,9 +1842,15 @@
   }
 
   function goNextFloor() {
-    // The boon was already earned by slaying the boss; descending just builds the
-    // next floor (no level-up screen here).
-    applyState(nextFloor(gameState), false);
+    // LEAVING THE TRAINING GROUNDS (by stair or skip portal) drops him into the REAL first floor as a
+    // pristine king — not floor 2. Otherwise, the boon was already earned by slaying the boss;
+    // descending just builds the next floor (no level-up screen here).
+    if (gameState && gameState.tutorial) {
+      lastTutTip = null;
+      applyState(leaveTutorial(gameState), false);
+    } else {
+      applyState(nextFloor(gameState), false);
+    }
     enemyQueue = [];
     animTimer = 0;
     pendingAction = null;
@@ -2243,7 +2289,6 @@
     screen = 'levelup';
     renderLevelUp();
     altarScreen.classList.remove('hidden');
-    queueTip('levelup');
   }
 
   function closeLevelUp() {
@@ -2270,7 +2315,10 @@
     // king is already at the seven-boon ceiling — guardians there pay out nothing. So the prompt was
     // asking him to confirm a cost that does not exist, on every single stair, for four floors.
     const ngPlus = typeof realmDef === 'function' && realmDef(result.realm).newGamePlus;
-    if (result.lastAction === 'exit' && !ngPlus && !bossDefeated(result)) {
+    // Never on the training grounds: the skip portal is meant to be a clean escape, and the boss
+    // there grants no boon to forfeit — so the "descend without slaying the guardian" warning (whose
+    // entire content is about a lost boon) would be a nonsense prompt.
+    if (result.lastAction === 'exit' && !ngPlus && !result.tutorial && !bossDefeated(result)) {
       openConfirm(
         'Descend without slaying the guardian? You will earn no boon this floor.',
         () => processPlayerResult(result),
@@ -2557,9 +2605,7 @@
       Renderer.effect(gameState.gameOver ? 'death' : 'hit');
       GameAudio.play(gameState.gameOver ? 'death' : 'hit');
       flashHealth();
-      if (!gameState.gameOver) {
-        queueTip('hp');
-      }
+      // (No "you took damage" pop-up — the heart flash says it, and the tutorial already taught it.)
     } else if (gameState.player.deflected) {
       // A blow landed but was warded/parried away — flash a blue block.
       Renderer.effect('deflect');
@@ -2629,7 +2675,7 @@
       Renderer.effect('danger', DANGER_TINTS[gameState.dangerEvent.kind] || DANGER_TINTS.wave);
       GameAudio.play('doom');
       logMessage(gameState.dangerEvent.message);
-      queueTip('dangerEvent');
+      // The screen-shake, the doom cue and the log line carry it — no pop-up interrupts the run.
     }
     saveGame(gameState);
     maybeOpenLevelUp(); // if this turn slew the boss, offer the boon now
@@ -3262,10 +3308,19 @@
       setTutorialsEnabled(false);
     } else {
       setTutorialsEnabled(true);
-      resetSeenTips(); // Let the tips play again from the start.
+      resetSeenTips(); // Let the one-and-done tips play again from the start.
     }
     refreshOptions();
   });
+  if (optionsReplayTutorial) {
+    optionsReplayTutorial.addEventListener('click', () => {
+      // Arm the training grounds to load again on the next new game, and make sure tips are on so
+      // its lessons can surface.
+      setTutorialFloorDone(false);
+      setTutorialsEnabled(true);
+      refreshOptions();
+    });
+  }
   if (optionsSoundToggle) {
     optionsSoundToggle.addEventListener('click', () => {
       GameAudio.toggle();

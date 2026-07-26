@@ -14,7 +14,7 @@ const LOGIC_FILES = ['config.js', 'constants.js', 'utils.js', 'terrain.js', 'pie
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, buildTutorialFloor, tickTutorial, leaveTutorial, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
 )();
 const {
   batStep, REALM_BOSS_NAMES,
@@ -43,6 +43,7 @@ const {
   makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS,
   elementForFloor, isElementFloor, petrifyEarthFloor,
   createInitialState, createPlayer, generateFloor, nextFloor, learnPerk, rollLevelPerks,
+  buildTutorialFloor, tickTutorial, leaveTutorial,
   getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, useCard,
   getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, chebyshev, CLASSES, terrainAt, unitInSight,
   fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles,
@@ -9277,4 +9278,74 @@ test('each NG+ realm names its guardians in its OWN register', () => {
   // their own worth naming. It must fall back rather than crash.
   assert.ok(!REALM_BOSS_NAMES.elemental, 'no elemental set yet (deferred)');
   assert.ok(createBoss(1, 5, 5, 'elemental').bossName, 'and an elemental guardian still gets a name');
+});
+
+test('THE TRAINING GROUNDS gate each lesson — you cannot walk past one unlearned', () => {
+  // A hand-built tutorial floor of five sealed WARDS, each opening only when its lesson is done, so a
+  // new player is FORCED through move → attack → ability → key → guardian before the stair. Built and
+  // ticked directly here; the real loop runs tickTutorial inside maybeSpawnEnemy at each turn's end.
+  const endTurn = (s) => maybeSpawnEnemy(beginEnemyPhase(s).state);
+  const gate = (s, x) => terrainAt(s, x, 12);
+  let s = buildTutorialFloor('warrior', 'hard');
+  assert.equal(s.tutorial, true, 'it is a tutorial floor');
+  assert.equal(s.tutStep, 0, 'starting on lesson one');
+  assert.ok(s.tutSkip, 'with a skip portal off the start');
+  assert.ok(gate(s, 6) === 'metalgate' && gate(s, 10) === 'metalgate' && gate(s, 14) === 'metalgate',
+    'all three wards sealed');
+
+  // LESSON 1 — MOVE. The ward at col 6 opens once he walks up to it.
+  while (s.player.x < 5) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
+  assert.equal(gate(s, 6), 'metalgateopen', 'moving opens the first ward');
+  assert.equal(s.tutTip, 'tutAttack', 'and the lesson advances to attack');
+
+  // LESSON 2 — ATTACK. A plain step onto the pawn fells it; the second ward opens.
+  while (s.player.x < 7) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
+  assert.ok(s.enemies.some((e) => e.id === 'tut-foe'), 'the training foe blocks the way');
+  s = movePlayerTo(s, 8, 12); s = endTurn(s);
+  assert.ok(!s.enemies.some((e) => e.id === 'tut-foe'), 'a step cuts it down');
+  assert.equal(gate(s, 10), 'metalgateopen', 'and the second ward opens');
+  assert.equal(s.tutTip, 'tutAbility');
+
+  // LESSON 3 — ABILITY. The third ward opens only on a used card; a plain advance will not do it.
+  while (s.player.x < 11) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
+  assert.equal(gate(s, 14), 'metalgate', 'no card used yet — third ward stays sealed');
+  s.player.usedCard = true; // the durable ledger a real weapon card sets
+  s = endTurn(s);
+  assert.equal(gate(s, 14), 'metalgateopen', 'using an ability opens the third ward');
+  assert.equal(s.tutTip, 'tutKeyBoss');
+
+  // LESSON 4/5 — KEY + GUARDIAN. The key unlocks the stair; the guardian blocks the path to it.
+  while (s.player.x < 15) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
+  s = movePlayerTo(s, 16, 12); s = endTurn(s);
+  assert.ok(s.key.collected, 'the key is taken by walking onto it');
+  assert.equal(s.exit.locked, false, 'which unlocks the stair');
+  s = movePlayerTo(s, 17, 12); s = endTurn(s);
+  assert.ok(s.enemies.some((e) => e.id === 'tut-boss') && s.player.x === 17, 'the guardian blocks the corridor');
+  assert.equal(movePlayerTo(s, 19, 12).player.x, 17, 'he cannot slip past it');
+  for (let i = 0; i < 4 && s.enemies.some((e) => e.id === 'tut-boss'); i += 1) { s = movePlayerTo(s, 18, 12); s = endTurn(s); }
+  assert.ok(!s.enemies.some((e) => e.id === 'tut-boss'), 'a few blows fell the guardian');
+  assert.equal(s.tutTip, 'tutDescend');
+  assert.ok(!s.pendingLevelUp, 'and the tutorial grants no boon');
+
+  // DESCEND leaves for a real, pristine floor 1.
+  while (s.player.x < 20) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
+  assert.equal(s.lastAction, 'exit', 'stepping the stair descends');
+  const floor1 = leaveTutorial(s);
+  assert.ok(floor1.floor === 1 && !floor1.tutorial, 'and lands on a real floor 1');
+  assert.equal(floor1.player.className, 'warrior', 'as the chosen class');
+});
+
+test('the training grounds are inert — no spawns, no dread, and a skip portal out', () => {
+  // It must never turn on the learner: no ambient spawns, no danger events, no encroaching lava,
+  // however long they dawdle. And the skip portal is always a one-step escape to floor 1.
+  const endTurn = (s) => maybeSpawnEnemy(beginEnemyPhase(s).state);
+  let s = buildTutorialFloor('ranger', 'easy');
+  const foes = s.enemies.length;
+  for (let t = 0; t < 40; t += 1) s = endTurn(s);
+  assert.ok(s.enemies.length <= foes, 'nothing ever spawns');
+  assert.ok(!Object.values(s.terrain).includes('lava'), 'and it never turns molten');
+
+  const skip = buildTutorialFloor('sorcerer', 'nightmare');
+  const moved = movePlayerTo(skip, skip.tutSkip.x, skip.tutSkip.y);
+  assert.equal(moved.lastAction, 'exit', 'the skip portal leaves for floor 1');
 });

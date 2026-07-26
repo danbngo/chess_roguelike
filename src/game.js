@@ -1769,6 +1769,136 @@ function buildPortalRoom(carryPlayer, score, cleared) {
   return state;
 }
 
+// ---- THE TRAINING GROUNDS (tutorial floor) ------------------------------------------------------
+// A hand-built floor prepended to a new run (main.js decides whether to load it). One straight
+// corridor of five gated lessons — move, attack, use an ability, take the key, fell the guardian —
+// each sealed behind a WARD (a metal gate: impassable and uncuttable) that only `tickTutorial` opens,
+// and only once the lesson is actually done. So the player CANNOT walk past a lesson.
+//
+// Built directly, like buildPortalRoom, rather than through generateFloor — no random terrain, no
+// roster conversion, no reachability carve (which would fling the wards open). A glowing SKIP PORTAL
+// by the start lets a player who wants none of it drop straight into the real first floor.
+const TUT_ROW = 12;              // the single walkable corridor
+const TUT_START_X = 2;
+const TUT_GATE_COLS = [6, 10, 14]; // wards: after move, after attack, after ability
+const TUT_FOE_X = 8;             // the pawn he must strike (lesson 2)
+const TUT_DUMMY_X = 12;          // a target for his ability (lesson 3)
+const TUT_KEY_X = 16;
+const TUT_BOSS_X = 18;           // the guardian, blocking the stair
+const TUT_STAIR_X = 20;
+function buildTutorialFloor(classKey, difficulty) {
+  const cls = CLASSES[classKey] ? classKey : 'warrior';
+  const player = createPlayer(cls);
+  player.difficulty = DIFFICULTY_HP[difficulty] ? difficulty : 'hard';
+  player.maxHp = startingHpFor(cls, player.difficulty);
+  player.hp = player.maxHp;
+  player.x = TUT_START_X;
+  player.y = TUT_ROW;
+
+  // Walkable set: the corridor, plus a one-tile pocket above the start for the skip portal.
+  const walk = new Set();
+  for (let x = TUT_START_X; x <= TUT_STAIR_X; x += 1) walk.add(`${x},${TUT_ROW}`);
+  const skip = { x: TUT_START_X, y: TUT_ROW - 1 };
+  walk.add(`${skip.x},${skip.y}`);
+
+  // Everything else is solid wall — a corridor floating in rock.
+  const terrain = {};
+  for (let x = 0; x < WORLD_SIZE; x += 1) {
+    for (let y = 0; y < WORLD_SIZE; y += 1) {
+      if (!walk.has(`${x},${y}`)) terrain[`${x},${y}`] = 'wall';
+    }
+  }
+  // The wards, sealed. Metal gates: nothing the player has will open them — only the tutorial does.
+  for (const gx of TUT_GATE_COLS) terrain[`${gx},${TUT_ROW}`] = 'metalgate';
+
+  // The training foes — both ASLEEP so they hold their tiles instead of wandering the corridor.
+  const foe = createEnemy('pawn', TUT_FOE_X, TUT_ROW);
+  foe.id = 'tut-foe'; foe.asleep = true; foe.awake = false; foe.tutorialFoe = true;
+  const dummy = createEnemy('pawn', TUT_DUMMY_X, TUT_ROW);
+  dummy.id = 'tut-dummy'; dummy.asleep = true; dummy.awake = false;
+  // The GUARDIAN: a real boss (HP bar, a couple of blows to fell) but toothless — no traits, asleep
+  // until he is close, so it stays in its chamber and teaches "boss = HP bar" without menace.
+  const boss = createEnemy('knight', TUT_BOSS_X, TUT_ROW);
+  boss.id = 'tut-boss';
+  boss.boss = true;
+  boss.maxHp = 2; boss.hp = 2;
+  boss.originalKind = 'knight';
+  boss.bossPerks = []; boss.bossPerk = undefined;
+  boss.bossName = 'the Straw Guardian';
+  boss.asleep = true; boss.awake = false;
+
+  const state = {
+    worldSize: WORLD_SIZE,
+    viewSize: player.vision,
+    realm: 'overworld',
+    tutorial: true,       // read by the turn loop: no dread, no spawns, no lava; runs tickTutorial
+    tutStep: 0,
+    tutTip: 'tutWelcome', // main.js surfaces this and follows it as it advances
+    tutSkip: skip,        // the always-open escape to the real first floor
+    player,
+    terrain,
+    fixedDoors: new Set(),
+    explored: {},
+    enemies: [foe, dummy, boss],
+    allies: [],
+    spatters: [], corpses: [], ashes: [], rubble: [], scraps: [], iceShards: [],
+    scorches: [], scars: [], boulders: [], puffs: [],
+    fog: {}, torches: {}, burningTrees: {}, treeHp: {},
+    key: { x: TUT_KEY_X, y: TUT_ROW, collected: false },
+    exit: { x: TUT_STAIR_X, y: TUT_ROW, locked: true, discovered: true },
+    upstair: null,
+    floor: 1,
+    turn: 0,
+    score: 0,
+    message: 'The Training Grounds. Walk right to begin — or take the portal behind you to skip ahead.',
+    pendingLevelUp: false,
+    gameOver: false,
+    won: false,
+  };
+  updateDiscovery(state);
+  return state;
+}
+
+// Once per turn on the tutorial floor: open the next ward the moment its lesson is done, and advance
+// the tip. Reads DURABLE state (positions, dead ids, key.collected, player.usedCard) rather than
+// transient per-turn flags, so it is correct whenever it runs and cannot miss an event.
+function tickTutorial(state) {
+  if (!state.tutorial) return;
+  const p = state.player;
+  const alive = (id) => state.enemies.some((e) => e.id === id);
+  const openGate = (gx) => {
+    const k = `${gx},${TUT_ROW}`;
+    if (state.terrain[k] === 'metalgate') state.terrain[k] = 'metalgateopen';
+  };
+
+  if (state.tutStep === 0) {
+    // MOVE: he has walked toward the first ward.
+    if (p.x >= TUT_GATE_COLS[0] - 1) { openGate(TUT_GATE_COLS[0]); state.tutStep = 1; state.tutTip = 'tutAttack'; }
+  } else if (state.tutStep === 1) {
+    // ATTACK: the pawn is down.
+    if (!alive('tut-foe')) { openGate(TUT_GATE_COLS[1]); state.tutStep = 2; state.tutTip = 'tutAbility'; }
+  } else if (state.tutStep === 2) {
+    // ABILITY: he has fired a weapon card (usedCard is a durable per-floor ledger).
+    if (p.usedCard) { openGate(TUT_GATE_COLS[2]); state.tutStep = 3; state.tutTip = 'tutKeyBoss'; }
+  } else if (state.tutStep === 3) {
+    // KEY + GUARDIAN. The key unlocks the stair on its own (ordinary floor logic, on pickup), and
+    // the GUARDIAN stands in the one-wide corridor BETWEEN the key and the stair — so the fight is
+    // forced by geography, not by a second lock. Once it is felled and the key is in hand, the way
+    // is clear: prompt the descent.
+    if (state.key && state.key.collected && !alive('tut-boss')) {
+      state.tutStep = 4;
+      state.tutTip = 'tutDescend';
+    }
+  }
+}
+
+// LEAVING the training grounds — by the skip portal or the stair — drops him into the REAL first
+// floor as a pristine starting king. The tutorial grants nothing and costs nothing, so this is just
+// a fresh floor 1 of his chosen class and difficulty.
+function leaveTutorial(state) {
+  return createInitialState(state.player.className, state.player.difficulty);
+}
+
 // Stepping onto a portal in the portal room. Returns the tile's gate, or null.
 function portalGateUnderKing(state) {
   if (!state.portalRoom) return null;
@@ -2391,6 +2521,13 @@ function defeatBoss(state, boss) {
     tallyKill(state, boss);
     if (state.player.promotion > 0) state.player.bossKilledAsBeast = true;
     state.message = `${bossTitle(boss)} is destroyed!`;
+    state.lastAction = 'combat';
+    return;
+  }
+  // THE TRAINING GROUNDS' guardian teaches the shape of a boss fight and nothing else — no boon, no
+  // level, no ledger. It falls, the stair unlocks (see tickTutorial), and the lesson is done.
+  if (state.tutorial) {
+    state.message = 'The Straw Guardian falls! The stair down unlocks.';
     state.lastAction = 'combat';
     return;
   }
@@ -7794,6 +7931,14 @@ function applyOnKill(state, ox, oy, dx, dy) {
 // descent so the controller drops to the next floor. Returns true when it fires.
 function tryDescend(next) {
   if (next.won || next.gameOver) return false;
+  // THE TRAINING GROUNDS' SKIP PORTAL — always open, off to one side of the start. Stepping into it
+  // leaves for the real first floor exactly as the stair does (main.js sees a tutorial `exit` and
+  // builds floor 1 rather than floor 2).
+  if (next.tutorial && next.tutSkip && next.player.x === next.tutSkip.x && next.player.y === next.tutSkip.y) {
+    next.lastAction = 'exit';
+    next.message = 'You step through the portal, leaving the training grounds behind.';
+    return true;
+  }
   // IN THE PORTAL ROOM the floor is nothing but doors. Stepping onto one is the whole interaction —
   // there is no stair here, and no key.
   if (next.portalRoom) {
@@ -9508,6 +9653,7 @@ function tickFogDamage(state) {
 // kill: no perk shrugs off lava any more (Pathfinder wades water/trees/pits, never fire), and Waiting
 // shrugs the horde but not the ground. The stair, uncollected key and upstair are spared so escape stays open.
 function tickLavaEncroachment(state) {
+  if (state.tutorial) return; // the training grounds never turn molten, however long he dawdles
   const intensity = overstayFraction(state.turn || 0);
   if (intensity <= 0) return;
   const p = state.player;
@@ -12173,6 +12319,15 @@ function fireDangerEvent(next, ramp) {
 // unleash one random hostile event. This is the game's escalating pressure now.
 function maybeSpawnEnemy(state) {
   if (state.portalRoom) return state; // nothing spawns between realms
+  // THE TRAINING GROUNDS: no spawns and no dread — but its lessons advance here (this is the one
+  // call that runs at the very end of every fully-resolved turn), so tick it, then settle.
+  if (state.tutorial) {
+    const t = structuredClone(state);
+    t.dangerEvent = null;
+    tickTutorial(t);
+    settleTurn(t);
+    return t;
+  }
   const next = structuredClone(state);
   next.dangerEvent = null; // cleared each turn; set below only when an event fires
   // The FINALE: once the Orb is taken on the portal floor, the realm's guardians converge —
@@ -12241,6 +12396,11 @@ function settleTurn(state) {
   // WAITING (Sentinel) invincibility lasts exactly one enemy phase — the one right after he holds his
   // ground — and lifts here, at its close, so his next turn is played as a mortal king again.
   if (state.player.invuln) state.player.invuln = false;
+  // THE TRAINING GROUNDS gate the corridor with sealed wards on PURPOSE, and its reachability is
+  // guaranteed by hand. `ensureReachable` would read those sealed gates as the king being stranded
+  // and TELEPORT him past them (measured: it dumped him next to the key), wrecking every lesson. And
+  // it can never stalemate — the skip portal is always one step away. So skip both here.
+  if (state.tutorial) return;
   if (checkStalemate(state)) return;
   ensureReachable(state);
 }

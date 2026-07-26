@@ -170,4 +170,38 @@ const TUTORIALS = {
       'opening into pits or lava, a cave-in, every enemy suddenly hunting you, and more. ' +
       'The screen heaves and an ominous note sounds each time. Don’t dawdle — descend.',
   },
+
+  // --- THE TRAINING GROUNDS: ONE short pop-up per stage (see buildTutorialFloor / tickTutorial). ---
+  // These are the ONLY tutorial pop-ups in the whole game — the real dungeon shows none. Each is a
+  // single instruction the player acts on to open the ward ahead; keep them to a sentence or two.
+  tutWelcome: {
+    title: 'Move',
+    text:
+      'Walk RIGHT to begin — WASD, the diagonals Q E Z X, or click a highlighted tile. ' +
+      'To skip the tutorial, step into the PORTAL behind you.',
+  },
+  tutAttack: {
+    title: 'Attack',
+    text:
+      'MOVE ONTO a foe to strike it — a plain step is an attack. Cut down the one ahead. ' +
+      '(RED tiles show where a foe could hit you; never end a turn on one.)',
+  },
+  tutAbility: {
+    title: 'Your ability',
+    text:
+      'Your ABILITY CARDS sit below the board. Press a card’s NUMBER to aim, a DIRECTION to swing it, ' +
+      'the number again to fire. Use any card to open the ward.',
+  },
+  tutKeyBoss: {
+    title: 'Key & guardian',
+    text:
+      'Grab the KEY, then fell the GUARDIAN blocking the stair — it wears a HP bar and takes a few ' +
+      'blows. With both done, the stair unlocks.',
+  },
+  tutDescend: {
+    title: 'Descend',
+    text:
+      'The stair is open — step onto it to descend into the real dungeon. You heal fully each ' +
+      'descent. Good luck, King!',
+  },
 };

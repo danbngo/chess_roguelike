@@ -5715,6 +5715,13 @@ const Renderer = (function () {
       drawPortal(gate.x, gate.y, false, false, tint);
     }
 
+    // THE TRAINING GROUNDS' SKIP PORTAL — a violet gate by the start that drops the player straight
+    // into the real first floor. Drawn with the same swirling portal art so it plainly reads as "a
+    // way out", with an arrow so it is never missed.
+    if (state.tutorial && state.tutSkip && isExplored(state.tutSkip.x, state.tutSkip.y)) {
+      drawPortal(state.tutSkip.x, state.tutSkip.y, false, false, '#a855f7');
+    }
+
     // The floor key / Orb of Victory: shown when in sight, or faded once discovered (persists in fog).
     if (state.key && !state.key.collected) {
       const seen = lit(state.key.x, state.key.y);
