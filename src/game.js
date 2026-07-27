@@ -1770,55 +1770,151 @@ function buildPortalRoom(carryPlayer, score, cleared) {
 }
 
 // ---- THE TRAINING GROUNDS (tutorial floor) ------------------------------------------------------
-// A hand-built floor prepended to a new run (main.js decides whether to load it). One straight
-// corridor of five gated lessons — move, attack, use an ability, take the key, fell the guardian —
-// each sealed behind a WARD (a metal gate: impassable and uncuttable) that only `tickTutorial` opens,
-// and only once the lesson is actually done. So the player CANNOT walk past a lesson.
+// A hand-built floor prepended to a new run (main.js decides whether to load it). A chain of torch-lit
+// ROOMS joined by choke-point doorways, where the lessons the king must PHYSICALLY overcome sit —
+// there are no invisible gates. A sleeping foe holds a doorway until he strikes it; a class-specific
+// PUZZLE walls off a chamber until he uses his signature ability the way it is meant to be used; a
+// guarded key blocks the stair. The geography gates, so he cannot walk past a lesson he has not done.
+//
+// Every lesson is a SIGN the king steps onto to read (state.tutSigns → tutTip) — the welcome sign is
+// simply the tile he spawns on, so NOTHING here pops up that he did not walk up to.
 //
 // Built directly, like buildPortalRoom, rather than through generateFloor — no random terrain, no
-// roster conversion, no reachability carve (which would fling the wards open). A glowing SKIP PORTAL
-// by the start lets a player who wants none of it drop straight into the real first floor.
-const TUT_ROW = 12;              // the single walkable corridor
-const TUT_START_X = 2;
-const TUT_GATE_COLS = [6, 10, 14]; // wards: after move, after attack, after ability
-const TUT_FOE_X = 8;             // the pawn he must strike (lesson 2)
-const TUT_DUMMY_X = 12;          // a target for his ability (lesson 3)
-const TUT_KEY_X = 16;
-const TUT_BOSS_X = 18;           // the guardian, blocking the stair
-const TUT_STAIR_X = 20;
+// reachability carve (which would fling the barriers open). A SKIP PORTAL sits at the far (west) end
+// of the start room, set well back from the spawn so it is not stumbled into; stepping in prompts a
+// confirm and drops straight to the real first floor.
+// A WINDING floor, generously spread out — not a cramped single row. The path SNAKES through three
+// lanes (east along the top, down, west along the middle, down, east along the bottom), with LONG
+// corridors between phases and BIG threat rooms. Every lesson: reach a SIGN in safety (a shut DOOR
+// blocks sight so the LIVE enemy beyond stays dormant — or the ability barrier gates), read it, step
+// through, and face a real threat that CAN strike back. Dying respawns at the start.
+//
+// The whole layout is data: `TUT_LAYOUT.rooms` are carved rectangles, `TUT_LAYOUT.path` is the ordered
+// snake of straight RUNS (the spine), and features hang off named tiles. The ability barrier faces
+// EAST (a straight run), so the class puzzle keeps its simple orientation.
+const TUT_ABILITY_LAUNCH = { x: 19, y: 4 };   // where he stands to solve; the barrier is one tile east
+const TUT_LAYOUT = {
+  spawn: { x: 4, y: 4 },
+  portal: { x: 2, y: 4 },
+  rooms: [
+    [2, 3, 4, 5],       // START (portal + spawn)
+    [13, 2, 15, 6],     // ATTACK — a wide room the mann roams
+    [21, 3, 21, 5],     // ABILITY — the ledge strip the knight leaps to
+    [11, 10, 14, 14],   // TURRET — a wide room to dodge the gun in
+    [2, 9, 4, 15],      // CIRCLE — a bigger room; the rune sits at its far end, so it takes a rush to reach
+    [11, 17, 16, 23],   // BOSS — a big open arena
+  ],
+  // straight runs (x0,y0 → x1,y1), joined end-to-end into one continuous snake.
+  path: [
+    [4, 4, 23, 4],      // LANE 1, east: start → attack → ability → east wall
+    [23, 5, 23, 12],    // down to lane 2
+    [22, 12, 2, 12],    // LANE 2, west: turret → circle → west wall
+    [2, 13, 2, 20],     // down to lane 3
+    [3, 20, 16, 20],    // LANE 3, east: boss → stair
+  ],
+  signs: [
+    [4, 4, 'tutWelcome'], [8, 4, 'tutAttack'], [19, 4, 'ABILITY'],
+    [19, 12, 'tutTurret'], [7, 12, 'tutCircle'], [6, 20, 'tutKeyBoss'],
+  ],
+  doors: [[12, 4], [15, 12], [5, 12], [10, 20]], // shield the attack / turret / circle / boss signs
+  mann: { x: 14, y: 4 },      // in the attack room
+  turret: { x: 10, y: 12 },   // seals the turret room's west doorway, sweeping row 12
+  circle: { x: 2, y: 12 },    // at the FAR end of the bigger circle room — a few steps to rush it down
+  guardian: { x: 14, y: 20 }, // roams the arena
+  key: { x: 12, y: 20 },
+  stair: { x: 16, y: 20 },
+};
+
+// The ABILITY barrier one tile EAST of the launch — the ONLY way across is the class's signature card:
+//   warrior  — the knight card LEAPS in an L over the chasm (cannot land ON a pit) to the ledge strip.
+//   ranger   — the diagonal BOW arrow throws a switch across a pit, opening the iron door.
+//   sorcerer — the straight BOLT melts the ice to water and is spent there.
+function tutorialPuzzle(classKey, terrain, lx, ly) {
+  const set = (x, y, t) => { terrain[`${x},${y}`] = t; };
+  if (classKey === 'ranger') {
+    // A metal GATE, not a door: a door he could just HEAVE open by hand (movePlayerTo offers `openDoor`
+    // on a metaldoor), which would skip the whole lesson. A gate only yields to current or a thrown
+    // switch — so the bow is the ONLY way through. `throwSwitch`→`toggleMetalAt` opens it (→ metalgateopen).
+    set(lx + 1, ly, 'metalgate');       // the sealed gate on the spine
+    set(lx + 1, ly + 1, 'pit');         // the arrow flies over this; he cannot walk to the switch
+    set(lx + 2, ly + 2, 'switch');      // two diagonal tiles off — bow range, not a step
+    return 'tutAbilityRanger';
+  }
+  if (classKey === 'sorcerer') {
+    set(lx + 1, ly, 'ice');             // the bolt thaws it to water
+    return 'tutAbilitySorcerer';
+  }
+  set(lx + 1, ly, 'pit');               // WARRIOR: a chasm to leap over
+  return 'tutAbilityWarrior';
+}
+
+// Sparse bracket torches on the interior walls that FACE a room, for a lit-dungeon look. Deterministic
+// (no RNG) so a save/reload draws the same sconces.
+function tutorialTorches(terrain, walk) {
+  const torches = {};
+  for (const key in terrain) {
+    if (terrain[key] !== 'wall') continue;
+    const [x, y] = key.split(',').map(Number);
+    if (x <= 0 || y <= 0 || x >= WORLD_SIZE - 1 || y >= WORLD_SIZE - 1) continue; // never the rampart
+    const facesRoom = walk.has(`${x},${y - 1}`) || walk.has(`${x},${y + 1}`)
+      || walk.has(`${x - 1},${y}`) || walk.has(`${x + 1},${y}`);
+    if (facesRoom && (x + y) % 3 === 0) torches[key] = true;
+  }
+  return torches;
+}
+
 function buildTutorialFloor(classKey, difficulty) {
   const cls = CLASSES[classKey] ? classKey : 'warrior';
+  const L = TUT_LAYOUT;
   const player = createPlayer(cls);
   player.difficulty = DIFFICULTY_HP[difficulty] ? difficulty : 'hard';
   player.maxHp = startingHpFor(cls, player.difficulty);
   player.hp = player.maxHp;
-  player.x = TUT_START_X;
-  player.y = TUT_ROW;
+  player.x = L.spawn.x;
+  player.y = L.spawn.y;
 
-  // Walkable set: the corridor, plus a one-tile pocket above the start for the skip portal.
+  // Carve the rooms and the snaking corridor. `path` is the ORDERED spine (for the harness/tests to
+  // follow); each run appends its tiles, joined end-to-end into one continuous line.
   const walk = new Set();
-  for (let x = TUT_START_X; x <= TUT_STAIR_X; x += 1) walk.add(`${x},${TUT_ROW}`);
-  const skip = { x: TUT_START_X, y: TUT_ROW - 1 };
-  walk.add(`${skip.x},${skip.y}`);
+  const path = [];
+  for (const [x0, y0, x1, y1] of L.rooms) {
+    for (let x = x0; x <= x1; x += 1) for (let y = y0; y <= y1; y += 1) walk.add(`${x},${y}`);
+  }
+  for (const [x0, y0, x1, y1] of L.path) {
+    const dx = Math.sign(x1 - x0);
+    const dy = Math.sign(y1 - y0);
+    let x = x0;
+    let y = y0;
+    for (;;) {
+      walk.add(`${x},${y}`);
+      const last = path[path.length - 1];
+      if (!last || last[0] !== x || last[1] !== y) path.push([x, y]);
+      if (x === x1 && y === y1) break;
+      x += dx; y += dy;
+    }
+  }
 
-  // Everything else is solid wall — a corridor floating in rock.
+  // Everything not walkable is solid wall — the rooms are carved from rock.
   const terrain = {};
   for (let x = 0; x < WORLD_SIZE; x += 1) {
     for (let y = 0; y < WORLD_SIZE; y += 1) {
       if (!walk.has(`${x},${y}`)) terrain[`${x},${y}`] = 'wall';
     }
   }
-  // The wards, sealed. Metal gates: nothing the player has will open them — only the tutorial does.
-  for (const gx of TUT_GATE_COLS) terrain[`${gx},${TUT_ROW}`] = 'metalgate';
+  const abilityTip = tutorialPuzzle(cls, terrain, TUT_ABILITY_LAUNCH.x, TUT_ABILITY_LAUNCH.y);
+  for (const [x, y] of L.doors) terrain[`${x},${y}`] = 'door'; // shut doors shield the signs
+  const torches = tutorialTorches(terrain, walk);
 
-  // The training foes — both ASLEEP so they hold their tiles instead of wandering the corridor.
-  const foe = createEnemy('pawn', TUT_FOE_X, TUT_ROW);
+  const signs = L.signs.map(([x, y, tip]) => ({ x, y, tip: tip === 'ABILITY' ? abilityTip : tip }));
+
+  // The training foe — a MANN (a non-royal king): it steps one tile any direction and CAPTURES the
+  // adjacent king, so it can strike straight ahead (a pawn couldn't). ASLEEP behind its door.
+  const foe = createEnemy('mann', L.mann.x, L.mann.y);
   foe.id = 'tut-foe'; foe.asleep = true; foe.awake = false; foe.tutorialFoe = true;
-  const dummy = createEnemy('pawn', TUT_DUMMY_X, TUT_ROW);
-  dummy.id = 'tut-dummy'; dummy.asleep = true; dummy.awake = false;
-  // The GUARDIAN: a real boss (HP bar, a couple of blows to fell) but toothless — no traits, asleep
-  // until he is close, so it stays in its chamber and teaches "boss = HP bar" without menace.
-  const boss = createEnemy('knight', TUT_BOSS_X, TUT_ROW);
+  // The GUARDIAN: a real boss (HP bar, a couple of blows) roaming the OPEN arena — a knight here has
+  // room to leap and CAN strike. Fight it OR dodge past to the stair. Asleep behind its door; dying
+  // respawns him at the start (main.js), so it is a safe place to learn the danger.
+  const boss = createEnemy('knight', L.guardian.x, L.guardian.y);
   boss.id = 'tut-boss';
   boss.boss = true;
   boss.maxHp = 2; boss.hp = 2;
@@ -1832,64 +1928,62 @@ function buildTutorialFloor(classKey, difficulty) {
     viewSize: player.vision,
     realm: 'overworld',
     tutorial: true,       // read by the turn loop: no dread, no spawns, no lava; runs tickTutorial
-    tutStep: 0,
-    tutTip: 'tutWelcome', // main.js surfaces this and follows it as it advances
-    tutSkip: skip,        // the always-open escape to the real first floor
+    tutTip: null,         // set below from the welcome sign the king spawns on
+    tutTipSerial: 0,      // bumped each time he steps onto a sign, so a lesson re-shows on every visit
+    tutOnSign: null,      // the sign he is currently standing on (null = none)
+    tutSigns: signs,      // stepping onto one sets tutTip; main.js shows it
+    tutSkip: { x: L.portal.x, y: L.portal.y }, // the always-open escape to the real first floor
+    tutPath: path,        // the ordered spine, for the harness/tests to walk the winding route
+    tutLaunch: { ...TUT_ABILITY_LAUNCH }, // where the ability puzzle is solved; barrier one tile east
     player,
     terrain,
     fixedDoors: new Set(),
     explored: {},
-    enemies: [foe, dummy, boss],
+    enemies: [foe, boss],
     allies: [],
     spatters: [], corpses: [], ashes: [], rubble: [], scraps: [], iceShards: [],
     scorches: [], scars: [], boulders: [], puffs: [],
-    fog: {}, torches: {}, burningTrees: {}, treeHp: {},
-    key: { x: TUT_KEY_X, y: TUT_ROW, collected: false },
-    exit: { x: TUT_STAIR_X, y: TUT_ROW, locked: true, discovered: true },
+    fog: {}, torches, burningTrees: {}, treeHp: {}, switches: {},
+    key: { x: L.key.x, y: L.key.y, collected: false },
+    exit: { x: L.stair.x, y: L.stair.y, locked: true, discovered: true },
     upstair: null,
     floor: 1,
     turn: 0,
     score: 0,
-    message: 'The Training Grounds. Walk right to begin — or take the portal behind you to skip ahead.',
+    message: 'The Training Grounds. Follow the corridors through the rooms — or take the portal to skip ahead.',
     pendingLevelUp: false,
     gameOver: false,
     won: false,
   };
+
+  // The two hazard machines (makeTurret reads the built realm/floor: an overworld-floor-1 gun is a
+  // plain one). The ROOK turret seals its room's doorway and sweeps the row; the SUMMONING CIRCLE
+  // (a weak pawn rune) seals its doorway — step onto it to shatter it before it conjures a horde.
+  const turret = makeTurret(state, 'rook', L.turret.x, L.turret.y);
+  turret.id = 'tut-turret';
+  const circle = createEnemy('pawn', L.circle.x, L.circle.y);
+  circle.id = 'tut-circle'; circle.summonCircle = true; circle.summonTick = 0;
+  state.enemies.push(turret, circle);
+  tickTutorial(state); // the king spawns on the welcome sign — surface it at once
   updateDiscovery(state);
   return state;
 }
 
-// Once per turn on the tutorial floor: open the next ward the moment its lesson is done, and advance
-// the tip. Reads DURABLE state (positions, dead ids, key.collected, player.usedCard) rather than
-// transient per-turn flags, so it is correct whenever it runs and cannot miss an event.
+// Once per turn on the tutorial floor. The lessons are gated by geography (a foe, a puzzle, a
+// guardian), so all this does is surface the SIGN the king is standing on. It re-teaches EVERY time
+// he freshly STEPS onto a sign — the same sign included, and again if he walks off and back — but not
+// while he simply stands on it. `tutOnSign` remembers the sign he is on; a bump of `tutTipSerial`
+// tells main.js to show the tip even when it is the same lesson as last time.
 function tickTutorial(state) {
-  if (!state.tutorial) return;
+  if (!state.tutorial || !state.tutSigns) return;
   const p = state.player;
-  const alive = (id) => state.enemies.some((e) => e.id === id);
-  const openGate = (gx) => {
-    const k = `${gx},${TUT_ROW}`;
-    if (state.terrain[k] === 'metalgate') state.terrain[k] = 'metalgateopen';
-  };
-
-  if (state.tutStep === 0) {
-    // MOVE: he has walked toward the first ward.
-    if (p.x >= TUT_GATE_COLS[0] - 1) { openGate(TUT_GATE_COLS[0]); state.tutStep = 1; state.tutTip = 'tutAttack'; }
-  } else if (state.tutStep === 1) {
-    // ATTACK: the pawn is down.
-    if (!alive('tut-foe')) { openGate(TUT_GATE_COLS[1]); state.tutStep = 2; state.tutTip = 'tutAbility'; }
-  } else if (state.tutStep === 2) {
-    // ABILITY: he has fired a weapon card (usedCard is a durable per-floor ledger).
-    if (p.usedCard) { openGate(TUT_GATE_COLS[2]); state.tutStep = 3; state.tutTip = 'tutKeyBoss'; }
-  } else if (state.tutStep === 3) {
-    // KEY + GUARDIAN. The key unlocks the stair on its own (ordinary floor logic, on pickup), and
-    // the GUARDIAN stands in the one-wide corridor BETWEEN the key and the stair — so the fight is
-    // forced by geography, not by a second lock. Once it is felled and the key is in hand, the way
-    // is clear: prompt the descent.
-    if (state.key && state.key.collected && !alive('tut-boss')) {
-      state.tutStep = 4;
-      state.tutTip = 'tutDescend';
-    }
+  const sign = state.tutSigns.find((s) => s.x === p.x && s.y === p.y);
+  const here = sign ? `${sign.x},${sign.y}` : null;
+  if (sign && here !== state.tutOnSign) {
+    state.tutTip = sign.tip;
+    state.tutTipSerial = (state.tutTipSerial || 0) + 1;
   }
+  state.tutOnSign = here;
 }
 
 // LEAVING the training grounds — by the skip portal or the stair — drops him into the REAL first
@@ -7936,6 +8030,7 @@ function tryDescend(next) {
   // builds floor 1 rather than floor 2).
   if (next.tutorial && next.tutSkip && next.player.x === next.tutSkip.x && next.player.y === next.tutSkip.y) {
     next.lastAction = 'exit';
+    next.tutSkipped = true; // main.js confirms the skip (and turns the tutorial off) before applying
     next.message = 'You step through the portal, leaving the training grounds behind.';
     return true;
   }
@@ -8894,15 +8989,16 @@ function resolveBoulderPush(next, x, y) {
 
 // Keyboard movement: a single ground step in a direction.
 function movePlayer(state, dx, dy) {
-  // Stepping into a boulder shoves it; stepping into a TREE chops it. Both are actions against a
-  // tile the king can never STAND on, so neither is a "move" — and without routing them here they
-  // fall through to the slide below, find no stop, and come back "the king cannot move that way".
-  // (This is exactly what happened to trees: movePlayerTo offered the chop, but nothing walking in
-  // with a direction ever reached it.)
+  // Stepping into a boulder shoves it; a TREE is chopped; a SWITCH is thrown; a metal DOOR is heaved
+  // open. Every one of these is an ACTION against a tile the king can never STAND on, so none is a
+  // "move" — and without routing them here they fall through to the slide below, find no stop, and
+  // come back "the king cannot move that way". (This is exactly what happened to trees — and to
+  // switches: movePlayerTo offered the throw, but nothing walking in with a DIRECTION ever reached it.)
   const ahead = terrainAt(state, state.player.x + dx, state.player.y + dy);
-  // A boulder is shoved, timber/iron is chopped, and a PIT is dived into (movePlayerTo enforces that
-  // the dive is only legal when he is stranded — otherwise it just reports he cannot go that way).
-  if (ahead === 'boulder' || isChoppable(ahead) || ahead === 'pit') {
+  // Shoved (boulder/generator), chopped (timber/iron), thrown (switch), heaved (metal door), or a PIT
+  // dived into (movePlayerTo enforces that the dive is only legal when he is stranded — otherwise it
+  // just reports he cannot go that way). movePlayerTo picks the right action for the tile.
+  if (isShovable(ahead) || isChoppable(ahead) || ahead === 'pit' || ahead === 'switch' || ahead === 'metaldoor') {
     return movePlayerTo(state, state.player.x + dx, state.player.y + dy);
   }
   const enemyAt = (x, y) => state.enemies.find((e) => e.x === x && e.y === y) || allyAt(state, x, y) || null;

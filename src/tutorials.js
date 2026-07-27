@@ -5,7 +5,7 @@ const TUTORIALS = {
   welcome: {
     title: 'Long live the King',
     text:
-      'Move the king with WASD, the diagonals Q E Z X, the numpad, or by clicking a highlighted ' +
+      'Move the king with WASD, the diagonals Q E Z C, the numpad, or by clicking a highlighted ' +
       'tile. Pan with the arrow keys or the screen edges, and zoom with the mouse wheel. You see ' +
       'only a short distance — unexplored ground is fogged until you reach it. RED tiles are squares ' +
       'a visible enemy could strike next turn, so never end your move on one. HOVER any tile or ' +
@@ -177,31 +177,56 @@ const TUTORIALS = {
   tutWelcome: {
     title: 'Move',
     text:
-      'Walk RIGHT to begin — WASD, the diagonals Q E Z X, or click a highlighted tile. ' +
-      'To skip the tutorial, step into the PORTAL behind you.',
+      'Follow the corridors EAST to begin. Move with WASD, the NUMPAD, or by clicking a highlighted ' +
+      'tile. For DIAGONALS, press two of WASD together (W+A = up-left) or use Q E Z C. The view follows ' +
+      'you — DRAG the board or use the ARROW KEYS to look around. To skip the tutorial, walk WEST into ' +
+      'the PORTAL.',
   },
   tutAttack: {
     title: 'Attack',
     text:
-      'MOVE ONTO a foe to strike it — a plain step is an attack. Cut down the one ahead. ' +
-      '(RED tiles show where a foe could hit you; never end a turn on one.)',
+      'MOVE ONTO a foe to strike it — a plain step is an attack. Cut down the foe ahead FAST: it hits ' +
+      'back if you linger beside it. (RED tiles show where a foe could strike; never end a turn on one.)',
   },
-  tutAbility: {
-    title: 'Your ability',
+  // One per class: the ability puzzle blocking the corridor demands the class’s real signature move.
+  // Fire a card by clicking its slot (or pressing its NUMBER), aiming a DIRECTION, then confirming.
+  tutAbilityWarrior: {
+    title: 'Leap the pit',
     text:
-      'Your ABILITY CARDS sit below the board. Press a card’s NUMBER to aim, a DIRECTION to swing it, ' +
-      'the number again to fire. Use any card to open the ward.',
+      'A pit blocks the way. Fire your KNIGHT card — click its slot below (or press its number), then ' +
+      'aim at the ledge across the gap. It leaps in an L, clean over the pit.',
+  },
+  tutAbilityRanger: {
+    title: 'Shoot the switch',
+    text:
+      'An iron GATE blocks the way — it will not budge by hand. Fire your BOW — click its slot below ' +
+      '(or press its number), then aim DIAGONALLY at the SWITCH across the pit. The gate grinds open.',
+  },
+  tutAbilitySorcerer: {
+    title: 'Melt the ice',
+    text:
+      'A wall of ice blocks the way. Fire your BOLT — click its slot below (or press its number), then ' +
+      'aim STRAIGHT at the ice. It melts to water and throws up scalding STEAM — cross quickly, and ' +
+      'never END a turn standing in the steam or it will burn you.',
+  },
+  tutTurret: {
+    title: 'Turret — strike from safety',
+    text:
+      'A TURRET fires along the red lines and needs a turn to lock on (“move!”). Don’t face it head-on ' +
+      '— step OFF its lines and STRIKE it from a diagonal, where it cannot shoot back.',
+  },
+  tutCircle: {
+    title: 'Summoning circle — rush it',
+    text:
+      'A SUMMONING CIRCLE conjures a fresh foe every few turns. Don’t let it build a horde — RUSH it ' +
+      'and step ONTO it to shatter it.',
   },
   tutKeyBoss: {
-    title: 'Key & guardian',
+    title: 'Key, guardian & stair',
     text:
-      'Grab the KEY, then fell the GUARDIAN blocking the stair — it wears a HP bar and takes a few ' +
-      'blows. With both done, the stair unlocks.',
-  },
-  tutDescend: {
-    title: 'Descend',
-    text:
-      'The stair is open — step onto it to descend into the real dungeon. You heal fully each ' +
-      'descent. Good luck, King!',
+      'Grab the KEY to unlock the stair, then reach it. The GUARDIAN can strike you — but you needn’t ' +
+      'fight it: dodge around and DIVE for the stair, or trade blows if you like. In the real dungeon, ' +
+      'felling a floor’s guardian grants a level-up UPGRADE — though this practice one gives none. If ' +
+      'you fall here, you wake back at the start. Step on the stair to descend for real — good luck, King!',
   },
 };

@@ -99,9 +99,10 @@ function recordRunScore(entry) {
 
 const TUTORIAL_ENABLED_KEY = 'chess-roguelike-tutorial-enabled';
 const TUTORIAL_SEEN_KEY = 'chess-roguelike-tutorial-seen';
-const TUTORIAL_FLOOR_DONE_KEY = 'chess-roguelike-tutorial-floor-done';
 
-// Tips are on by default; only an explicit opt-out turns them off.
+// The single tutorial switch. On by default; the training grounds play at the start of every new game
+// while it is on. Turned off only by the in-floor skip portal or the Options toggle; re-enabled from
+// Options. (No "already did it" flag — the player is never told they cannot see it again.)
 function tutorialsEnabled() {
   try {
     return localStorage.getItem(TUTORIAL_ENABLED_KEY) !== 'false';
@@ -110,29 +111,29 @@ function tutorialsEnabled() {
   }
 }
 
-// Has the player already been GIVEN the training-grounds floor? Set the first time a new game loads
-// it (whether they finish it or take the skip portal), so it never auto-loads again. Distinct from
-// `tutorialsEnabled` (the small in-game tips): a player can have seen the floor but still want tips,
-// or vice versa. Cleared by "Replay tutorial" in Options.
-function tutorialFloorDone() {
+function setTutorialsEnabled(enabled) {
   try {
-    return localStorage.getItem(TUTORIAL_FLOOR_DONE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-function setTutorialFloorDone(done) {
-  try {
-    if (done) localStorage.setItem(TUTORIAL_FLOOR_DONE_KEY, 'true');
-    else localStorage.removeItem(TUTORIAL_FLOOR_DONE_KEY);
+    localStorage.setItem(TUTORIAL_ENABLED_KEY, enabled ? 'true' : 'false');
   } catch {
     /* ignore */
   }
 }
 
-function setTutorialsEnabled(enabled) {
+// EDGE-OF-SCREEN PANNING. Off by default — a friend found the camera drifting whenever the mouse
+// neared a window edge hard to manage. The camera re-centres on the king every move anyway, and
+// drag / arrow-keys / the minimap all pan deliberately, so this is a pure convenience the player
+// opts INTO from Options.
+const EDGE_SCROLL_KEY = 'chess-roguelike-edge-scroll';
+function edgeScrollEnabled() {
   try {
-    localStorage.setItem(TUTORIAL_ENABLED_KEY, enabled ? 'true' : 'false');
+    return localStorage.getItem(EDGE_SCROLL_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+function setEdgeScrollEnabled(on) {
+  try {
+    localStorage.setItem(EDGE_SCROLL_KEY, on ? 'true' : 'false');
   } catch {
     /* ignore */
   }

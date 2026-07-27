@@ -12,7 +12,10 @@ const NUMPAD_MOVES = {
   Numpad3: [1, 1],
 };
 
-// WSADQEZX move the king; the arrow keys are reserved for panning the camera.
+// WASD move the king; Q E Z C are the four diagonals around them (x does NOTHING — it sat under the
+// down-right finger and was too easy to hit by accident, so down-right moved to C). The arrow keys pan.
+// Two cardinals pressed together also make a diagonal (see the combo catcher in main.js), so W+A is
+// up-left, etc. — the explicit diagonal keys are just a shortcut.
 const KEY_MOVES = {
   w: [0, -1],
   s: [0, 1],
@@ -22,7 +25,7 @@ const KEY_MOVES = {
   q: [-1, -1],
   e: [1, -1],
   z: [-1, 1],
-  x: [1, 1],
+  c: [1, 1],
 };
 
 // Arrow keys pan the camera rather than moving the king.

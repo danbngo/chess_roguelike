@@ -56,8 +56,8 @@
   const optionsScreen = document.getElementById('options-screen');
   const optionsStatus = document.getElementById('options-tutorial-status');
   const optionsToggle = document.getElementById('options-toggle-tutorial');
-  const optionsReplayTutorial = document.getElementById('options-replay-tutorial');
   const optionsSoundToggle = document.getElementById('options-toggle-sound');
+  const optionsEdgeScroll = document.getElementById('options-toggle-edgescroll');
   const optionsCharacterButton = document.getElementById('options-character');
 
   const characterScreen = document.getElementById('character-screen');
@@ -82,8 +82,6 @@
   const victoryContinueButton = document.getElementById('victory-continue');
   const victoryAgainButton = document.getElementById('victory-again');
   const victoryTitleButton = document.getElementById('victory-title');
-  const tutorialOkButton = document.getElementById('tutorial-ok');
-  const tutorialDisableButton = document.getElementById('tutorial-disable');
   const optionsCloseButton = document.getElementById('options-close');
 
   Renderer.init(canvas);
@@ -179,10 +177,11 @@
   let pendingTips = [];
   // Tutorial-FLOOR lesson tips (tutWelcome, tutAttack, …) are "volatile": they always show while the
   // player is on the training grounds — even on a replay — and are never written to the seen-tips
-  // record. Everything else is a one-and-done tip that persists. `lastTutTip` stops the current
-  // lesson tip from re-queuing every turn.
+  // record. Everything else is a one-and-done tip that persists. `lastTutSerial` tracks the sign-visit
+  // counter game.js bumps each time the king freshly STEPS onto a sign, so a lesson re-shows every
+  // time he steps on its sign (and again if he walks off and back), but NOT while he stands on it.
   let volatileTips = new Set();
-  let lastTutTip = null;
+  let lastTutSerial = 0;
   let screenBeforeModal = 'playing';
   let pendingConfirm = null; // callback to run if the player confirms a yes/no modal
 
@@ -1333,12 +1332,6 @@
     }
   }
 
-  function disableTipsFromModal() {
-    setTutorialsEnabled(false);
-    pendingTips = [];
-    tutorialScreen.classList.add('hidden');
-    screen = screenBeforeModal;
-  }
 
   // Queue tips for whatever the king can currently see.
   //
@@ -1353,10 +1346,11 @@
     // remaining objective tip (the sealed stair / portal) fires only if the king actually steps onto
     // it while it's locked (see maybeShowLockedExitTip), so a player who beelines the key never sees it.
     //
-    // The one exception is the TRAINING GROUNDS, whose whole job is to teach: it drives a `tutTip`
-    // that advances lesson by lesson, and we surface each new one as it changes.
-    if (state && state.tutorial && state.tutTip && state.tutTip !== lastTutTip) {
-      lastTutTip = state.tutTip;
+    // The one exception is the TRAINING GROUNDS, whose whole job is to teach. game.js bumps
+    // `tutTipSerial` every time the king freshly STEPS onto a lesson sign; we surface the tip on each
+    // bump — so a sign re-teaches every time it's stepped on, the SAME sign included.
+    if (state && state.tutorial && state.tutTip && state.tutTipSerial !== lastTutSerial) {
+      lastTutSerial = state.tutTipSerial;
       queueTip(state.tutTip, { volatile: true });
     }
   }
@@ -1371,15 +1365,12 @@
 
   function refreshOptions() {
     const enabled = tutorialsEnabled();
-    const tutPending = !tutorialFloorDone(); // will the training grounds load on the next new game?
-    optionsStatus.textContent = `Tutorial tips are currently ${enabled ? 'ON' : 'OFF'}.`
-      + (tutPending ? ' The training-grounds floor will play on your next new game.' : '');
-    optionsToggle.textContent = enabled ? 'Disable tutorials' : 'Enable tutorials';
-    if (optionsReplayTutorial) {
-      optionsReplayTutorial.textContent = tutPending ? 'Tutorial armed for next new game' : 'Replay tutorial on next new game';
-      optionsReplayTutorial.disabled = tutPending; // nothing to arm if it is already pending
-    }
+    optionsStatus.textContent = enabled
+      ? 'Tutorial is ON — the training grounds play at the start of every new game.'
+      : 'Tutorial is OFF.';
+    optionsToggle.textContent = enabled ? 'Disable tutorial' : 'Enable tutorial';
     if (optionsSoundToggle) optionsSoundToggle.textContent = GameAudio.isEnabled() ? 'Sound: On' : 'Sound: Off';
+    if (optionsEdgeScroll) optionsEdgeScroll.textContent = `Edge scrolling: ${edgeScrollEnabled() ? 'On' : 'Off'}`;
     // The character sheet only exists mid-run.
     if (optionsCharacterButton) optionsCharacterButton.style.display = gameState ? '' : 'none';
   }
@@ -1813,12 +1804,11 @@
     // "tutorial popup spam" — a one-and-done tip should stay done. Tips now persist for good; the
     // training grounds carry their own always-on lesson tips instead (volatile, see queueTip).
     //
-    // THE TRAINING GROUNDS load once, the first time a new game is started with tutorials on. Loading
-    // it marks it done so it never auto-loads again (the player can Replay it from Options). Inside,
-    // a skip portal drops straight to floor 1 for anyone who wants none of it.
-    if (tutorialsEnabled() && !tutorialFloorDone() && typeof buildTutorialFloor === 'function') {
-      setTutorialFloorDone(true);
-      lastTutTip = null;
+    // THE TRAINING GROUNDS load on EVERY new game while the tutorial is on — the player is never told
+    // "you already did this". The only way out is the in-floor skip portal, which turns the tutorial
+    // off for good (see commitMove). Re-enable it any time from Options.
+    if (tutorialsEnabled() && typeof buildTutorialFloor === 'function') {
+      lastTutSerial = 0;
       startGame(buildTutorialFloor(cls, diff));
       saveGame(gameState);
       scanVisibleTips(gameState); // surfaces the welcome lesson
@@ -1846,7 +1836,7 @@
     // pristine king — not floor 2. Otherwise, the boon was already earned by slaying the boss;
     // descending just builds the next floor (no level-up screen here).
     if (gameState && gameState.tutorial) {
-      lastTutTip = null;
+      lastTutSerial = 0;
       applyState(leaveTutorial(gameState), false);
     } else {
       applyState(nextFloor(gameState), false);
@@ -2013,6 +2003,23 @@
   }
 
   function onGameOver() {
+    // DYING ON THE TRAINING GROUNDS costs nothing — it is a place to make mistakes. Rebuild the floor
+    // and wake the king back at the start rather than ending the run.
+    if (gameState && gameState.tutorial) {
+      const cls = gameState.player.className;
+      const diff = gameState.player.difficulty;
+      startGame(buildTutorialFloor(cls, diff));
+      // Wake him NEXT TO the welcome sign, not ON it — so the move lesson does not pop up again on
+      // every death — and greet him with a speech bubble, the way a boss taunts.
+      gameState.player.x += 1; // one step east, onto the path, off the sign tile
+      gameState.tutOnSign = null;
+      lastTutSerial = gameState.tutTipSerial; // suppress the auto-tip this respawn
+      logMessage('You fell in the training grounds — back to the start. Nothing lost.');
+      Renderer.centerOn(gameState.player.x, gameState.player.y);
+      Renderer.shout(gameState.player.x, gameState.player.y, "Let's try that again", false);
+      saveGame(gameState);
+      return;
+    }
     screen = 'gameover';
     document.body.classList.remove('in-game');
     hideTilePopover();
@@ -2315,9 +2322,19 @@
     // king is already at the seven-boon ceiling — guardians there pay out nothing. So the prompt was
     // asking him to confirm a cost that does not exist, on every single stair, for four floors.
     const ngPlus = typeof realmDef === 'function' && realmDef(result.realm).newGamePlus;
-    // Never on the training grounds: the skip portal is meant to be a clean escape, and the boss
-    // there grants no boon to forfeit — so the "descend without slaying the guardian" warning (whose
-    // entire content is about a lost boon) would be a nonsense prompt.
+    // STEPPING INTO THE SKIP PORTAL turns the tutorial off for good (it stops auto-loading on new
+    // games) — so confirm it first, and point the player at where to switch it back on. Cancelling
+    // simply discards the move: the king never leaves the tile.
+    if (result.tutSkipped) {
+      openConfirm(
+        'You can re-enable the tutorial through the Options menu at any time.',
+        () => { setTutorialsEnabled(false); processPlayerResult(result); },
+        { title: 'Skip the tutorial?', yesLabel: 'Skip tutorial' },
+      );
+      return;
+    }
+    // Never warn about a forfeited boon on the training grounds: its guardian grants none, and the
+    // "descend without slaying the guardian" prompt is entirely about a lost boon.
     if (result.lastAction === 'exit' && !ngPlus && !result.tutorial && !bossDefeated(result)) {
       openConfirm(
         'Descend without slaying the guardian? You will earn no boon this floor.',
@@ -2669,6 +2686,10 @@
 
     // Turn complete (allies already struck, BEFORE the foes) — now the floor may turn on him.
     applyState(maybeSpawnEnemy(gameState), true);
+    // A tutorial SIGN the king just stepped onto is read by tickTutorial (inside maybeSpawnEnemy),
+    // which runs AFTER the earlier scanVisibleTips this turn — so surface it here, on the SAME turn he
+    // reached the sign, not a turn late.
+    scanVisibleTips(gameState);
     if (gameState.dangerEvent) {
       // A danger event fired — a gentle rumble tinted the event's OWN colour (so the player reads
       // at a glance which hazard struck), the alarm cue, the exact log line, and a one-time tip.
@@ -2680,6 +2701,38 @@
     saveGame(gameState);
     maybeOpenLevelUp(); // if this turn slew the boss, offer the boon now
     maybeOpenAltar(); // ...and if he ended it standing on an altar, raise its offer
+  }
+
+  // DIAGONAL BY TWO KEYS. Two CARDINAL keys pressed within DIAG_COMBO_MS of each other combine into a
+  // diagonal — W+A is up-left, S+D is down-right — so a player who never learns Q E Z C can still move
+  // on the diagonals every piece in this game lives on. The cost is a small hold: a lone cardinal waits
+  // that long for a partner before it commits. An EXPLICIT diagonal key (or a numpad diagonal) skips
+  // the wait and moves at once.
+  const DIAG_COMBO_MS = 60;
+  let pendingStep = null;      // a cardinal [dx,dy] awaiting a possible perpendicular partner
+  let pendingStepTimer = null;
+  function clearPendingStep() {
+    if (pendingStepTimer) { clearTimeout(pendingStepTimer); pendingStepTimer = null; }
+    pendingStep = null;
+  }
+  function firePendingStep() {
+    pendingStepTimer = null;
+    const p = pendingStep; pendingStep = null;
+    if (p) handleStep(p.dx, p.dy);
+  }
+  function queueStep(dx, dy) {
+    if (dx !== 0 && dy !== 0) { clearPendingStep(); handleStep(dx, dy); return; } // explicit diagonal — go now
+    if (pendingStep) {
+      const p = pendingStep;
+      const perpendicular = (p.dx === 0) !== (dx === 0); // one is vertical, the other horizontal
+      if (perpendicular) { clearPendingStep(); handleStep(p.dx + dx, p.dy + dy); return; } // W+A → diagonal
+      // same axis (or a repeat) — let the waiting one go on its own, then hold this one for its partner
+      if (pendingStepTimer) clearTimeout(pendingStepTimer);
+      pendingStep = null;
+      handleStep(p.dx, p.dy);
+    }
+    pendingStep = { dx, dy };
+    pendingStepTimer = setTimeout(firePendingStep, DIAG_COMBO_MS);
   }
 
   function handleStep(dx, dy) {
@@ -2718,6 +2771,7 @@
     if (!gameState) {
       return;
     }
+    clearPendingStep(); // a click is a fresh intent — drop any half-formed keyboard diagonal
     const rect = canvas.getBoundingClientRect();
     const scale = canvas.width / rect.width;
     const { x: tileX, y: tileY } = Renderer.screenToTile((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
@@ -2886,12 +2940,11 @@
       return;
     }
 
-    // A tutorial tip is up: Enter / Space / Escape all dismiss it (like the "Got it" button).
+    // A tutorial tip is up: ANY key dismisses it (F2 for a screenshot is handled above). One tap to
+    // move on — no button to hunt for.
     if (screen === 'tutorial') {
-      if (event.key === 'Enter' || event.key === 'Escape' || event.key === ' ' || event.code === 'Space') {
-        event.preventDefault();
-        dismissTip();
-      }
+      event.preventDefault();
+      dismissTip();
       return;
     }
 
@@ -3059,7 +3112,7 @@
     const move = resolveMove(event);
     if (move) {
       event.preventDefault();
-      handleStep(move[0], move[1]);
+      queueStep(move[0], move[1]); // cardinals may combine into a diagonal; see queueStep
       return;
     }
     // Arrow keys pan the camera.
@@ -3213,7 +3266,9 @@
     return event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom;
   };
   window.addEventListener('mousemove', (event) => {
-    if (screen !== 'playing' || dragging || miniDragging || overMinimap(event)) {
+    // Edge panning is opt-in (Options) — off by default, since the camera follows the king on every
+    // move and drag / arrows / minimap all pan on purpose.
+    if (!edgeScrollEnabled() || screen !== 'playing' || dragging || miniDragging || overMinimap(event)) {
       edgePan = { x: 0, y: 0 };
       return;
     }
@@ -3281,8 +3336,9 @@
   victoryTitleButton.addEventListener('click', showTitle);
   // ONE overlay, TWO uses — the Skip button has to know which moment it is closing.
   if (altarCloseButton) altarCloseButton.addEventListener('click', () => (screen === 'altar' ? closeAltar() : closeLevelUp()));
-  tutorialOkButton.addEventListener('click', dismissTip);
-  tutorialDisableButton.addEventListener('click', disableTipsFromModal);
+  // Clicking ANYWHERE on the tip overlay dismisses it — the "Got it" button is just a visible cue
+  // (its click bubbles up to this one handler, so a single tip is dismissed, not two).
+  if (tutorialScreen) tutorialScreen.addEventListener('click', dismissTip);
   optionsButton.addEventListener('click', openOptions);
   optionsCloseButton.addEventListener('click', closeOptions);
   if (logToggle) {
@@ -3304,26 +3360,19 @@
   });
   if (confirmNoButton) confirmNoButton.addEventListener('click', closeConfirm);
   optionsToggle.addEventListener('click', () => {
-    if (tutorialsEnabled()) {
-      setTutorialsEnabled(false);
-    } else {
-      setTutorialsEnabled(true);
-      resetSeenTips(); // Let the one-and-done tips play again from the start.
-    }
+    setTutorialsEnabled(!tutorialsEnabled());
     refreshOptions();
   });
-  if (optionsReplayTutorial) {
-    optionsReplayTutorial.addEventListener('click', () => {
-      // Arm the training grounds to load again on the next new game, and make sure tips are on so
-      // its lessons can surface.
-      setTutorialFloorDone(false);
-      setTutorialsEnabled(true);
-      refreshOptions();
-    });
-  }
   if (optionsSoundToggle) {
     optionsSoundToggle.addEventListener('click', () => {
       GameAudio.toggle();
+      refreshOptions();
+    });
+  }
+  if (optionsEdgeScroll) {
+    optionsEdgeScroll.addEventListener('click', () => {
+      setEdgeScrollEnabled(!edgeScrollEnabled());
+      edgePan = { x: 0, y: 0 }; // stop any glide the instant it is switched off
       refreshOptions();
     });
   }

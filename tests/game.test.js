@@ -6553,6 +6553,29 @@ test('a SWITCH answers an arrow and a hexed foe, but never spellfire', () => {
   assert.ok(confusedChopTargets(hexed, ws()).some((t) => t.hitSwitch), 'a confused foe sees it as a target');
 });
 
+test('the king throws an adjacent switch by MELEE — click OR a direction key', () => {
+  // A switch is not standable, so walking a DIRECTION into it used to find no slide-stop and report
+  // "the king cannot move that way" (movePlayer skipped it, like it once skipped trees). It is an
+  // action against the housing, exactly like a chop: strike it, it throws, he holds his ground.
+  const setup = () => {
+    const s = createInitialState('warrior', 'easy');
+    s.terrain = { '5,4': 'switch', '7,5': 'metaldoor' }; // switch above the king; a door in sight to toggle
+    s.enemies = []; s.allies = [];
+    s.player.x = 5; s.player.y = 5; s.player.moveRange = 1;
+    return s;
+  };
+  // getPlayerMoves offers it (so a CLICK works)...
+  assert.ok(getPlayerMoves(setup()).some((m) => m.x === 5 && m.y === 4 && m.hitSwitch), 'the switch tile is offered as a hitSwitch move');
+  // ...and click-to-move throws it, opening the metal door in range.
+  const clicked = movePlayerTo(setup(), 5, 4);
+  assert.equal(clicked.terrain['7,5'], 'metaldooropen', 'clicking the switch throws it (opens the door)');
+  assert.equal(clicked.player.x, 5, 'and the king holds his ground on the switch tile');
+  // A DIRECTION key straight up into the switch does the same — no more "cannot move that way".
+  const keyed = movePlayer(setup(), 0, -1);
+  assert.notEqual(keyed.lastAction, 'blocked', 'walking a direction into the switch is not refused');
+  assert.equal(keyed.terrain['7,5'], 'metaldooropen', 'a direction key into the switch throws it too');
+});
+
 test('an ELECTRICAL LIGHT is a fitting, not a fire — it switches, conducts, and only burns when lit', () => {
   const ws = () => {
     const s = createInitialState('warrior', 'easy');
@@ -9280,72 +9303,135 @@ test('each NG+ realm names its guardians in its OWN register', () => {
   assert.ok(createBoss(1, 5, 5, 'elemental').bossName, 'and an elemental guardian still gets a name');
 });
 
-test('THE TRAINING GROUNDS gate each lesson — you cannot walk past one unlearned', () => {
-  // A hand-built tutorial floor of five sealed WARDS, each opening only when its lesson is done, so a
-  // new player is FORCED through move → attack → ability → key → guardian before the stair. Built and
-  // ticked directly here; the real loop runs tickTutorial inside maybeSpawnEnemy at each turn's end.
-  const endTurn = (s) => maybeSpawnEnemy(beginEnemyPhase(s).state);
-  const gate = (s, x) => terrainAt(s, x, 12);
+test('THE TRAINING GROUNDS — a winding, spread-out floor: shielded signs, then LIVE threats', () => {
+  // A snaking 3-lane floor (long corridors, big rooms). Each lesson's SIGN is reached in SAFETY — a
+  // shut DOOR (or the ability barrier) stands between it and the LIVE enemy beyond, so nothing wakes
+  // until the king steps through. Then the threat is real and CAN hit: a mann (strikes any adjacent
+  // tile), a turret, a conjuring circle, a leaping guardian. Follow the stored tutPath; a LIVE phase
+  // checks both the door shielding AND that each enemy bites.
+  const quiet = (s) => maybeSpawnEnemy(beginEnemyPhase(s).state);
+  const live = (s) => { const ph = beginEnemyPhase(s); let n = ph.state; for (const id of (ph.moverIds || [])) { if (n.gameOver) break; n = moveEnemy(n, id); } return maybeSpawnEnemy(n); };
+  const terr = (s, x, y) => terrainAt(s, x, y);
+  const has = (s, id) => s.enemies.some((e) => e.id === id);
+  const en = (s, id) => s.enemies.find((e) => e.id === id);
+  const at = (s, x, y) => s.player.x === x && s.player.y === y;
+  const mv = (s, x, y) => quiet(movePlayerTo(s, x, y));
+  const crossBarrier = (s, cls) => {
+    const c = s.player.cards[0];
+    if (cls === 'warrior') { const m = getCardMoves(s, c).find((m) => m.viaJump && m.x > s.player.x); s = quiet(useCard(s, 0, m.x, m.y)); s = mv(s, 21, 4); }
+    else if (cls === 'ranger') { const m = getCardMoves(s, c).find((m) => terr(s, m.x, m.y) === 'switch'); s = quiet(useCard(s, 0, m.x, m.y)); s = mv(s, 20, 4); s = mv(s, 21, 4); }
+    else { const m = getCardMoves(s, c).find((m) => m.y === 4 && m.x > s.player.x); s = quiet(useCard(s, 0, m.x, m.y)); s = mv(s, 20, 4); s = mv(s, 21, 4); }
+    return s;
+  };
+  const walkPath = (s, cls, seen) => {
+    const path = s.tutPath; const bx = s.tutLaunch.x + 1; const by = s.tutLaunch.y;
+    let i = path.findIndex(([x, y]) => at(s, x, y)); if (i < 0) i = 0; let guard = 0;
+    while (i < path.length - 1 && !s.gameOver && s.lastAction !== 'exit' && guard++ < 400) {
+      const [nx, ny] = path[i + 1];
+      if (nx === bx && ny === by) { s = crossBarrier(s, cls); i = path.findIndex(([x, y]) => x === 21 && y === 4); if (s.tutTip) seen.add(s.tutTip); continue; }
+      let tries = 0; let reached = false;
+      while (tries++ < 12 && !s.gameOver) { const before = `${s.player.x},${s.player.y}`; s = mv(s, nx, ny); if (at(s, nx, ny)) { reached = true; break; } if (`${s.player.x},${s.player.y}` === before && s.lastAction !== 'combat') break; }
+      if (!reached) break;
+      if (s.tutTip) seen.add(s.tutTip);
+      i += 1;
+    }
+    return s;
+  };
+
   let s = buildTutorialFloor('warrior', 'hard');
-  assert.equal(s.tutorial, true, 'it is a tutorial floor');
-  assert.equal(s.tutStep, 0, 'starting on lesson one');
-  assert.ok(s.tutSkip, 'with a skip portal off the start');
-  assert.ok(gate(s, 6) === 'metalgate' && gate(s, 10) === 'metalgate' && gate(s, 14) === 'metalgate',
-    'all three wards sealed');
+  assert.equal(s.tutTip, 'tutWelcome', 'welcome shows on spawn');
+  assert.ok(at(s, 4, 4), 'he spawns at (4,4)');
+  assert.equal(s.tutSigns.length, 6, 'six lesson signs');
+  assert.ok(Array.isArray(s.tutPath) && s.tutPath.length > 60, 'a long winding path is stored');
+  assert.equal(s.tutSigns.find((g) => g.tip === 'tutAttack').x, 8, 'the attack sign is a long corridor (4 tiles) from the welcome sign');
+  assert.ok([[12, 4], [15, 12], [5, 12], [10, 20]].every(([x, y]) => terr(s, x, y) === 'door'), 'four shut doors shield the attack/turret/circle/boss signs');
+  assert.equal(en(s, 'tut-foe').kind, 'mann', 'the foe is a mann — it strikes any adjacent tile, not a harmless pawn');
+  assert.ok(has(s, 'tut-turret') && has(s, 'tut-circle') && has(s, 'tut-boss'), 'a turret, a circle and a guardian stand on the floor');
+  assert.ok(terr(s, 11, 17) !== 'wall' && terr(s, 16, 23) !== 'wall', 'the boss arena is big');
 
-  // LESSON 1 — MOVE. The ward at col 6 opens once he walks up to it.
-  while (s.player.x < 5) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
-  assert.equal(gate(s, 6), 'metalgateopen', 'moving opens the first ward');
-  assert.equal(s.tutTip, 'tutAttack', 'and the lesson advances to attack');
+  // DOOR SHIELDING — the enemy BEYOND each door stays dormant while its sign is read (isolated).
+  for (const [x, y, keep] of [[8, 4, 'tut-foe'], [19, 12, 'tut-turret'], [7, 12, 'tut-circle'], [6, 20, 'tut-boss']]) {
+    let p = buildTutorialFloor('warrior', 'hard');
+    p.enemies = p.enemies.filter((e) => e.id === keep);
+    p.player.x = x; p.player.y = y; const hp = p.player.hp; const n = p.enemies.length;
+    for (let t = 0; t < 5; t += 1) p = live(p);
+    assert.ok(p.player.hp === hp && p.enemies.length === n, `${keep} stays dormant behind its door`);
+  }
 
-  // LESSON 2 — ATTACK. A plain step onto the pawn fells it; the second ward opens.
-  while (s.player.x < 7) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
-  assert.ok(s.enemies.some((e) => e.id === 'tut-foe'), 'the training foe blocks the way');
-  s = movePlayerTo(s, 8, 12); s = endTurn(s);
-  assert.ok(!s.enemies.some((e) => e.id === 'tut-foe'), 'a step cuts it down');
-  assert.equal(gate(s, 10), 'metalgateopen', 'and the second ward opens');
-  assert.equal(s.tutTip, 'tutAbility');
+  // EACH ENEMY CAN HIT (LIVE, isolated + placed in range).
+  { let p = buildTutorialFloor('warrior', 'hard'); p.player.x = 13; p.player.y = 4; const m = en(p, 'tut-foe'); m.asleep = false; m.awake = true; const hp = p.player.hp; let hit = false; for (let t = 0; t < 4 && !p.gameOver; t += 1) { p = live(p); if (p.player.hp < hp) { hit = true; break; } } assert.ok(hit || p.gameOver, 'the mann strikes the adjacent king'); }
+  { let p = buildTutorialFloor('warrior', 'hard'); p.player.x = 11; p.player.y = 12; const hp = p.player.hp; let hit = false; for (let t = 0; t < 5 && !p.gameOver; t += 1) { p = live(p); if (p.player.hp < hp) { hit = true; break; } } assert.ok(hit || p.gameOver, 'the turret shoots a king in its row'); }
+  { let p = buildTutorialFloor('warrior', 'hard'); p.player.x = 4; p.player.y = 12; const n = p.enemies.length; let grew = false; for (let t = 0; t < 7; t += 1) { p = live(p); if (p.enemies.length > n) { grew = true; break; } } assert.ok(grew, 'the circle conjures a foe'); }
+  { let p = buildTutorialFloor('warrior', 'hard'); p.key.collected = true; p.player.x = 12; p.player.y = 20; const b = en(p, 'tut-boss'); b.asleep = false; b.awake = true; b.x = 14; b.y = 21; const hp = p.player.hp; let hit = false; for (let t = 0; t < 8 && !p.gameOver; t += 1) { p = live(p); if (p.player.hp < hp) { hit = true; break; } } assert.ok(hit || p.gameOver, 'the guardian leaps onto the king'); }
 
-  // LESSON 3 — ABILITY. The third ward opens only on a used card; a plain advance will not do it.
-  while (s.player.x < 11) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
-  assert.equal(gate(s, 14), 'metalgate', 'no card used yet — third ward stays sealed');
-  s.player.usedCard = true; // the durable ledger a real weapon card sets
-  s = endTurn(s);
-  assert.equal(gate(s, 14), 'metalgateopen', 'using an ability opens the third ward');
-  assert.equal(s.tutTip, 'tutKeyBoss');
-
-  // LESSON 4/5 — KEY + GUARDIAN. The key unlocks the stair; the guardian blocks the path to it.
-  while (s.player.x < 15) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
-  s = movePlayerTo(s, 16, 12); s = endTurn(s);
-  assert.ok(s.key.collected, 'the key is taken by walking onto it');
-  assert.equal(s.exit.locked, false, 'which unlocks the stair');
-  s = movePlayerTo(s, 17, 12); s = endTurn(s);
-  assert.ok(s.enemies.some((e) => e.id === 'tut-boss') && s.player.x === 17, 'the guardian blocks the corridor');
-  assert.equal(movePlayerTo(s, 19, 12).player.x, 17, 'he cannot slip past it');
-  for (let i = 0; i < 4 && s.enemies.some((e) => e.id === 'tut-boss'); i += 1) { s = movePlayerTo(s, 18, 12); s = endTurn(s); }
-  assert.ok(!s.enemies.some((e) => e.id === 'tut-boss'), 'a few blows fell the guardian');
-  assert.equal(s.tutTip, 'tutDescend');
-  assert.ok(!s.pendingLevelUp, 'and the tutorial grants no boon');
-
-  // DESCEND leaves for a real, pristine floor 1.
-  while (s.player.x < 20) { s = movePlayerTo(s, s.player.x + 1, 12); s = endTurn(s); }
-  assert.equal(s.lastAction, 'exit', 'stepping the stair descends');
+  // WALKTHROUGH — follow the whole winding path to the stair, reading every sign en route.
+  const seen = new Set([s.tutTip]);
+  s = walkPath(s, 'warrior', seen);
+  assert.equal(s.lastAction, 'exit', 'reaching the stair descends');
+  assert.ok(['tutWelcome', 'tutAttack', 'tutAbilityWarrior', 'tutTurret', 'tutCircle', 'tutKeyBoss'].every((t) => seen.has(t)), 'every sign was read en route');
+  assert.ok(!has(s, 'tut-foe') && !has(s, 'tut-turret') && !has(s, 'tut-circle'), 'the foe, turret and circle were all cleared');
+  assert.ok(s.key.collected, 'the key was taken');
   const floor1 = leaveTutorial(s);
-  assert.ok(floor1.floor === 1 && !floor1.tutorial, 'and lands on a real floor 1');
-  assert.equal(floor1.player.className, 'warrior', 'as the chosen class');
+  assert.ok(floor1.floor === 1 && !floor1.tutorial && floor1.player.className === 'warrior', 'onto a pristine floor 1 of the class');
 });
 
-test('the training grounds are inert — no spawns, no dread, and a skip portal out', () => {
-  // It must never turn on the learner: no ambient spawns, no danger events, no encroaching lava,
-  // however long they dawdle. And the skip portal is always a one-step escape to floor 1.
+test('each class gets an ability puzzle solvable ONLY with its own starter card', () => {
+  // At the ability launch tile (19,4) the barrier is one tile east (20,4). The ranger shoots a switch
+  // to open an iron door; the sorcerer melts an ice wall. (The warrior's knight-leap is exercised
+  // above.) Each barrier is impassable until the signature card fires.
+  const terr = (s, x, y) => terrainAt(s, x, y);
+
+  // RANGER — a diagonal bow shot throws the switch across the pit, opening the iron door.
+  let r = buildTutorialFloor('ranger', 'hard');
+  r.player.x = 19; r.player.y = 4; // at the launch tile
+  assert.equal(terr(r, 20, 4), 'metalgate', 'the barrier is an iron GATE (not hand-openable — the bow is the only way)');
+  assert.ok(!getPlayerMoves(r).some((m) => m.x === 20 && m.y === 4), 'a metal gate offers NO hand-open move (a metaldoor would)');
+  const sw = getCardMoves(r, r.player.cards[0]).find((m) => terr(r, m.x, m.y) === 'switch');
+  assert.ok(sw, 'the bow can reach the switch across the pit');
+  r = useCard(r, 0, sw.x, sw.y);
+  assert.equal(terr(r, 20, 4), 'metalgateopen', 'shooting the switch opens the gate');
+
+  // SORCERER — a straight bolt melts the ice wall to water.
+  let z = buildTutorialFloor('sorcerer', 'hard');
+  z.player.x = 19; z.player.y = 4;
+  assert.equal(terr(z, 20, 4), 'ice', 'the barrier is ice');
+  const east = getCardMoves(z, z.player.cards[0]).find((m) => m.y === 4 && m.x > 19);
+  assert.ok(east, 'the bolt can be aimed east at the ice');
+  z = useCard(z, 0, east.x, east.y);
+  assert.equal(terr(z, 20, 4), 'water', 'the bolt thaws the ice to water');
+});
+
+test('the training grounds never turn molten, and the skip portal is set back', () => {
+  // No dread clock, no encroaching lava, however long the learner dawdles. And the skip portal is set
+  // back from the spawn (2 tiles west) so it is not fallen into; stepping in flags the skip.
   const endTurn = (s) => maybeSpawnEnemy(beginEnemyPhase(s).state);
   let s = buildTutorialFloor('ranger', 'easy');
-  const foes = s.enemies.length;
-  for (let t = 0; t < 40; t += 1) s = endTurn(s);
-  assert.ok(s.enemies.length <= foes, 'nothing ever spawns');
-  assert.ok(!Object.values(s.terrain).includes('lava'), 'and it never turns molten');
+  for (let t = 0; t < 40; t += 1) s = endTurn(s); // king idle at the spawn
+  assert.ok(!Object.values(s.terrain).includes('lava'), 'it never turns molten');
 
-  const skip = buildTutorialFloor('sorcerer', 'nightmare');
-  const moved = movePlayerTo(skip, skip.tutSkip.x, skip.tutSkip.y);
-  assert.equal(moved.lastAction, 'exit', 'the skip portal leaves for floor 1');
+  let skip = buildTutorialFloor('sorcerer', 'nightmare');
+  assert.ok(skip.tutSkip.x === 2 && skip.tutSkip.y === 4 && skip.player.x === 4 && skip.player.y === 4, 'the portal sits two tiles west of the spawn');
+  skip = movePlayerTo(skip, 3, 4); // one step west — not yet out
+  assert.notEqual(skip.lastAction, 'exit', 'a single step west does not skip');
+  const moved = movePlayerTo(skip, 2, 4); // the second step reaches the portal
+  assert.ok(moved.lastAction === 'exit' && moved.tutSkipped, 'the skip portal leaves for floor 1');
+});
+
+test('a training-grounds sign re-teaches every time it is stepped on', () => {
+  // A lesson sign is not one-and-done: stepping onto it re-shows its tip, and again if you walk off
+  // and back — but merely STANDING on it does not spam. game.js bumps tutTipSerial on each fresh
+  // arrival; main.js surfaces the tip on each bump.
+  const endTurn = (s) => maybeSpawnEnemy(beginEnemyPhase(s).state);
+  let s = buildTutorialFloor('warrior', 'hard');
+  assert.equal(s.tutTipSerial, 1, 'the welcome sign bumps the serial on spawn');
+  assert.equal(s.tutOnSign, '4,4', 'and records the sign he is on');
+  s = endTurn(movePlayerTo(s, 3, 4)); // step OFF the welcome sign (west, into the start room — not a sign)
+  assert.equal(s.tutTipSerial, 1, 'stepping off does not bump');
+  assert.equal(s.tutOnSign, null, 'and clears the current sign');
+  s = endTurn(movePlayerTo(s, 4, 4)); // step BACK onto it
+  assert.equal(s.tutTipSerial, 2, 'stepping back on re-bumps — it re-teaches');
+  assert.equal(s.tutTip, 'tutWelcome', 'the same lesson');
+  const before = s.tutTipSerial;
+  s = endTurn(s); // a turn where he does not move off the sign
+  assert.equal(s.tutTipSerial, before, 'standing on it does not re-bump (no spam)');
 });

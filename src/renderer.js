@@ -2241,6 +2241,48 @@ const Renderer = (function () {
     ctx.restore();
   }
 
+  // A TRAINING-GROUNDS SIGNPOST: a little wooden board on a post with a softly pulsing glow, so it
+  // plainly reads as "step here to read". Not a real terrain type — drawn from state.tutSigns.
+  function drawSign(tileX, tileY) {
+    const cx = tileX * tileSize + tileSize / 2;
+    const cy = tileY * tileSize + tileSize / 2;
+    const s = tileSize;
+    ctx.save();
+    // A warm glow beneath it, gently pulsing, to draw the eye.
+    const pulse = 0.5 + 0.5 * Math.sin(clock * 3);
+    const grad = ctx.createRadialGradient(cx, cy, s * 0.04, cx, cy, s * 0.42);
+    grad.addColorStop(0, `rgba(251, 191, 36, ${0.32 * (0.6 + 0.4 * pulse)})`);
+    grad.addColorStop(1, 'rgba(251, 191, 36, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, s * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+    // The post.
+    ctx.fillStyle = '#5b3a1e';
+    ctx.fillRect(cx - s * 0.03, cy - s * 0.02, s * 0.06, s * 0.3);
+    // The board.
+    const bw = s * 0.4;
+    const bh = s * 0.26;
+    const bx = cx - bw / 2;
+    const by = cy - s * 0.26;
+    ctx.fillStyle = '#8a5a2b';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = '#c98a4a';
+    ctx.lineWidth = Math.max(1, s * 0.02);
+    ctx.strokeRect(bx, by, bw, bh);
+    // A couple of "text" lines suggested on the board.
+    ctx.strokeStyle = '#f0d8b0';
+    ctx.lineWidth = Math.max(1, s * 0.018);
+    for (let i = 0; i < 2; i += 1) {
+      const ly = by + bh * (0.38 + i * 0.3);
+      ctx.beginPath();
+      ctx.moveTo(bx + bw * 0.18, ly);
+      ctx.lineTo(bx + bw * 0.82, ly);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // The Orb of Victory (floor 8): a radiant sphere that replaces the floor key — collecting it
   // opens the portal and triggers the finale's boss-rush.
   function drawOrb(tileX, tileY, faded) {
@@ -2975,10 +3017,19 @@ const Renderer = (function () {
       case 'crushershut':
         return isDark ? '#4a4238' : '#635749'; // the ram, down
       case 'metaldoor':
-      case 'metalgate':
       case 'metaldooropen':
+        return isDark ? '#3f434b' : '#565b66'; // gunmetal plate — a solid door
+      case 'metalgate':
       case 'metalgateopen':
-        return isDark ? '#3f434b' : '#565b66'; // gunmetal plate
+        // BARS, not a plate: like a normal 'gate', the native floor shows BETWEEN the bars (drawTexture
+        // lays the ironwork over the top), so you can read the ground you cannot yet walk onto. The
+        // fallback is the ordinary sepia floor (NOT gunmetal), so the ground reads through even where
+        // there is no element ground to sample — e.g. the overworld tutorial.
+        {
+          const g = nativeGround();
+          if (g) return isDark ? g.dark : g.light;
+        }
+        return isDark ? '#71481d' : '#e8c589';
       case 'wall':
         // THE ROOM AT THE END OF THE WORLD has no walls — what surrounds it is SPACE. Near-black,
         // faintly blue, so the marble floor appears to float in it rather than to be walled in.
@@ -5720,6 +5771,10 @@ const Renderer = (function () {
     // way out", with an arrow so it is never missed.
     if (state.tutorial && state.tutSkip && isExplored(state.tutSkip.x, state.tutSkip.y)) {
       drawPortal(state.tutSkip.x, state.tutSkip.y, false, false, '#a855f7');
+    }
+    // The lesson SIGNPOSTS — step onto one to read its lesson (see tickTutorial / tutSigns).
+    for (const sign of (state.tutSigns || [])) {
+      if (isExplored(sign.x, sign.y)) drawSign(sign.x, sign.y);
     }
 
     // The floor key / Orb of Victory: shown when in sight, or faded once discovered (persists in fog).
