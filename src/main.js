@@ -2797,12 +2797,14 @@
       return;
     }
 
-    // A click on a reachable tile moves the king there; any other click inspects
-    // the tile in the right-hand pane.
+    // A click on a reachable tile moves the king there; any OTHER click both inspects the tile AND
+    // SCROLLS the view to centre on it — so clicking a distant object is how you look around (no need
+    // to hunt for the screen edge or drag).
     const canMove = isIdle() && getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
     if (canMove) {
       commitMove(movePlayerTo(gameState, tileX, tileY));
     } else {
+      if (tileX >= 0 && tileX < WORLD_SIZE && tileY >= 0 && tileY < WORLD_SIZE) Renderer.centerOn(tileX, tileY);
       examineTile(tileX, tileY);
     }
   }
@@ -3075,6 +3077,15 @@
         aimCardCursor(aim[0], aim[1]); // push a direction → the target that way
         return;
       }
+      // Arrows still PAN while aiming (they only move the king outside aim mode) — so you can look
+      // around before you fire without disturbing the target cursor. Consume them here so they never
+      // fall through to the king-movement block below.
+      const aimPan = resolvePan(event);
+      if (aimPan) {
+        event.preventDefault();
+        Renderer.panBy(aimPan[0] * KEY_PAN_STEP, aimPan[1] * KEY_PAN_STEP);
+        return;
+      }
     }
 
     // Not aiming and not in a confirm: Escape toggles the Options menu.
@@ -3109,17 +3120,13 @@
       return;
     }
 
-    const move = resolveMove(event);
+    // MOVE the king — WASD, the numpad, OR the arrow keys (arrows no longer pan; the camera follows
+    // him, and you scroll by dragging, the minimap, or clicking a tile). Two cardinals within the
+    // combo window make a diagonal, so ↑+← is up-left just like W+A.
+    const move = resolveMove(event) || resolvePan(event);
     if (move) {
       event.preventDefault();
       queueStep(move[0], move[1]); // cardinals may combine into a diagonal; see queueStep
-      return;
-    }
-    // Arrow keys pan the camera.
-    const pan = resolvePan(event);
-    if (pan) {
-      event.preventDefault();
-      Renderer.panBy(pan[0] * KEY_PAN_STEP, pan[1] * KEY_PAN_STEP);
       return;
     }
     // Zoom: Page Up / '+' / '=' zoom in; Page Down / '-' / '_' zoom out.

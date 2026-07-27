@@ -5,8 +5,9 @@ const TUTORIALS = {
   welcome: {
     title: 'Long live the King',
     text:
-      'Move the king with WASD, the diagonals Q E Z C, the numpad, or by clicking a highlighted ' +
-      'tile. Pan with the arrow keys or the screen edges, and zoom with the mouse wheel. You see ' +
+      'Move the king with WASD, the arrow keys, the diagonals Q E Z C, the numpad, or by clicking a ' +
+      'highlighted tile. The camera follows you — CLICK any distant tile to scroll to it, or drag the ' +
+      'board, and zoom with the mouse wheel. You see ' +
       'only a short distance — unexplored ground is fogged until you reach it. RED tiles are squares ' +
       'a visible enemy could strike next turn, so never end your move on one. HOVER any tile or ' +
       'piece to read exactly what it is and does. You begin beside the stair down — explore to find ' +
@@ -177,10 +178,10 @@ const TUTORIALS = {
   tutWelcome: {
     title: 'Move',
     text:
-      'Follow the corridors EAST to begin. Move with WASD, the NUMPAD, or by clicking a highlighted ' +
-      'tile. For DIAGONALS, press two of WASD together (W+A = up-left) or use Q E Z C. The view follows ' +
-      'you — DRAG the board or use the ARROW KEYS to look around. To skip the tutorial, walk WEST into ' +
-      'the PORTAL.',
+      'Follow the corridors EAST to begin. Move with WASD, the ARROW KEYS, the NUMPAD, or by clicking a ' +
+      'highlighted tile. For DIAGONALS, press two of WASD together (W+A = up-left) or use Q E Z C. The ' +
+      'view follows you — CLICK a distant tile or DRAG the board to look around. To skip the tutorial, ' +
+      'walk WEST into the PORTAL.',
   },
   tutAttack: {
     title: 'Attack',

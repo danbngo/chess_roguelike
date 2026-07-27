@@ -13,7 +13,8 @@ const NUMPAD_MOVES = {
 };
 
 // WASD move the king; Q E Z C are the four diagonals around them (x does NOTHING — it sat under the
-// down-right finger and was too easy to hit by accident, so down-right moved to C). The arrow keys pan.
+// down-right finger and was too easy to hit by accident, so down-right moved to C). The arrow keys ALSO
+// move him in-game (via resolvePan, fed into the same queueStep), and only pan in menus / while aiming.
 // Two cardinals pressed together also make a diagonal (see the combo catcher in main.js), so W+A is
 // up-left, etc. — the explicit diagonal keys are just a shortcut.
 const KEY_MOVES = {
@@ -28,7 +29,9 @@ const KEY_MOVES = {
   c: [1, 1],
 };
 
-// Arrow keys pan the camera rather than moving the king.
+// Arrow-key directions. In-game these MOVE the king (main.js feeds them through queueStep alongside
+// WASD); in menus and while aiming a card they PAN the camera instead. Kept separate from KEY_MOVES so
+// each caller can decide which meaning applies.
 const PAN_KEYS = {
   arrowup: [0, -1],
   arrowdown: [0, 1],
