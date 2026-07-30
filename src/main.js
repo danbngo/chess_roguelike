@@ -94,6 +94,11 @@
   const KEY_PAN_STEP = 1.4; // tiles per arrow-key press
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
+  // Touch tuning: how far a finger may slide before a tap becomes a drag, and how much a pinch's
+  // pixel-distance change maps to zoom (0.12 is one wheel notch, so ~24px of pinch ≈ one notch).
+  const TAP_SLOP = 10; // px — coarser than the mouse's 3px, since fingers wobble
+  const PINCH_ZOOM_SCALE = 0.005;
+  const LONG_PRESS_MS = 420; // hold this long without moving to inspect a tile (touch has no hover)
 
   // screen: 'title' | 'class' | 'playing' | 'levelup' | 'character' | 'confirm' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
@@ -3139,15 +3144,14 @@
     }
   });
 
-  canvas.addEventListener('click', (event) => {
-    if (suppressClick) {
-      suppressClick = false; // this "click" was the end of a drag
-      return;
-    }
+  // A tap OR a mouse-click at a client point, dispatched by screen. Both the mouse `click` listener and
+  // the touch `touchend` tap call this with a bare {clientX, clientY} — handleClick and the option
+  // hit-tests only ever read those two fields, so a synthesized point works exactly like a real event.
+  function dispatchTap(clientX, clientY) {
     if (screen === 'title') {
       const rect = canvas.getBoundingClientRect();
       const scale = canvas.width / rect.width;
-      const id = Renderer.titleOptionAt((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
+      const id = Renderer.titleOptionAt((clientX - rect.left) * scale, (clientY - rect.top) * scale);
       if (id) {
         const opt = withDebugOption(titleMenuModel()).options.find((o) => o.id === id);
         if (opt && opt.enabled && opt.action) opt.action();
@@ -3157,11 +3161,19 @@
     if (screen === 'class' || screen === 'trophies') {
       const rect = canvas.getBoundingClientRect();
       const scale = canvas.width / rect.width;
-      const id = Renderer.sceneOptionAt((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
+      const id = Renderer.sceneOptionAt((clientX - rect.left) * scale, (clientY - rect.top) * scale);
       if (id) handleSceneClick(id);
       return;
     }
-    handleClick(event);
+    handleClick({ clientX, clientY });
+  }
+
+  canvas.addEventListener('click', (event) => {
+    if (suppressClick) {
+      suppressClick = false; // this "click" was the end of a drag
+      return;
+    }
+    dispatchTap(event.clientX, event.clientY);
   });
 
   // A click on the diegetic class-select or trophy scene, by the hit-rect id the renderer reported.
@@ -3214,6 +3226,88 @@
       suppressClick = true; // swallow the click that follows a drag
     }
     dragging = false;
+  });
+
+  // --- TOUCH (phones/tablets) — mirrors the mouse: ONE finger taps (= click) or drags (= pan), TWO
+  // fingers pinch (= zoom). A long single-finger hold inspects a tile (touch has no hover). All of
+  // this is additive; a mouse never emits touch events, so desktop is unaffected. `touch-action: none`
+  // on the canvas (styles.css) stops the browser scrolling/zooming the page underneath us.
+  let touchStart = null;      // {x,y} where a one-finger gesture began (client coords)
+  let touchLast = null;       // {x,y} previous position, for incremental panning
+  let touchMoved = false;     // has this touch passed TAP_SLOP? (then it's a drag, not a tap)
+  let pinchDist = null;       // finger separation at the last pinch sample, or null when not pinching
+  let longPressTimer = null;
+
+  const clearLongPress = () => { if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; } };
+  const fingerGap = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+
+  canvas.addEventListener('touchstart', (event) => {
+    hideTilePopover(); // clear a long-press popover from a previous touch
+    if (event.touches.length === 1) {
+      const t = event.touches[0];
+      touchStart = { x: t.clientX, y: t.clientY };
+      touchLast = { x: t.clientX, y: t.clientY };
+      touchMoved = false;
+      pinchDist = null;
+      // Arm a long-press: hold still and we inspect the tile under the finger, like a desktop hover.
+      clearLongPress();
+      longPressTimer = setTimeout(() => {
+        longPressTimer = null;
+        if (touchStart && !touchMoved && screen === 'playing') {
+          touchMoved = true; // consume the gesture so the lift is not also treated as a tap
+          const rect = canvas.getBoundingClientRect();
+          const scale = canvas.width / rect.width;
+          showTilePopover({ clientX: touchStart.x, clientY: touchStart.y }, (touchStart.x - rect.left) * scale, (touchStart.y - rect.top) * scale);
+        }
+      }, LONG_PRESS_MS);
+    } else if (event.touches.length === 2) {
+      // Second finger down: begin a pinch and cancel any pending tap/long-press.
+      pinchDist = fingerGap(event.touches);
+      touchStart = null;
+      touchMoved = true;
+      clearLongPress();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (event) => {
+    if (pinchDist !== null && event.touches.length === 2) {
+      event.preventDefault();
+      const gap = fingerGap(event.touches);
+      const delta = (gap - pinchDist) * PINCH_ZOOM_SCALE;
+      if (delta) Renderer.zoomBy(delta);
+      pinchDist = gap;
+      return;
+    }
+    if (!touchStart || !event.touches.length) return;
+    const t = event.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
+    if (!touchMoved && Math.abs(t.clientX - touchStart.x) + Math.abs(t.clientY - touchStart.y) > TAP_SLOP) {
+      touchMoved = true;      // crossed the slop → it's a drag now, so abandon the pending tap/long-press
+      clearLongPress();
+    }
+    if (touchMoved) {
+      event.preventDefault(); // only hijack the gesture once it's clearly a drag, so a clean tap still fires
+      Renderer.panByPixels((t.clientX - touchLast.x) * scale, (t.clientY - touchLast.y) * scale);
+      touchLast = { x: t.clientX, y: t.clientY };
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (event) => {
+    clearLongPress();
+    // A one-finger lift that never moved is a TAP → dispatch it and preventDefault so the browser does
+    // not also fire a synthetic 300ms-late mouse click (which would double-handle the tap).
+    if (touchStart && !touchMoved && event.changedTouches.length) {
+      event.preventDefault();
+      const t = event.changedTouches[0];
+      dispatchTap(t.clientX, t.clientY);
+    }
+    if (!event.touches.length) { touchStart = null; touchLast = null; pinchDist = null; }
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', () => {
+    clearLongPress();
+    touchStart = null; touchLast = null; pinchDist = null; touchMoved = false;
   });
 
   canvas.addEventListener('mousemove', (event) => {

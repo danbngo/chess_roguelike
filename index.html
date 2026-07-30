@@ -2,10 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- user-scalable=no + viewport-fit=cover stop mobile browsers hijacking pinch/double-tap-zoom (the
+         game handles pinch itself) and let the board fill notched screens. No effect on desktop. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Chess Dungeon</title>
     <meta name="description" content="A chess-piece roguelike: descend a shifting dungeon as a lone king, claim each floor's key from its guardian, and fight to the portal home." />
     <meta name="theme-color" content="#0b0b12" />
+    <!-- Installed-PWA hints: launch fullscreen (no browser chrome) from the home screen. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Chess Dungeon" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icon-180.png" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%99%9A%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -210,5 +219,14 @@
     <script src="src/input.js"></script>
     <script src="src/tutorials.js"></script>
     <script src="src/main.js"></script>
+    <!-- Register the service worker so the game installs to the home screen and runs offline. Guarded:
+         it only exists on HTTPS/localhost, so running straight off file:// simply skips it (no error). -->
+    <script>
+      if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW registration failed:', err));
+        });
+      }
+    </script>
   </body>
 </html>

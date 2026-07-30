@@ -64,6 +64,9 @@ canvas {
   border: 2px solid rgba(248, 250, 252, 0.12);
   background: #020617;
   display: block;
+  /* The game owns all touch gestures on the board (tap/drag/pinch handled in main.js); tell the
+     browser not to scroll or double-tap-zoom the page when a finger lands here. No effect on mouse. */
+  touch-action: none;
 }
 
 .overlay {
@@ -1010,3 +1013,54 @@ body.in-game canvas {
   font-size: 0.72rem;
 }
 .ach-badge.badge-locked .badge-name { color: #cbd5e1; }
+
+/* ============================================================================
+   PHONE / NARROW SCREENS — stack the board over its side panels so it all fits
+   a portrait phone, with the ability cards in a thumb-swipeable row under the
+   board. Width-gated (not touch-gated): a narrow desktop window gets the same
+   sane stack, while a normal wide desktop is completely unaffected. The board's
+   tap / drag / pinch handlers (main.js) work the same in either layout.
+   ============================================================================ */
+@media (max-width: 760px) {
+  body.in-game .game-layout {
+    flex-direction: column;
+    align-items: stretch;
+    height: auto;
+    min-height: 100vh;
+    width: 100vw;
+  }
+  /* Board FIRST and full width, capped so the HUD + cards below stay on-screen. */
+  body.in-game .stage {
+    order: 0;
+    width: 100vw;
+    max-width: 100vw;
+  }
+  body.in-game canvas#game {
+    width: min(100vw, 62vh);
+    height: min(100vw, 62vh);
+    margin: 0 auto;
+  }
+  /* Panels drop BELOW the board at full width and natural height — no more two
+     full-height columns crammed either side of a tiny board. */
+  body.in-game .pane {
+    order: 1;
+    width: 100vw;
+    max-width: none;
+    min-width: 0;
+    height: auto;
+    overflow-y: visible;
+  }
+  body.in-game .right-pane { order: 2; }
+  /* Every ability card a thumb-tap away: one horizontal, swipeable row. */
+  body.in-game .card-bar {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Shrink the corner minimap so it does not cover a small board. */
+  #minimap {
+    width: min(120px, 30vw);
+    height: min(120px, 30vw);
+  }
+}
