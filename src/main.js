@@ -2905,7 +2905,9 @@
     // character / tips / confirm) deliberately set nothing, so the music doesn't lurch when one
     // pops open over whatever was already playing.
     if (screen === 'title' || screen === 'class') GameAudio.setTrack('title');
-    else if (screen === 'gameover') GameAudio.setTrack('death');
+    // The run-over screen: the death lament normally — but if the run was actually WON, the victory
+    // jingle (which plays once, not looped), so a win never sounds like a defeat even on this screen.
+    else if (screen === 'gameover') GameAudio.setTrack(gameState && gameState.won ? 'altar' : 'death');
     else if (screen === 'levelup' || screen === 'victory') GameAudio.setTrack('altar');
     // The demon realm gets its own loop — the same wandering shape, dragged down into the pit. An
     // OVERWORLD floor gone molten in the overstay switches to it too: once the lava wells up, the
