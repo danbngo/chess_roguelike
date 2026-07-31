@@ -1051,12 +1051,36 @@ body.in-game canvas {
     overflow-y: visible;
   }
   body.in-game .right-pane { order: 2; }
-  /* Every ability card a thumb-tap away: one horizontal, swipeable row. */
+  /* Every ability card a thumb-tap away: one horizontal, swipeable row, and BIGGER + LOUDER than on
+     desktop — the cards are the point of a class, and a playtester found them easy to miss. */
   body.in-game .card-bar {
     flex-wrap: nowrap;
     justify-content: flex-start;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    gap: 0.6rem;
+    margin: 0.5rem 0;
+    padding-bottom: 0.2rem;
+  }
+  .card-slot {
+    width: 3.9rem;
+    height: 3.9rem;
+    font-size: 2rem;
+    border-radius: 14px;
+  }
+  .card-slot.ready {
+    border-width: 3px; /* a ready ability should shout on a small screen */
+  }
+  /* De-clutter: the message log and the small captions eat room a phone doesn't have. The log's
+     content still reaches the player through the on-board effects and the examine pane. */
+  body.in-game .log-wrap { display: none; }
+  body.in-game .card-hint,
+  body.in-game #inv-hint,
+  body.in-game #orb-hint { display: none; }
+  /* Roomier tap targets for the pane buttons (Options, etc.). */
+  body.in-game .pane-button {
+    padding: 0.55rem 1rem;
+    font-size: 1rem;
   }
   /* Shrink the corner minimap so it does not cover a small board. */
   #minimap {

@@ -94,11 +94,15 @@
   const KEY_PAN_STEP = 1.4; // tiles per arrow-key press
   const WHEEL_ZOOM_STEP = 0.12;
   const KEY_ZOOM_STEP = 0.25;
-  // Touch tuning: how far a finger may slide before a tap becomes a drag, and how much a pinch's
-  // pixel-distance change maps to zoom (0.12 is one wheel notch, so ~24px of pinch ≈ one notch).
-  const TAP_SLOP = 10; // px — coarser than the mouse's 3px, since fingers wobble
+  // Touch tuning. A one-finger flick STEPS the king (SWIPE_STEP px in a direction = one move); a tap
+  // (under TAP_SLOP) acts on the tile; panning/zoom are TWO-finger, so one finger is free to move.
+  const TAP_SLOP = 10;      // px — under this a touch is a tap, not a swipe (fingers wobble)
+  const SWIPE_STEP = 26;    // px a finger must travel for a flick to register as one king-step
   const PINCH_ZOOM_SCALE = 0.005;
   const LONG_PRESS_MS = 420; // hold this long without moving to inspect a tile (touch has no hover)
+  // Is this a touch device? Drives swipe controls and which control hints the tutorial shows.
+  const IS_TOUCH = (typeof window !== 'undefined')
+    && (('ontouchstart' in window) || (navigator && navigator.maxTouchPoints > 0));
 
   // screen: 'title' | 'class' | 'playing' | 'levelup' | 'character' | 'confirm' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';
@@ -1318,8 +1322,11 @@
   }
 
   function presentTip(id) {
-    tutorialTitle.textContent = TUTORIALS[id].title;
-    tutorialText.textContent = TUTORIALS[id].text;
+    const tip = TUTORIALS[id];
+    tutorialTitle.textContent = tip.title;
+    // On a touch device, show the mobile control copy (swipe/tap) when a tip provides it — nobody on a
+    // phone should be told to "press WASD". Falls back to the normal text when there's no mobile variant.
+    tutorialText.textContent = (IS_TOUCH && tip.mobileText) ? tip.mobileText : tip.text;
     tutorialScreen.classList.remove('hidden');
   }
 
@@ -3228,27 +3235,40 @@
     dragging = false;
   });
 
-  // --- TOUCH (phones/tablets) — mirrors the mouse: ONE finger taps (= click) or drags (= pan), TWO
-  // fingers pinch (= zoom). A long single-finger hold inspects a tile (touch has no hover). All of
-  // this is additive; a mouse never emits touch events, so desktop is unaffected. `touch-action: none`
-  // on the canvas (styles.css) stops the browser scrolling/zooming the page underneath us.
+  // --- TOUCH (phones/tablets). ONE finger drives the king: a directional SWIPE steps him that way (the
+  // primary way to move on a phone), while a still TAP acts on the tile under it (move-to / attack /
+  // inspect), and a still HOLD inspects it (touch has no hover). TWO fingers own the camera: pinch to
+  // zoom, drag to pan. Keeping pan on two fingers frees one finger for movement. All additive — a mouse
+  // never emits touch events — and `touch-action: none` (styles.css) stops the page scrolling under us.
   let touchStart = null;      // {x,y} where a one-finger gesture began (client coords)
-  let touchLast = null;       // {x,y} previous position, for incremental panning
-  let touchMoved = false;     // has this touch passed TAP_SLOP? (then it's a drag, not a tap)
-  let pinchDist = null;       // finger separation at the last pinch sample, or null when not pinching
+  let touchMoved = false;     // has this touch passed TAP_SLOP? (then it's a swipe, not a tap)
+  let swipeFired = false;     // has this one-finger swipe already stepped the king? (one step per swipe)
+  let pinch = null;           // {dist, cx, cy} of a two-finger gesture, for zoom + pan; null otherwise
   let longPressTimer = null;
 
   const clearLongPress = () => { if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; } };
-  const fingerGap = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  const fingerGap = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const fingerMid = (t) => ({ cx: (t[0].clientX + t[1].clientX) / 2, cy: (t[0].clientY + t[1].clientY) / 2 });
+
+  // A swipe vector → one of the 8 king directions. Cardinal unless the diagonal is clearly intended
+  // (both axes within ~2.4x), which suits a grid where a stray degree shouldn't send you diagonally.
+  function swipeDirection(dx, dy) {
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+    const sx = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+    const sy = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+    if (adx > ady * 2.4) return [sx, 0];
+    if (ady > adx * 2.4) return [0, sy];
+    return [sx, sy];
+  }
 
   canvas.addEventListener('touchstart', (event) => {
     hideTilePopover(); // clear a long-press popover from a previous touch
     if (event.touches.length === 1) {
       const t = event.touches[0];
       touchStart = { x: t.clientX, y: t.clientY };
-      touchLast = { x: t.clientX, y: t.clientY };
       touchMoved = false;
-      pinchDist = null;
+      swipeFired = false;
+      pinch = null;
       // Arm a long-press: hold still and we inspect the tile under the finger, like a desktop hover.
       clearLongPress();
       longPressTimer = setTimeout(() => {
@@ -3261,8 +3281,8 @@
         }
       }, LONG_PRESS_MS);
     } else if (event.touches.length === 2) {
-      // Second finger down: begin a pinch and cancel any pending tap/long-press.
-      pinchDist = fingerGap(event.touches);
+      // Second finger down: begin a pinch/pan and cancel any pending one-finger tap/swipe/long-press.
+      pinch = { dist: fingerGap(event.touches), ...fingerMid(event.touches) };
       touchStart = null;
       touchMoved = true;
       clearLongPress();
@@ -3270,44 +3290,50 @@
   }, { passive: false });
 
   canvas.addEventListener('touchmove', (event) => {
-    if (pinchDist !== null && event.touches.length === 2) {
+    // TWO fingers: zoom by the change in separation, pan by the change in midpoint — both at once.
+    if (pinch && event.touches.length === 2) {
       event.preventDefault();
       const gap = fingerGap(event.touches);
-      const delta = (gap - pinchDist) * PINCH_ZOOM_SCALE;
-      if (delta) Renderer.zoomBy(delta);
-      pinchDist = gap;
+      const mid = fingerMid(event.touches);
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      const zoomDelta = (gap - pinch.dist) * PINCH_ZOOM_SCALE;
+      if (zoomDelta) Renderer.zoomBy(zoomDelta);
+      Renderer.panByPixels((mid.cx - pinch.cx) * scale, (mid.cy - pinch.cy) * scale);
+      pinch = { dist: gap, cx: mid.cx, cy: mid.cy };
       return;
     }
+    // ONE finger: once it travels far enough in a direction, step the king ONCE (a flick = one move).
     if (!touchStart || !event.touches.length) return;
     const t = event.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    const scale = canvas.width / rect.width;
-    if (!touchMoved && Math.abs(t.clientX - touchStart.x) + Math.abs(t.clientY - touchStart.y) > TAP_SLOP) {
-      touchMoved = true;      // crossed the slop → it's a drag now, so abandon the pending tap/long-press
-      clearLongPress();
-    }
-    if (touchMoved) {
-      event.preventDefault(); // only hijack the gesture once it's clearly a drag, so a clean tap still fires
-      Renderer.panByPixels((t.clientX - touchLast.x) * scale, (t.clientY - touchLast.y) * scale);
-      touchLast = { x: t.clientX, y: t.clientY };
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    if (!touchMoved && Math.abs(dx) + Math.abs(dy) > TAP_SLOP) { touchMoved = true; clearLongPress(); }
+    // Swipe-to-step is a PLAYING-screen gesture; on menus/scenes a drag simply does nothing (they are
+    // driven by taps), so a slightly-moving tap on a menu button is never mistaken for a swipe.
+    if (!swipeFired && screen === 'playing' && Math.hypot(dx, dy) >= SWIPE_STEP) {
+      event.preventDefault();
+      swipeFired = true; // one step per swipe; a fresh touch is needed for the next
+      const [sx, sy] = swipeDirection(dx, dy);
+      if (sx || sy) { clearPendingStep(); handleStep(sx, sy); }
     }
   }, { passive: false });
 
   canvas.addEventListener('touchend', (event) => {
     clearLongPress();
-    // A one-finger lift that never moved is a TAP → dispatch it and preventDefault so the browser does
-    // not also fire a synthetic 300ms-late mouse click (which would double-handle the tap).
-    if (touchStart && !touchMoved && event.changedTouches.length) {
+    // A one-finger lift that never moved is a TAP → act on the tile, and preventDefault so the browser
+    // does not also fire a synthetic 300ms-late mouse click (which would double-handle the tap).
+    if (touchStart && !touchMoved && !swipeFired && event.changedTouches.length) {
       event.preventDefault();
       const t = event.changedTouches[0];
       dispatchTap(t.clientX, t.clientY);
     }
-    if (!event.touches.length) { touchStart = null; touchLast = null; pinchDist = null; }
+    if (!event.touches.length) { touchStart = null; pinch = null; }
   }, { passive: false });
 
   canvas.addEventListener('touchcancel', () => {
     clearLongPress();
-    touchStart = null; touchLast = null; pinchDist = null; touchMoved = false;
+    touchStart = null; pinch = null; touchMoved = false; swipeFired = false;
   });
 
   canvas.addEventListener('mousemove', (event) => {

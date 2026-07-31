@@ -12,6 +12,12 @@ const TUTORIALS = {
       'a visible enemy could strike next turn, so never end your move on one. HOVER any tile or ' +
       'piece to read exactly what it is and does. You begin beside the stair down — explore to find ' +
       'the key that unlocks it.',
+    mobileText:
+      'SWIPE in any direction to STEP the king that way, or TAP a highlighted tile to move there. Use ' +
+      'two fingers to pinch-zoom and to pan. You see only a short distance — unexplored ground is fogged ' +
+      'until you reach it. RED tiles are squares a visible enemy could strike next turn, so never end ' +
+      'your move on one. HOLD any tile to read exactly what it is and does. You begin beside the stair ' +
+      'down — explore to find the key that unlocks it.',
   },
   cards: {
     title: 'Your abilities win fights',
@@ -21,6 +27,11 @@ const TUTORIALS = {
       'Press its number (1-9) or click it to AIM, then push a DIRECTION to swing the target onto what ' +
       'you want, and press the number again (or Enter) to fire. Escape cancels. Each card then ' +
       'recharges for a few turns, so spend them, do not hoard them — they cost you nothing but time.',
+    mobileText:
+      'The glowing slots under the board are your ABILITY CARDS — they are the whole point of your ' +
+      'class, and a plain step will not carry you far without them. A card PULSES while it is ready. ' +
+      'TAP a card to AIM it, then TAP the target tile to fire (tap the card again to cancel). Each card ' +
+      'then recharges for a few turns, so spend them, do not hoard them — they cost you nothing but time.',
   },
   surprise: {
     title: 'Caught by surprise',
@@ -182,12 +193,20 @@ const TUTORIALS = {
       'highlighted tile. For DIAGONALS, press two of WASD together (W+A = up-left) or use Q E Z C. The ' +
       'view follows you — CLICK a distant tile or DRAG the board to look around. To skip the tutorial, ' +
       'walk WEST into the PORTAL.',
+    mobileText:
+      'Follow the corridors EAST to begin. SWIPE in any direction to STEP the king that way — including ' +
+      'diagonals — or TAP a highlighted tile to move there. Use TWO fingers to zoom (pinch) and to look ' +
+      'around (drag). To skip the tutorial, go WEST into the PORTAL.',
   },
   tutAttack: {
     title: 'Attack',
     text:
       'MOVE ONTO a foe to strike it — a plain step is an attack. Cut down the foe ahead FAST: it hits ' +
       'back if you linger beside it. (RED tiles show where a foe could strike; never end a turn on one.)',
+    mobileText:
+      'SWIPE toward a foe — or TAP it — to STRIKE it: moving onto an enemy IS your attack, you have no ' +
+      'separate attack button. Don’t run from the foe ahead; cut it DOWN before it corners you. (RED ' +
+      'tiles show where a foe could strike — never end a turn on one.)',
   },
   // One per class: the ability puzzle blocking the corridor demands the class’s real signature move.
   // Fire a card by clicking its slot (or pressing its NUMBER), aiming a DIRECTION, then confirming.
@@ -196,12 +215,18 @@ const TUTORIALS = {
     text:
       'A pit blocks the way. Fire your KNIGHT card — click its slot below (or press its number), then ' +
       'aim at the ledge across the gap. It leaps in an L, clean over the pit.',
+    mobileText:
+      'A pit blocks the way. TAP your KNIGHT card in the row below to aim it, then TAP the ledge across ' +
+      'the gap. It leaps in an L, clean over the pit.',
   },
   tutAbilityRanger: {
     title: 'Shoot the switch',
     text:
       'An iron GATE blocks the way — it will not budge by hand. Fire your BOW — click its slot below ' +
       '(or press its number), then aim DIAGONALLY at the SWITCH across the pit. The gate grinds open.',
+    mobileText:
+      'An iron GATE blocks the way — it will not budge by hand. TAP your BOW card below to aim it, then ' +
+      'TAP the SWITCH DIAGONALLY across the pit. The gate grinds open.',
   },
   tutAbilitySorcerer: {
     title: 'Melt the ice',
@@ -209,6 +234,10 @@ const TUTORIALS = {
       'A wall of ice blocks the way. Fire your BOLT — click its slot below (or press its number), then ' +
       'aim STRAIGHT at the ice. It melts to water and throws up scalding STEAM — cross quickly, and ' +
       'never END a turn standing in the steam or it will burn you.',
+    mobileText:
+      'A wall of ice blocks the way. TAP your BOLT card below to aim it, then TAP the ice STRAIGHT ahead. ' +
+      'It melts to water and throws up scalding STEAM — cross quickly, and never END a turn standing in ' +
+      'the steam or it will burn you.',
   },
   tutTurret: {
     title: 'Turret — strike from safety',
