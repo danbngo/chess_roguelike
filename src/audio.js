@@ -552,6 +552,9 @@ const GameAudio = (function () {
     death: 'sounds/game_over.mp3',
   };
   const FILE_MUSIC_GAIN = 0.6; // balances the recordings under the SFX — tune to taste
+  // Tracks that play ONCE and then fall silent, rather than looping — the upgrade/victory jingle is a
+  // one-shot stinger, not an ambient bed, so it shouldn't repeat while the player mulls a boon.
+  const MUSIC_ONCE = new Set(['altar']);
   const musicBuffers = {};     // file key -> AudioBuffer | 'loading' | 'failed'
   let musicSource = null;      // the BufferSource currently looping, or null
   let musicSourceName = null;  // which file key it is
@@ -574,7 +577,11 @@ const GameAudio = (function () {
     }
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.loop = true;
+    src.loop = !MUSIC_ONCE.has(key); // most tracks loop; the upgrade/victory stinger plays once
+    // A one-shot: when it finishes on its own, drop the reference so state reflects "nothing playing"
+    // (and it isn't mistaken for a still-looping source). The guard ignores the onended that fires when
+    // we deliberately stop it to switch tracks — by then musicSource already points at the new one.
+    src.onended = () => { if (musicSource === src) { musicSource = null; musicSourceName = null; } };
     src.connect(musicFileGain);
     // Ease the loop in over half a second so it doesn't hard-cut after the load (and so switching
     // tracks cross-starts softly) — the gentle "the world comes alive" entrance.
