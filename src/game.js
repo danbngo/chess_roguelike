@@ -1801,7 +1801,8 @@ const TUT_LAYOUT = {
     [13, 2, 15, 6],     // ATTACK — a wide room the mann roams
     [21, 3, 21, 5],     // ABILITY — the ledge strip the knight leaps to
     [11, 10, 14, 14],   // TURRET — a wide room to dodge the gun in
-    [2, 9, 4, 15],      // CIRCLE — a bigger room; the rune sits at its far end, so it takes a rush to reach
+    [2, 9, 7, 15],      // CIRCLE — a WIDE room; the rune sits at the far WEST end, so the long approach
+                        // (~6 tiles in its sight) lets it conjure a foe before the king can shatter it
     [11, 17, 16, 23],   // BOSS — a big open arena
   ],
   // straight runs (x0,y0 → x1,y1), joined end-to-end into one continuous snake.
@@ -1814,9 +1815,9 @@ const TUT_LAYOUT = {
   ],
   signs: [
     [4, 4, 'tutWelcome'], [8, 4, 'tutAttack'], [19, 4, 'ABILITY'],
-    [19, 12, 'tutTurret'], [7, 12, 'tutCircle'], [6, 20, 'tutKeyBoss'],
+    [19, 12, 'tutTurret'], [9, 12, 'tutCircle'], [6, 20, 'tutKeyBoss'],
   ],
-  doors: [[12, 4], [15, 12], [5, 12], [10, 20]], // shield the attack / turret / circle / boss signs
+  doors: [[12, 4], [15, 12], [8, 12], [10, 20]], // shield the attack / turret / circle / boss signs
   mann: { x: 14, y: 4 },      // in the attack room
   turret: { x: 10, y: 12 },   // seals the turret room's west doorway, sweeping row 12
   circle: { x: 2, y: 12 },    // at the FAR end of the bigger circle room — a few steps to rush it down

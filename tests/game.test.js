@@ -9344,13 +9344,13 @@ test('THE TRAINING GROUNDS — a winding, spread-out floor: shielded signs, then
   assert.equal(s.tutSigns.length, 6, 'six lesson signs');
   assert.ok(Array.isArray(s.tutPath) && s.tutPath.length > 60, 'a long winding path is stored');
   assert.equal(s.tutSigns.find((g) => g.tip === 'tutAttack').x, 8, 'the attack sign is a long corridor (4 tiles) from the welcome sign');
-  assert.ok([[12, 4], [15, 12], [5, 12], [10, 20]].every(([x, y]) => terr(s, x, y) === 'door'), 'four shut doors shield the attack/turret/circle/boss signs');
+  assert.ok([[12, 4], [15, 12], [8, 12], [10, 20]].every(([x, y]) => terr(s, x, y) === 'door'), 'four shut doors shield the attack/turret/circle/boss signs');
   assert.equal(en(s, 'tut-foe').kind, 'mann', 'the foe is a mann — it strikes any adjacent tile, not a harmless pawn');
   assert.ok(has(s, 'tut-turret') && has(s, 'tut-circle') && has(s, 'tut-boss'), 'a turret, a circle and a guardian stand on the floor');
   assert.ok(terr(s, 11, 17) !== 'wall' && terr(s, 16, 23) !== 'wall', 'the boss arena is big');
 
   // DOOR SHIELDING — the enemy BEYOND each door stays dormant while its sign is read (isolated).
-  for (const [x, y, keep] of [[8, 4, 'tut-foe'], [19, 12, 'tut-turret'], [7, 12, 'tut-circle'], [6, 20, 'tut-boss']]) {
+  for (const [x, y, keep] of [[8, 4, 'tut-foe'], [19, 12, 'tut-turret'], [9, 12, 'tut-circle'], [6, 20, 'tut-boss']]) {
     let p = buildTutorialFloor('warrior', 'hard');
     p.enemies = p.enemies.filter((e) => e.id === keep);
     p.player.x = x; p.player.y = y; const hp = p.player.hp; const n = p.enemies.length;

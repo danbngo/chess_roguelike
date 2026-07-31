@@ -570,13 +570,18 @@ const GameAudio = (function () {
     stopMusicFile();
     if (!musicFileGain) {
       musicFileGain = ctx.createGain();
-      musicFileGain.gain.value = FILE_MUSIC_GAIN;
       musicFileGain.connect(musicBus);
     }
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;
     src.connect(musicFileGain);
+    // Ease the loop in over half a second so it doesn't hard-cut after the load (and so switching
+    // tracks cross-starts softly) — the gentle "the world comes alive" entrance.
+    const now = ctx.currentTime;
+    musicFileGain.gain.cancelScheduledValues(now);
+    musicFileGain.gain.setValueAtTime(0.0001, now);
+    musicFileGain.gain.linearRampToValueAtTime(FILE_MUSIC_GAIN, now + 0.5);
     src.start();
     musicSource = src;
     musicSourceName = key;
@@ -602,23 +607,33 @@ const GameAudio = (function () {
       // callback form of decodeAudioData for older Safari (which doesn't return a promise)
       .then((data) => new Promise((res, rej) => ctx.decodeAudioData(data, res, rej)))
       .then((decoded) => { musicBuffers[key] = decoded; applyMusic(); }) // swap it in the instant it's ready
-      .catch(() => { musicBuffers[key] = 'failed'; }); // stay on the procedural fallback for this track
+      .catch(() => { musicBuffers[key] = 'failed'; applyMusic(); }); // failed → re-evaluate → synth fallback now
   }
 
-  // Decide what should be sounding for the current `track`: a ready MP3 loop if we have one (and
-  // silence the synth so we never hear both), otherwise the procedural score while the file loads.
+  // Decide what should be sounding for the current `track`. If a screen HAS an MP3, we play it once it's
+  // ready and stay SILENT while it loads — rather than blip the synthesized fallback for a second, which
+  // was jarring on the title. The procedural score returns only when a file genuinely FAILS to load, or
+  // for a track that has no file at all.
   function applyMusic() {
     if (!enabled || !unlocked || !ensure()) return;
     if (ctx.state === 'suspended') ctx.resume();
     const key = fileKeyFor(track);
-    if (key && startMusicFile(key)) {
-      stopProcedural();
+    if (key) {
+      if (startMusicFile(key)) { stopProcedural(); return; } // the file is ready — play it
+      loadMusic(key); // kick off (or continue) the load
+      stopMusicFile();
+      if (musicBuffers[key] === 'failed') startProcedural(); // couldn't load it — fall back to the synth
+      else stopProcedural();                                 // still loading — silence, not a synth blip
       return;
     }
     stopMusicFile();
-    startProcedural();
-    if (key) loadMusic(key);
+    startProcedural(); // no MP3 maps to this track → the procedural score
   }
+
+  // Is any music actually sounding right now? / Are we in the brief warm-up before the first track
+  // has decoded (music on, unlocked, nothing playing yet)? main.js uses the latter to show a loader.
+  function isMusicPlaying() { return Boolean(musicSource) || Boolean(musicTimer); }
+  function isWarming() { return enabled && unlocked && !isMusicPlaying(); }
 
   // Public entry points (unchanged names, so existing callers keep working): start = "play whatever
   // the current screen calls for"; stop = "silence everything".
@@ -662,5 +677,5 @@ const GameAudio = (function () {
     return enabled;
   }
 
-  return { play, startMusic, stopMusic, setTension, setTrack, setDanger, isEnabled, setEnabled, toggle };
+  return { play, startMusic, stopMusic, setTension, setTrack, setDanger, isEnabled, setEnabled, toggle, isMusicPlaying, isWarming };
 })();

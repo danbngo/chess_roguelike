@@ -50,6 +50,7 @@
   const orbBar = document.getElementById('orb-bar');
   const orbHint = document.getElementById('orb-hint');
   const tilePopover = document.getElementById('tile-popover');
+  const musicLoadingEl = document.getElementById('music-loading');
   const tutorialScreen = document.getElementById('tutorial-screen');
   const tutorialTitle = document.getElementById('tutorial-title');
   const tutorialText = document.getElementById('tutorial-text');
@@ -361,7 +362,12 @@
     while (logEl.childElementCount > LOG_MAX) {
       logEl.removeChild(logEl.firstChild);
     }
-    logEl.scrollTop = logEl.scrollHeight;
+    // Autoscroll to the newest line — but on the NEXT frame, so reading scrollHeight doesn't force a
+    // synchronous layout right after the append (a reflow on every log line). Skipped entirely when the
+    // log is hidden (offsetParent === null), e.g. the mobile layout where the panel is display:none.
+    requestAnimationFrame(() => {
+      if (logEl.offsetParent !== null) logEl.scrollTop = logEl.scrollHeight;
+    });
   }
 
   // White -> yellow -> orange -> red -> dark red as `ratio` climbs 0..1.
@@ -1242,11 +1248,12 @@
     }
   }
 
-  // Restart the HP counter's damage animation (re-add the class after a reflow).
+  // Restart the HP counter's damage animation. The class is re-added on the NEXT frame, which restarts
+  // the CSS animation without the old `void offsetWidth` trick — that read forced a synchronous layout
+  // (a reflow) on every single hit. requestAnimationFrame costs nothing and delays the flash one frame.
   function flashHealth() {
     healthLabel.classList.remove('damage');
-    void healthLabel.offsetWidth;
-    healthLabel.classList.add('damage');
+    requestAnimationFrame(() => healthLabel.classList.add('damage'));
   }
 
   function applyState(nextState, animate) {
@@ -2917,6 +2924,9 @@
     // Past the 60% mark of the CLIMB (not of the whole cycle — the grace isn't dread).
     const inDanger = Boolean(gameState) && screen === 'playing' && dread >= 0.6;
     GameAudio.setTension(inDanger);
+
+    // Show the "loading music" cue only during the brief warm-up before the first track has decoded.
+    if (musicLoadingEl) musicLoadingEl.classList.toggle('visible', GameAudio.isWarming());
 
     Renderer.update(delta);
     if (screen === 'title') {
