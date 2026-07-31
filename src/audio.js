@@ -552,9 +552,10 @@ const GameAudio = (function () {
     death: 'sounds/game_over.mp3',
   };
   const FILE_MUSIC_GAIN = 0.6; // balances the recordings under the SFX — tune to taste
-  // Tracks that play ONCE and then fall silent, rather than looping — the upgrade/victory jingle is a
-  // one-shot stinger, not an ambient bed, so it shouldn't repeat while the player mulls a boon.
-  const MUSIC_ONCE = new Set(['altar']);
+  // Tracks that play ONCE and then fall silent, rather than looping. The upgrade/victory jingle is a
+  // one-shot stinger; the death track is trimmed with a fade-out taper, so looping it would fade to
+  // silence then jarringly restart — it should ring out once over the game-over screen and stop.
+  const MUSIC_ONCE = new Set(['altar', 'death']);
   const musicBuffers = {};     // file key -> AudioBuffer | 'loading' | 'failed'
   let musicSource = null;      // the BufferSource currently looping, or null
   let musicSourceName = null;  // which file key it is
@@ -664,6 +665,13 @@ const GameAudio = (function () {
     };
     document.addEventListener('pointerdown', once);
     document.addEventListener('keydown', once);
+    // Backgrounding the tab / locking the phone: suspend the whole audio graph so music doesn't keep
+    // playing out of sight (the game loop's rAF already pauses when hidden). Resume on return.
+    document.addEventListener('visibilitychange', () => {
+      if (!ctx) return;
+      if (document.hidden) ctx.suspend();
+      else if (enabled && unlocked) ctx.resume();
+    });
   }
 
   function isEnabled() {

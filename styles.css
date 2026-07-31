@@ -57,12 +57,46 @@ button:hover {
   margin: 0 auto;
 }
 
+/* Crash recovery overlay — covers everything if the game hits an unrecoverable error, turning a frozen
+   screen into a one-click reload (the run auto-saves). Hidden by default via the shared .hidden class. */
+#crash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(2, 6, 23, 0.92);
+}
+#crash-screen.hidden { display: none; }
+#crash-screen .crash-card {
+  max-width: 30rem;
+  text-align: center;
+  padding: 1.75rem 2rem;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: #0b0b12;
+  color: #e2e8f0;
+}
+#crash-screen h2 { margin: 0 0 0.6rem; font-size: 1.3rem; color: #f8fafc; }
+#crash-screen p { margin: 0 0 1.2rem; color: #cbd5e1; line-height: 1.5; }
+#crash-screen button {
+  padding: 0.6rem 1.6rem;
+  font-size: 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(30, 41, 59, 0.9);
+  color: #f8fafc;
+  cursor: pointer;
+}
+
 /* Music warm-up cue: a soft, centred note that fades in only while the first track is decoding, and
    fades out the instant it plays. Never intercepts input. */
 #music-loading {
   position: fixed;
   left: 50%;
-  bottom: 2.2rem;
+  bottom: calc(2.2rem + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   padding: 0.5rem 1rem;
   border-radius: 999px;
@@ -330,8 +364,9 @@ button:disabled {
 /* Whole-level minimap, pinned to the viewport's bottom-right corner. */
 #minimap {
   position: fixed;
-  right: 10px;
-  bottom: 10px;
+  /* Keep clear of a notch / rounded corner / home indicator on phones (env insets are 0 elsewhere). */
+  right: calc(10px + env(safe-area-inset-right));
+  bottom: calc(10px + env(safe-area-inset-bottom));
   z-index: 55;
   width: min(220px, 24vmin);
   height: min(220px, 24vmin);
@@ -1050,6 +1085,10 @@ body.in-game canvas {
     height: auto;
     min-height: 100vh;
     width: 100vw;
+    /* Keep the board and HUD out from under the status bar / notch / home indicator. */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    box-sizing: border-box;
   }
   /* Board FIRST and full width, capped so the HUD + cards below stay on-screen. */
   body.in-game .stage {

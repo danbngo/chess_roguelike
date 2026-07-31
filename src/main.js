@@ -51,6 +51,9 @@
   const orbHint = document.getElementById('orb-hint');
   const tilePopover = document.getElementById('tile-popover');
   const musicLoadingEl = document.getElementById('music-loading');
+  const crashScreen = document.getElementById('crash-screen');
+  const crashReload = document.getElementById('crash-reload');
+  if (crashReload) crashReload.addEventListener('click', () => location.reload());
   const tutorialScreen = document.getElementById('tutorial-screen');
   const tutorialTitle = document.getElementById('tutorial-title');
   const tutorialText = document.getElementById('tutorial-text');
@@ -2835,7 +2838,7 @@
 
   let lastTime = 0;
 
-  function step(timestamp) {
+  function stepFrame(timestamp) {
     if (!lastTime) {
       lastTime = timestamp;
     }
@@ -2955,7 +2958,29 @@
       const aoe = aiming ? spellAoeTiles(gameState, cardTargeting, cardCursor) : null;
       Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null, aoe);
     }
+  }
+
+  // The animation loop, wrapped so ONE bad frame can't freeze the whole game. On an uncaught error we
+  // surface a reload prompt (the run auto-saves on every move, so a reload resumes it) and keep the loop
+  // scheduling — a transient hiccup recovers, and the prompt is shown only once. A window-level 'error'
+  // backstop catches crashes in event handlers (clicks/keys) that fall outside this loop.
+  let crashed = false;
+  function reportCrash(err) {
+    if (crashed) return;
+    crashed = true;
+    console.error('Chess Dungeon — unrecoverable error:', err);
+    if (crashScreen) crashScreen.classList.remove('hidden');
+  }
+  function step(timestamp) {
+    try {
+      stepFrame(timestamp);
+    } catch (err) {
+      reportCrash(err);
+    }
     requestAnimationFrame(step);
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('error', (e) => { if (e && e.error) reportCrash(e.error); });
   }
 
   /* ------------------------------- wiring -------------------------------- */

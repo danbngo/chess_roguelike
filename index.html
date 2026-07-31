@@ -205,6 +205,15 @@
          GameAudio.isWarming). Fades itself out the instant the music starts. pointer-events:none so it
          never blocks a click. -->
     <div id="music-loading" aria-hidden="true">♪ Loading music&hellip;</div>
+    <!-- Shown only if the game hits an unrecoverable error, so a crash is a reload prompt (the run is
+         auto-saved) instead of a frozen black screen. See reportCrash in main.js. -->
+    <div id="crash-screen" class="hidden">
+      <div class="crash-card">
+        <h2>The dungeon shifted&hellip;</h2>
+        <p>Something went wrong. Your run is saved &mdash; reload to pick up where you left off.</p>
+        <button id="crash-reload" type="button">Reload</button>
+      </div>
+    </div>
     <canvas id="minimap" width="240" height="240"></canvas>
     <!-- Plain classic scripts, loaded in dependency order, so the game runs
          straight off the filesystem (no server / ES modules required). -->
