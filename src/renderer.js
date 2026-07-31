@@ -590,6 +590,77 @@ const Renderer = (function () {
   const VS_TEXT = String.fromCharCode(0xFE0E); // U+FE0E text-presentation selector
   function pieceGlyph(kind) { return (DEMON_BASE_GLYPH[kind] || getPieceLabel(kind)) + VS_TEXT; }
 
+  // ---- VECTOR PIECE SILHOUETTES ---------------------------------------------------------------
+  // Pieces drawn as filled canvas paths (in a 100-unit box centred on the origin, y-down) so they look
+  // IDENTICAL on every device, instead of borrowing a system serif's chess glyph — which rendered
+  // differently on mobile and could swap in a colour-emoji. Each sub-shape is filled SEPARATELY in the
+  // ink colour, so they union cleanly with no path-winding surprises. A kind with no entry here falls
+  // back to the Unicode glyph (letter-labelled fairy pieces, the mann's skull, the ferz).
+  const PIECE_SHAPE = {
+    king: 'king', queen: 'queen', rook: 'rook', bishop: 'bishop', knight: 'knight', pawn: 'pawn',
+    // demon (fairy) kinds wear the silhouette of the classical piece they're built on
+    amazon: 'queen', chancellor: 'rook', archbishop: 'bishop', nightrider: 'knight', berolina: 'pawn',
+  };
+  function pcPoly(pts) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+  function pcCircle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+  function pcBase() { pcPoly([-32, 46, 32, 46, 26, 36, -26, 36]); pcPoly([-22, 36, 22, 36, 18, 28, -18, 28]); }
+  const PIECE_ART = {
+    pawn() { pcCircle(0, -30, 14); pcPoly([-9, -18, 9, -18, 17, 28, -17, 28]); pcBase(); },
+    rook() {
+      pcPoly([-24, -44, -13, -44, -13, -34, -24, -34]); // three merlons
+      pcPoly([-5, -44, 5, -44, 5, -34, -5, -34]);
+      pcPoly([13, -44, 24, -44, 24, -34, 13, -34]);
+      pcPoly([-24, -36, 24, -36, 24, -28, -24, -28]);   // battlement band
+      pcPoly([-20, -28, 20, -28, 16, 24, -16, 24]);     // tapered body
+      pcBase();
+    },
+    bishop() {
+      pcCircle(0, -46, 5); // finial
+      ctx.beginPath(); ctx.moveTo(0, -42); ctx.bezierCurveTo(16, -30, 12, -14, 0, -8); ctx.bezierCurveTo(-12, -14, -16, -30, 0, -42); ctx.closePath(); ctx.fill(); // mitre
+      pcPoly([-13, -10, 13, -10, 15, -4, -15, -4]);     // collar
+      pcPoly([-13, -4, 13, -4, 18, 26, -18, 26]);       // body
+      pcBase();
+    },
+    queen() {
+      pcPoly([-24, -8, -22, -40, -11, -16, 0, -44, 11, -16, 22, -40, 24, -8]); // three-peak crown
+      pcCircle(-22, -40, 4); pcCircle(0, -44, 4); pcCircle(22, -40, 4);        // point balls
+      pcPoly([-24, -8, 24, -8, 18, 26, -18, 26]);       // body
+      pcBase();
+    },
+    king() {
+      pcPoly([-4, -50, 4, -50, 4, -30, -4, -30]);       // cross, upright
+      pcPoly([-13, -45, 13, -45, 13, -38, -13, -38]);   // cross bar
+      ctx.beginPath(); ctx.moveTo(-16, -12); ctx.bezierCurveTo(-22, -30, -10, -34, 0, -28); ctx.bezierCurveTo(10, -34, 22, -30, 16, -12); ctx.closePath(); ctx.fill(); // crowned head
+      ctx.beginPath(); ctx.moveTo(-16, -12); ctx.lineTo(16, -12); ctx.bezierCurveTo(20, 6, 22, 18, 22, 26); ctx.lineTo(-22, 26); ctx.bezierCurveTo(-22, 18, -20, 6, -16, -12); ctx.closePath(); ctx.fill(); // bell body
+      pcBase();
+    },
+    knight() {
+      // a horse's head in profile, facing left, over the base
+      pcPoly([20, 28, 24, -6, 16, -16, 18, -30, 22, -44, 11, -30, 3, -42, -3, -28,
+        -12, -24, -26, -12, -30, -6, -23, 0, -12, -3, -6, 4, -10, 16, -2, 28]);
+      pcBase();
+    },
+  };
+  // Draw a piece's vector silhouette centred at (cx,cy), `size` px tall, filled with `color`. Returns
+  // false for kinds with no vector, so the caller can stamp the Unicode glyph as before.
+  function drawPieceShape(kind, cx, cy, size, color) {
+    const shape = PIECE_SHAPE[kind];
+    if (!shape) return false;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(size / 100, size / 100);
+    ctx.fillStyle = color;
+    PIECE_ART[shape]();
+    ctx.restore();
+    return true;
+  }
+
   // SPECIES MARKS — the same idea as the demons' horns and wings, extended to every realm.
   //
   // Colour alone turned out not to be enough: a green token and a bone-white one look like two
@@ -1097,10 +1168,13 @@ const Renderer = (function () {
       ctx.strokeStyle = stroke;
       ctx.stroke();
       ctx.fillStyle = glyph;
-      ctx.font = `${tileSize * 0.62}px serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.04);
+      // A vector silhouette when we have one (identical on every device); otherwise the Unicode glyph.
+      if (!drawPieceShape(kind, cx, cy, bodyRadius * 1.9, glyph)) {
+        ctx.font = `${tileSize * 0.62}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(pieceGlyph(kind), cx, cy + tileSize * 0.04);
+      }
       // A MANN is RISEN: dry rib-bones laid across its token, so the skull reads as a whole skeleton
       // rather than a floating head. Tinted to the token's own glyph colour rather than a fixed
       // bone-grey — it wears the king's green now like every other ally, and hard-coded bone would
