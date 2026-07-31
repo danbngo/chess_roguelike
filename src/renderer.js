@@ -583,7 +583,12 @@ const Renderer = (function () {
   const DEMON_BASE_GLYPH = { berolina: '♟', nightrider: '♞', archbishop: '♝', chancellor: '♜', amazon: '♛' };
   const DEMON_WINGED = new Set(['nightrider', 'archbishop', 'chancellor', 'amazon']); // the knight-leapers
   function isDemonKind(kind) { return Object.prototype.hasOwnProperty.call(DEMON_BASE_GLYPH, kind); }
-  function pieceGlyph(kind) { return DEMON_BASE_GLYPH[kind] || getPieceLabel(kind); }
+  // U+FE0E = the TEXT variation selector. Chess glyphs (♚♛♜…) and the mann's skull (☠) have emoji
+  // forms, and on mobile a platform whose serif font lacks the glyph swaps in a COLOUR-EMOJI version —
+  // which is why the king looked wrong on phones. Appending U+FE0E forces the monochrome text glyph
+  // everywhere; on desktop, where they already render as text, it's a harmless no-op.
+  const VS_TEXT = String.fromCharCode(0xFE0E); // U+FE0E text-presentation selector
+  function pieceGlyph(kind) { return (DEMON_BASE_GLYPH[kind] || getPieceLabel(kind)) + VS_TEXT; }
 
   // SPECIES MARKS — the same idea as the demons' horns and wings, extended to every realm.
   //

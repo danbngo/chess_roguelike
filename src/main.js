@@ -1640,7 +1640,10 @@
   // A small canvas showing HOW THIS CLASS LOOKS: the king token in the class colour, on a soft glow
   // of that same colour — the exact token the player will command, so the three of them read apart
   // at a glance. The starting-piece glyph rides in the corner as a hint at the kit.
-  const PIECE_GLYPH = { knight: '♞', bishop: '♝', rook: '♜', king: '♚' };
+  // Append U+FE0E so these chess glyphs render as monochrome TEXT, never a colour-emoji substitute on
+  // mobile (same reason as renderer.pieceGlyph — the king emblem looked wrong on phones otherwise).
+  const VS_TEXT = String.fromCharCode(0xFE0E);
+  const PIECE_GLYPH = { knight: '♞' + VS_TEXT, bishop: '♝' + VS_TEXT, rook: '♜' + VS_TEXT, king: '♚' + VS_TEXT };
   function classEmblem(cls) {
     const el = document.createElement('canvas');
     const S = 88;
