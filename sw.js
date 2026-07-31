@@ -29,6 +29,12 @@ const ASSETS = [
   './src/input.js',
   './src/tutorials.js',
   './src/main.js',
+  // Music (looped per screen).
+  './sounds/title_screen.mp3',
+  './sounds/dungeon.mp3',
+  './sounds/hell.mp3',
+  './sounds/upgrade_screen.mp3',
+  './sounds/game_over.mp3',
 ];
 
 self.addEventListener('install', (event) => {

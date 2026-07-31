@@ -503,6 +503,7 @@ const GameAudio = (function () {
     if (!TRACKS[name] || track === name) return;
     track = name;
     step = 0;
+    applyMusic(); // swap to this screen's MP3 loop (or the procedural fallback) right away
   }
 
   // Darken the EXPLORING loop once danger is high (a no-op if already in that mode).
@@ -521,19 +522,108 @@ const GameAudio = (function () {
     dangerStep = Math.min(HURRY.length - 1, dreadGear(frac));
   }
 
-  function startMusic() {
+  // The PROCEDURAL score (everything above) is the fallback. It runs only when the current screen has
+  // no ready MP3 — see applyMusic.
+  function startProcedural() {
     if (!enabled || !unlocked || musicTimer || !ensure()) return;
     if (ctx.state === 'suspended') ctx.resume();
     nextNoteTime = ctx.currentTime + 0.12;
     musicTimer = setInterval(musicTick, 40);
   }
 
-  function stopMusic() {
+  function stopProcedural() {
     if (musicTimer) {
       clearInterval(musicTimer);
       musicTimer = null;
     }
   }
+
+  // ---- FILE-BASED MUSIC ----------------------------------------------------------------------
+  // Per-screen MP3s that REPLACE the procedural score when present. Each is decoded once to a PCM
+  // AudioBuffer and looped on a BufferSource (loop=true) — which loops SEAMLESSLY regardless of the
+  // source format, because any encoder padding is gone after decode. Track names match setTrack()'s.
+  // `tense` has no file, so a dangerous exploring floor just keeps the dungeon loop (the tempo-hurry /
+  // tension darkening are procedural-only touches that a fixed recording can't do).
+  const MUSIC_FILES = {
+    title: 'sounds/title_screen.mp3',
+    explore: 'sounds/dungeon.mp3',
+    hell: 'sounds/hell.mp3',
+    altar: 'sounds/upgrade_screen.mp3',
+    death: 'sounds/game_over.mp3',
+  };
+  const FILE_MUSIC_GAIN = 0.6; // balances the recordings under the SFX — tune to taste
+  const musicBuffers = {};     // file key -> AudioBuffer | 'loading' | 'failed'
+  let musicSource = null;      // the BufferSource currently looping, or null
+  let musicSourceName = null;  // which file key it is
+  let musicFileGain = null;    // dedicated gain so file music can be balanced independently
+
+  // The live track may be the danger variant 'tense'; it shares the exploring file.
+  function fileKeyFor(name) {
+    const key = name === 'tense' ? 'explore' : name;
+    return MUSIC_FILES[key] ? key : null;
+  }
+
+  function startMusicFile(key) {
+    const buf = musicBuffers[key];
+    if (!buf || buf === 'loading' || buf === 'failed') return false;
+    if (musicSourceName === key && musicSource) return true; // already looping this one
+    stopMusicFile();
+    if (!musicFileGain) {
+      musicFileGain = ctx.createGain();
+      musicFileGain.gain.value = FILE_MUSIC_GAIN;
+      musicFileGain.connect(musicBus);
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(musicFileGain);
+    src.start();
+    musicSource = src;
+    musicSourceName = key;
+    return true;
+  }
+
+  function stopMusicFile() {
+    if (musicSource) {
+      try { musicSource.stop(); } catch (e) { /* already stopped */ }
+      try { musicSource.disconnect(); } catch (e) { /* already gone */ }
+    }
+    musicSource = null;
+    musicSourceName = null;
+  }
+
+  function loadMusic(key) {
+    if (!ctx || musicBuffers[key] !== undefined) return; // already loaded / loading / failed
+    const url = MUSIC_FILES[key];
+    if (!url) return;
+    musicBuffers[key] = 'loading';
+    fetch(url)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      // callback form of decodeAudioData for older Safari (which doesn't return a promise)
+      .then((data) => new Promise((res, rej) => ctx.decodeAudioData(data, res, rej)))
+      .then((decoded) => { musicBuffers[key] = decoded; applyMusic(); }) // swap it in the instant it's ready
+      .catch(() => { musicBuffers[key] = 'failed'; }); // stay on the procedural fallback for this track
+  }
+
+  // Decide what should be sounding for the current `track`: a ready MP3 loop if we have one (and
+  // silence the synth so we never hear both), otherwise the procedural score while the file loads.
+  function applyMusic() {
+    if (!enabled || !unlocked || !ensure()) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const key = fileKeyFor(track);
+    if (key && startMusicFile(key)) {
+      stopProcedural();
+      return;
+    }
+    stopMusicFile();
+    startProcedural();
+    if (key) loadMusic(key);
+  }
+
+  // Public entry points (unchanged names, so existing callers keep working): start = "play whatever
+  // the current screen calls for"; stop = "silence everything".
+  function startMusic() { applyMusic(); }
+  function stopMusic() { stopMusicFile(); stopProcedural(); }
 
   // Unlock audio on the first user gesture (required by browser autoplay policy).
   function unlock() {
@@ -541,6 +631,8 @@ const GameAudio = (function () {
     if (!enabled || !ensure()) return;
     if (ctx.state === 'suspended') ctx.resume();
     startMusic();
+    // Warm every screen's MP3 in the background so switching screens never blips back to the synth.
+    Object.keys(MUSIC_FILES).forEach(loadMusic);
   }
   if (typeof document !== 'undefined') {
     const once = () => {
