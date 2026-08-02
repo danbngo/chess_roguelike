@@ -134,6 +134,7 @@ const Renderer = (function () {
     // half the world (WORLD_SIZE / 2 tiles across the canvas).
     baseTile = canvasEl.width / (WORLD_SIZE / 2);
     tileSize = baseTile * camera.zoom;
+    loadPieceSprites(); // start fetching the piece PNGs (async; vectors cover any frame before they land)
   }
 
   // A '#rrggbb' hex to an 'r, g, b' triplet (the format EFFECTS colours use). Passes a
@@ -661,6 +662,42 @@ const Renderer = (function () {
     return true;
   }
 
+  // ---- PIECE SPRITES (hand-drawn PNGs in /images) — the PRIMARY art; the vector silhouettes above are
+  // the fallback while these load (and for kinds with no sprite). Each piece has a light ('white') and
+  // a dark ('black') version; we pick by the ink colour so it contrasts its token exactly as the glyph
+  // did. knight → 'horse'; demon/fairy kinds borrow their classical piece's sprite.
+  const PIECE_SPRITE_NAMES = {
+    king: 'king', queen: 'queen', rook: 'rook', bishop: 'bishop', knight: 'horse', pawn: 'pawn',
+    amazon: 'queen', chancellor: 'rook', archbishop: 'bishop', nightrider: 'horse', berolina: 'pawn',
+  };
+  const pieceSprites = {}; // "king_white" -> HTMLImageElement
+  function loadPieceSprites() {
+    if (typeof Image === 'undefined') return; // headless (tests) — sprites simply never load, vectors show
+    for (const base of ['king', 'queen', 'rook', 'bishop', 'horse', 'pawn']) {
+      for (const shade of ['white', 'black']) {
+        const img = new Image();
+        img.src = `images/${base}_${shade}.png`;
+        pieceSprites[`${base}_${shade}`] = img;
+      }
+    }
+  }
+  function isLightColor(color) {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec((color || '').trim());
+    if (!m) return true;
+    return (0.299 * parseInt(m[1], 16) + 0.587 * parseInt(m[2], 16) + 0.114 * parseInt(m[3], 16)) / 255 > 0.5;
+  }
+  // Draw the PNG sprite centred at (cx,cy), fit so its longest side is `size`. Returns false if there is
+  // no sprite for this kind or it hasn't loaded yet, so the caller falls back to the vector / glyph.
+  function drawPieceSprite(kind, cx, cy, size, inkColor) {
+    const base = PIECE_SPRITE_NAMES[kind];
+    if (!base) return false;
+    const img = pieceSprites[`${base}_${isLightColor(inkColor) ? 'white' : 'black'}`];
+    if (!img || !img.complete || !img.naturalWidth) return false;
+    const k = size / Math.max(img.naturalWidth, img.naturalHeight);
+    ctx.drawImage(img, cx - (img.naturalWidth * k) / 2, cy - (img.naturalHeight * k) / 2, img.naturalWidth * k, img.naturalHeight * k);
+    return true;
+  }
+
   // SPECIES MARKS — the same idea as the demons' horns and wings, extended to every realm.
   //
   // Colour alone turned out not to be enough: a green token and a bone-white one look like two
@@ -1168,8 +1205,10 @@ const Renderer = (function () {
       ctx.strokeStyle = stroke;
       ctx.stroke();
       ctx.fillStyle = glyph;
-      // A vector silhouette when we have one (identical on every device); otherwise the Unicode glyph.
-      if (!drawPieceShape(kind, cx, cy, bodyRadius * 1.9, glyph)) {
+      // A hand-drawn PNG sprite when it's loaded; else the vector silhouette (identical on every device);
+      // else the Unicode glyph. All three are centred on the token and inked to contrast it.
+      if (!drawPieceSprite(kind, cx, cy, bodyRadius * 1.95, glyph)
+          && !drawPieceShape(kind, cx, cy, bodyRadius * 1.9, glyph)) {
         ctx.font = `${tileSize * 0.62}px serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';

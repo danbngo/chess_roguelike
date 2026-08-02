@@ -35,6 +35,13 @@ const ASSETS = [
   './sounds/hell.mp3',
   './sounds/upgrade_screen.mp3',
   './sounds/game_over.mp3',
+  // Piece sprites (light + dark of each).
+  './images/king_white.png', './images/king_black.png',
+  './images/queen_white.png', './images/queen_black.png',
+  './images/rook_white.png', './images/rook_black.png',
+  './images/bishop_white.png', './images/bishop_black.png',
+  './images/horse_white.png', './images/horse_black.png',
+  './images/pawn_white.png', './images/pawn_black.png',
 ];
 
 self.addEventListener('install', (event) => {
