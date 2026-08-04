@@ -1103,6 +1103,28 @@ body.in-game canvas {
    tap / drag / pinch handlers (main.js) work the same in either layout.
    ============================================================================ */
 @media (max-width: 760px) {
+  /* Modal overlays (upgrade / options / tips / confirm / run-end / title menu) go FULL-SCREEN on a
+     phone — hovering over the board with the panes still showing around them wastes scarce space and
+     looks unfinished. Fixed to the viewport (like the crash/loading overlays), and `safe center` so the
+     card centres when it fits but top-aligns and SCROLLS when it's taller than the screen (long upgrade
+     lists / the options menu never get clipped by vertical centring). */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: safe center;
+    overflow-y: auto;
+    padding: calc(1.4rem + env(safe-area-inset-top)) 1.1rem calc(1.4rem + env(safe-area-inset-bottom));
+  }
+  .overlay-card {
+    max-width: 34rem;
+    width: 100%;
+  }
+
   body.in-game .game-layout {
     flex-direction: column;
     align-items: stretch;
