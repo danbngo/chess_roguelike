@@ -117,7 +117,11 @@ const Renderer = (function () {
   // world coordinate (in tiles, fractional) sitting at the center of the canvas;
   // x/y ease toward targetX/targetY and zoom toward targetZoom for smooth motion.
   let baseTile = 0;
-  const DEFAULT_ZOOM = 1;
+  // Phones start CLOSER in — the board is small on screen, so the default desktop framing reads as far
+  // too zoomed out on mobile. (Pinch still adjusts from here.)
+  const IS_TOUCH = (typeof window !== 'undefined' && 'ontouchstart' in window)
+    || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
+  const DEFAULT_ZOOM = IS_TOUCH ? 1.5 : 1;
   const MIN_ZOOM = 0.5; // zoomed all the way out shows the whole 20x20 board
   const MAX_ZOOM = 2.5; // zoomed all the way in shows a handful of tiles
   let camera = { x: 10, y: 10, targetX: 10, targetY: 10, zoom: DEFAULT_ZOOM, targetZoom: DEFAULT_ZOOM };
