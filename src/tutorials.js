@@ -13,11 +13,11 @@ const TUTORIALS = {
       'piece to read exactly what it is and does. You begin beside the stair down — explore to find ' +
       'the key that unlocks it.',
     mobileText:
-      'TAP a tile to step toward it, or flick-SWIPE to step that way; HOLD to keep moving, or DOUBLE-TAP ' +
-      'a far tile to auto-walk there. Press and DRAG to look around, pinch to zoom. You see only a short ' +
-      'distance — unexplored ground is fogged until you reach it. RED tiles are squares a visible enemy ' +
-      'could strike next turn, so never end your move on one. You begin beside the stair down — explore ' +
-      'to find the key that unlocks it.',
+      'TAP a neighbouring tile to move or strike; TAP a FAR tile to preview a path, then TAP it again to ' +
+      'walk there. Or flick-SWIPE to step, HOLD to keep going. Press and DRAG to look around, pinch to ' +
+      'zoom. You see only a short distance — unexplored ground is fogged until you reach it. RED tiles ' +
+      'are squares a visible enemy could strike next turn, so never end your move on one. You begin ' +
+      'beside the stair down — explore to find the key that unlocks it.',
   },
   cards: {
     title: 'Your abilities win fights',
@@ -194,9 +194,10 @@ const TUTORIALS = {
       'view follows you — CLICK a distant tile or DRAG the board to look around. To skip the tutorial, ' +
       'walk WEST into the PORTAL.',
     mobileText:
-      'Follow the corridors EAST. TAP a tile to step toward it (a neighbour = move or strike), or flick-' +
-      'SWIPE to step that way — HOLD to keep going, or DOUBLE-TAP a far tile to auto-walk there. Press ' +
-      'and DRAG to look around, pinch to zoom. To skip the tutorial, go WEST into the PORTAL.',
+      'Follow the corridors EAST. TAP a neighbouring tile to move or strike; TAP a FAR tile to preview a ' +
+      'path, then TAP that tile again to walk there (he stops if it gets dangerous). Or flick-SWIPE to ' +
+      'step, HOLD to keep going. Press and DRAG to look around, pinch to zoom. To skip, go WEST into the ' +
+      'PORTAL.',
   },
   tutAttack: {
     title: 'Attack',

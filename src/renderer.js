@@ -76,6 +76,7 @@ const Renderer = (function () {
   // pieces on screen and working out WHICH of them covers the square you are eyeing means tracing
   // every line by eye; this rings the culprits instead. Set on hover, empty the rest of the time.
   let markedThreats = new Set();
+  let pathPreview = null; // mobile: a proposed move route to preview, { tiles:[{x,y}], dx, dy } or null
 
   // In-flight ranged projectiles (turret / boss bolts), each easing from a source
   // tile to a target tile over its lifetime.
@@ -5944,6 +5945,21 @@ const Renderer = (function () {
       }
     }
 
+    // MOBILE MOVE-PATH PROPOSAL: an amber trail of tiles to the tapped destination, which pulses/glows
+    // stronger — tap it again to commit the walk. (setPathPreview from main.js; cleared when he moves.)
+    if (pathPreview) {
+      for (const t of pathPreview.tiles) {
+        if (t.x === pathPreview.dx && t.y === pathPreview.dy) continue; // the destination is drawn specially
+        tileOutline(t.x * tileSize, t.y * tileSize, '#fbbf24', 1); // amber step
+      }
+      const pulse = 0.6 + 0.4 * Math.sin(clock * 4.5); // gently breathing glow on the destination
+      ctx.save();
+      ctx.shadowColor = '#fde047';
+      ctx.shadowBlur = tileSize * 0.55 * pulse;
+      tileOutline(pathPreview.dx * tileSize, pathPreview.dy * tileSize, '#fde047', 5);
+      ctx.restore();
+    }
+
     // Visible enemies, with those currently mid-move (e.g. a knight in the middle
     // of a leap) drawn last so they ride visibly over the pieces they pass over.
     // Premonition (seeAllFoes): EVERY enemy on the floor is shown as a radar blip, straight
@@ -6223,5 +6239,10 @@ const Renderer = (function () {
     markedThreats = new Set(ids || []);
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats };
+  // Mobile move-path proposal to overlay: p = { tiles:[{x,y},…], dx, dy } (dx,dy = destination), or null.
+  function setPathPreview(p) {
+    pathPreview = (p && p.tiles && p.tiles.length) ? p : null;
+  }
+
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview };
 })();

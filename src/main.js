@@ -2419,6 +2419,7 @@
     if (!isIdle()) {
       return;
     }
+    clearPathProposal(); // any actual step invalidates a pending move-path proposal preview
     const result = movePlayer(gameState, dx, dy);
     if (result.lastAction === 'boulder-stuck') {
       // A committed shove against an immovable boulder: it SPENDS the turn (enemy phase runs),
@@ -2931,18 +2932,22 @@
     dragging = false;
   });
 
-  // --- MOBILE AUTO-MOVE: a held or issued command that keeps stepping the king between turns, ticked
-  // from the game loop ONLY while idle (so it respects animations and the enemy phase). Three modes:
+  // --- MOBILE AUTO-MOVE + move-path PROPOSAL. Two auto-move modes, ticked from the game loop ONLY while
+  // idle (so they respect animations and the enemy phase):
   //   'direction' — a held SWIPE: keep stepping the swiped way (steerable), ~once a HOLD_REPEAT_MS.
-  //   'approach'  — a held TAP (still finger): keep stepping TOWARD the tapped tile.
-  //   'path'      — a DOUBLE-TAP: auto-walk the pathfound route to the tapped tile, hands-free.
-  const HOLD_DELAY_MS = 350;   // hold a still finger this long before "move toward the tile" begins
-  const HOLD_REPEAT_MS = 750;  // ms between steps while a swipe/tap is HELD (unhurried, ~once a second)
-  const DOUBLE_TAP_MS = 300;   // two taps within this window (and near the same spot) = a double-tap
-  let autoMove = null;         // { mode, dx, dy, tx, ty, nextAt } or null
-  let lastTapUp = null;        // { t, x, y } of the previous tap, for double-tap detection
+  //   'path'      — a CONFIRMED destination: auto-walk the pathfound route there, stopping on danger.
+  // A single far TAP first PROPOSES a path (previewed on the board, see pathProposal); a second tap on
+  // that same destination commits it.
+  const HOLD_REPEAT_MS = 750;  // ms between steps while a swipe is HELD (unhurried, ~once a second)
+  const STEP_DIRS = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+  let autoMove = null;         // { mode:'direction'|'path', dx,dy | tx,ty, nextAt, lastHp } or null
+  let pathProposal = null;     // a tapped-but-unconfirmed destination { tx, ty }, previewed on the board
   const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   function clearAutoMove() { autoMove = null; }
+  function clearPathProposal() {
+    pathProposal = null;
+    if (Renderer && typeof Renderer.setPathPreview === 'function') Renderer.setPathPreview(null);
+  }
 
   function tileFromClient(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
@@ -2970,47 +2975,86 @@
     return best;
   }
 
-  // Issue ONE step toward (tx,ty). Returns true iff a move was actually issued.
-  function stepTowardTile(tx, ty) {
-    if (!gameState || !isIdle()) return false;
-    if (gameState.player.x === tx && gameState.player.y === ty) return false;
-    const m = nextStepToward(gameState, tx, ty);
-    if (!m) return false;
-    const dx = Math.sign(m.x - gameState.player.x);
-    const dy = Math.sign(m.y - gameState.player.y);
-    if (!dx && !dy) return false;
-    clearPendingStep();
-    handleStep(dx, dy);
-    return true;
+  // Trace the whole walking route from the king to (tx,ty) by following the flood downhill — the tiles
+  // he'd step through, ending at the destination (or the nearest reachable tile). For the on-board path
+  // PREVIEW. Null if he can't get any closer at all.
+  function computePath(state, tx, ty) {
+    const { dist, id } = allyPathField(state, tx, ty);
+    let x = state.player.x, y = state.player.y;
+    const tiles = [];
+    let guard = 0;
+    while (!(x === tx && y === ty) && guard++ < 400) {
+      const here = dist[id(x, y)];
+      let best = null;
+      let bestD = here >= 0 ? here : Infinity;
+      for (const [dx, dy] of STEP_DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= WORLD_SIZE || ny >= WORLD_SIZE) continue;
+        const d = dist[id(nx, ny)];
+        if (d >= 0 && d < bestD) { bestD = d; best = [nx, ny]; }
+      }
+      if (!best) break;
+      x = best[0]; y = best[1];
+      tiles.push({ x, y });
+    }
+    return tiles.length ? tiles : null;
   }
 
-  // Advance the active auto-move (called every frame from the loop). Held modes step on a cadence; a
-  // path auto-walks as fast as the animations allow, and stops on arrival or when it can get no closer.
+  // Advance the active auto-move (from the loop, only while idle). A held SWIPE steps on a cadence; a
+  // confirmed PATH auto-walks as fast as animations allow — and STOPS if he took damage, if the next
+  // tile is a threatened (red) one, or if he can no longer get closer.
   function tickAutoMove(now) {
     if (!autoMove || !gameState || screen !== 'playing' || cardTargeting !== null || !isIdle()) return;
     if (autoMove.mode === 'path') {
-      if (gameState.player.x === autoMove.tx && gameState.player.y === autoMove.ty) { clearAutoMove(); return; }
-      if (!stepTowardTile(autoMove.tx, autoMove.ty)) clearAutoMove();
+      const p = gameState.player;
+      if (p.x === autoMove.tx && p.y === autoMove.ty) { clearAutoMove(); return; }        // arrived
+      if (typeof autoMove.lastHp === 'number' && p.hp < autoMove.lastHp) { clearAutoMove(); return; } // got hit
+      const m = nextStepToward(gameState, autoMove.tx, autoMove.ty);
+      if (!m) { clearAutoMove(); return; }                                                 // can no longer path there
+      const threats = getThreatenedTiles(gameState);                                       // Map keyed "x,y"
+      if (threats && threats.has(`${m.x},${m.y}`)) { clearAutoMove(); return; }             // won't walk INTO danger
+      autoMove.lastHp = p.hp;
+      clearPendingStep();
+      handleStep(Math.sign(m.x - p.x), Math.sign(m.y - p.y));
       return;
     }
     if (now < autoMove.nextAt) return;
     autoMove.nextAt = now + HOLD_REPEAT_MS;
     if (autoMove.mode === 'direction') handleStep(autoMove.dx, autoMove.dy);
-    else if (autoMove.mode === 'approach') stepTowardTile(autoMove.tx, autoMove.ty);
   }
 
-  // A mobile TAP while playing: strike/step onto an adjacent tile, else take ONE step toward a distant
-  // one — navigation beats inspection on a phone, so the old tap-to-centre-and-examine is gone here.
-  // On menus, or while aiming a card, fall back to the normal tap dispatch (option select / fire card).
+  // A mobile TAP while playing. An adjacent/reachable tile = move or strike NOW. A FAR tile shows a
+  // move-path PROPOSAL highlighted on the board; tapping that same destination a SECOND time commits the
+  // auto-walk. Menus / card-aiming fall back to the normal tap dispatch (option select / fire card).
   function mobileTap(clientX, clientY) {
     if (screen !== 'playing' || cardTargeting !== null || !gameState) { dispatchTap(clientX, clientY); return; }
     const tile = tileFromClient(clientX, clientY);
+    // Adjacent / reachable in one move → act immediately.
     if (getPlayerMoves(gameState).some((m) => m.x === tile.x && m.y === tile.y)) {
-      clearPendingStep();
+      clearPathProposal(); clearPendingStep();
       commitMove(movePlayerTo(gameState, tile.x, tile.y));
       return;
     }
-    stepTowardTile(tile.x, tile.y);
+    // His own tile, or off the board → just clear any proposal.
+    if ((tile.x === gameState.player.x && tile.y === gameState.player.y)
+        || tile.x < 0 || tile.y < 0 || tile.x >= WORLD_SIZE || tile.y >= WORLD_SIZE) {
+      clearPathProposal();
+      return;
+    }
+    // Second tap on the SAME proposed destination → COMMIT the auto-walk.
+    if (pathProposal && pathProposal.tx === tile.x && pathProposal.ty === tile.y) {
+      clearPathProposal();
+      autoMove = { mode: 'path', tx: tile.x, ty: tile.y, nextAt: 0, lastHp: gameState.player.hp };
+      return;
+    }
+    // Otherwise PROPOSE a path to the tapped tile (if he can get anywhere toward it).
+    const path = computePath(gameState, tile.x, tile.y);
+    if (path) {
+      pathProposal = { tx: tile.x, ty: tile.y };
+      Renderer.setPathPreview({ tiles: path, dx: tile.x, dy: tile.y });
+    } else {
+      clearPathProposal();
+    }
   }
 
   // --- TOUCH (phones/tablets). ONE finger drives the king: a SWIPE steps his way (HOLD it to keep
@@ -3024,16 +3068,12 @@
   const FLICK_MS = 200;
   let touchStart = null;      // {x,y} where a one-finger gesture began (client coords)
   let touchStartTime = 0;     // when it began, for the flick-vs-drag decision
-  let touchMoved = false;     // has this touch passed TAP_SLOP? (then it's a swipe/pan, not a tap/hold)
+  let touchMoved = false;     // has this touch passed TAP_SLOP? (then it's a swipe/pan, not a tap)
   let gestureMode = null;     // once it's clearly moving: 'swipe' (move king) or 'pan' (camera)
   let panLast = null;         // last client pos while panning, for the incremental delta
   let swipeFired = false;     // has this swipe stepped at least once? (=> not a tap on lift)
-  let holdBegan = false;      // did the still-hold "approach" kick in? (=> not a tap on lift)
-  let pendingDouble = null;   // the tile a double-tap is targeting (set on the 2nd tap's touchstart)
   let pinch = null;           // two-finger gesture state, or null
-  let longPressTimer = null;
 
-  const clearLongPress = () => { if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; } };
   const fingerGap = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   const fingerMid = (t) => ({ cx: (t[0].clientX + t[1].clientX) / 2, cy: (t[0].clientY + t[1].clientY) / 2 });
 
@@ -3049,34 +3089,16 @@
   }
 
   canvas.addEventListener('touchstart', (event) => {
-    clearAutoMove(); // any new touch cancels a running auto-walk / held move
+    clearAutoMove(); // any new touch cancels a running auto-walk / held swipe
     hideTilePopover();
     if (event.touches.length === 1) {
       const t = event.touches[0];
       touchStart = { x: t.clientX, y: t.clientY };
       touchStartTime = nowMs();
-      touchMoved = false; gestureMode = null; swipeFired = false; holdBegan = false; pinch = null;
-      // DOUBLE-TAP? a quick second tap near the first → mark this touch to auto-path on lift.
-      pendingDouble = (lastTapUp && (nowMs() - lastTapUp.t) < DOUBLE_TAP_MS
-        && Math.abs(t.clientX - lastTapUp.x) < 34 && Math.abs(t.clientY - lastTapUp.y) < 34)
-        ? tileFromClient(t.clientX, t.clientY) : null;
-      // Arm the HOLD: a still finger held past HOLD_DELAY_MS starts stepping toward the tile (unless a
-      // double-tap is forming, which becomes an auto-path instead).
-      clearLongPress();
-      if (!pendingDouble) {
-        longPressTimer = setTimeout(() => {
-          longPressTimer = null;
-          if (touchStart && !touchMoved && screen === 'playing') {
-            holdBegan = true;
-            const tile = tileFromClient(touchStart.x, touchStart.y);
-            autoMove = { mode: 'approach', tx: tile.x, ty: tile.y, nextAt: 0 }; // nextAt 0 => step at once
-          }
-        }, HOLD_DELAY_MS);
-      }
+      touchMoved = false; gestureMode = null; swipeFired = false; pinch = null;
     } else if (event.touches.length === 2) {
       pinch = { dist: fingerGap(event.touches), ...fingerMid(event.touches) };
-      touchStart = null; touchMoved = true; pendingDouble = null;
-      clearLongPress();
+      touchStart = null; touchMoved = true;
     }
   }, { passive: false });
 
@@ -3100,8 +3122,7 @@
     const dy = t.clientY - touchStart.y;
     // First real movement: commit to a flick-SWIPE (moved fast, and on the board) or a PRESS-DRAG PAN.
     if (!touchMoved && Math.abs(dx) + Math.abs(dy) > TAP_SLOP) {
-      touchMoved = true; clearLongPress(); pendingDouble = null;
-      clearAutoMove(); // a drag cancels any hold-approach that had begun
+      touchMoved = true;
       gestureMode = (screen === 'playing' && (nowMs() - touchStartTime) < FLICK_MS) ? 'swipe' : 'pan';
       panLast = { x: t.clientX, y: t.clientY };
     }
@@ -3128,26 +3149,18 @@
   }, { passive: false });
 
   canvas.addEventListener('touchend', (event) => {
-    clearLongPress();
-    if (autoMove && (autoMove.mode === 'direction' || autoMove.mode === 'approach')) clearAutoMove(); // held ends on release
-    // A clean TAP (still finger, no swipe, hold never kicked in): navigate, or engage a double-tap path.
-    if (touchStart && !touchMoved && !swipeFired && !holdBegan && event.changedTouches.length) {
+    if (autoMove && autoMove.mode === 'direction') clearAutoMove(); // a held swipe ends on release
+    // A clean TAP (still finger, no swipe): move/strike an adjacent tile, or propose/confirm a far path.
+    if (touchStart && !touchMoved && !swipeFired && event.changedTouches.length) {
       event.preventDefault();
       const t = event.changedTouches[0];
-      if (pendingDouble) {
-        autoMove = { mode: 'path', tx: pendingDouble.x, ty: pendingDouble.y, nextAt: 0 };
-        pendingDouble = null; lastTapUp = null;
-      } else {
-        mobileTap(t.clientX, t.clientY);
-        lastTapUp = { t: nowMs(), x: t.clientX, y: t.clientY };
-      }
+      mobileTap(t.clientX, t.clientY);
     }
     if (!event.touches.length) { touchStart = null; pinch = null; }
   }, { passive: false });
 
   canvas.addEventListener('touchcancel', () => {
-    clearLongPress();
-    touchStart = null; pinch = null; touchMoved = false; gestureMode = null; swipeFired = false; holdBegan = false; pendingDouble = null;
+    touchStart = null; pinch = null; touchMoved = false; gestureMode = null; swipeFired = false;
   });
 
   canvas.addEventListener('mousemove', (event) => {
