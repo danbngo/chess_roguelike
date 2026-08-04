@@ -534,17 +534,34 @@ body.in-game canvas {
   color: #475569;
 }
 
-/* Character level as small star badges. */
-.level-badges {
+/* Turn / level / carried-key on one compact line. */
+.stat-line {
   display: flex;
+  align-items: baseline;
   flex-wrap: wrap;
-  gap: 0.08rem;
-  font-size: 0.85rem;
+  gap: 0.35rem 0.6rem;
+}
+
+/* The carried floor key (or Orb of Victory) as a small inline badge beside the stats. */
+.carry {
+  font-size: 1.05rem;
+  line-height: 1;
+  align-self: center;
+}
+.carry:empty { display: none; }
+.carry.key { color: #fde047; text-shadow: 0 0 6px rgba(250, 204, 21, 0.5); }
+.carry.orb { color: #5eead4; text-shadow: 0 0 7px rgba(94, 234, 212, 0.6); }
+
+/* Character level as ONE compact "Lv N" badge (not a row of stars). */
+.level-badges {
+  display: inline-flex;
+  font-size: 0.82rem;
   line-height: 1;
 }
 .level-badges .badge {
   color: #fbbf24;
   text-shadow: 0 0 3px rgba(251, 191, 36, 0.5);
+  white-space: nowrap;
 }
 /* MAXED OUT: every boon a run can pay out is his. The stars stop reading as a progress bar and burn
    gold-white instead, so "the next guardian has nothing to teach me" is legible at a glance. */

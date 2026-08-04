@@ -45,8 +45,7 @@
   const altarCloseButton = document.getElementById('altar-close');
   const cardBar = document.getElementById('card-bar');
   const cardHint = document.getElementById('card-hint');
-  const invBar = document.getElementById('inv-bar');
-  const invHint = document.getElementById('inv-hint');
+  const carryEl = document.getElementById('carry');
   const orbBar = document.getElementById('orb-bar');
   const orbHint = document.getElementById('orb-hint');
   const tilePopover = document.getElementById('tile-popover');
@@ -227,23 +226,18 @@
     healthLabel.title = `HP ${hp}/${maxHp}`;
   }
 
-  // Character level as a row of small star badges.
+  // Character level as ONE compact badge ("Lv 3"), not a row of stars. MAXED — once he holds every boon
+  // a run can pay out — it burns gold-white with a ✦, so "the next guardian has nothing to teach me" is
+  // legible at a glance (the panel used to look identical either way).
   function renderLevelBadges(level, boons) {
     if (!levelLabel) return;
-    levelLabel.innerHTML = '';
-    // MAXED. Once he holds every boon a run can pay out, the stars stop being a progress bar and
-    // become a statement: they burn gold. Without this the panel looks identical whether the next
-    // guardian will teach him something or not, which is exactly when he most wants to know.
     const maxed = typeof MAX_BOONS === 'number' && (boons || 0) >= MAX_BOONS;
-    for (let i = 0; i < level; i += 1) {
-      const b = document.createElement('span');
-      b.className = maxed ? 'badge maxed' : 'badge';
-      b.textContent = maxed ? '✦' : '★';
-      levelLabel.append(b);
-    }
-    levelLabel.title = maxed
-      ? `Level ${level} — you have learned all you can (${MAX_BOONS} boons)`
-      : `Level ${level}`;
+    levelLabel.innerHTML = '';
+    const b = document.createElement('span');
+    b.className = maxed ? 'badge maxed' : 'badge';
+    b.textContent = maxed ? `Lv ${level} ✦` : `Lv ${level}`;
+    levelLabel.append(b);
+    levelLabel.title = maxed ? `Level ${level} — all ${MAX_BOONS} boons learned` : `Level ${level}`;
   }
 
   function updateHud() {
@@ -269,27 +263,22 @@
   // point is that a player can see at a glance whether the stair is going to open for him, without
   // hunting for it in the log. Kept deliberately bare: it is a shelf, not a second row of buttons.
   function renderInventory() {
-    if (!invBar) return;
-    invBar.innerHTML = '';
-    if (invHint) invHint.classList.add('hidden');
-    if (!gameState) return;
-    const held = [];
-    // The Orb of Victory is the last floor's key wearing a different hat (key.orb) — so it lands
-    // here for free, and reads as the run-defining thing it is rather than another gold key.
-    if (gameState.key && gameState.key.collected) {
-      const realmOrb = (realmDef(gameState.realm).orb) || {};
-      held.push(gameState.key.orb
-        ? { cls: 'orb', glyph: '◉', title: `${realmOrb.name || 'Orb of Victory'} — the portal will open for you` }
-        : { cls: 'key', glyph: '⚷', title: 'Floor key — the stair down is unlocked' });
+    // The carried KEY (or the Orb of Victory — the last floor's key in a different hat, key.orb) shown
+    // as one small badge INLINE with the stats, not a whole "Carrying" row. So he can see at a glance
+    // whether the stair will open without hunting the log. Empty (nothing carried) → hidden by CSS.
+    if (carryEl) {
+      carryEl.textContent = '';
+      carryEl.className = 'carry';
+      if (gameState && gameState.key && gameState.key.collected) {
+        const orb = gameState.key.orb;
+        const realmOrb = (realmDef(gameState.realm).orb) || {};
+        carryEl.textContent = orb ? '◉' : '⚷';
+        carryEl.classList.add(orb ? 'orb' : 'key');
+        carryEl.title = orb
+          ? `${realmOrb.name || 'Orb of Victory'} — the portal will open for you`
+          : 'Floor key — the stair down is unlocked';
+      }
     }
-    for (const item of held) {
-      const slot = document.createElement('div');
-      slot.className = `inv-slot ${item.cls}`;
-      slot.textContent = item.glyph;
-      slot.title = item.title;
-      invBar.append(slot);
-    }
-    if (invHint && held.length) invHint.classList.remove('hidden');
     renderOrbs();
   }
 

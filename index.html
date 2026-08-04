@@ -28,16 +28,19 @@
             <div class="info-panel">
               <div id="floor">Floor I</div>
               <div id="floor-name" class="floor-name"></div>
-              <div id="turn">Turn 0</div>
+              <!-- Turn, level and the carried key on ONE compact line — the key floats beside the stats
+                   instead of taking a whole "Carrying" row of its own. -->
+              <div class="stat-line">
+                <span id="turn">Turn 0</span>
+                <span id="level" class="level-badges" aria-label="Level"></span>
+                <span id="carry" class="carry" aria-label="Carrying"></span>
+              </div>
               <div id="health" class="hearts" aria-label="Health"></div>
-              <div id="level" class="level-badges" aria-label="Level"></div>
             </div>
             <p id="card-hint" class="card-hint hidden">Abilities — press 1-9 or click to aim</p>
             <div id="card-bar" class="card-bar"></div>
-            <p id="inv-hint" class="card-hint hidden">Carrying</p>
-            <div id="inv-bar" class="inv-bar"></div>
-            <!-- ORBS: one per realm cleared, kept for their own sake. Sits under the pack because it
-                 is a trophy shelf, not equipment — nothing here does anything. -->
+            <!-- ORBS: one per realm cleared, kept for their own sake. A trophy shelf, not equipment —
+                 nothing here does anything; hidden until he has carried one out. -->
             <p id="orb-hint" class="card-hint hidden">Orbs</p>
             <div id="orb-bar" class="inv-bar"></div>
             <div class="log-wrap">
