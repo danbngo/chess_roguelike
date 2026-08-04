@@ -8961,41 +8961,6 @@ test('striking something that does NOT die never leaves the king standing on it'
   assert.match(n.message, /cuts down|crushes/i, 'and the log says so');
 });
 
-test('every creature the game can field DESCRIBES ITSELF in the inspector', () => {
-  // The tile inspector named the PIECE (rook, pawn) and its STATE (wandering, asleep) but never its
-  // species — so a zombie, a golem and a lava elemental all read as "Enemy: rook (wandering)". That
-  // is the worst gap in a game with three realms of creatures whose whole point is that hitting them
-  // does not work, and whose counters are all different.
-  //
-  // `foeFlavour` lives inside main.js's IIFE (it is UI, not rules), so this checks the SOURCE — the
-  // table must carry an entry for every species the rules can actually produce. It is deliberately
-  // driven off ELEMENTAL_TYPES rather than a hand-written list, so adding a native to the roster
-  // without describing it fails here.
-  const main = fs.readFileSync(path.join(here, '..', 'src', 'main.js'), 'utf8');
-  for (const type of Object.values(ELEMENTAL_TYPES).flat()) {
-    assert.ok(main.includes(`${type}: '`), `the inspector describes the "${type}" native`);
-  }
-  // The undead realm's three, the Workshop's oddities, and the demon floors.
-  for (const needle of ['zombie', 'skeleton', 'vampire', 'wisp', 'coffin', 'fabricator', 'Golem', 'Demonic']) {
-    assert.ok(main.includes(needle), `the inspector describes ${needle}`);
-  }
-  // And every KIND OF GUN. There are five and only "fire" was ever named, so a boulder gun, a water
-  // jet and a lava spitter all announced themselves as a plain turret despite doing three completely
-  // different things to the ground under him.
-  for (const gun of ['FIRE turret', 'ELECTRIC turret', 'BOULDER turret', 'WATER JET', 'LAVA SPITTER']) {
-    assert.ok(main.includes(gun), `the inspector names the ${gun}`);
-  }
-  // Same rule for TERRAIN: `terrainLabel` falls back to the raw internal name, so a missing entry
-  // ships "crushershut" to the player. Twenty types were missing when this was first audited.
-  for (const t of ['stone', 'mushroom', 'coral', 'everburn', 'deepwater', 'void', 'spring',
-    'wire', 'switch', 'generator', 'metaldoor', 'metalgate', 'crusheropen', 'crushershut',
-    'gloom', 'tombstone', 'deathwater']) {
-    // Matched as `  <type>: '` — a plain substring rather than a regex, because escaping a regex
-    // through this file's template literals silently produced a pattern that matched nothing.
-    assert.ok(main.includes(`  ${t}: '`), `the inspector names the "${t}" terrain`);
-  }
-});
-
 test('a vampire bursting into BATS is a reprieve — only BLOOD puts it back together', () => {
   const arena = (px, py) => {
     const s = createInitialState('warrior', 'nightmare');

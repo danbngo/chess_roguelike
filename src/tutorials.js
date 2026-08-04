@@ -13,11 +13,11 @@ const TUTORIALS = {
       'piece to read exactly what it is and does. You begin beside the stair down — explore to find ' +
       'the key that unlocks it.',
     mobileText:
-      'SWIPE in any direction to STEP the king that way, or TAP a highlighted tile to move there. Use ' +
-      'two fingers to pinch-zoom and to pan. You see only a short distance — unexplored ground is fogged ' +
-      'until you reach it. RED tiles are squares a visible enemy could strike next turn, so never end ' +
-      'your move on one. HOLD any tile to read exactly what it is and does. You begin beside the stair ' +
-      'down — explore to find the key that unlocks it.',
+      'TAP a tile to step toward it, or flick-SWIPE to step that way; HOLD to keep moving, or DOUBLE-TAP ' +
+      'a far tile to auto-walk there. Press and DRAG to look around, pinch to zoom. You see only a short ' +
+      'distance — unexplored ground is fogged until you reach it. RED tiles are squares a visible enemy ' +
+      'could strike next turn, so never end your move on one. You begin beside the stair down — explore ' +
+      'to find the key that unlocks it.',
   },
   cards: {
     title: 'Your abilities win fights',
@@ -194,9 +194,9 @@ const TUTORIALS = {
       'view follows you — CLICK a distant tile or DRAG the board to look around. To skip the tutorial, ' +
       'walk WEST into the PORTAL.',
     mobileText:
-      'Follow the corridors EAST to begin. SWIPE in any direction to STEP the king that way — including ' +
-      'diagonals — or TAP a highlighted tile to move there. Use TWO fingers to zoom (pinch) and to look ' +
-      'around (drag). To skip the tutorial, go WEST into the PORTAL.',
+      'Follow the corridors EAST. TAP a tile to step toward it (a neighbour = move or strike), or flick-' +
+      'SWIPE to step that way — HOLD to keep going, or DOUBLE-TAP a far tile to auto-walk there. Press ' +
+      'and DRAG to look around, pinch to zoom. To skip the tutorial, go WEST into the PORTAL.',
   },
   tutAttack: {
     title: 'Attack',

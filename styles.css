@@ -8,6 +8,13 @@ body {
   min-height: 100vh;
   background: #000;
   color: #f8fafc;
+  /* A game, not a document: never let a tap/long-press select text or pop the iOS callout menu
+     (accidental text-selection on a long-press was easy on mobile), and kill the grey tap flash. */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .shell {

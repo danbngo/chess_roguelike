@@ -797,275 +797,11 @@
     return tiles;
   }
 
-  /* ------------------------------ tile popover --------------------------- */
-
-  // EVERY terrain the game can put on a tile needs an entry here. `terrainLabel` falls back to the
-  // RAW INTERNAL NAME, so a missing one shows the player "crushershut" — which is how this was
-  // found. When it was audited, TWENTY types had no entry: every New Game+ terrain ever added had
-  // been shipping its variable name to the tooltip. If you add a terrain, add it here in the same
-  // commit; there is a test that fails otherwise.
-  const TERRAIN_NAMES = {
-    normal: 'Open ground',
-    // --- the undead realm ---
-    deathwater: 'River of death — it drinks at anything still alive that ends a turn in it (the undead wade it freely)',
-    gloom: 'Gloom — a standing darkness. You cannot see out of it; only carrying a TORCH near burns it back',
-    tombstone: 'Tombstone — solid stone. Linger beside one and it bursts open, leaving a pit and whatever climbed out',
-    // --- the Workshop ---
-    wire: 'Wire — cable laid in the floor. Walk it freely; current runs down it and through anything touching it',
-    switch: 'Switch — a housing, not a plate. STRIKE it to throw it: every metal fitting, golem and gun in sight flips',
-    generator: 'Generator — machinery. Impassable, but SHOVE it like a boulder; every 4th turn it lets go into the network',
-    metaldoor: 'Metal door (shut) — step into it to HAUL IT OPEN. It never swings shut again',
-    metaldooropen: 'Metal door (open) — hauled open for good; a clear passage',
-    metalgate: 'Metal gate (shut) — bars you cannot cut. You can see through it, but not walk or shoot through. Only CURRENT or a switch works it',
-    metalgateopen: 'Metal gate (open) — a clear passage until something flips it back',
-    crushershut: 'Crusher (shut) — a press at rest. Current opens it',
-    crusheropen: 'Crusher (open) — a press standing open. Current brings it DOWN: it flattens a golem, and wounds and throws anything else',
-    // --- the elemental realm ---
-    stone: 'Bedrock — the one wall with no answer at all: it cannot be cut, phased, tunnelled, burned or shoved',
-    mushroom: 'Mushroom — the earth floor’s timber: three blows to fell. One that grew over a PIT leaves open floor when cut down',
-    coral: 'Coral — a reef wall. Three blows opens a way through',
-    everburn: 'Everburning tree — alight for good and never consumed. Only an axe answers it (three blows)',
-    deepwater: 'Deep water — out of your depth. The FIRST turn under is free; after that it drowns you for 1, then 2, then 3… Surfacing anywhere resets it',
-    void: 'The void — open sky, not a hole. Nothing crosses it but a flier (not even a Pathfinder, who treads ordinary pits)',
-    spring: 'Spring pad — steps onto it are LAUNCHED as the piece shown, along the direction you were already moving',
-    gateopen: 'Gate (open) — a clear passage',
-    wall: 'Wall — blocks sight & movement',
-    lava: 'Lava — crossable, but burns you 1 HP per turn you end on it (enemies wade free); clear to see through',
-    water: 'Water — slow (cross one per move); no cards while wading',
-    pit: 'Pit — a bottomless hole: nothing can cross it, but shots (yours OR a turret’s/boss’s) fly right over',
-    boulder: 'Boulder — blocks sight & movement; step into it to SHOVE it (into a pit/lava/water fills the hole). Leaps crush it; spells blast it. Knocked, it ROLLS until it hits something',
-    ice: 'Ice — a see-through slab: impassable to walkers (but a JUMPER can perch on it), and you can look past it. Fire/spells MELT it to water; a foe SLAMMED into it shatters it — but a leap onto it leaves it intact',
-    geyser: 'Geyser — a demon-realm vent: every 3rd turn ALL geysers blow at once, scalding whatever stands on one for 1 HP (a tall plume warns the turn before). The erupting gas also blocks sight for that turn. Shove a boulder onto it to cap it; enemies shy off them',
-    devilgrass: 'Tall grass — blocks sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
-    devilgrass_demon: 'Devilgrass — dry, dead husks that still block sight but not movement; walk right through. Fire/spells WITHER it away; a rolling boulder flattens it',
-    gate: 'Gate — iron bars: they BAR the way but not the view. You can see (and shoot) straight through them, so you can case a room before committing to it. Walk into it to cut it down (3 swings); a rolling boulder buckles it, and a foe slammed into it bends the bars. Iron does not burn — spellfire will not touch it',
-    tree: 'Tree — solid timber: blocks sight & movement, but it can come DOWN. Walk into it to chop (3 swings); a rolling boulder shears it through; a foe slammed into it cracks the trunk. Spellfire sets it ALIGHT — it burns where it stands, then is gone, leaving scorched ground',
-    door: 'Door (shut) — blocks sight & fire, but you can walk/leap right onto it; doing so pushes it OPEN',
-    dooropen: 'Doorway (open) — a clear, walkable threshold; blocks nothing. Left empty, it starts swinging shut',
-    doorajar: 'Door (swinging shut) — still passable and clear, but it will close fully next turn unless something is in it',
-  };
-
-  // The level's outer edge is solid STONE (impassable rock), distinct from interior brick walls.
-  function terrainLabel(tx, ty) {
-    const t = terrainAt(gameState, tx, ty);
-    if (t === 'wall' && (tx === 0 || ty === 0 || tx === WORLD_SIZE - 1 || ty === WORLD_SIZE - 1)) {
-      return 'Stone — the impassable rock edge of the level';
-    }
-    // Same terrain, different realm: living grass up top, dry devilgrass husks below.
-    if (t === 'devilgrass' && gameState && (gameState.floor || 1) >= DEMON_FLOOR) {
-      return TERRAIN_NAMES.devilgrass_demon;
-    }
-    return TERRAIN_NAMES[t] || t;
-  }
-
-  // Build a human description of a tile (or null if there is nothing to say).
-  // WHAT A CREATURE IS, and what actually answers it.
-  //
-  // Most of these cannot be dealt with by hitting them, and each has its own counter — so naming the
-  // species without naming the answer would be trivia. A player who reads "Water elemental" learns
-  // nothing; one who reads "steel passes through it — FIRE is the answer" can act.
-  //
-  // Ordered from most specific to least: a thing can be several of these at once (a demonic zombie
-  // rook), and the most surprising fact is the one worth leading with.
-  const ELEMENTAL_FLAVOUR = {
-    earthen: 'Earth elemental — a blow does nothing. SHOVE it, or come down on it from above; a pit is final',
-    stonen: 'Stone elemental — nothing hurts it and it cannot be crushed. Only the GROUND takes it (a pit). Slow: it moves every other turn',
-    molefolk: 'Molefolk — tunnels through walls and boulders (never bedrock), and leaves a PIT on every tile it crosses. Mortal: it dies to a blow',
-    batkin: 'Cave bat — airborne, drifts at random, bites what it can reach. Mortal, and it never becomes anything worse',
-    watery: 'Water elemental — steel passes through it. FIRE is the answer. Its wake deepens water it crosses. Step INTO it to shove it aside (and start drowning)',
-    icy: 'Ice elemental — steel does nothing; spellfire MELTS it into a water elemental (which then needs fire again). It freezes every tile it crosses, and a leap slides off it',
-    merfolk: 'Merfolk — at home in deep water. Mortal, but killing one spills INK that blinds the water for two turns',
-    lavan: 'Lava elemental — FIRE is useless. Steel kills it, but striking it in melee costs you a heart; a LEAP is clean. It leaves the floor molten behind it',
-    fiery: 'Fire elemental — fire feeds it and steel only burns you. WATER quenches it. Step INTO it to shove it aside (and stand in flames)',
-    salamander: 'Salamander — crosses lava and fire unharmed. Otherwise an ordinary mortal',
-    electric: 'Electric elemental — immune to current. Steel kills it, but it EARTHS ITSELF through the room as it dies. Step INTO it and it warps away',
-    steamy: 'Steam elemental — immune to current, and there is nothing in it to cut (a swing only scalds you). COLD condenses it — water or ice. It boils the air around it every turn. Slow',
-    tengu: 'Tengu — sees and moves over any terrain at all. Otherwise an ordinary mortal',
-  };
-  function foeFlavour(enemy) {
-    if (!enemy) return null;
-    if (enemy.wisp) {
-      return 'Wisp — a loose mote of current, and a one-shot countdown. It comes straight on, ignoring cover, and EARTHS ITSELF on the first thing it touches that is not a wire: bait it onto anything (even another wisp). Slow: it winds up, then drifts';
-    }
-    if (enemy.coffin) return 'Coffin — three blows to break open, and something is inside';
-    if (enemy.fabricator) return 'Fabricator — it stamps out a new golem every time current reaches it. Be careful what you switch ON';
-    if (typeof isGolem === 'function' && isGolem(enemy)) {
-      return enemy.inert
-        ? 'Golem (switched off) — it gets back up in a few turns. Only a PIT or a crusher is final'
-        : 'Golem — it cannot be killed, only switched off (a blow, or a switch). Only a PIT or a crusher is final';
-    }
-    if (enemy.elemental && ELEMENTAL_FLAVOUR[enemy.elemental]) return ELEMENTAL_FLAVOUR[enemy.elemental];
-    if (enemy.undeadType === 'zombie') return 'Zombie — three wounds, and it lumbers (a recovery turn after every exertion). FIRE counts double';
-    if (enemy.undeadType === 'skeleton') return 'Skeleton — the first killing blow only BREAKS it; it knits itself back together in three turns unless you finish it while it is down. Fire is no shortcut';
-    if (enemy.undeadType === 'vampire') {
-      return enemy.bat
-        ? 'Vampire (scattered into BATS) — it cannot be killed like this. It drifts at random, and re-forms the moment it feeds'
-        : 'Vampire — a killing blow bursts it into a cloud of BATS rather than killing it. The bats re-form unless you deny them blood';
-    }
-    if (typeof isDemonKind === 'function' && isDemonKind(enemy.kind)) {
-      return 'Demonic — a native of the deep floors. It wades lava as if it were not there';
-    }
-    return null;
-  }
-
-  function describeTile(tx, ty) {
-    if (!gameState || tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) {
-      return null;
-    }
-    if (!(gameState.explored && gameState.explored[`${tx},${ty}`])) {
-      return 'Unexplored — shrouded in fog of war.';
-    }
-    const visible = inLineOfSight(gameState, tx, ty);
-    const lines = [];
-    if (gameState.player.x === tx && gameState.player.y === ty) {
-      lines.push('Your king');
-    }
-    // A PORTAL is an object standing ON the floor, not a terrain type — so without this the tile
-    // under a door described itself as "Open ground", which is exactly what it was doing in the
-    // room whose entire content is doors. Named before the terrain line, because in that room the
-    // door IS the tile as far as the player is concerned.
-    const gate = (gameState.portalGates || []).find((g) => g.x === tx && g.y === ty);
-    if (gate) {
-      if (gate.accept) {
-        lines.push('THE WAY HOME — step through to end the run here and keep everything you have won');
-      } else if (gate.collapsed) {
-        lines.push(`${portalRealmName(gate.realm)} — SPENT. Its portal is dark and cold; you have already walked it`);
-      } else {
-        lines.push(`${portalRealmName(gate.realm)} — an open portal. Step through to enter it`);
-      }
-    }
-    lines.push(terrainLabel(tx, ty));
-    // STEAM sits ON the terrain rather than being terrain, so it has its own line — without it, a tile
-    // under a scalding bank described itself as plain floor and the burn came out of nowhere.
-    const steamLeft = gameState.fog && gameState.fog[`${tx},${ty}`];
-    if (steamLeft > 0) {
-      lines.push(`Scalding steam (${steamLeft} turn${steamLeft === 1 ? '' : 's'} left) — blocks sight, and sears anything standing in it each turn`);
-    }
-    if (visible) {
-      const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
-      if (enemy) {
-        let tag;
-        if (enemy.turret) {
-          // WHICH gun. There are five kinds now and only "fire" was ever named — so a boulder gun, a
-          // water jet and a lava spitter all described themselves as a plain turret, despite doing
-          // three completely different things to the ground he is standing on.
-          const gun = enemy.fire ? 'FIRE turret — piercing spellfire through units; 3-turn cycle'
-            : enemy.electric ? 'ELECTRIC turret — it shoots the CIRCUIT, not you; the current does the rest'
-            : enemy.boulder ? 'BOULDER turret — wounds, shoves you back, and leaves the rock between you and it'
-            : enemy.jet ? 'WATER JET — wounds, and makes the ground under you wetter (dry→water→DEEP)'
-            : enemy.lava ? 'LAVA SPITTER — wounds, and turns the ground under you molten'
-            : 'turret — fixed; fires its pattern';
-          tag = ` (${gun}; HP ${enemy.hp}/${enemy.maxHp})`;
-        } else if (enemy.summonCircle) {
-          tag = ' (summoning circle — spawns foes; step on it to destroy)';
-        } else if (enemy.boss) {
-          const perks = (enemy.bossPerks && enemy.bossPerks.length ? enemy.bossPerks : [enemy.bossPerk]).filter(Boolean);
-          const perk = perks.length ? `; ${perks.join(', ')}` : '';
-          tag = ` (${enemy.mini ? 'mini-boss' : 'boss'} — HP ${enemy.hp}/${enemy.maxHp}${perk})`;
-        } else {
-          // The four states, named, because "no tag" left the commonest one (wandering) invisible and
-          // players read it as the same thing as asleep.
-          if (enemy.asleep) tag = ' (asleep — posted here; it does nothing until it sees you or is struck)';
-          else if (enemy.surprised) tag = ' (surprised — it just spotted you and loses this turn)';
-          else if (enemy.lastSeen && enemy.lastSeenTtl > 0) tag = ' (hunting — it is tracking where it last saw you)';
-          else tag = ' (wandering — roaming, looking for you)';
-        }
-        // Confusion is true of EVERY kind of piece, so it is appended to whatever tag the branches
-        // above chose rather than being one more case inside them — a confused turret is still a
-        // turret, and the player wants to read both facts.
-        if (enemy.confused) tag += ' — CONFUSED';
-        if (gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)) tag += ' — neutral (it ignores you; strike it and the truce ends)';
-        lines.push(`Enemy: ${enemy.kind}${tag}`);
-        // WHAT IT IS, on its own line. The line above says which PIECE it is and what it is doing;
-        // neither tells him he is looking at a zombie, a golem or a lava elemental. That is the one
-        // fact this realm-heavy game most needs to surface, because half these creatures cannot be
-        // killed by hitting them and the counter is different for each — so the flavour line names
-        // the ANSWER, not just the species.
-        const flavour = foeFlavour(enemy);
-        if (flavour) lines.push(flavour);
-      }
-    }
-    const ally = (gameState.allies || []).find((a) => a.x === tx && a.y === ty);
-    if (ally) {
-      lines.push(`Ally: ${ally.kind}${ally.familiar ? ' (familiar)' : ally.undead ? ' (undead)' : ''}`);
-    }
-    const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
-    if (onBuilding(gameState.exit)) {
-      if (gameState.exit.portal) lines.push(gameState.exit.locked ? 'Victory portal — dormant until you seize the Orb' : 'Victory portal — step in to escape and win!');
-      else lines.push(gameState.exit.locked ? 'Stairs down — sealed until you find the key' : 'Stairs down to the next floor');
-    }
-    if (gameState.key && !gameState.key.collected && onBuilding(gameState.key)) {
-      lines.push(gameState.key.orb ? 'Orb of Victory — seize it to open the portal (but guardians will converge!)' : 'Floor key — collect it to unlock the stair');
-    }
-    // The way he came IN. Cosmetic — but it has to SAY that, or a stair-shaped thing you cannot use
-    // just reads as a bug.
-    if (gameState.upstair && gameState.upstair.x === tx && gameState.upstair.y === ty) {
-      lines.push('Collapsed stairway — the way you came in, caved in behind you. There is no going back; it only marks where this floor began.');
-    }
-    return lines.join('\n');
-  }
-
-  function showTilePopover(event, canvasX, canvasY) {
-    if (screen !== 'playing') {
-      hideTilePopover();
-      return;
-    }
-    const { x, y } = Renderer.screenToTile(canvasX, canvasY);
-    // Ring whoever covers this square. threatenersOf is the SAME reckoning that paints the red tint
-    // (same ghost: his body out of the way, the key gone, doors judged open), so the highlight can
-    // never contradict the colour of the tile the player is pointing at.
-    Renderer.markThreats(gameState ? threatenersOf(gameState, x, y).map((e) => e.id) : []);
-    const text = describeTile(x, y);
-    if (!text) {
-      hideTilePopover();
-      return;
-    }
-    tilePopover.textContent = text;
-    tilePopover.style.left = `${event.clientX + 14}px`;
-    tilePopover.style.top = `${event.clientY + 14}px`;
-    tilePopover.classList.remove('hidden');
-  }
-
   function hideTilePopover() {
     Renderer.markThreats([]); // the cursor is gone — so are the rings
     tilePopover.classList.add('hidden');
     tilePopover.classList.remove('wide'); // reset the class-details widening
   }
-
-  /* ------------------------------ examine pane --------------------------- */
-
-  const PIECE_INFO = {
-    pawn: 'Steps one tile orthogonally; captures one tile diagonally.',
-    mann: 'Steps and captures one tile in any direction — a non-royal king. Skeletal: the Necromancer’s risen familiar.',
-    berolina: 'Steps one tile diagonally; captures one tile orthogonally.',
-    knight: 'Leaps in an L (two and one), clear over anything between.',
-    bishop: 'Slides any distance diagonally.',
-    rook: 'Slides any distance orthogonally.',
-    queen: 'Slides any distance in any direction.',
-    nightrider: 'Repeats a knight’s leap outward in a line — bounding across the floor until a body or a wall halts it. Cannot touch what stands beside it.',
-    archbishop: 'Moves as a bishop or a knight.',
-    chancellor: 'Moves as a rook or a knight.',
-    amazon: 'Moves as a queen or a knight — the realm’s final guardian.',
-    king: 'Moves one tile in any direction — a weak, common foe worth capturing.',
-    ferz: 'Steps and captures one tile diagonally — a feeble, dazed piece (what a Hex warps a foe into).',
-    enpassant: 'Step one tile in any direction (capturing a foe there), and strike one foe you pass — a piece that was beside your starting tile.',
-    doublestep: 'Dash up to two tiles in any one direction, repositioning onto open ground or capturing a foe at the far tile. A nimble on-demand maneuver.',
-    banish: 'Send ANY foe, turret or rogue mini-boss you can see clean out of the world — it is simply gone, leaving a puff of smoke. It is NOT a kill: no boon, no corpse. A floor guardian and a summoning circle cannot be shifted. Cooldown 9.',
-    silence: 'Every foe you can SEE drops into a dead sleep for 3 turns — walk through them, or walk away. A free action; it breaks the instant you strike anything. Cooldown 9.',
-    confuse: 'Every foe you can SEE loses track of which side it is on. A confused piece either strikes whatever is nearest — its OWN kind included — or blunders off at random, an even chance of each. Nothing is immune: turrets, guardians and summoning circles all lose the thread. The fog lifts by itself about every other turn, and ANY blow you land snaps that piece straight out of it. Costs a turn. Cooldown 9.',
-    blink: 'Flicker to a random SAFE tile in sight — one no visible foe threatens. A free action (costs no turn); does nothing if there is no refuge. Cooldown 6.',
-    fireball: 'Hurl a fireball along any queen line. It strikes your target AND washes spellfire over every tile around it — which burns YOU and your allies if you are standing in the ring. Cooldown 7.',
-    promotion: 'Become an INVINCIBLE warhorse for 3 turns: leap like a knight (and step a tile), take no damage, use no weapon cards. Free to cast, cooldown 9.',
-    reload: 'Spend your turn to recharge every other card at once.',
-    swap: 'Trade places with any unit in sight — enemy or turret. No damage.',
-  };
-
-  // One-line descriptions of each enemy role (for the examine pane).
-  const ROLE_INFO = {
-    turret: 'Turret — fixed; fires its piece pattern (1 turn to lock on, then fires). Destructible (3 HP), struck in place like a boss. FIRE turrets (reddish, floor 5+) loose piercing spellfire THROUGH units on a slower 3-turn cycle.',
-    circle: 'Summoning circle — conjures foes while it sees you; step on it to destroy it.',
-    boss: 'Boss — a high-mobility guardian with a HP bar.',
-  };
 
   function setExamineEmpty(text) {
     examineEl.innerHTML = '';
@@ -1091,87 +827,6 @@
     examineEl.append(block);
   }
 
-  // Populate the right pane with full detail about a clicked tile.
-  function examineTile(tx, ty) {
-    if (!gameState || tx < 0 || tx >= WORLD_SIZE || ty < 0 || ty >= WORLD_SIZE) {
-      setExamineEmpty('Click a tile to inspect it.');
-      return;
-    }
-    if (!(gameState.explored && gameState.explored[`${tx},${ty}`])) {
-      setExamineEmpty('Unexplored — shrouded in fog of war.');
-      return;
-    }
-    examineEl.innerHTML = '';
-    const visible = inLineOfSight(gameState, tx, ty);
-    addExamineBlock(`Tile (${tx}, ${ty})`, terrainLabel(tx, ty));
-
-    if (gameState.player.x === tx && gameState.player.y === ty) {
-      const p = gameState.player;
-      const stats = [`HP ${p.hp}/${p.maxHp}`, `Sight ${p.vision}`, `Move ${p.moveRange}`, `Level ${p.level || 1}`];
-      stats.push(`Cards — ${(p.cards || []).length} ${classCategory(p.className)}`);
-      const cls = CLASSES[p.className];
-      addExamineBlock(cls ? `${cls.name} King` : 'Your King', stats);
-      if (cls && (cls.startPerk || (p.takenPerks || []).length)) {
-        const names = [];
-        if (cls.startPerk) names.push(`${cls.startPerk.name} (innate)`);
-        for (const id of (p.takenPerks || [])) names.push((cls.perks.find((k) => k.id === id) || { name: id }).name);
-        addExamineBlock('Perks', names);
-      }
-    }
-
-    if (visible) {
-      const enemy = gameState.enemies.find((e) => e.x === tx && e.y === ty);
-      if (enemy) {
-        const st = gameState.player.beastFriend && typeof isNeutralBeast === 'function' && isNeutralBeast(gameState, enemy)
-          ? 'Neutral — a wild beast at truce. It roams and takes no interest in you, and nothing else picks a fight with it. Strike it and the truce is off for good'
-          : enemy.confused
-          ? 'Confused — strikes whatever is nearest, its own side included, or blunders off at random. Any blow you land snaps it out of it'
-          : enemy.boss && enemy.dormant
-          ? (gameState.key && gameState.key.orb ? 'Dormant — guarding the Orb (wakes on sight)' : 'Dormant — guarding the key (wakes on sight)')
-          : enemy.surprised
-            ? 'Surprised — frozen this turn'
-            : enemy.frustrated
-              ? 'Frustrated — no legal move'
-              : enemy.awake
-                ? 'Hostile — hunting the king'
-                : 'Unaware — wandering';
-        const hpLine = enemy.boss && enemy.maxHp ? `HP ${enemy.hp}/${enemy.maxHp}` : null;
-        const perkLine = enemy.boss && enemy.bossPerk ? (BOSS_PERK_LABELS[enemy.bossPerk] || null) : null;
-        const title = enemy.boss ? `${enemy.mini ? 'Mini-boss' : 'Boss'} — ${(enemy.bossName || enemy.kind).replace(/^the /, '')}` : `Enemy — ${enemy.kind}`;
-        // WHAT IT IS goes FIRST, above the piece's movement blurb. On a realm floor "it moves like a
-        // rook" is the least surprising thing about a creature that cannot be killed by hitting it —
-        // and for half of these the counter is the only fact worth reading.
-        addExamineBlock(title, [
-          foeFlavour(enemy),
-          PIECE_INFO[enemy.kind] || '',
-          ROLE_INFO[enemyRole(enemy)] || null,
-          hpLine, perkLine, st,
-        ]);
-      }
-    }
-
-    const onBuilding = (b) => b && b.x === tx && b.y === ty && (b.discovered || visible);
-    if (onBuilding(gameState.exit)) {
-      if (gameState.exit.portal) {
-        addExamineBlock('Victory portal', gameState.exit.locked
-          ? 'The way home — but it lies dormant until you seize the Orb of Victory. Step in with the Orb to win the run.'
-          : 'Step into the portal to escape the realm and WIN the run.');
-      } else {
-        addExamineBlock('Stairs', gameState.exit.locked
-          ? 'Descend to the next floor — but the stair is sealed until you collect this floor’s key.'
-          : 'Descend to the next floor — you fully heal and gain a level.');
-      }
-    }
-    if (gameState.key && !gameState.key.collected && onBuilding(gameState.key)) {
-      if (gameState.key.orb) addExamineBlock('Orb of Victory', 'Seize it to open the portal home — but the realm’s guardians will converge on you the moment you do.');
-      else addExamineBlock('Floor key', 'Walk onto it to collect it — the stair down then unlocks.');
-    }
-
-    const scar = (gameState.scars || []).find((s) => s.x === tx && s.y === ty);
-    if (scar && (gameState.explored || {})[`${tx},${ty}`]) {
-      addExamineBlock('Ruined circle', 'A shattered summoning circle — it conjures no more.');
-    }
-  }
 
   // Aim by DIRECTION rather than blind-cycling a ring: a movement key picks the target whose
   // BEARING from the king best matches the way you pushed. Pressing the same way again steps
@@ -1588,7 +1243,7 @@
     pendingTips = [];
     awaitingFollowup = false;
     cancelCardTargeting();
-    setExamineEmpty('Click a tile to inspect it.');
+    setExamineEmpty('Aim an ability to see what it does.');
     screen = 'playing';
     document.body.classList.add('in-game');
     document.body.classList.remove('on-title');
@@ -2332,7 +1987,7 @@
     }
     screen = 'playing';
     altarScreen.classList.add('hidden');
-    setExamineEmpty('Click a tile to inspect it.');
+    setExamineEmpty('Aim an ability to see what it does.');
     saveGame(gameState);
     scanVisibleTips(gameState);
   }
@@ -2816,21 +2471,18 @@
         commitMove(useCard(gameState, index, tileX, tileY));
       } else if (wasFollowup) {
         endFollowupTurn(); // clicking away declines the bonus shot and ends the turn
-      } else {
-        examineTile(tileX, tileY);
       }
+      // a click on a non-target simply cancelled the card (above)
       return;
     }
 
-    // A click on a reachable tile moves the king there; any OTHER click both inspects the tile AND
-    // SCROLLS the view to centre on it — so clicking a distant object is how you look around (no need
-    // to hunt for the screen edge or drag).
+    // A click on a reachable tile moves the king there; any OTHER click SCROLLS the view to centre on
+    // it — clicking a distant tile is how a desktop mouse looks around (examining tiles was removed).
     const canMove = isIdle() && getPlayerMoves(gameState).some((move) => move.x === tileX && move.y === tileY);
     if (canMove) {
       commitMove(movePlayerTo(gameState, tileX, tileY));
-    } else {
-      if (tileX >= 0 && tileX < WORLD_SIZE && tileY >= 0 && tileY < WORLD_SIZE) Renderer.centerOn(tileX, tileY);
-      examineTile(tileX, tileY);
+    } else if (tileX >= 0 && tileX < WORLD_SIZE && tileY >= 0 && tileY < WORLD_SIZE) {
+      Renderer.centerOn(tileX, tileY);
     }
   }
 
@@ -2844,6 +2496,8 @@
     }
     const delta = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
+
+    tickAutoMove(timestamp); // advance a held-swipe / hold / double-tap auto-walk (only when idle)
 
     if (screen === 'playing' && animTimer > 0) {
       animTimer = Math.max(0, animTimer - delta);
@@ -3178,6 +2832,7 @@
     const move = resolveMove(event) || resolvePan(event);
     if (move) {
       event.preventDefault();
+      clearAutoMove(); // a manual keypress takes over from any mobile auto-walk
       queueStep(move[0], move[1]); // cardinals may combine into a diagonal; see queueStep
       return;
     }
@@ -3220,6 +2875,7 @@
       suppressClick = false; // this "click" was the end of a drag
       return;
     }
+    clearAutoMove();
     dispatchTap(event.clientX, event.clientY);
   });
 
@@ -3275,15 +2931,106 @@
     dragging = false;
   });
 
-  // --- TOUCH (phones/tablets). ONE finger drives the king: a directional SWIPE steps him that way (the
-  // primary way to move on a phone), while a still TAP acts on the tile under it (move-to / attack /
-  // inspect), and a still HOLD inspects it (touch has no hover). TWO fingers own the camera: pinch to
-  // zoom, drag to pan. Keeping pan on two fingers frees one finger for movement. All additive — a mouse
-  // never emits touch events — and `touch-action: none` (styles.css) stops the page scrolling under us.
+  // --- MOBILE AUTO-MOVE: a held or issued command that keeps stepping the king between turns, ticked
+  // from the game loop ONLY while idle (so it respects animations and the enemy phase). Three modes:
+  //   'direction' — a held SWIPE: keep stepping the swiped way (steerable), ~once a HOLD_REPEAT_MS.
+  //   'approach'  — a held TAP (still finger): keep stepping TOWARD the tapped tile.
+  //   'path'      — a DOUBLE-TAP: auto-walk the pathfound route to the tapped tile, hands-free.
+  const HOLD_DELAY_MS = 350;   // hold a still finger this long before "move toward the tile" begins
+  const HOLD_REPEAT_MS = 750;  // ms between steps while a swipe/tap is HELD (unhurried, ~once a second)
+  const DOUBLE_TAP_MS = 300;   // two taps within this window (and near the same spot) = a double-tap
+  let autoMove = null;         // { mode, dx, dy, tx, ty, nextAt } or null
+  let lastTapUp = null;        // { t, x, y } of the previous tap, for double-tap detection
+  const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  function clearAutoMove() { autoMove = null; }
+
+  function tileFromClient(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
+    return Renderer.screenToTile((clientX - rect.left) * scale, (clientY - rect.top) * scale);
+  }
+
+  // The king's best legal step toward (tx,ty): rank his moves by a flood from the target over walkable
+  // ground (allyPathField, shared with ally pathing) and take the one that gets STRICTLY closer the way
+  // he'd have to WALK. Null if nothing gets closer (already as near as the floor allows, or walled off).
+  function nextStepToward(state, tx, ty) {
+    const moves = getPlayerMoves(state);
+    if (!moves.length) return null;
+    const { dist, id } = allyPathField(state, tx, ty);
+    const here = dist[id(state.player.x, state.player.y)];
+    let best = null;
+    let bestD = here >= 0 ? here : Infinity;
+    for (const m of moves) {
+      const d = dist[id(m.x, m.y)];
+      if (d >= 0 && d < bestD) { bestD = d; best = m; }
+    }
+    // Adjacent to a target the flood can't stand on (an enemy to strike, the king wading): allow the
+    // finishing step ONTO it.
+    if (!best) { const onto = moves.find((m) => m.x === tx && m.y === ty); if (onto) best = onto; }
+    return best;
+  }
+
+  // Issue ONE step toward (tx,ty). Returns true iff a move was actually issued.
+  function stepTowardTile(tx, ty) {
+    if (!gameState || !isIdle()) return false;
+    if (gameState.player.x === tx && gameState.player.y === ty) return false;
+    const m = nextStepToward(gameState, tx, ty);
+    if (!m) return false;
+    const dx = Math.sign(m.x - gameState.player.x);
+    const dy = Math.sign(m.y - gameState.player.y);
+    if (!dx && !dy) return false;
+    clearPendingStep();
+    handleStep(dx, dy);
+    return true;
+  }
+
+  // Advance the active auto-move (called every frame from the loop). Held modes step on a cadence; a
+  // path auto-walks as fast as the animations allow, and stops on arrival or when it can get no closer.
+  function tickAutoMove(now) {
+    if (!autoMove || !gameState || screen !== 'playing' || cardTargeting !== null || !isIdle()) return;
+    if (autoMove.mode === 'path') {
+      if (gameState.player.x === autoMove.tx && gameState.player.y === autoMove.ty) { clearAutoMove(); return; }
+      if (!stepTowardTile(autoMove.tx, autoMove.ty)) clearAutoMove();
+      return;
+    }
+    if (now < autoMove.nextAt) return;
+    autoMove.nextAt = now + HOLD_REPEAT_MS;
+    if (autoMove.mode === 'direction') handleStep(autoMove.dx, autoMove.dy);
+    else if (autoMove.mode === 'approach') stepTowardTile(autoMove.tx, autoMove.ty);
+  }
+
+  // A mobile TAP while playing: strike/step onto an adjacent tile, else take ONE step toward a distant
+  // one — navigation beats inspection on a phone, so the old tap-to-centre-and-examine is gone here.
+  // On menus, or while aiming a card, fall back to the normal tap dispatch (option select / fire card).
+  function mobileTap(clientX, clientY) {
+    if (screen !== 'playing' || cardTargeting !== null || !gameState) { dispatchTap(clientX, clientY); return; }
+    const tile = tileFromClient(clientX, clientY);
+    if (getPlayerMoves(gameState).some((m) => m.x === tile.x && m.y === tile.y)) {
+      clearPendingStep();
+      commitMove(movePlayerTo(gameState, tile.x, tile.y));
+      return;
+    }
+    stepTowardTile(tile.x, tile.y);
+  }
+
+  // --- TOUCH (phones/tablets). ONE finger drives the king: a SWIPE steps his way (HOLD it to keep
+  // going ~once a second, steerable); a still TAP steps toward the tapped tile (adjacent = move/strike);
+  // a still HOLD keeps stepping toward it; a DOUBLE-TAP auto-walks the pathfound route there. TWO fingers
+  // own the camera: pinch to zoom, drag to pan. `touch-action:none` (styles.css) stops the page scrolling
+  // under us; a mouse never emits touch events, so desktop is untouched.
+  // A quick FLICK (finger moving within FLICK_MS of touchdown) is a swipe = move the king; a slower,
+  // deliberate PRESS-AND-DRAG is a camera pan. Biased toward pan, since a stray pan is harmless but a
+  // stray king-step could walk into danger.
+  const FLICK_MS = 200;
   let touchStart = null;      // {x,y} where a one-finger gesture began (client coords)
-  let touchMoved = false;     // has this touch passed TAP_SLOP? (then it's a swipe, not a tap)
-  let swipeFired = false;     // has this one-finger swipe already stepped the king? (one step per swipe)
-  let pinch = null;           // {dist, cx, cy} of a two-finger gesture, for zoom + pan; null otherwise
+  let touchStartTime = 0;     // when it began, for the flick-vs-drag decision
+  let touchMoved = false;     // has this touch passed TAP_SLOP? (then it's a swipe/pan, not a tap/hold)
+  let gestureMode = null;     // once it's clearly moving: 'swipe' (move king) or 'pan' (camera)
+  let panLast = null;         // last client pos while panning, for the incremental delta
+  let swipeFired = false;     // has this swipe stepped at least once? (=> not a tap on lift)
+  let holdBegan = false;      // did the still-hold "approach" kick in? (=> not a tap on lift)
+  let pendingDouble = null;   // the tile a double-tap is targeting (set on the 2nd tap's touchstart)
+  let pinch = null;           // two-finger gesture state, or null
   let longPressTimer = null;
 
   const clearLongPress = () => { if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; } };
@@ -3302,29 +3049,33 @@
   }
 
   canvas.addEventListener('touchstart', (event) => {
-    hideTilePopover(); // clear a long-press popover from a previous touch
+    clearAutoMove(); // any new touch cancels a running auto-walk / held move
+    hideTilePopover();
     if (event.touches.length === 1) {
       const t = event.touches[0];
       touchStart = { x: t.clientX, y: t.clientY };
-      touchMoved = false;
-      swipeFired = false;
-      pinch = null;
-      // Arm a long-press: hold still and we inspect the tile under the finger, like a desktop hover.
+      touchStartTime = nowMs();
+      touchMoved = false; gestureMode = null; swipeFired = false; holdBegan = false; pinch = null;
+      // DOUBLE-TAP? a quick second tap near the first → mark this touch to auto-path on lift.
+      pendingDouble = (lastTapUp && (nowMs() - lastTapUp.t) < DOUBLE_TAP_MS
+        && Math.abs(t.clientX - lastTapUp.x) < 34 && Math.abs(t.clientY - lastTapUp.y) < 34)
+        ? tileFromClient(t.clientX, t.clientY) : null;
+      // Arm the HOLD: a still finger held past HOLD_DELAY_MS starts stepping toward the tile (unless a
+      // double-tap is forming, which becomes an auto-path instead).
       clearLongPress();
-      longPressTimer = setTimeout(() => {
-        longPressTimer = null;
-        if (touchStart && !touchMoved && screen === 'playing') {
-          touchMoved = true; // consume the gesture so the lift is not also treated as a tap
-          const rect = canvas.getBoundingClientRect();
-          const scale = canvas.width / rect.width;
-          showTilePopover({ clientX: touchStart.x, clientY: touchStart.y }, (touchStart.x - rect.left) * scale, (touchStart.y - rect.top) * scale);
-        }
-      }, LONG_PRESS_MS);
+      if (!pendingDouble) {
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          if (touchStart && !touchMoved && screen === 'playing') {
+            holdBegan = true;
+            const tile = tileFromClient(touchStart.x, touchStart.y);
+            autoMove = { mode: 'approach', tx: tile.x, ty: tile.y, nextAt: 0 }; // nextAt 0 => step at once
+          }
+        }, HOLD_DELAY_MS);
+      }
     } else if (event.touches.length === 2) {
-      // Second finger down: begin a pinch/pan and cancel any pending one-finger tap/swipe/long-press.
       pinch = { dist: fingerGap(event.touches), ...fingerMid(event.touches) };
-      touchStart = null;
-      touchMoved = true;
+      touchStart = null; touchMoved = true; pendingDouble = null;
       clearLongPress();
     }
   }, { passive: false });
@@ -3343,37 +3094,60 @@
       pinch = { dist: gap, cx: mid.cx, cy: mid.cy };
       return;
     }
-    // ONE finger: once it travels far enough in a direction, step the king ONCE (a flick = one move).
     if (!touchStart || !event.touches.length) return;
     const t = event.touches[0];
     const dx = t.clientX - touchStart.x;
     const dy = t.clientY - touchStart.y;
-    if (!touchMoved && Math.abs(dx) + Math.abs(dy) > TAP_SLOP) { touchMoved = true; clearLongPress(); }
-    // Swipe-to-step is a PLAYING-screen gesture; on menus/scenes a drag simply does nothing (they are
-    // driven by taps), so a slightly-moving tap on a menu button is never mistaken for a swipe.
-    if (!swipeFired && screen === 'playing' && Math.hypot(dx, dy) >= SWIPE_STEP) {
+    // First real movement: commit to a flick-SWIPE (moved fast, and on the board) or a PRESS-DRAG PAN.
+    if (!touchMoved && Math.abs(dx) + Math.abs(dy) > TAP_SLOP) {
+      touchMoved = true; clearLongPress(); pendingDouble = null;
+      clearAutoMove(); // a drag cancels any hold-approach that had begun
+      gestureMode = (screen === 'playing' && (nowMs() - touchStartTime) < FLICK_MS) ? 'swipe' : 'pan';
+      panLast = { x: t.clientX, y: t.clientY };
+    }
+    if (gestureMode === 'pan') {
       event.preventDefault();
-      swipeFired = true; // one step per swipe; a fresh touch is needed for the next
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      Renderer.panByPixels((t.clientX - panLast.x) * scale, (t.clientY - panLast.y) * scale);
+      panLast = { x: t.clientX, y: t.clientY };
+      return;
+    }
+    if (gestureMode === 'swipe' && Math.hypot(dx, dy) >= SWIPE_STEP) {
+      event.preventDefault();
       const [sx, sy] = swipeDirection(dx, dy);
-      if (sx || sy) { clearPendingStep(); handleStep(sx, sy); }
+      if (sx || sy) {
+        if (autoMove && autoMove.mode === 'direction') {
+          autoMove.dx = sx; autoMove.dy = sy; // steer the held direction as the finger keeps moving
+        } else {
+          if (!swipeFired) { swipeFired = true; clearPendingStep(); handleStep(sx, sy); } // first step now
+          autoMove = { mode: 'direction', dx: sx, dy: sy, nextAt: nowMs() + HOLD_REPEAT_MS };
+        }
+      }
     }
   }, { passive: false });
 
   canvas.addEventListener('touchend', (event) => {
     clearLongPress();
-    // A one-finger lift that never moved is a TAP → act on the tile, and preventDefault so the browser
-    // does not also fire a synthetic 300ms-late mouse click (which would double-handle the tap).
-    if (touchStart && !touchMoved && !swipeFired && event.changedTouches.length) {
+    if (autoMove && (autoMove.mode === 'direction' || autoMove.mode === 'approach')) clearAutoMove(); // held ends on release
+    // A clean TAP (still finger, no swipe, hold never kicked in): navigate, or engage a double-tap path.
+    if (touchStart && !touchMoved && !swipeFired && !holdBegan && event.changedTouches.length) {
       event.preventDefault();
       const t = event.changedTouches[0];
-      dispatchTap(t.clientX, t.clientY);
+      if (pendingDouble) {
+        autoMove = { mode: 'path', tx: pendingDouble.x, ty: pendingDouble.y, nextAt: 0 };
+        pendingDouble = null; lastTapUp = null;
+      } else {
+        mobileTap(t.clientX, t.clientY);
+        lastTapUp = { t: nowMs(), x: t.clientX, y: t.clientY };
+      }
     }
     if (!event.touches.length) { touchStart = null; pinch = null; }
   }, { passive: false });
 
   canvas.addEventListener('touchcancel', () => {
     clearLongPress();
-    touchStart = null; pinch = null; touchMoved = false; swipeFired = false;
+    touchStart = null; pinch = null; touchMoved = false; gestureMode = null; swipeFired = false; holdBegan = false; pendingDouble = null;
   });
 
   canvas.addEventListener('mousemove', (event) => {
@@ -3415,7 +3189,6 @@
       const t = cardTargets.find((c) => c.x === tile.x && c.y === tile.y);
       if (t) cardCursor = { x: t.x, y: t.y };
     }
-    showTilePopover(event, x * scale, y * scale);
   });
 
   canvas.addEventListener('mouseleave', () => {
