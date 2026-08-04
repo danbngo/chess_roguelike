@@ -614,8 +614,8 @@ const GameAudio = (function () {
       .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
       // callback form of decodeAudioData for older Safari (which doesn't return a promise)
       .then((data) => new Promise((res, rej) => ctx.decodeAudioData(data, res, rej)))
-      .then((decoded) => { musicBuffers[key] = decoded; applyMusic(); }) // swap it in the instant it's ready
-      .catch(() => { musicBuffers[key] = 'failed'; applyMusic(); }); // failed → re-evaluate → synth fallback now
+      .then((decoded) => { musicBuffers[key] = decoded; applyMusic(); preloadRest(); }) // swap in + then warm the rest
+      .catch(() => { musicBuffers[key] = 'failed'; applyMusic(); preloadRest(); }); // failed → synth fallback + warm rest
   }
 
   // Decide what should be sounding for the current `track`. If a screen HAS an MP3, we play it once it's
@@ -649,13 +649,21 @@ const GameAudio = (function () {
   function stopMusic() { stopMusicFile(); stopProcedural(); }
 
   // Unlock audio on the first user gesture (required by browser autoplay policy).
+  // Warm the OTHER tracks — but only ONCE the first (current-screen) track has loaded, so it gets the
+  // bandwidth to itself and music starts as soon as possible. Idempotent; loadMusic skips ones already
+  // loaded/loading. (Runs from the current track's load-complete handler; see loadMusic.)
+  let restWarmed = false;
+  function preloadRest() {
+    if (restWarmed) return;
+    restWarmed = true;
+    Object.keys(MUSIC_FILES).forEach(loadMusic);
+  }
+
   function unlock() {
     unlocked = true;
     if (!enabled || !ensure()) return;
     if (ctx.state === 'suspended') ctx.resume();
-    startMusic();
-    // Warm every screen's MP3 in the background so switching screens never blips back to the synth.
-    Object.keys(MUSIC_FILES).forEach(loadMusic);
+    startMusic(); // loads ONLY the current screen's track first; preloadRest warms the others after it lands
   }
   if (typeof document !== 'undefined') {
     const once = () => {
