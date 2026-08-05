@@ -904,6 +904,10 @@
   }
 
   function applyState(nextState, animate) {
+    // A fresh state load (animate === false) — descending a stair, entering a realm/portal, a new game —
+    // is NOT a normal step, so cancel any mobile auto-walk; otherwise it would keep chasing the old
+    // floor's destination onto the new floor. (Normal moves pass animate === true and keep it running.)
+    if (!animate) { clearAutoMove(); clearPathProposal(); }
     gameState = nextState;
     updateHud();
     // Drain the action's SOUND CUES. The logic layer names what happened (a door creaked open, a
