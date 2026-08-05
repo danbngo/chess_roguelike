@@ -5529,6 +5529,24 @@ const Renderer = (function () {
       return (oneWayActive && !isWithinBounds(awareBounds, x, y))
         || (seeThrough && !hasLineOfSight(state, state.player.x, state.player.y, x, y, false));
     };
+    // Can the king's SHOT actually reach (tx,ty)? Sixth Sense fires through anything; otherwise a solid
+    // shot-stopper on the line — wall, stone, boulder, ice — blocks it. Used to tell a "free-fire" one-
+    // way tile (shootable) from one Premonition only SEES past solid cover (spotted, but no shot).
+    const shotReaches = (tx, ty) => {
+      if (state.player.seeThroughWalls || typeof blocksArrow !== 'function') return true;
+      let x = state.player.x, y = state.player.y;
+      const adx = Math.abs(tx - x), ady = Math.abs(ty - y);
+      const sx = x < tx ? 1 : -1, sy = y < ty ? 1 : -1;
+      let err = adx - ady;
+      while (x !== tx || y !== ty) {
+        const e2 = 2 * err;
+        if (e2 > -ady) { err -= ady; x += sx; }
+        if (e2 < adx) { err += adx; y += sy; }
+        if (x === tx && y === ty) break;
+        if (blocksArrow(terrainAt(state, x, y))) return false;
+      }
+      return true;
+    };
     const threatened = getThreatenedTiles(state);
     const visible = computeVisibleTiles(state);
     const lit = (x, y) => visible.has(`${x},${y}`);
@@ -5694,6 +5712,12 @@ const Renderer = (function () {
         if (!inView) {
           // Out of the king's line of sight: dim it and hide what lurks there.
           ctx.fillStyle = 'rgba(2, 6, 23, 0.64)';
+          ctx.fillRect(px, py, tileSize, tileSize);
+        } else if (oneWaySafe(x, y) && !shotReaches(x, y)) {
+          // SEEN, but NOT shootable: Premonition x-rays past solid cover (a wall, a boulder), but an
+          // arrow can't follow — the foe there is spotted, not a target. DIM it, clearly apart from the
+          // cyan free-fire zones below, so "I can see it but can't hit it" reads at a glance.
+          ctx.fillStyle = 'rgba(2, 6, 23, 0.5)';
           ctx.fillRect(px, py, tileSize, tileSize);
         } else if (oneWaySafe(x, y)) {
           // A SAFE one-way firing zone: the king can shoot here but nothing here can hit him back.

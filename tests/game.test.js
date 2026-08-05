@@ -2724,11 +2724,11 @@ test('Marksman: Recoil (T1) kicks back + knocks adjacent foes away; Ballista (T2
   assert.ok(shot.enemies.some((e) => e.x === 8 && e.y === 8), 'a foe two tiles from the firing spot is NOT punted by the kickback');
 });
 
-test('Oracle chain: Premonition (see/shoot through HAZE, one-way) → Hawk Eyes / Power Draw', () => {
+test('Oracle chain: Premonition (x-ray sight; shoot only through haze; one-way) → Hawk Eyes / Power Draw', () => {
   const base = createInitialState('ranger').player;
-  // Premonition: see AND shoot through HAZE (tall grass / steam) within sight — one-way. NOT walls.
+  // Premonition: x-ray SIGHT through any cover; but he SHOOTS only through HAZE (grass/steam), not solid.
   const p1 = rangerWith('r_eagle');
-  assert.equal(p1.player.trueSight, true, 'Premonition grants soft-sight through haze');
+  assert.equal(p1.player.trueSight, true, 'Premonition grants x-ray sight');
   p1.player.x = 10; p1.player.y = 10; p1.terrain = { '11,11': 'devilgrass' };
   assert.equal(inLineOfSight(p1, 12, 12), true, 'his sight passes through the tall grass');
   p1.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true })]; // a foe behind the grass on the SE diagonal
@@ -2736,10 +2736,13 @@ test('Oracle chain: Premonition (see/shoot through HAZE, one-way) → Hawk Eyes 
   assert.ok(getCardMoves(p1, p1.player.cards[bowIdx]).some((m) => m.x === 12 && m.y === 12), 'and he can SHOOT it through the grass');
   // ...but ONE-WAY: the hidden foe can't see the king back.
   assert.equal(enemyAwareOfKing(p1, 12, 12), false, 'the foe in the grass cannot see the king');
-  // ...and a WALL still blinds him — Premonition is haze-only now.
+  // ...and now he SEES clean through a WALL too — but he still cannot SHOOT through it.
   const walled = rangerWith('r_eagle');
   walled.player.x = 10; walled.player.y = 10; walled.terrain = { '11,11': 'wall' };
-  assert.equal(inLineOfSight(walled, 12, 12), false, 'solid stone still blocks Premonition');
+  assert.equal(inLineOfSight(walled, 12, 12), true, 'Premonition x-rays straight through solid stone');
+  walled.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 12, awake: true })]; // a foe behind the WALL
+  const bowW = walled.player.cards.findIndex((c) => c.kind === 'bishop');
+  assert.ok(!getCardMoves(walled, walled.player.cards[bowW]).some((m) => m.x === 12 && m.y === 12), 'but the arrow slaps into the wall — the foe is spotted, not a target');
   // Hawk Eyes grants +2 sight radius and +2 card reach — the extended sight is ONE-WAY, like Premonition.
   const s = rangerWith('r_eagle', 'r_reach', 'r_eyes2');
   assert.equal(s.player.vision, base.vision + 4, 'a +2-radius sight bump atop the innate Sharpened Senses baseline');

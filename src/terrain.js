@@ -286,15 +286,15 @@ function lineHasGate(state, x0, y0, x1, y1) {
   return false;
 }
 
-// How far the king's OWN sight passes THROUGH cover. Sixth Sense (seeThroughWalls) sees and shoots
-// clean through opaque cover — full x-ray (returns true). Premonition (trueSight) is now the lesser
-// gift: it peers only through HAZE — tall grass and geyser steam — never stone, timber or boulders
-// (returns 'soft'). Both are one-way — see enemyAwareOfKing.
+// How far the king's OWN SIGHT passes THROUGH cover (this is VISION, not shots). BOTH gifts now see
+// clean through EVERYTHING — walls, boulders, trees, haze (returns true / full x-ray). They differ only
+// in what they can SHOOT through, which is decided separately by `seeThroughWalls` at the fire sites:
+// Sixth Sense (seeThroughWalls) looses shots through solid cover too; Premonition (trueSight) sees past
+// it but its arrows still stop at anything solid — it only shoots through what doesn't block movement
+// (haze: grass, steam). Both are one-way — see enemyAwareOfKing.
 function playerSeesThroughCover(state) {
   const p = state.player || {};
-  if (p.seeThroughWalls) return true;
-  if (p.trueSight) return 'soft';
-  return false;
+  return (p.seeThroughWalls || p.trueSight) ? true : false;
 }
 
 // A tile is in the KING's sight if it is inside his window and unobstructed.
