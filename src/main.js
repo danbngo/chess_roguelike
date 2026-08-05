@@ -507,6 +507,7 @@
     if (!isIdle()) {
       return;
     }
+    if (tutBlocksCard(index)) return; // training floor: only the spotlit ability card answers
     // During a Double-Cast follow-up only the SAME card may re-fire; its hotkey otherwise
     // declines the bonus shot and ends the turn, and other cards are locked out.
     if (awaitingFollowup) {
@@ -573,6 +574,10 @@
     scored.sort((a, b) => (b.v - a.v) || (distToKing(a.t) - distToKing(b.t)));
     const preferred = scored[0].t;
     cardCursor = { x: preferred.x, y: preferred.y };
+    // TUTORIAL: snap straight to the tile the lesson wants (the ledge / switch / ice), never a stray
+    // foe, so a single Enter or a tap on the glowing tile always solves the puzzle.
+    const tg = tutGuide();
+    if (tg && tg.phase === 'cardTarget' && tg.tiles.length) cardCursor = { x: tg.tiles[0].x, y: tg.tiles[0].y };
     gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — cycle targets with the numpad/WSAD, then Enter/Space (or press ${index + 1} again) to fire; Esc to cancel.`;
     showCardInfo(card, index);
     updateHud();
@@ -829,6 +834,10 @@
     if (cardTargeting === null || !cardTargets.length || !gameState) {
       return;
     }
+    // TUTORIAL: the cursor is pinned to the lesson's target tile — don't let a direction key drag it
+    // off onto a tile the spotlight isn't even showing.
+    const g = tutGuide();
+    if (g && g.phase === 'cardTarget') return;
     const kx = gameState.player.x;
     const ky = gameState.player.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -861,6 +870,10 @@
     if (cardTargeting === null || !cardCursor) {
       return;
     }
+    // TUTORIAL: only fire when the cursor sits on the lesson's target tile — never let a misaim waste
+    // the one card that opens the barrier. (toggleCardTargeting already snaps the cursor there.)
+    const g = tutGuide();
+    if (g && g.phase === 'cardTarget' && !g.tiles.some((t) => t.x === cardCursor.x && t.y === cardCursor.y)) return;
     const target = cardTargets.find((t) => t.x === cardCursor.x && t.y === cardCursor.y);
     const index = cardTargeting;
     if (!target) {
@@ -2408,8 +2421,83 @@
     pendingStepTimer = setTimeout(firePendingStep, DIAG_COMBO_MS);
   }
 
+  /* ------------------- tutorial spotlight & single-target input gate -------------------
+     On the TRAINING FLOOR only: at a tricky juncture (strike the ferz, the ability-card puzzle,
+     shatter the circle, grab the key, reach the stair) the game FREEZES and only the one glowing
+     tile — or the one glowing ability card — answers a tap. Everything below returns null/false off
+     the training floor, so the real game is never gated. See tutJuncture (game.js) for the geography. */
+
+  // The one thing the player must tap right now, or null. Wraps the pure juncture and adds the
+  // ability card's press → aim sub-steps. Shapes: { phase:'card', card:0 } (press the glowing card),
+  // { phase:'cardTarget', tiles } (card aimed — tap a glowing tile to fire), or
+  // { phase:'strike'|'circle'|'key'|'stair', tiles:[one tile] } (step onto the glowing tile).
+  function tutGuide() {
+    if (!gameState || !gameState.tutorial || screen !== 'playing') return null;
+    if (typeof tutJuncture !== 'function') return null;
+    const j = tutJuncture(gameState);
+    if (!j) return null;
+    if (j.kind === 'ability') {
+      if (cardTargeting === 0) return { phase: 'cardTarget', tiles: abilityTargetTiles(), card: null };
+      const c = gameState.player.cards[0];
+      if (c && c.remaining > 0) return null; // already fired — let the shot resolve, don't re-lock
+      return { phase: 'card', tiles: null, card: 0 };
+    }
+    return { phase: j.kind, tiles: [{ x: j.x, y: j.y }], card: null };
+  }
+
+  // The tile(s) the starter ability card must hit to open the barrier — read live from getCardMoves,
+  // the same way the walkthrough test's crossBarrier does, so it can never drift from the real rule.
+  function abilityTargetTiles() {
+    if (!gameState) return [];
+    const c = gameState.player.cards[0];
+    if (!c) return [];
+    const p = gameState.player;
+    const moves = getCardMoves(gameState, c) || [];
+    const cls = p.className;
+    let picks;
+    if (cls === 'ranger') picks = moves.filter((m) => terrainAt(gameState, m.x, m.y) === 'switch');
+    else if (cls === 'warrior') picks = moves.filter((m) => m.viaJump && m.x > p.x); // leap east over the pit
+    else picks = moves.filter((m) => m.y === p.y && m.x > p.x); // sorcerer: bolt straight east into the ice
+    return picks.map((m) => ({ x: m.x, y: m.y }));
+  }
+
+  // Input gates. true = the guide forbids this action right now (freeze).
+  function tutBlocksMove(tx, ty) {
+    const g = tutGuide();
+    if (!g) return false;
+    if (g.card != null) return true;                 // must press the card, not step
+    if (!g.tiles || !g.tiles.length) return true;
+    return !g.tiles.some((t) => t.x === tx && t.y === ty);
+  }
+  function tutBlocksCard(idx) {
+    const g = tutGuide();
+    if (!g) return false;
+    if (g.phase === 'card') return idx !== g.card;
+    if (g.phase === 'cardTarget') return idx !== 0; // only the aimed card re-answers (fire / cancel)
+    return true;                                    // a tile juncture wants no card pressed at all
+  }
+
+  // Push the board veil + ability-card highlight to match the guide. Cheap; called once per frame.
+  function syncTutSpotlight() {
+    const g = tutGuide();
+    if (Renderer && typeof Renderer.setTutSpotlight === 'function') {
+      Renderer.setTutSpotlight(g ? (g.card != null ? [] : g.tiles) : null);
+    }
+    const slot = g && g.card != null ? g.card : null;
+    if (cardBar) {
+      cardBar.classList.toggle('tut-guiding', slot != null);
+      const kids = cardBar.children;
+      for (let i = 0; i < kids.length; i += 1) kids[i].classList.toggle('tut-target', i === slot);
+    }
+  }
+
   function handleStep(dx, dy) {
     if (!isIdle()) {
+      return;
+    }
+    if (tutBlocksMove(gameState.player.x + dx, gameState.player.y + dy)) {
+      GameAudio.play('nope'); // frozen at a lesson juncture — only the glowing tile / card answers
+      Renderer.bump(dx, dy);
       return;
     }
     clearPathProposal(); // any actual step invalidates a pending move-path proposal preview
@@ -2449,6 +2537,17 @@
     const rect = canvas.getBoundingClientRect();
     const scale = canvas.width / rect.width;
     const { x: tileX, y: tileY } = Renderer.screenToTile((event.clientX - rect.left) * scale, (event.clientY - rect.top) * scale);
+
+    // TUTORIAL FREEZE: at a juncture, only the glowing tile acts. A click anywhere else just re-centres
+    // the view (looking around stays free) — it never moves, fires, or cancels an aim by accident.
+    const guide = tutGuide();
+    if (guide) {
+      const onTarget = Boolean(guide.tiles && guide.tiles.some((t) => t.x === tileX && t.y === tileY));
+      if (!onTarget) {
+        if (tileX >= 0 && tileX < WORLD_SIZE && tileY >= 0 && tileY < WORLD_SIZE) Renderer.centerOn(tileX, tileY);
+        return;
+      }
+    }
 
     // Aiming a card: a click on a highlighted tile plays it; anything else cancels.
     if (cardTargeting !== null) {
@@ -2604,6 +2703,7 @@
       const aiming = cardTargeting !== null;
       const targets = aiming ? cardTargets : null;
       const aoe = aiming ? spellAoeTiles(gameState, cardTargeting, cardCursor) : null;
+      syncTutSpotlight(); // training floor: dim the board / light the one tile or card to tap next
       Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null, aoe);
     }
   }
@@ -3030,6 +3130,7 @@
   // next tile is a threatened (red) one, or if he can no longer get any closer.
   function tickAutoMove() {
     if (!autoMove || !gameState || screen !== 'playing' || cardTargeting !== null || !isIdle()) return;
+    if (tutGuide()) { clearAutoMove(); return; } // a lesson juncture takes over — no auto-walk through it
     const p = gameState.player;
     if (p.x === autoMove.tx && p.y === autoMove.ty) { clearAutoMove(); return; }          // arrived
     if (typeof autoMove.lastHp === 'number' && p.hp < autoMove.lastHp) { clearAutoMove(); return; } // got hit
@@ -3061,6 +3162,14 @@
   // move-path PROPOSAL highlighted on the board; tapping that same destination a SECOND time commits the
   // auto-walk. Menus / card-aiming fall back to the normal tap dispatch (option select / fire card).
   function mobileTap(clientX, clientY) {
+    // TUTORIAL FREEZE: at a juncture only the glowing tile (or the ability card) answers. A tap on the
+    // card phase does nothing here (the DOM card handles it); a tap off the target tile is swallowed.
+    const guide = tutGuide();
+    if (guide) {
+      if (guide.card != null) return;
+      const gt = tileFromClient(clientX, clientY);
+      if (!guide.tiles || !guide.tiles.some((t) => t.x === gt.x && t.y === gt.y)) return;
+    }
     if (screen !== 'playing' || cardTargeting !== null || !gameState) { dispatchTap(clientX, clientY); return; }
     const tile = tileFromClient(clientX, clientY);
     // Adjacent / reachable in one move → act immediately.

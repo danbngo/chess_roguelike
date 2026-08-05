@@ -77,6 +77,10 @@ const Renderer = (function () {
   // every line by eye; this rings the culprits instead. Set on hover, empty the rest of the time.
   let markedThreats = new Set();
   let pathPreview = null; // mobile: a proposed move route to preview, { tiles:[{x,y}], dx, dy } or null
+  // TUTORIAL SPOTLIGHT: at a tricky juncture the training floor dims everything and punches a bright
+  // hole over the one tile the player must tap. `null` = off; `[]` = dim the whole board with no hole
+  // (used while he must press an ABILITY CARD in the row below the board); `[{x,y}…]` = spotlight those.
+  let tutSpotlight = null;
 
   // In-flight ranged projectiles (turret / boss bolts), each easing from a source
   // tile to a target tile over its lifetime.
@@ -674,6 +678,7 @@ const Renderer = (function () {
   const PIECE_SPRITE_NAMES = {
     king: 'king', queen: 'queen', rook: 'rook', bishop: 'bishop', knight: 'horse', pawn: 'pawn',
     amazon: 'queen', chancellor: 'rook', archbishop: 'bishop', nightrider: 'horse', berolina: 'pawn',
+    ferz: 'bishop', // a ferz (1-step diagonal mover) wears the bishop's mitre — its glyph is ♗ already
   };
   const pieceSprites = {}; // "king_white" -> HTMLImageElement
   function loadPieceSprites() {
@@ -6170,6 +6175,29 @@ const Renderer = (function () {
 
     ctx.restore();
 
+    // TUTORIAL SPOTLIGHT — a veil over the whole board with the one tile he must tap punched clear and
+    // ringed in a breathing gold. Drawn in SCREEN space (the board transform is already restored), so
+    // each tile maps back with the same origin/scale screenToTile uses. An empty list dims everything
+    // (no hole) — his attention belongs on the glowing ABILITY CARD below the board, not the board.
+    if (tutSpotlight) {
+      const ts = tileSize;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      for (const t of tutSpotlight) ctx.rect((t.x - originX) * ts, (t.y - originY) * ts, ts, ts);
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.62)';
+      ctx.fill('evenodd'); // the inner rects overlap the outer once → even winding → punched holes
+      if (tutSpotlight.length) {
+        const pulse = 0.55 + 0.45 * Math.sin(clock * 4.5);
+        ctx.shadowColor = '#fde047';
+        ctx.shadowBlur = ts * 0.6 * pulse;
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = Math.max(2, ts * 0.06);
+        for (const t of tutSpotlight) ctx.strokeRect((t.x - originX) * ts + 2, (t.y - originY) * ts + 2, ts - 4, ts - 4);
+      }
+      ctx.restore();
+    }
+
     // Escalating danger: a warm edge vignette that intensifies the longer the king lingers,
     // snapping to an angry, pulsing red once the floor hits max danger. Purely atmospheric —
     // the centre of the board stays perfectly clear, so vision never changes.
@@ -6272,5 +6300,10 @@ const Renderer = (function () {
     pathPreview = (p && p.tiles && p.tiles.length) ? p : null;
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview };
+  // TUTORIAL: the tiles to spotlight this frame (see tutSpotlight). null = off; [] = dim, no hole.
+  function setTutSpotlight(tiles) {
+    tutSpotlight = tiles || null;
+  }
+
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight };
 })();

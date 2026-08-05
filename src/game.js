@@ -1818,7 +1818,7 @@ const TUT_LAYOUT = {
     [19, 12, 'tutTurret'], [9, 12, 'tutCircle'], [6, 20, 'tutKeyBoss'],
   ],
   doors: [[12, 4], [15, 12], [8, 12], [10, 20]], // shield the attack / turret / circle / boss signs
-  mann: { x: 14, y: 4 },      // in the attack room
+  foe: { x: 14, y: 4 },       // the ferz in the attack room
   turret: { x: 10, y: 12 },   // seals the turret room's west doorway, sweeping row 12
   circle: { x: 2, y: 12 },    // at the FAR end of the bigger circle room — a few steps to rush it down
   guardian: { x: 14, y: 20 }, // roams the arena
@@ -1908,9 +1908,11 @@ function buildTutorialFloor(classKey, difficulty) {
 
   const signs = L.signs.map(([x, y, tip]) => ({ x, y, tip: tip === 'ABILITY' ? abilityTip : tip }));
 
-  // The training foe — a MANN (a non-royal king): it steps one tile any direction and CAPTURES the
-  // adjacent king, so it can strike straight ahead (a pawn couldn't). ASLEEP behind its door.
-  const foe = createEnemy('mann', L.mann.x, L.mann.y);
+  // The training foe — a FERZ: it steps (and captures) exactly one square DIAGONALLY, a weak,
+  // short-range piece. ASLEEP behind its door until the king draws near. It renders as a BISHOP
+  // sprite (PIECE_SPRITE_NAMES maps ferz→bishop), so it reads as a clean piece on a small screen
+  // instead of a glyph.
+  const foe = createEnemy('ferz', L.foe.x, L.foe.y);
   foe.id = 'tut-foe'; foe.asleep = true; foe.awake = false; foe.tutorialFoe = true;
   // The GUARDIAN: a real boss (HP bar, a couple of blows) roaming the OPEN arena — a knight here has
   // room to leap and CAN strike. Fight it OR dodge past to the stair. Asleep behind its door; dying
@@ -1985,6 +1987,39 @@ function tickTutorial(state) {
     state.tutTipSerial = (state.tutTipSerial || 0) + 1;
   }
   state.tutOnSign = here;
+}
+
+// The current tutorial JUNCTURE the king must act at, or null — the ONE tile he needs to tap next.
+// The UI (main.js) reads this to FREEZE input and spotlight that tile at the tricky moments; between
+// junctures he moves freely. Pure function of game state (the ability juncture's card press/aim
+// sub-steps are layered on in the UI). Priority order — only one is ever live, since the junctures
+// sit far apart on the floor: solve the ability puzzle → strike the ferz → shatter the summoning
+// circle → grab the key → reach the stair. The TURRET is deliberately NOT gated: stepping off its
+// lines is a judgement call, not one right tile, so it keeps only its tip.
+function tutJuncture(state) {
+  if (!state || !state.tutorial) return null;
+  const p = state.player;
+  const reach = (x, y) => getPlayerMoves(state).some((m) => m.x === x && m.y === y);
+  // ABILITY — standing ON the launch tile with the barrier one step east still unsolved. The bar is a
+  // pit (warrior), a metal gate (ranger) or a wall of ice (sorcerer); each clears a different way.
+  const L = state.tutLaunch;
+  if (L && p.x === L.x && p.y === L.y) {
+    const bar = terrainAt(state, L.x + 1, L.y);
+    if (bar === 'pit' || bar === 'metalgate' || bar === 'ice') return { kind: 'ability', x: L.x, y: L.y };
+  }
+  // STRIKE the ferz — the instant he can step onto it.
+  const foe = state.enemies.find((e) => e.id === 'tut-foe');
+  if (foe && reach(foe.x, foe.y)) return { kind: 'strike', x: foe.x, y: foe.y };
+  // SHATTER the summoning circle — step onto its rune.
+  const circle = state.enemies.find((e) => e.id === 'tut-circle');
+  if (circle && reach(circle.x, circle.y)) return { kind: 'circle', x: circle.x, y: circle.y };
+  // GRAB the key.
+  const key = state.key;
+  if (key && !key.collected && reach(key.x, key.y)) return { kind: 'key', x: key.x, y: key.y };
+  // REACH the stair, once the key is his.
+  const ex = state.exit;
+  if (key && key.collected && ex && reach(ex.x, ex.y)) return { kind: 'stair', x: ex.x, y: ex.y };
+  return null;
 }
 
 // LEAVING the training grounds — by the skip portal or the stair — drops him into the REAL first

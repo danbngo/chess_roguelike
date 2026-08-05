@@ -831,6 +831,24 @@ body.in-game canvas {
   cursor: not-allowed;
 }
 
+/* TUTORIAL SPOTLIGHT on the ABILITY row: at the ability-puzzle juncture the training floor freezes
+   input and tells the player to press ONE card. Dim every other slot right down and set the target
+   card ablaze with a breathing gold ring so the eye goes straight to it (matches the board veil). */
+.card-bar.tut-guiding .card-slot {
+  opacity: 0.22;
+  filter: grayscale(0.5);
+  transition: opacity 0.2s ease;
+}
+.card-bar.tut-guiding .card-slot.tut-target {
+  opacity: 1;
+  filter: none;
+  animation: tut-card-pulse 1.1s ease-in-out infinite;
+}
+@keyframes tut-card-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px #fde047, 0 0 14px 2px rgba(253, 224, 71, 0.55); }
+  50%      { box-shadow: 0 0 0 3px #fde047, 0 0 26px 7px rgba(253, 224, 71, 0.95); }
+}
+
 /* Cooldown countdown badge in the corner of a recharging card. */
 .card-cooldown {
   position: absolute;
