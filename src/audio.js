@@ -361,6 +361,7 @@ const GameAudio = (function () {
   let track = 'explore';
   let tense = false;
   let dangerStep = 0;
+  let dangerFrac = 0; // raw 0..1 dread level, for the smoothly-scaling dread heartbeat (see startHeart)
   const ARP = [0, 1, 2, 1, 0, 1, 2, 1];
   // The in-play score HURRIES in gears as the floor's dread climbs — the same tune, wound tighter —
   // so the urgency of getting off the floor is audible. Beat multipliers (lower = faster), one per
@@ -520,6 +521,7 @@ const GameAudio = (function () {
     // moment a hostile event fires, so a tempo shift is never decorative — it means something just
     // happened. HURRY must stay DREAD_RAMP_STEPS + 1 long for the two to line up.
     dangerStep = Math.min(HURRY.length - 1, dreadGear(frac));
+    dangerFrac = Math.max(0, Math.min(1, frac || 0)); // drives the dread heartbeat
   }
 
   // The PROCEDURAL score (everything above) is the fallback. It runs only when the current screen has
@@ -643,10 +645,44 @@ const GameAudio = (function () {
   function isMusicPlaying() { return Boolean(musicSource) || Boolean(musicTimer); }
   function isWarming() { return enabled && unlocked && !isMusicPlaying(); }
 
+  // ---- DREAD HEARTBEAT ------------------------------------------------------------------------
+  // A recorded track can't hurry its tempo the way the procedural score did, so the "dread is rising"
+  // cue is a soft, low HEARTBEAT layered over WHATEVER is playing (MP3 or synth): silent through the
+  // opening grace, then quickening AND swelling as the floor's dread climbs. Driven by setDanger's raw
+  // fraction, scheduled ahead like the music so the pulse stays steady. Sits on musicBus, so the Sound
+  // toggle mutes it and it ducks with the rest of the music.
+  const HEART_SLOW = 1.5;   // seconds between beats at the faintest dread
+  const HEART_FAST = 0.5;   // ...and at maximum dread
+  let heartTimer = null;
+  let heartNextTime = 0;
+  function scheduleHeartbeat(when, frac) {
+    const g = 0.045 + frac * 0.11; // louder as dread climbs (kept low — it's an undertone, not a drum)
+    tone(60, when, 0.15, { type: 'sine', gain: g, bus: musicBus, attack: 0.004 });          // lub
+    tone(46, when + 0.17, 0.19, { type: 'sine', gain: g * 0.7, bus: musicBus, attack: 0.004 }); // dub
+  }
+  function heartTick() {
+    if (!ctx || ctx.state === 'suspended') return;
+    const frac = dangerFrac;
+    if (frac <= 0.001) { heartNextTime = ctx.currentTime + 0.1; return; } // calm — no pulse in the grace
+    if (heartNextTime < ctx.currentTime) heartNextTime = ctx.currentTime + 0.05; // never schedule in the past
+    while (heartNextTime < ctx.currentTime + 0.25) {
+      scheduleHeartbeat(heartNextTime, frac);
+      heartNextTime += HEART_SLOW - (HEART_SLOW - HEART_FAST) * frac; // 1.5s (faint) → 0.5s (max dread)
+    }
+  }
+  function startHeart() {
+    if (!enabled || !unlocked || heartTimer || !ensure()) return;
+    heartNextTime = ctx.currentTime + 0.1;
+    heartTimer = setInterval(heartTick, 60);
+  }
+  function stopHeart() {
+    if (heartTimer) { clearInterval(heartTimer); heartTimer = null; }
+  }
+
   // Public entry points (unchanged names, so existing callers keep working): start = "play whatever
   // the current screen calls for"; stop = "silence everything".
-  function startMusic() { applyMusic(); }
-  function stopMusic() { stopMusicFile(); stopProcedural(); }
+  function startMusic() { applyMusic(); startHeart(); }
+  function stopMusic() { stopMusicFile(); stopProcedural(); stopHeart(); }
 
   // Unlock audio on the first user gesture (required by browser autoplay policy).
   // Warm the OTHER tracks — but only ONCE the first (current-screen) track has loaded, so it gets the
@@ -678,8 +714,21 @@ const GameAudio = (function () {
     document.addEventListener('visibilitychange', () => {
       if (!ctx) return;
       if (document.hidden) ctx.suspend();
-      else if (enabled && unlocked) ctx.resume();
+      else if (enabled && unlocked) ctx.resume(); // best effort — iOS often ignores this until a gesture
     });
+    // iOS SAFARI: after backgrounding, resume() only takes effect from a USER GESTURE, so the line above
+    // silently no-ops and the game comes back SILENT. Re-resume (and restart music/heartbeat if their
+    // sources died) on the next touch/key whenever the context is found suspended. Persistent, unlike
+    // the one-shot unlock above; a no-op when nothing is suspended.
+    const resumeOnGesture = () => {
+      if (!ctx || !enabled || !unlocked || ctx.state !== 'suspended') return;
+      const revive = () => { applyMusic(); startHeart(); };
+      const p = ctx.resume();
+      if (p && typeof p.then === 'function') p.then(revive).catch(() => {}); else revive();
+    };
+    document.addEventListener('pointerdown', resumeOnGesture);
+    document.addEventListener('touchend', resumeOnGesture);
+    document.addEventListener('keydown', resumeOnGesture);
   }
 
   function isEnabled() {
