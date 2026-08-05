@@ -3033,11 +3033,26 @@
     const p = gameState.player;
     if (p.x === autoMove.tx && p.y === autoMove.ty) { clearAutoMove(); return; }          // arrived
     if (typeof autoMove.lastHp === 'number' && p.hp < autoMove.lastHp) { clearAutoMove(); return; } // got hit
+    // The last step made NO progress (a stuck boulder shove, a knockback that cancelled it…) → stop
+    // rather than hammer the same spot.
+    if (autoMove.lastPos && autoMove.lastPos.x === p.x && autoMove.lastPos.y === p.y) { clearAutoMove(); return; }
     const m = nextStepToward(gameState, autoMove.tx, autoMove.ty);
     if (!m) { clearAutoMove(); return; }                                                   // can no longer path there
     const threats = getThreatenedTiles(gameState);                                         // Map keyed "x,y"
     if (threats && threats.has(`${m.x},${m.y}`)) { clearAutoMove(); return; }               // won't walk INTO danger
+    // A step ONTO a breakable obstacle (a tree, a gate…) is a HIT, not a move — untouched it would be
+    // hacked at until felled. Strike it just ONCE if he KNEW it was there when he set out (he chose to
+    // path into it), and never if it only surfaced from the fog (don't waste a turn on a surprise).
+    if (typeof isChoppable === 'function' && isChoppable(terrainAt(gameState, m.x, m.y))) {
+      if (autoMove.knownAtStart && autoMove.knownAtStart.has(`${m.x},${m.y}`)) {
+        clearPendingStep();
+        handleStep(Math.sign(m.x - p.x), Math.sign(m.y - p.y)); // one strike at a known obstacle
+      }
+      clearAutoMove(); // then stop — after the single known hit, or immediately for a fog surprise
+      return;
+    }
     autoMove.lastHp = p.hp;
+    autoMove.lastPos = { x: p.x, y: p.y }; // remember where he stepped FROM, to catch a no-op next tick
     clearPendingStep();
     handleStep(Math.sign(m.x - p.x), Math.sign(m.y - p.y));
   }
@@ -3063,7 +3078,12 @@
     // Second tap on the SAME proposed destination → COMMIT the auto-walk.
     if (pathProposal && pathProposal.tx === tile.x && pathProposal.ty === tile.y) {
       clearPathProposal();
-      autoMove = { mode: 'path', tx: tile.x, ty: tile.y, lastHp: gameState.player.hp };
+      autoMove = {
+        mode: 'path', tx: tile.x, ty: tile.y, lastHp: gameState.player.hp,
+        // What he had ALREADY discovered when he set out — so a breakable obstacle he KNEW about gets one
+        // strike, but one he only uncovers from the fog en route stops him instead of being hacked at.
+        knownAtStart: new Set(Object.keys(gameState.explored || {})),
+      };
       return;
     }
     // Otherwise PROPOSE a path to the tapped tile (if he can get anywhere toward it).
