@@ -3274,6 +3274,25 @@
     touchStart = null; pinch = null; touchMoved = false;
   });
 
+  // KEEP THE INTERFACE A FIXED SIZE ON MOBILE. iOS Safari ignores our <meta user-scalable=no>, so a
+  // two-finger pinch (or a double-tap) that lands on the HUD zooms the WHOLE PAGE and mangles the
+  // layout. The PLAY AREA has its own pinch-to-zoom, but that runs on TOUCH events on the <canvas>
+  // (see the handlers above) — Safari's page zoom rides on the separate GESTURE events, which we cancel
+  // document-wide here. So the board still zooms; the interface never rescales.
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => {
+    document.addEventListener(type, (event) => { event.preventDefault(); }, { passive: false });
+  });
+  // Double-tap-to-zoom is a second mechanism (and also rescales the page). Cancel the quick second tap
+  // — but ONLY off the board: the canvas owns its own taps (and already suppresses their default), and
+  // a one-finger SCROLL inside the full-screen modals never trips this (it needs two taps ≤300ms apart).
+  let lastTouchEndAt = 0;
+  document.addEventListener('touchend', (event) => {
+    if (event.target && event.target.closest && event.target.closest('#game')) return;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - lastTouchEndAt <= 300 && event.cancelable) event.preventDefault();
+    lastTouchEndAt = now;
+  }, { passive: false });
+
   canvas.addEventListener('mousemove', (event) => {
     const rect = canvas.getBoundingClientRect();
     const scale = canvas.width / rect.width;
