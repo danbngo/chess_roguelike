@@ -832,21 +832,31 @@ body.in-game canvas {
 }
 
 /* TUTORIAL SPOTLIGHT on the ABILITY row: at the ability-puzzle juncture the training floor freezes
-   input and tells the player to press ONE card. Dim every other slot right down and set the target
-   card ablaze with a breathing gold ring so the eye goes straight to it (matches the board veil). */
+   input and tells the player to press ONE card. Dim every other slot right down and make the target
+   card glow. The glow is drawn INSET (inside the card's own rounded shape) + a brightening border,
+   NOT an outer box-shadow: on mobile the card row is a horizontal scroller (overflow-x:auto), which
+   also clips overflow-y, so an outer glow got sliced into a hard yellow SQUARE around the round card.
+   An inset glow follows the border-radius and is never clipped. */
 .card-bar.tut-guiding .card-slot {
-  opacity: 0.22;
+  opacity: 0.24;
   filter: grayscale(0.5);
   transition: opacity 0.2s ease;
 }
 .card-bar.tut-guiding .card-slot.tut-target {
   opacity: 1;
   filter: none;
-  animation: tut-card-pulse 1.1s ease-in-out infinite;
+  background: rgba(253, 224, 71, 0.14);
+  animation: tut-card-pulse 1.15s ease-in-out infinite;
 }
 @keyframes tut-card-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px #fde047, 0 0 14px 2px rgba(253, 224, 71, 0.55); }
-  50%      { box-shadow: 0 0 0 3px #fde047, 0 0 26px 7px rgba(253, 224, 71, 0.95); }
+  0%, 100% {
+    border-color: #fde047;
+    box-shadow: inset 0 0 0 2px rgba(253, 224, 71, 0.55), inset 0 0 12px rgba(253, 224, 71, 0.35);
+  }
+  50% {
+    border-color: #fffbeb;
+    box-shadow: inset 0 0 0 2px rgba(253, 224, 71, 0.95), inset 0 0 22px rgba(253, 224, 71, 0.75);
+  }
 }
 
 /* Cooldown countdown badge in the corner of a recharging card. */
@@ -1136,6 +1146,10 @@ body.in-game canvas {
     align-items: center;
     justify-content: safe center;
     overflow-y: auto;
+    /* Only vertical SCROLL — never pinch- or double-tap-ZOOM. Every modal (options, upgrades, tutorial
+       tips, game-over, victory…) is an .overlay, so this keeps them a fixed size on mobile while the
+       long ones still scroll. Reinforces the document-wide gesture blocker in main.js. */
+    touch-action: pan-y;
     padding: calc(1.4rem + env(safe-area-inset-top)) 1.1rem calc(1.4rem + env(safe-area-inset-bottom));
   }
   .overlay-card {

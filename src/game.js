@@ -1936,6 +1936,7 @@ function buildTutorialFloor(classKey, difficulty) {
     tutOnSign: null,      // the sign he is currently standing on (null = none)
     tutSigns: signs,      // stepping onto one sets tutTip; main.js shows it
     tutSkip: { x: L.portal.x, y: L.portal.y }, // the always-open escape to the real first floor
+    tutStart: { x: L.spawn.x, y: L.spawn.y },  // spawn tile — the first-move juncture spotlights one step east of it
     tutPath: path,        // the ordered spine, for the harness/tests to walk the winding route
     tutLaunch: { ...TUT_ABILITY_LAUNCH }, // where the ability puzzle is solved; barrier one tile east
     player,
@@ -2000,6 +2001,14 @@ function tutJuncture(state) {
   if (!state || !state.tutorial) return null;
   const p = state.player;
   const reach = (x, y) => getPlayerMoves(state).some((m) => m.x === x && m.y === y);
+  // MOVE — his very FIRST step. On the spawn tile with no turn yet taken, spotlight the tile one step
+  // EAST so tapping-to-move is the first thing he does. Clears the instant he takes it (turn > 0), so
+  // it never blocks the westward skip portal afterwards.
+  if (state.tutStart && (state.turn || 0) === 0 && p.x === state.tutStart.x && p.y === state.tutStart.y) {
+    const tx = state.tutStart.x + 1;
+    const ty = state.tutStart.y;
+    if (terrainAt(state, tx, ty) !== 'wall' && reach(tx, ty)) return { kind: 'move', x: tx, y: ty };
+  }
   // ABILITY — standing ON the launch tile with the barrier one step east still unsolved. The bar is a
   // pit (warrior), a metal gate (ranger) or a wall of ice (sorcerer); each clears a different way.
   const L = state.tutLaunch;
@@ -2754,34 +2763,19 @@ function checkDeath(state) {
   state.message = 'The king falls.';
 }
 
-// Resolve whether an incoming hit is shrugged off: a Bulwark ward (first hit each
-// turn), or a Parry ward from a strike last turn. Null means the hit lands. When a
-// hit IS deflected, `player.deflected` is flagged so the view can flash a block.
-// WAITING only turns aside a shot from AFAR. A blow struck by something standing next to him lands
-// however still he holds — the stance is about reading a missile in flight, not shrugging off a mace.
-// So it covers turrets and a guardian's bolt/volley (and anything else that reaches him without
-// closing), and nothing that is toe to toe. A null attacker is the GROUND (lava, steam, a fall), which
-// nothing has ever stopped.
-function waitingCovers(state, attacker) {
-  if (!attacker) return false; // the ground is not an attack
-  if (attacker.turret) return true; // a gun, always at range — even a knight-pattern one
-  // A JUMPER launches its blow from two tiles off, but the leap CLOSES that distance: it lands on top
-  // of him. That is melee however the arithmetic reads, so the hold does not answer it.
-  if (isJumperKind(attacker.kind)) return false;
-  return chebyshev(attacker.x, attacker.y, state.player.x, state.player.y) > 1; // it struck without closing
-}
-
+// Resolve whether an incoming hit is shrugged off: a raised Sentinel GUARD (Parry), or a Parry ward
+// from a strike last turn. Null means the hit lands. When a hit IS deflected, `player.deflected` is
+// flagged so the view can flash a block.
 function rollMitigation(state, attacker) {
   const player = state.player;
   let mit = null;
-  if (player.invuln && waitingCovers(state, attacker)) {
-    mit = 'invuln'; // a Sentinel WAITING out the turn reads a shot from afar and turns it aside
-  } else if (player.warded) {
+  if (player.warded) {
     mit = 'parry';
-  } else if (player.firstHitEachTurn && player.guardUp) {
-    // PARRY is a guard you RAISE and then SPEND. Ending a turn without striking raises it (see
-    // passTurn); the next blow that would land is turned aside and the guard drops, whatever else
-    // you did in between.
+  } else if (player.guardUp) {
+    // PARRY is a guard you RAISE and then SPEND. It goes up when you BRACE (Sentinel T1: skip a turn),
+    // and — with Parry (T2) — on ANY turn you end without striking (see passTurn / skipTurn). The next
+    // blow that would land, from any foe near or far, is turned aside and the guard drops, whatever
+    // else you did in between.
     //
     // Unconditional it negated a hit EVERY turn, for the whole run, while he attacked freely — a
     // guard you never choose to hold is not a choice, and the bot measured it at a 70% win rate on
@@ -2805,18 +2799,22 @@ function applyReflect(state, attacker, mit) {
   if (mit !== 'ward' && mit !== 'parry') return; // only a blow the GUARD turned aside is answered
   if (chebyshev(attacker.x, attacker.y, state.player.x, state.player.y) > 1) return;
   if (!state.enemies.some((e) => e.id === attacker.id)) return; // already gone (e.g. its own blow felled it)
-  state.reflectAt = { x: attacker.x, y: attacker.y };
+  const dx = Math.sign(state.player.x - attacker.x); // toward the king — the view lunges the ghost this way
+  const dy = Math.sign(state.player.y - attacker.y);
+  let slain = false;
   if (attacker.boss) damageBoss(state, attacker, 1);
   else if (attacker.turret) damageTurret(state, attacker, 1);
-  else if (isCapturable(state, attacker)) resolveKill(state, attacker);
+  else if (isCapturable(state, attacker)) { resolveKill(state, attacker); slain = true; }
+  // The view replays the counter (main.js → Renderer.riposte): the foe's blow rings off the raised
+  // guard, THEN it is cut down. A boss/turret only staggers, so it stays on the board and is not ghosted.
+  state.reflectAt = { x: attacker.x, y: attacker.y, kind: attacker.kind, role: attacker.role || 'normal', dx, dy, slain };
 }
 function mitigationMessage(mit, kind) {
   // The FOE is the actor here, and the wording has to say so. "The warhorse charges through a rook"
   // read as the KING doing something — so the log never once told the player he was being attacked,
   // and the whole board looked like it had stopped fighting back.
-  if (mit === 'invuln') return `A ${kind} strikes the waiting king — but the blow finds nothing to wound!`;
   if (mit === 'parry') return `The king parries a ${kind}!`;
-  if (mit === 'ward') return `A ward absorbs a ${kind}'s blow!`;
+  if (mit === 'ward') return `The king's raised guard turns aside a ${kind}'s blow!`;
   return `The king shrugs off a ${kind}!`;
 }
 
@@ -2844,7 +2842,7 @@ const PERK_FLAGS = [
   // Innate CLASS traits (granted at createPlayer, never rolled): the Warrior's hold-your-ground, the
   // Sorcerer's wider level-up choice. (The Ranger's Sharpened Senses is a plain stat bump — no flag.)
   'discipline', 'studious',
-  // Sentinel: Waiting turns a skipped turn into a turn of invincibility; Reflect makes a Parry bite back.
+  // Sentinel: Brace (`waiting`) raises the Parry guard when you skip a turn; Reflect (Riposte) makes a Parry bite back.
   'waiting',
 ];
 
@@ -9072,11 +9070,11 @@ function skipTurn(state) {
   const next = structuredClone(state);
   const p = next.player;
   p.attacked = false; // he swung at nothing — passTurn raises a Parry guard on this
-  // WAITING (Sentinel): holding his ground turns him invincible until his next turn — set BEFORE
-  // passTurn so even a lava/torch sear on the wait tile is shrugged off. settleTurn clears it once the
-  // enemy phase has run.
-  if (p.waiting) p.invuln = true;
-  next.message = p.waiting ? 'The king holds his ground — untouchable.' : 'The king holds his ground.';
+  // BRACE (Sentinel T1): holding his ground raises the Parry GUARD, so the next blow is turned aside
+  // (rollMitigation). passTurn also raises it for the T2 Parry perk on any blow-free turn — a skip is
+  // one — but this line covers a Brace-only king who has not yet taken that broader perk.
+  if (p.waiting) p.guardUp = true;
+  next.message = p.waiting ? 'The king braces — guard up.' : 'The king holds his ground.';
   next.lastAction = 'move'; // a spent, non-combat turn (no bump, no beep)
   passTurn(next);
   next.enemyTurn = true;

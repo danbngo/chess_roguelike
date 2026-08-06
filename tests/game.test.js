@@ -1124,9 +1124,9 @@ test('Silence drops every foe in SIGHT, and HOLDS as he strikes — only the foe
   assert.equal(t.enemies.find((e) => e.id === 'near')?.asleep, true, 'but the OTHER hushed foe sleeps on');
 });
 
-test('Waiting (Sentinel): holding still turns aside fire from AFAR — but not a blow struck up close', () => {
-  // It used to blank EVERY attack, which made the hold a free turn in any melee. Now it is a read on
-  // incoming fire: shots from across the room bounce, a foe standing next to him lands its blow.
+test('Brace (Sentinel T1): a skipped turn raises a guard that turns aside the next blow — near OR far', () => {
+  // Reworked from the old Waiting (a read on incoming FIRE only): tier 1 now simply grants Parry (block
+  // the next hit) when you skip a turn — the same guard tier 2 hands out on any blow-free turn.
   const build = (place) => {
     const t = warriorWith('w_waiting');
     t.terrain = {}; t.allies = [];
@@ -1139,32 +1139,29 @@ test('Waiting (Sentinel): holding still turns aside fire from AFAR — but not a
   assert.equal(build(melee).player.waiting, true, 'the perk grants it');
   const volley = (st) => moveEnemy(moveEnemy(st, 'rk'), 'rk'); // a turret LOCKS ON, then fires
 
-  // RANGED: he reads the bolt and it does nothing.
+  // A skip raises the guard, and it turns aside a shot from AFAR.
   let s = skipTurn(build(gun));
-  assert.equal(s.player.invuln, true, 'holding his ground raises the read');
+  assert.equal(s.player.guardUp, true, 'bracing raises the guard');
   const g0 = s.player.hp;
   s = volley(s);
-  assert.equal(s.player.hp, g0, 'the turret fires and the shot is turned aside');
+  assert.equal(s.player.hp, g0, 'the turret fires and the guard turns the shot aside');
+  assert.equal(s.player.guardUp, false, 'and the guard is spent');
 
-  // MELEE: the same hold does NOT stop a mace swung by something standing next to him.
+  // Unlike the old Waiting, a blow struck UP CLOSE is turned aside too — it is a Parry, not a read on fire.
   let m = skipTurn(build(melee));
-  assert.equal(m.player.invuln, true, 'the read is up all the same');
+  assert.equal(m.player.guardUp, true, 'the guard is up all the same');
   const m0 = m.player.hp;
   m = moveEnemy(m, 'rk');
-  assert.ok(m.player.hp < m0, 'but an adjacent foe strikes home regardless');
+  assert.equal(m.player.hp, m0, 'an adjacent foe’s blow is turned aside by the raised guard');
 
-  // CONTROL: without the perk the turret's shot lands for real.
+  // CONTROL: without the perk a skip raises no guard and the bolt bites.
   let ctrl = build(gun);
   ctrl.player.waiting = false;
   ctrl = skipTurn(ctrl);
-  assert.equal(Boolean(ctrl.player.invuln), false, 'no perk, no read');
+  assert.equal(Boolean(ctrl.player.guardUp), false, 'no perk, no guard');
   const c0 = ctrl.player.hp;
   ctrl = volley(ctrl);
   assert.ok(ctrl.player.hp < c0, 'and the bolt bites');
-
-  // The window is ONE turn: settleTurn (run by maybeSpawnEnemy) lifts it before his next turn.
-  const after = maybeSpawnEnemy(s);
-  assert.equal(after.player.invuln, false, 'the read lifts by his next turn');
 });
 
 test('Parry is a guard you RAISE and SPEND — banked by a quiet turn, kept through the fight', () => {
@@ -7793,18 +7790,16 @@ test('Riposte (Sentinel): the counter comes off the GUARD — an unparried blow 
   assert.ok(tur && tur.hp === 3, 'a turret two tiles off takes no riposte (it never came adjacent)');
 });
 
-test('Waiting: a knight that LEAPS onto him both wounds and shoves — the read is no answer to melee', () => {
+test('a knight that LEAPS onto an UNGUARDED Sentinel both wounds and shoves him', () => {
   const t = warriorWith('w_waiting');
   t.terrain = {}; t.allies = [];
   t.player.x = 10; t.player.y = 10; t.player.hp = 6; t.player.maxHp = 6;
-  t.player.invuln = true; // as if he had just waited
+  // He has NOT braced — no guard is banked, so the leap gets through, wound and shove alike.
   const knight = makeEnemy({ kind: 'knight', x: 9, y: 8, awake: true, id: 'kn' }); // a jumper that knocks back
   t.enemies = [knight];
   const after = moveEnemy(t, 'kn');
-  // Waiting reads incoming FIRE. A knight that lands on top of him is toe to toe, so it gets through:
-  // both the wound and the shove land. This is the whole point of the nerf — the hold is not a bunker.
-  assert.ok(after.player.hp < 6, 'the leap wounds him despite the hold');
-  assert.ok(after.player.x !== 10 || after.player.y !== 10, 'and the knockback still shoves him off his tile');
+  assert.ok(after.player.hp < 6, 'the leap wounds him');
+  assert.ok(after.player.x !== 10 || after.player.y !== 10, 'and the knockback shoves him off his tile');
 });
 
 test('overstay ramps from max dread to the molten peak, then holds', () => {
@@ -7816,14 +7811,14 @@ test('overstay ramps from max dread to the molten peak, then holds', () => {
   assert.equal(overstayFraction(MAX_TURNS_LAVA + 999), 1, 'and stays maxed');
 });
 
-test('Waiting shrugs off blows but NOT the ground — lava still burns a waiting king', () => {
+test('Brace guards against a BLOW but not the GROUND — lava still burns a bracing king', () => {
   const s = warriorWith('w_waiting');
   s.terrain = { '10,10': 'lava' }; s.allies = [];
   s.player.x = 10; s.player.y = 10; s.player.hp = 6; s.player.maxHp = 6;
   s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true })]; // a foe in sight, so the hold is legal
-  const next = skipTurn(s); // he waits ON lava — invincible to blows, but fire is the ground
-  assert.equal(next.player.invuln, true, 'the halo is up (blows would be shrugged)');
-  assert.ok(next.player.hp < 6, 'yet the lava still sears him');
+  const next = skipTurn(s); // he braces ON lava — guard up against a blow, but fire is the ground
+  assert.equal(next.player.guardUp, true, 'the guard is up (a blow would be turned aside)');
+  assert.ok(next.player.hp < 6, 'yet the lava still sears him — the guard stops steel, not fire');
 });
 
 test('a floor the king will not leave turns MOLTEN — lava wells up under the overstay', () => {
@@ -9346,7 +9341,10 @@ test('THE TRAINING GROUNDS — a winding, spread-out floor: shielded signs, then
 test('THE TRAINING GROUNDS — the guided-spotlight JUNCTURE fires at each tricky moment, and only there', () => {
   const put = (s, x, y) => { s.player.x = x; s.player.y = y; return s; };
   let s = buildTutorialFloor('warrior', 'hard');
-  assert.equal(tutJuncture(put(s, 4, 4)), null, 'free to walk during the welcome/move stage — no lock');
+  const firstMove = tutJuncture(put(s, 4, 4)); // fresh floor (turn 0), standing on the spawn tile
+  assert.ok(firstMove && firstMove.kind === 'move' && firstMove.x === 5 && firstMove.y === 4, 'the very FIRST move is gated — spotlight one step east of spawn');
+  s.turn = 1; // once he has stepped, the spawn tile frees up again (so the westward skip portal still works)
+  assert.equal(tutJuncture(put(s, 4, 4)), null, 'after that first step, standing on spawn no longer locks');
   const strike = tutJuncture(put(s, 13, 4));
   assert.ok(strike && strike.kind === 'strike' && strike.x === 14 && strike.y === 4, 'adjacent to the ferz → STRIKE its tile');
   assert.equal(tutJuncture(put(s, 8, 4)), null, 'mid-corridor with nothing adjacent → no lock');

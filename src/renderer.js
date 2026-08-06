@@ -45,6 +45,8 @@ const Renderer = (function () {
   const PUFF_TIME = 5; // seconds a death/summon smoke puff takes to dissipate (lingers ~4x longer)
   let shouts = []; // { x, y, text, t } — a boss's one-turn battle-cry speech bubble (client-side)
   const SHOUT_TIME = 1.6; // seconds the bubble lingers before it fades
+  let riposts = []; // { x, y, kind, role, dx, dy, t } — Sentinel RIPOSTE: a ghost of the slain foe replays its blow
+  const RIPOSTE_TIME = 0.5; // seconds the riposte ghost takes to lunge, ring off the guard, and be cut down
   let boulderRenders = []; // { x, y, targetX, targetY, angle, targetAngle } — boulders ROLL + spin as they move
   let lungePoint = null; // the king POUNCES onto this tile first, then eases to his real target (leap-onto-foe bounce)
 
@@ -265,6 +267,14 @@ const Renderer = (function () {
     shouts.push({ x, y, text: String(text || ''), t: 0, demon: Boolean(demon) });
   }
 
+  // RIPOSTE (Sentinel T3): the countered foe is already gone from the state, so replay it as a GHOST —
+  // its token lunges in at the king, its blow rings off the raised guard, then it fades as it is cut
+  // down. Only a SLAIN foe is ghosted; a boss/turret that merely staggers is still on the board and
+  // animates itself. `info` = { x, y, kind, role, dx, dy, slain } from applyReflect.
+  function riposte(info) {
+    if (info && info.slain) riposts.push({ ...info, t: 0 });
+  }
+
   // A foe SWINGING at the king: shove its token a third of a tile at him. It is never retargeted,
   // so the ordinary easing hauls it straight back to its own square — a lunge and a recoil, the
   // same trick bumpBoulder plays. Without it a melee blow was invisible: the king lost a heart
@@ -384,6 +394,7 @@ const Renderer = (function () {
     scheduledBumps = [];
     allySyncedOnce = false; // ...and nobody standing beside him on arrival was CONJURED there
     shouts = [];
+    riposts = [];
     lungePoint = null;
     snapCameraToPlayer(state);
   }
@@ -561,6 +572,8 @@ const Renderer = (function () {
     }
     for (const s of shouts) s.t += delta / SHOUT_TIME;
     shouts = shouts.filter((s) => s.t < 1);
+    for (const r of riposts) r.t += delta / RIPOSTE_TIME;
+    riposts = riposts.filter((r) => r.t < 1);
     clampCamera();
     camera.x += (camera.targetX - camera.x) * speed;
     camera.y += (camera.targetY - camera.y) * speed;
@@ -6132,6 +6145,36 @@ const Renderer = (function () {
       }
     }
 
+    // SENTINEL RIPOSTE GHOSTS: replay each countered foe (already removed from the state) so its blow
+    // visibly rings off the king's guard BEFORE it is cut down. The token lunges in at the king (out
+    // and back over the first half), a bright clink flashes on the guard at the contact, then it fades
+    // as the counter fells it. Drawn here, in board space, so it eases over the same tiles as the foes.
+    for (const r of riposts) {
+      const reach = Math.sin(Math.min(r.t, 0.5) / 0.5 * Math.PI); // lunge OUT (peak t=0.25) and back
+      const gx = r.x + r.dx * reach * 0.4;
+      const gy = r.y + r.dy * reach * 0.4;
+      ctx.save();
+      ctx.globalAlpha = r.t < 0.5 ? 1 : Math.max(0, 1 - (r.t - 0.5) / 0.5); // then fade as it is cut down
+      drawPiece(gx, gy, r.kind, false, { role: r.role || 'normal' });
+      ctx.restore();
+      // The blow RINGING off the raised guard: a bright arc on the king's facing edge, at the lunge peak.
+      if (r.t > 0.12 && r.t < 0.5) {
+        const clink = Math.sin((r.t - 0.12) / 0.38 * Math.PI); // 0→1→0 across the contact window
+        const cx = (playerRender.x + 0.5 - r.dx * 0.42) * tileSize;
+        const cy = (playerRender.y + 0.5 - r.dy * 0.42) * tileSize;
+        ctx.save();
+        ctx.globalAlpha = clink;
+        ctx.strokeStyle = '#bae6fd';
+        ctx.lineWidth = Math.max(2, tileSize * 0.05);
+        ctx.shadowColor = '#7dd3fc';
+        ctx.shadowBlur = tileSize * 0.5 * clink;
+        ctx.beginPath();
+        ctx.arc(cx, cy, tileSize * (0.16 + 0.16 * clink), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     // The king's allies (Necromancer familiar / undead): green tokens with a heart, always
     // shown (they are on his side, so never hidden by fog). Positions come from the EASED ally
     // renders (so they glide like every other piece); gore is looked up on the live ally by id.
@@ -6305,5 +6348,5 @@ const Renderer = (function () {
     tutSpotlight = tiles || null;
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight };
 })();

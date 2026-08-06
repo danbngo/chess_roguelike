@@ -626,7 +626,9 @@
   function showCardInfo(card, index) {
     examineEl.innerHTML = '';
     addExamineBlock(`${card.kind} — ${classCategory(gameState.player.className)}`, cardInfoLines(card));
-    if (typeof index === 'number') addRebindRow(index);
+    // REBIND-HOTKEY row DISABLED — the 1-9 slot grid ate too much of a phone screen (a rarely-used
+    // convenience). Re-enable by uncommenting; addRebindRow/rebindCard below are kept intact.
+    // if (typeof index === 'number') addRebindRow(index);
   }
 
   // A row of numbered buttons under the aimed card's description: press one to move this card to that
@@ -2296,13 +2298,19 @@
       Renderer.bumpEnemy(gameState.strikeBump.id, gameState.strikeBump.dx, gameState.strikeBump.dy);
       gameState.strikeBump = null;
     }
-    // REFLECT (Sentinel): the king ripostes a foe that ended its blow adjacent — he LUNGES at it and
-    // it is cut down, out of turn. Shown as the king's own strike so the counter-kill reads clearly.
+    // REFLECT (Sentinel): the king ripostes a foe that ended its blow adjacent. Replay it so the counter
+    // READS — the slain foe's blow rings off the raised guard (a blue block flash), then it is cut down.
+    // Renderer.riposte ghosts the foe (already removed from the state) lunging in and fading; the king's
+    // own lunge onto its tile is the counter-stroke.
     if (gameState.reflectAt) {
-      Renderer.lunge(gameState.reflectAt.x, gameState.reflectAt.y);
+      const r = gameState.reflectAt;
+      Renderer.riposte(r);      // ghost of the slain foe: lunge in, ring off the guard, fade as it's cut down
+      Renderer.lunge(r.x, r.y); // the king's counter-stroke onto its tile
       Renderer.effect('kill');
       GameAudio.play('kill');
       gameState.reflectAt = null;
+      // NB: the blue block flash + 'deflect' sound come from the player.deflected branch just below —
+      // a parried blow sets that flag, so we don't fire them here (it would double up).
     }
     if (gameState.player.hp < hpBefore) {
       Renderer.effect(gameState.gameOver ? 'death' : 'hit');
@@ -2566,6 +2574,13 @@
         endFollowupTurn(); // clicking away declines the bonus shot and ends the turn
       }
       // a click on a non-target simply cancelled the card (above)
+      return;
+    }
+
+    // A click on his OWN tile holds the ground (Warrior's Discipline) — the mouse equivalent of Space.
+    // A non-warrior click on the king falls through to re-centre (its old, harmless behaviour).
+    if (tileX === gameState.player.x && tileY === gameState.player.y && gameState.player.discipline) {
+      if (isIdle()) commitMove(skipTurn(gameState)); // self-guards: beeps if nothing is in sight to wait for
       return;
     }
 
@@ -3178,9 +3193,15 @@
       commitMove(movePlayerTo(gameState, tile.x, tile.y));
       return;
     }
-    // His own tile, or off the board → just clear any proposal.
-    if ((tile.x === gameState.player.x && tile.y === gameState.player.y)
-        || tile.x < 0 || tile.y < 0 || tile.x >= WORLD_SIZE || tile.y >= WORLD_SIZE) {
+    // His OWN tile: hold your ground (Warrior's Discipline) — tapping the king spends the turn in place,
+    // exactly like pressing Space. skipTurn self-guards (it refuses with a beep if no foe is in sight).
+    if (tile.x === gameState.player.x && tile.y === gameState.player.y) {
+      clearPathProposal();
+      if (gameState.player.discipline && isIdle()) commitMove(skipTurn(gameState));
+      return;
+    }
+    // Off the board → just clear any proposal.
+    if (tile.x < 0 || tile.y < 0 || tile.x >= WORLD_SIZE || tile.y >= WORLD_SIZE) {
       clearPathProposal();
       return;
     }
