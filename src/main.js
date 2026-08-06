@@ -106,6 +106,9 @@
   // Is this a touch device? Drives swipe controls and which control hints the tutorial shows.
   const IS_TOUCH = (typeof window !== 'undefined')
     && (('ontouchstart' in window) || (navigator && navigator.maxTouchPoints > 0));
+  // Tag the body so CSS can de-crowd the HUD on a phone in ANY orientation. The mobile LAYOUT rules are
+  // width-gated (max-width:760px), which a phone held sideways slips past — this class is not.
+  if (IS_TOUCH && typeof document !== 'undefined' && document.body) document.body.classList.add('touch');
 
   // screen: 'title' | 'class' | 'playing' | 'levelup' | 'character' | 'confirm' | 'gameover' | 'victory' | 'tutorial' | 'options'
   let screen = 'title';

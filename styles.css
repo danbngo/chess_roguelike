@@ -498,6 +498,28 @@ body.in-game canvas {
   border-radius: 0;
 }
 
+/* --- TOUCH DEVICES, ANY ORIENTATION -------------------------------------------------------------
+   The mobile LAYOUT block (max-width:760px, further down) is width-gated, which a phone held SIDEWAYS
+   (~844px wide) slips past — so in landscape the activity log and the ability/examine pane crept back
+   and the board ran under the camera cutout. These rules key off a `touch` body class instead, so they
+   hold in portrait AND landscape. */
+/* No room on a phone for the log, the ability-description pane, or the small captions — the on-board
+   effects and tap-to-aim carry that information. Hidden in every orientation (portrait already hid the
+   log and captions further down; this extends the same de-crowd to landscape and adds the ability pane). */
+body.touch.in-game .log-wrap,
+body.touch.in-game .right-pane,
+body.touch.in-game .card-hint,
+body.touch.in-game #inv-hint,
+body.touch.in-game #orb-hint { display: none; }
+/* Keep the whole game clear of the notch / camera cutout on EVERY edge. In landscape the cutout sits on
+   a long side and was slicing the left off the board; padding the layout insets all of it. env() insets
+   are 0 where there is no cutout, so this does nothing on hardware without one. box-sizing:border-box
+   is required so width:100vw + padding does not overflow (the base landscape layout is content-box). */
+body.touch.in-game .game-layout {
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
 /* Left pane: plain one-line stats, controls, cards, and the message log. */
 .info-panel {
   display: flex;
