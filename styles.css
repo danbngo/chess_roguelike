@@ -1369,12 +1369,12 @@ body.touch .overlay.hidden { display: none; }
      BOTTOM, where the thumb rests. Options demotes to a corner gear. Reworked 2026-08-08 from a screenshot
      that showed the controls scattered into dead space. */
 
-  /* OPTIONS → a small GEAR in the top-right corner, over the board, freeing the row it used to eat. */
+  /* OPTIONS → a small GEAR at the TOP-LEFT of the HUD band, just BELOW the board (off the play area,
+     not floating over a tile). It is the first child of the pane, so it sits above the centred stats;
+     `align-self:flex-start` pins it left while the stats stay centred. */
   body.touch.in-game #options {
-    position: fixed;
-    top: calc(6px + env(safe-area-inset-top));
-    right: calc(8px + env(safe-area-inset-right));
-    z-index: 57;
+    align-self: flex-start;
+    margin: 0 0 0.15rem;
     width: 2.6rem;
     height: 2.6rem;
     min-width: 0;

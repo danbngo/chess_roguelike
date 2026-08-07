@@ -12,7 +12,7 @@
   const logEl = document.getElementById('log');
   const logToggle = document.getElementById('log-toggle');
   const examineEl = document.getElementById('examine');
-  const restartButton = document.getElementById('restart');
+  const optionsTitleButton = document.getElementById('options-title');
   const optionsButton = document.getElementById('options');
 
   const titleScreen = document.getElementById('title-screen');
@@ -3483,8 +3483,12 @@
       refreshOptions();
     });
   }
-  restartButton.addEventListener('click', () => {
-    confirmNewGame(newGame); // "Restart Run" in the options menu — confirm before wiping the current one
+  optionsTitleButton.addEventListener('click', () => {
+    // "Title Screen" in the options menu — the run auto-saves each move, so save the current state once
+    // more and bail to the title; "Continue" there picks it right back up. (Restart Run was removed —
+    // starting fresh belongs to the title's New Game, not a mid-run button.)
+    if (gameState) saveGame(gameState);
+    showTitle();
   });
 
   showTitle();
