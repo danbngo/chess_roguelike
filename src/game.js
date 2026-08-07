@@ -2967,7 +2967,7 @@ function createPlayer(classKey) {
     turretsDestroyed: 0,
     circlesDispelled: 0,
     maxFloorTurns: 0, // the longest he ever lingered on a single floor
-    usedCard: false,
+    killedWithCard: false, // Bare Hands badge: set true the first time a CARD fells an enemy (melee kills don't count)
     usedNormalAttack: false, // struck by simply moving onto a foe (no card)
     openedDoor: false,
     pushedBoulder: false,
@@ -8303,7 +8303,10 @@ function useCard(state, cardIndex, x, y) {
     next.lastAction = 'blocked';
     return next;
   }
-  if (!isAbilityCard) p.usedCard = true; // badge ledger: he drew a WEAPON (Animal Form/Reload/Swap don't count)
+  // Bare Hands badge: forfeited only by KILLING with a card, not by merely playing one — see the
+  // enemy-count check far below, after all of this card's damage has resolved. (This line used to read
+  // `if (!isAbilityCard)` — a function reference, always truthy, so the negation was always false and
+  // the badge was NEVER lost. It also tracked mere usage, which the player asked to change to kills.)
 
   // FIREBALL: work out WHERE the burst will centre before anything resolves.
   //
@@ -8491,6 +8494,7 @@ function useCard(state, cardIndex, x, y) {
   let realKill = false; // felled a real enemy piece (gates the on-kill perks)
   const kills = []; // real pieces felled this cast (for Dazzle)
   const impactTiles = []; // every tile a spell's fireball detonates on (for the view)
+  const foesBefore = next.enemies.length; // Bare Hands: any drop by the end means this CARD made a kill
   p.attacked = true;
 
   if (category === 'melee') {
@@ -8815,6 +8819,11 @@ function useCard(state, cardIndex, x, y) {
     if (next.lastShot) next.lastShot.tiles = [...(next.lastShot.tiles || []), { x, y }, ...frags]; // a burst at impact
   }
 
+  // BARE HANDS badge: this card FELLED at least one enemy if the board lost a foe over its whole
+  // resolution (the strike, plus any Recoil / Fireball burst / Explosive Round above). Killing with a
+  // card forfeits the badge; a plain melee capture goes through movePlayer, never here, so it stays
+  // clean. Banish/Swap/reposition returned earlier and remove nothing that counts as a slaying.
+  if (next.enemies.length < foesBefore) p.killedWithCard = true;
   // A melee reposition / En-Passant dash / Recoil can carry the king onto the key.
   collectKeyIfHere(next);
   // A melee card that fells the guardian leaves the king on the stair: descend.

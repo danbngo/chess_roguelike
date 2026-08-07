@@ -105,7 +105,7 @@ const ACHIEVEMENTS = (() => {
   add('streak:30', 'Unstoppable', 'Fell a foe on 30 turns in a row.', (p) => (p.bestKillStreak || 0) >= 30);
 
   // --- Conduct: restraint -------------------------------------------------
-  add('card:none', 'Bare Hands', 'Win without ever playing a weapon card.', (p) => !p.usedCard, { won: true });
+  add('card:none', 'Bare Hands', 'Win without ever killing an enemy with a card — every kill by a plain move.', (p) => !p.killedWithCard, { won: true });
   add('attack:none', 'Never Lifted a Finger', 'Win without ever landing a plain attack.', (p) => !p.usedNormalAttack, { won: true });
   add('door:none', 'No Doors Were Opened', 'Win without opening a single door.', (p) => !p.openedDoor, { won: true });
   add('boulder:none', 'Immovable', 'Win without pushing a single boulder.', (p) => !p.pushedBoulder, { won: true });

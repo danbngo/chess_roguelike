@@ -506,6 +506,35 @@ test('turrets are pushable now — Trample shoves an adjacent turret back', () =
   assert.ok(r.enemies.some((e) => e.turret && e.x === 14 && e.y === 9), 'the turret was shoved a tile back');
 });
 
+test('Bare Hands is forfeited by KILLING with a card, not by merely playing one — melee kills keep it', () => {
+  const base = () => {
+    const s = createInitialState('warrior');
+    s.terrain = {}; s.enemies = []; s.allies = []; s.key = null;
+    s.player.x = 10; s.player.y = 10; s.player.hp = 20; s.player.maxHp = 20;
+    return s;
+  };
+  const knightIdx = (s) => s.player.cards.findIndex((c) => c && c.kind === 'knight');
+  assert.equal(base().player.killedWithCard, false, 'a fresh king holds the badge');
+  // 1. A card that FELLS a foe forfeits it (the old bug: `!isAbilityCard` was always false, so it never did).
+  {
+    const s = base(); s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 11 })]; // an L-hop from (10,10)
+    const r = useCard(s, knightIdx(s), 12, 11);
+    assert.equal(r.player.killedWithCard, true, 'a CARD kill forfeits Bare Hands');
+  }
+  // 2. A card that kills NOTHING keeps it (usage alone no longer counts).
+  {
+    const s = base();
+    const r = useCard(s, knightIdx(s), 12, 11); // empty ground — a leap, no kill
+    assert.equal(r.player.killedWithCard, false, 'playing a card with no kill keeps the badge');
+  }
+  // 3. A plain MELEE capture keeps it — that is the whole point of the badge.
+  {
+    const s = base(); s.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10 })];
+    const r = movePlayerTo(s, 11, 10);
+    assert.equal(r.player.killedWithCard, false, 'a melee-move kill keeps the badge');
+  }
+});
+
 test('a foe shoved into a pit plunges to its death; a boss clambers back out for 1 wound', () => {
   const s = warriorWith('w_fleet', 'w_pierce', 'w_trample');
   const idx = s.player.cards.findIndex((c) => c.kind === 'knight');
