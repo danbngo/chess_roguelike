@@ -12336,6 +12336,79 @@ function demonIntruder(next) {
   return `Something claws its way up through the floor — a rogue ${kind}!`;
 }
 
+// A free, standable tile beside (x,y) — never the king, a unit, an ally, the key, or the exit. Used to
+// stand a freshly-summoned foe next to a rune that has just swallowed one of its kin.
+function freeTileAround(next, x, y) {
+  for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || nx >= WORLD_SIZE || ny < 0 || ny >= WORLD_SIZE) continue;
+    if (!isStandable(terrainAt(next, nx, ny))) continue;
+    if (nx === next.player.x && ny === next.player.y) continue;
+    if (next.enemies.some((e) => e.x === nx && e.y === ny)) continue;
+    if (allyAt(next, nx, ny)) continue;
+    if (keyTileAt(next, nx, ny) || (next.exit && nx === next.exit.x && ny === next.exit.y)) continue;
+    return { x: nx, y: ny };
+  }
+  return null;
+}
+
+// The on-screen foes a dread event may CONVERT: ordinary pieces (not a boss / turret / rune), standing
+// on solid ground he can SEE, and never one already at his throat (a conversion at range 1 is an unfair
+// spike). Shared by the conversion events; the pool only OFFERS those when a real cluster of these is in
+// view, so a lone straggler is never singled out (the user's steer: don't convert with few/no foes up).
+function convertibleEnemies(next) {
+  return next.enemies.filter((e) => !e.boss && !e.turret && !e.summonCircle
+    && isStandable(terrainAt(next, e.x, e.y)) && inLineOfSight(next, e.x, e.y)
+    && chebyshev(e.x, e.y, next.player.x, next.player.y) > 1);
+}
+
+// THE DUNGEON ANOINTS ITS OWN. Up to a few ordinary foes in view swell into MINI-BOSSES where they
+// stand — same tile, same piece, now a guardian's worth of it (an HP bar, a boss trait, hunting). Any
+// floor, mortal or hell. Returns '' with nothing to take, so the roll re-rolls onto something that lands.
+function enemiesToMinis(next) {
+  const marks = convertibleEnemies(next);
+  if (!marks.length) return '';
+  const victims = pickSome(marks, Math.min(marks.length, 1 + randomInt(3)));
+  for (const victim of victims) {
+    const mb = makeMiniBoss(next, victim.kind, victim.x, victim.y);
+    mb.id = victim.id; // keep its identity so the token GLIDES rather than popping
+    mb.awake = true; mb.asleep = false;
+    rememberKing(next, mb);
+    next.enemies = next.enemies.map((e) => (e.id === victim.id ? mb : e));
+    addSmoke(next, victim.x, victim.y);
+  }
+  dreadLanded(next);
+  return 'The dungeon anoints its own — foes swell into mini-bosses!';
+}
+
+// RUNES SWALLOW THEM. Up to a couple of ordinary foes in view sink into SUMMONING CIRCLES where they
+// stood, and one of their OWN KIND claws up beside each rune at once — so it arrives already having
+// conjured. Nastier than plain circles (each is a rune AND a fresh foe), so it takes fewer. Any floor.
+function enemiesToCircles(next) {
+  const marks = convertibleEnemies(next);
+  if (!marks.length) return '';
+  const victims = pickSome(marks, Math.min(marks.length, 1 + randomInt(2)));
+  for (const victim of victims) {
+    const kind = victim.kind;
+    const circle = createEnemy(kind, victim.x, victim.y); // its CLASS carries through — it summons its own kind
+    circle.id = victim.id;
+    circle.summonCircle = true; circle.awake = true; circle.summonTick = 0;
+    next.enemies = next.enemies.map((e) => (e.id === victim.id ? circle : e));
+    // ...and the summoned foe of that same class, already standing beside the new rune.
+    const spot = freeTileAround(next, victim.x, victim.y);
+    if (spot) {
+      const minion = createEnemy(kind, spot.x, spot.y);
+      minion.awake = true; minion.summoned = true;
+      rememberKing(next, minion);
+      next.enemies.push(minion);
+    }
+    addSmoke(next, victim.x, victim.y);
+  }
+  dreadLanded(next);
+  return 'The stone drinks them down — foes become summoning runes, their kin rising beside them!';
+}
+
 function fireDangerEvent(next, ramp) {
   // Only unleash a hazard the king has ALREADY encountered, so danger events keep pace with
   // the game's normal progression (no lava/pits/boulders/turrets before he's met one).
@@ -12372,6 +12445,10 @@ function fireDangerEvent(next, ramp) {
     if (next.player.seenTurret) pool.push('conscript');
     if (seen.includes('pit')) pool.push('fissures');
     if (seen.includes('lava') || isHellNow(next)) pool.push('steam');
+    // TURN HIS OWN RANKS AGAINST HIM — anoint foes into mini-bosses, or sink them into summoning runes
+    // with a fresh minion already beside each. Only OFFERED with a real cluster of ordinary foes in
+    // view (≥2): converting one lone straggler reads as random singling-out, not the floor turning.
+    if (convertibleEnemies(next).length >= 2) pool.push('anoint', 'runecircles');
     // The three that drag HELL up onto an overworld floor. Meaningless in the realm itself, where
     // all of it is already true — so they are simply not in the pool down there.
     if (!isHellNow(next)) {
@@ -12394,6 +12471,8 @@ function fireDangerEvent(next, ramp) {
       case 'freeze': return freezeTerrain(next, hazardCount(next, 0.04, 3, 12)) ? 'A killing frost sweeps in — ice sheets over the floor!' : 'Your breath fogs in a sudden chill.';
       case 'barChokes': return barTheChokes(next);
       case 'conscript': return enemiesToTurrets(next);
+      case 'anoint': return enemiesToMinis(next);
+      case 'runecircles': return enemiesToCircles(next);
       case 'steam': return steamBurst(next);
       case 'circles': return circlesAtHand(next);
       case 'demonise': return demoniseNearby(next);

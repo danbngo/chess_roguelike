@@ -26,10 +26,13 @@ const DIFFICULTY_HP = {
 // meets it at all, while one who dawdles gets urgency that ARRIVES rather than creeps.
 // Softened so a MODESTLY-skilled clear (~120 turns) still finishes inside the grace: a long quiet
 // opening, then dread climbs across the middle, then — for a king who WILL NOT leave — the molten
-// overstay. Each of the three phases is 120 turns: grace 0-120 (first danger tick at 120), dread ramp
-// 120-240 (max dread + first lava at 240), lava ramp 240-360 (molten peak at 360). The grace holds 5
-// steps and the ramp 5 (fixed by the audio's HURRY gears), so a step is 24 turns.
-const DREAD_STEP_TURNS = 24;
+// overstay. Each of the three phases is DREAD_STEP_TURNS*5 turns: grace 0-95 (first danger tick at 95),
+// dread ramp 95-190 (max dread + first lava at 190), lava ramp 190-285 (molten peak at 285). The grace
+// holds 5 steps and the ramp 5 (fixed by the audio's HURRY gears). The step was 24; SPED UP to 19
+// (2026-08-08) — ~1.25x faster across the WHOLE cycle, because on a brisk run dread barely registered
+// and "hard" played too safe. Everything downstream (MAX_TURNS_SCARY, the lava overstay, the music
+// gears via dreadFraction) is derived from this, so this one number re-paces the lot.
+const DREAD_STEP_TURNS = 19;
 const DREAD_GRACE_STEPS = 5; // the quiet opening — nothing stirs (5 * 24 = 120 turns)
 const DREAD_RAMP_STEPS = 5; // must match HURRY.length in audio.js
 const DREAD_TOTAL_STEPS = DREAD_GRACE_STEPS + DREAD_RAMP_STEPS; // 10

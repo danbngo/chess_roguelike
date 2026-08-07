@@ -14,7 +14,7 @@ const LOGIC_FILES = ['config.js', 'constants.js', 'utils.js', 'terrain.js', 'pie
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, buildTutorialFloor, tickTutorial, tutJuncture, leaveTutorial, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, buildTutorialFloor, tickTutorial, tutJuncture, leaveTutorial, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
 )();
 const {
   batStep, REALM_BOSS_NAMES,
@@ -59,7 +59,7 @@ const {
   fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss,
   tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
   overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS,
-  barTheChokes, enemiesToTurrets, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot,
+  barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot,
   realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, MAX_BOONS,
   makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls,
   buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById,
@@ -1569,7 +1569,7 @@ test('a danger event always LANDS — a fizzled pick is retried, never spent', (
   const snap = (st) => JSON.stringify({
     n: st.enemies.length,
     terrain: Object.keys(st.terrain).sort().map((k) => `${k}:${st.terrain[k]}`).join(','),
-    pieces: st.enemies.map((e) => `${e.kind}${e.turret ? 'T' : ''}${e.summonCircle ? 'C' : ''}@${e.x},${e.y}`).sort().join('|'),
+    pieces: st.enemies.map((e) => `${e.kind}${e.turret ? 'T' : ''}${e.summonCircle ? 'C' : ''}${e.mini ? 'M' : ''}@${e.x},${e.y}`).sort().join('|'),
     fog: Object.keys(st.fog || {}).sort().join(','),
     awake: st.enemies.filter((e) => e.awake).length,
     seen: st.enemies.map((e) => (e.lastSeen ? `${e.lastSeen.x},${e.lastSeen.y}` : '-')).join('|'),
@@ -1587,6 +1587,41 @@ test('a danger event always LANDS — a fizzled pick is retried, never spent', (
     if (snap(s) === before) silent += 1;
   }
   assert.equal(silent, 0, `every event changed the world (${silent}/${N} did nothing)`);
+});
+
+test('dread conversions: foes in view become mini-bosses or summoning runes — and fizzle on an empty board', () => {
+  const crowd = () => {
+    const s = createInitialState('warrior');
+    s.terrain = {}; s.allies = []; s.key = null; s.upstair = null;
+    s.player.x = 10; s.player.y = 10; s.player.vision = 40; // see the whole cluster
+    s.enemies = [];
+    for (let i = 0; i < 4; i += 1) s.enemies.push(createEnemy('rook', 13 + i, 10)); // four rooks in view, not adjacent
+    return s;
+  };
+  // ANOINT — ordinary foes swell into hunting mini-bosses where they stand.
+  {
+    const s = crowd();
+    assert.ok(enemiesToMinis(s), 'anoint reports');
+    const minis = s.enemies.filter((e) => e.mini && e.boss);
+    assert.ok(minis.length >= 1 && minis.length <= 4, `some foes anointed (${minis.length})`);
+    assert.ok(minis.every((m) => m.awake), 'and they hunt at once');
+  }
+  // RUNECIRCLES — foes sink into summoning runes, each with a same-class minion already beside it.
+  {
+    const s = crowd();
+    const before = s.enemies.length;
+    assert.ok(enemiesToCircles(s), 'runecircles reports');
+    assert.ok(s.enemies.some((e) => e.summonCircle), 'a foe became a summoning circle');
+    assert.ok(s.enemies.length > before, 'and a minion rose beside it (the board grew)');
+    assert.ok(s.enemies.some((e) => e.summoned && e.kind === 'rook'), 'the minion is of the SAME class');
+  }
+  // Neither fires on a bare board — it returns '' so the danger roll re-rolls onto something that lands.
+  {
+    const s = createInitialState('warrior');
+    s.terrain = {}; s.enemies = []; s.allies = [];
+    assert.equal(enemiesToMinis(s), '', 'anoint fizzles with no foes');
+    assert.equal(enemiesToCircles(s), '', 'runecircles fizzles with no foes');
+  }
 });
 
 test('every dread STEP-UP is itself a hostile event — the music is a tell, not a mood', () => {
