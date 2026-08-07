@@ -72,8 +72,14 @@ const BLOOD_DRY = 0.6; // per-turn survival factor (lower = dries faster)
 const PURSUIT_TTL_MIN = 5;
 const PURSUIT_TTL_MAX = 10;
 // Having reached the spot where it lost him, a hunter casts on this many tiles further along the way
-// he was heading — the "he must have gone round that corner" guess. One guess per pursuit.
+// he was heading — the "he must have gone round that corner" guess.
 const PURSUIT_GUESS = 3;
+// ...and it may cast on again when it reaches THAT spot and he still isn't there, up to this many times
+// per pursuit — so a hunter FOLLOWS the line he was running (through tall grass, round a corner) instead
+// of shrugging after a single guess. This is what makes losing sight ONCE no longer shake a pursuer: to
+// break the trail you must TURN (leave the line), not merely duck out of view. The TTL still caps the
+// total distance; a straight cast that hits a wall/edge ends the chase there.
+const PURSUIT_GUESS_CASTS = 4;
 // FOG: a drifting cloud (spellfire over water, steam off lava/ice, a Steamweaver boss) that blocks the
 // look for this many turns before it thins away. It is HAZE — Premonition (soft-sight) peers through.
 const FOG_TURNS = 2;

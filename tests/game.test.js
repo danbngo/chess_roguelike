@@ -3906,6 +3906,35 @@ test('an out-of-sight enemy pursues the king’s last-seen tile', () => {
   assert.ok(chebyshev(after.x, after.y, 8, 8) < chebyshev(11, 8, 8, 8), 'it advanced toward the memory');
 });
 
+test('a hunter FOLLOWS the king’s heading line when it loses him in tall grass — and casting on CLOSES the gap', () => {
+  // Losing sight ONCE used to shake a pursuer: it reached the stale last-seen tile and forgot on the
+  // spot. Now it casts the trail on along his heading, again and again while the memory holds, so it
+  // follows the LINE he was running down the grass and closes to striking range. (To shake it he must
+  // TURN off the line — a straight run no longer works.)
+  const build = (guessesLeft) => {
+    const s = createInitialState('warrior');
+    s.terrain = {}; s.allies = []; s.key = null;
+    for (let x = 4; x <= 22; x += 1) s.terrain[`${x},10`] = 'devilgrass'; // grass blocks sight past one tile
+    s.player.x = 18; s.player.y = 10; s.player.hp = 20; s.player.maxHp = 20;
+    s.enemies = [makeEnemy({ kind: 'king', x: 5, y: 10, awake: true, id: 'e',
+      lastSeen: { x: 6, y: 10 }, lastSeenTtl: 15, lastSeenDir: { dx: 1, dy: 0 }, guessesLeft })];
+    return s;
+  };
+  const closestOver = (guessesLeft) => {
+    let st = build(guessesLeft);
+    let closest = Infinity;
+    for (let t = 0; t < 16; t += 1) {
+      const ph = beginEnemyPhase(st); st = ph.state;
+      for (const id of (ph.moverIds || [])) st = moveEnemy(st, id);
+      const en = st.enemies.find((x) => x.id === 'e'); if (!en) break;
+      closest = Math.min(closest, chebyshev(en.x, en.y, st.player.x, st.player.y));
+    }
+    return closest;
+  };
+  assert.ok(closestOver(8) <= 1, 'casting on, the hunter follows the grass line and reaches striking range');
+  assert.ok(closestOver(0) >= 5, 'with no casts it stalls at the stale tile and never closes');
+});
+
 test('an enemy that pursues into view reads as aware, not "unaware" on screen', () => {
   const s = createInitialState('warrior');
   s.terrain = {};

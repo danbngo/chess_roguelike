@@ -9499,11 +9499,32 @@ function rememberAt(enemy, x, y, heading, turns) {
   // blow out of nowhere) never watched him WALK anywhere, so it has nothing to cast along and will
   // simply give up at the tile rather than guess a direction it never saw.
   enemy.lastSeenDir = heading || null;
-  enemy.guessed = false;
+  enemy.guessesLeft = PURSUIT_GUESS_CASTS; // fresh casts to keep following his heading when the trail runs out
 }
 
 function rememberKing(state, enemy) {
   rememberAt(enemy, state.player.x, state.player.y, state.kingHeading, pursuitTurns());
+}
+
+// CAST THE TRAIL ON. Reaching the spot where it lost him and finding him gone, a hunter carries the
+// chase PURSUIT_GUESS tiles further along the way he was HEADING — "he must have gone round that
+// corner" — and it does so AGAIN each time it reaches the new spot, up to PURSUIT_GUESS_CASTS per
+// pursuit, so it FOLLOWS the line he was running (through tall grass, down a corridor) instead of
+// shrugging after a single guess. THIS is what makes losing sight once no longer shake a pursuer; to
+// break the trail he must TURN (leave the line), not merely duck out of view. Retargets `lastSeen` and
+// returns true, or returns false (→ the caller forgets) when it is out of casts / memory, never saw a
+// heading, or the cast would only jam it against a wall or the world edge (no advance). Bounded three
+// ways — the cast budget, the memory TTL (spent per real step), and that no-advance guard — so a hunt
+// can never chain across the whole floor.
+function castTrailOn(enemy, from) {
+  if (!(enemy.guessesLeft > 0 && enemy.lastSeenTtl > 0 && enemy.lastSeenDir
+      && (enemy.lastSeenDir.dx || enemy.lastSeenDir.dy))) return false;
+  const gx = clamp(from.x + enemy.lastSeenDir.dx * PURSUIT_GUESS, 0, WORLD_SIZE - 1);
+  const gy = clamp(from.y + enemy.lastSeenDir.dy * PURSUIT_GUESS, 0, WORLD_SIZE - 1);
+  if (gx === from.x && gy === from.y) return false; // pinned against a wall / the edge — no advance
+  enemy.guessesLeft -= 1;
+  enemy.lastSeen = { x: gx, y: gy };
+  return true;
 }
 
 function pursueLastSeen(state, enemy) {
@@ -9513,23 +9534,9 @@ function pursueLastSeen(state, enemy) {
     enemy.lastSeen = null;
     enemy.lastSeenTtl = 0;
   };
+  // Already standing on the trail's end and he is not here — cast on and hunt the new guess THIS turn.
   if (enemy.x === target.x && enemy.y === target.y) {
-    // It stands where it last had him — and he is not here. Rather than shrug and wander off the
-    // instant it arrives, it CASTS ON: carries the chase a few tiles further along the way he was
-    // heading, which is what a hunter does when its quarry rounds a corner. That is the difference
-    // between a foe that gives up at the corner and one that comes round it after you.
-    //
-    // One guess per pursuit (`guessed`), and only while the memory still holds — so it cannot chain
-    // guesses across the whole floor, and the recursion below can only ever go one level deep.
-    if (!enemy.guessed && enemy.lastSeenTtl > 0 && enemy.lastSeenDir
-        && (enemy.lastSeenDir.dx || enemy.lastSeenDir.dy)) {
-      enemy.guessed = true;
-      enemy.lastSeen = {
-        x: clamp(target.x + enemy.lastSeenDir.dx * PURSUIT_GUESS, 0, WORLD_SIZE - 1),
-        y: clamp(target.y + enemy.lastSeenDir.dy * PURSUIT_GUESS, 0, WORLD_SIZE - 1),
-      };
-      return pursueLastSeen(state, enemy); // hunt the guess on this same turn
-    }
+    if (castTrailOn(enemy, target)) return pursueLastSeen(state, enemy);
     forget();
     return false;
   }
@@ -9560,7 +9567,12 @@ function pursueLastSeen(state, enemy) {
   enemy.y = best.y;
   crushBoulderUnder(state, enemy); // a leaper that PURSUES onto a boulder / ice slab shatters it, same as a hunting leap
   enemy.lastSeenTtl -= 1;
-  if ((enemy.x === target.x && enemy.y === target.y) || enemy.lastSeenTtl <= 0) forget();
+  // It reached the spot it was heading for. Rather than FORGET here the instant it arrives — the old
+  // bug that made a hunter give up the moment it lost sight — cast the trail ON along his heading for
+  // next turn (it has already spent this turn's step). Give up only when the memory has run out, or
+  // there is no further cast to make.
+  if (enemy.lastSeenTtl <= 0) forget();
+  else if (enemy.x === target.x && enemy.y === target.y) { if (!castTrailOn(enemy, target)) forget(); }
   return true;
 }
 
