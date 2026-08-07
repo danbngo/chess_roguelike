@@ -510,7 +510,8 @@ body.touch.in-game .log-wrap,
 body.touch.in-game .right-pane,
 body.touch.in-game .card-hint,
 body.touch.in-game #inv-hint,
-body.touch.in-game #orb-hint { display: none; }
+body.touch.in-game #orb-hint,
+body.touch.in-game #orb-bar { display: none; }
 /* Keep the whole game clear of the notch / camera cutout on EVERY edge. In landscape the cutout sits on
    a long side and was slicing the left off the board; padding the layout insets all of it. env() insets
    are 0 where there is no cutout, so this does nothing on hardware without one. box-sizing:border-box
@@ -547,41 +548,86 @@ body.touch .overlay.hidden { display: none; }
    empty beside the board — the "black strip". Instead: a COMPACT translucent control panel (Options +
    stats + cards) and the square board, CENTRED together as a group, with the minimap tucked into the
    right-hand margin clear of the board. No dead black column. */
+/* LANDSCAPE (phone held wide, touch). A landscape board is HEIGHT-limited and roughly square, so the
+   side margins are wide — put the board dead CENTRE and scatter the HUD into the four CORNERS/margins,
+   where it sits clear of the board and falls under the two thumbs: stats top-left, Options gear top-
+   right, cards bottom-left (left thumb), minimap bottom-right (right thumb). The `.left-pane` collapses
+   (`display: contents`) so it lays nothing out — its pieces are each placed below. No black column. */
 @media (orientation: landscape) {
   body.touch.in-game .game-layout {
     flex-direction: row;
     justify-content: center;
     align-items: center;
-    gap: 0.6rem;
   }
-  body.touch.in-game .left-pane {
-    align-self: center;
-    width: auto;
-    min-width: 128px;
-    max-width: 30vw;
-    height: auto;
-    max-height: calc(100vh - 12px);
-    background: rgba(2, 6, 23, 0.62);
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 14px;
-    padding: 0.5rem 0.55rem;
-    gap: 0.4rem;
+  body.touch.in-game .left-pane { display: contents; }
+
+  /* STATS — top-left. */
+  body.touch.in-game .info-panel {
+    position: fixed;
+    top: calc(6px + env(safe-area-inset-top));
+    left: calc(8px + env(safe-area-inset-left));
+    z-index: 56;
+    max-width: 40vw;
+    align-items: flex-start;
+    text-align: left;
+    gap: 0.15rem;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.82rem;
+    background: rgba(2, 6, 23, 0.6);
+    border-radius: 12px;
   }
-  /* Cards stay IN the panel as a tidy wrapped block — not floated loose across the board. */
+  /* OPTIONS → gear, top-right. */
+  body.touch.in-game #options {
+    position: fixed;
+    top: calc(6px + env(safe-area-inset-top));
+    right: calc(8px + env(safe-area-inset-right));
+    z-index: 57;
+    width: 2.5rem;
+    height: 2.5rem;
+    min-width: 0;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0;
+    background: rgba(2, 6, 23, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  body.touch.in-game #options::before {
+    content: '\2699'; /* ⚙ gear */
+    font-size: 1.4rem;
+    line-height: 1;
+    color: #cbd5e1;
+  }
+  /* CARDS — bottom-left thumb zone, a wrapped tray. */
   body.touch.in-game .card-bar {
+    position: fixed;
+    left: calc(8px + env(safe-area-inset-left));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    z-index: 56;
+    margin: 0;
+    max-width: 34vw;
     flex-wrap: wrap;
     justify-content: flex-start;
     gap: 0.4rem;
-    margin: 0.35rem 0 0;
+    padding: 0.35rem 0.45rem;
+    background: rgba(2, 6, 23, 0.55);
+    border-radius: 14px;
     overflow: visible;
   }
-  /* Minimap in the bottom-RIGHT margin, clear of the centred board. */
+  body.touch.in-game .card-slot {
+    width: 3.5rem;
+    height: 3.5rem;
+    font-size: 1.9rem;
+  }
+  /* MINIMAP — bottom-right thumb zone. */
   body.touch.in-game #minimap {
     left: auto;
     right: calc(8px + env(safe-area-inset-right));
     bottom: calc(8px + env(safe-area-inset-bottom));
-    width: min(128px, 28vh);
-    height: min(128px, 28vh);
+    width: min(140px, 30vh);
+    height: min(140px, 30vh);
   }
 }
 
