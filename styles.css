@@ -520,6 +520,53 @@ body.touch.in-game .game-layout {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+/* DEDICATED FULL-SCREEN MODALS on a phone, ANY orientation. The base .overlay is position:absolute and
+   just floats a card OVER the play area — fine on a desktop, but on a phone (especially landscape, where
+   the width-gated mobile block below doesn't fire) there is no room, so a modal must take the WHOLE
+   screen. Fixed to the viewport, scrollable, and inset from the notch on every edge. */
+body.touch .overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  overflow-y: auto;
+  touch-action: pan-y; /* scroll a long modal, never pinch-zoom it */
+  padding: calc(1.2rem + env(safe-area-inset-top)) calc(1.1rem + env(safe-area-inset-right)) calc(1.2rem + env(safe-area-inset-bottom)) calc(1.1rem + env(safe-area-inset-left));
+}
+body.touch .overlay-card { max-width: 34rem; width: 100%; }
+
+/* LANDSCAPE (phone held wide): the fixed minimap sat bottom-RIGHT, over the board. Move it to the
+   bottom-LEFT corner (the controls side), and float the ability cards as a thumb strip along the bottom
+   STARTING to the right of it, so the two never fight for the same corner. */
+@media (orientation: landscape) {
+  body.touch.in-game #minimap {
+    right: auto;
+    left: calc(8px + env(safe-area-inset-left));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    width: min(150px, 34vh);
+    height: min(150px, 34vh);
+  }
+  body.touch.in-game .card-bar {
+    position: fixed;
+    left: calc(20px + min(150px, 34vh) + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    z-index: 56;
+    margin: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-start;
+    background: rgba(2, 6, 23, 0.55);
+    border-radius: 12px;
+    padding: 0.3rem 0.45rem;
+  }
+}
+
 /* Left pane: plain one-line stats, controls, cards, and the message log. */
 .info-panel {
   display: flex;

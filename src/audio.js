@@ -711,18 +711,26 @@ const GameAudio = (function () {
     document.addEventListener('keydown', once);
     // Backgrounding the tab / locking the phone: suspend the whole audio graph so music doesn't keep
     // playing out of sight (the game loop's rAF already pauses when hidden). Resume on return.
+    let audioBackgrounded = false; // were we hidden since the last successful revive? (drives the gesture fix)
     document.addEventListener('visibilitychange', () => {
       if (!ctx) return;
-      if (document.hidden) ctx.suspend();
+      if (document.hidden) { audioBackgrounded = true; ctx.suspend(); }
       else if (enabled && unlocked) ctx.resume(); // best effort — iOS often ignores this until a gesture
     });
     // iOS SAFARI: after backgrounding, resume() only takes effect from a USER GESTURE, so the line above
-    // silently no-ops and the game comes back SILENT. Re-resume (and restart music/heartbeat if their
-    // sources died) on the next touch/key whenever the context is found suspended. Persistent, unlike
-    // the one-shot unlock above; a no-op when nothing is suspended.
+    // silently no-ops and the game comes back SILENT. Two traps this must clear, both seen on-device:
+    //   1. iOS may leave the context in the 'interrupted' state, NOT 'suspended' — so keying off
+    //      `!== 'suspended'` missed it. We now revive from ANY non-running state.
+    //   2. iOS KILLS the buffer sources in the background, yet `musicSource` still points at the dead one,
+    //      so startMusicFile thinks the track is "already looping" and never rebuilds it. So we drop the
+    //      dead sources (stopMusicFile/stopHeart) BEFORE applyMusic, forcing fresh nodes on the revived ctx.
+    // The `audioBackgrounded` flag guarantees a rebuild on the first gesture after any hide, even if iOS
+    // has quietly flipped the state back to 'running' while leaving the sources dead.
     const resumeOnGesture = () => {
-      if (!ctx || !enabled || !unlocked || ctx.state !== 'suspended') return;
-      const revive = () => { applyMusic(); startHeart(); };
+      if (!ctx || !enabled || !unlocked) return;
+      if (ctx.state === 'running' && !audioBackgrounded) return; // nothing to fix
+      audioBackgrounded = false;
+      const revive = () => { stopMusicFile(); stopHeart(); applyMusic(); startHeart(); };
       const p = ctx.resume();
       if (p && typeof p.then === 'function') p.then(revive).catch(() => {}); else revive();
     };
