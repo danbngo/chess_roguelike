@@ -538,6 +538,10 @@ body.touch .overlay {
   padding: calc(1.2rem + env(safe-area-inset-top)) calc(1.1rem + env(safe-area-inset-right)) calc(1.2rem + env(safe-area-inset-bottom)) calc(1.1rem + env(safe-area-inset-left));
 }
 body.touch .overlay-card { max-width: 34rem; width: 100%; }
+/* CRITICAL: `body.touch .overlay` (0,2,1) is MORE specific than `.overlay.hidden` (0,2,0), so without
+   this its display:flex would UN-HIDE every hidden modal (the "Descend?" confirm showed on entry). Re-
+   assert the hide at higher specificity so hidden stays hidden. */
+body.touch .overlay.hidden { display: none; }
 
 /* LANDSCAPE (phone held wide): the fixed minimap sat bottom-RIGHT, over the board. Move it to the
    bottom-LEFT corner (the controls side), and float the ability cards as a thumb strip along the bottom
