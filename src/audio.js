@@ -715,30 +715,33 @@ const GameAudio = (function () {
     };
     document.addEventListener('pointerdown', once);
     document.addEventListener('keydown', once);
-    // Backgrounding the tab / locking the phone: suspend the whole audio graph so music doesn't keep
-    // playing out of sight (the game loop's rAF already pauses when hidden). Resume on return.
-    let audioBackgrounded = false; // were we hidden since the last successful revive? (drives the gesture fix)
-    document.addEventListener('visibilitychange', () => {
-      if (!ctx) return;
-      if (document.hidden) { audioBackgrounded = true; ctx.suspend(); }
-      else if (enabled && unlocked) ctx.resume(); // best effort — iOS often ignores this until a gesture
-    });
-    // iOS SAFARI: after backgrounding, resume() only takes effect from a USER GESTURE, so the line above
-    // silently no-ops and the game comes back SILENT. Two traps this must clear, both seen on-device:
-    //   1. iOS may leave the context in the 'interrupted' state, NOT 'suspended' — so keying off
-    //      `!== 'suspended'` missed it. We now revive from ANY non-running state.
-    //   2. iOS KILLS the buffer sources in the background, yet `musicSource` still points at the dead one,
-    //      so startMusicFile thinks the track is "already looping" and never rebuilds it. So we drop the
-    //      dead sources (stopMusicFile/stopHeart) BEFORE applyMusic, forcing fresh nodes on the revived ctx.
-    // The `audioBackgrounded` flag guarantees a rebuild on the first gesture after any hide, even if iOS
-    // has quietly flipped the state back to 'running' while leaving the sources dead.
+    // BACKGROUNDING the tab / locking the phone: suspend the graph so nothing plays out of sight.
+    const suspendAudio = () => { if (ctx) { try { ctx.suspend(); } catch (e) { /* ignore */ } } };
+    // RETURNING to the foreground (closing then RE-MAXIMISING the app on mobile): FORCE the mixer back to
+    // life with the same hard rebuild the Sound toggle uses (forceRevive) — so the sound unsticks on its
+    // own, no toggle needed. Why not a plain resume()? iOS KILLS the buffer sources while backgrounded
+    // yet often leaves the context reading 'running', so resume() alone rebuilds nothing and the game
+    // returns silent; forceRevive tears the dead sources down (stopMusicFile/stopHeart) and builds fresh
+    // ones on the running context. When iOS instead leaves the context suspended/'interrupted' (resume
+    // only takes on a gesture there), the per-gesture path below is the reliable fallback. Debounced so
+    // visibilitychange + pageshow firing together don't restart the loop twice.
+    let lastWake = 0;
+    const wakeAudio = () => {
+      if (!enabled || !unlocked) return;
+      const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      if (now - lastWake < 400) return;
+      lastWake = now;
+      forceRevive();
+    };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) suspendAudio(); else wakeAudio(); });
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('pagehide', suspendAudio);
+      window.addEventListener('pageshow', wakeAudio); // bfcache restore / some iOS re-maximise paths
+    }
+    // The reliable iOS fallback: the first touch/key after returning forces the rebuild whenever the
+    // context is still not running (there, resume() only takes effect from a user gesture).
     const resumeOnGesture = () => {
-      if (!ctx || !enabled || !unlocked) return;
-      if (ctx.state === 'running' && !audioBackgrounded) return; // nothing to fix
-      audioBackgrounded = false;
-      const revive = () => { stopMusicFile(); stopHeart(); applyMusic(); startHeart(); };
-      const p = ctx.resume();
-      if (p && typeof p.then === 'function') p.then(revive).catch(() => {}); else revive();
+      if (ctx && enabled && unlocked && ctx.state !== 'running') forceRevive();
     };
     document.addEventListener('pointerdown', resumeOnGesture);
     document.addEventListener('touchend', resumeOnGesture);
