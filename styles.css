@@ -55,16 +55,23 @@ p {
 }
 
 button {
-  background: rgba(30, 41, 59, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 999px;
+  background: var(--plaque);
+  border: 1px solid var(--brass);
+  border-radius: 11px;
   padding: 0.45rem 0.8rem;
   cursor: pointer;
-  color: inherit;
+  color: var(--ink);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, transform 0.04s ease, color 0.15s ease;
 }
 
+/* Warm torchlit hover, no bg swap — so card slots (which override their own bg/state colour) keep it
+   and just catch a faint glow, while plain buttons light up. `:active` gives every button a real press. */
 button:hover {
-  background: rgba(59, 130, 246, 0.3);
+  border-color: var(--brass-lit);
+  box-shadow: 0 0 12px rgba(232, 193, 74, 0.25);
+}
+button:active {
+  transform: translateY(1px);
 }
 
 .stage {
@@ -92,11 +99,11 @@ button:hover {
   text-align: center;
   padding: 1.75rem 2rem;
   border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: #0b0b12;
-  color: #e2e8f0;
+  border: 1px solid var(--brass);
+  background: var(--panel);
+  color: var(--ink-dim);
 }
-#crash-screen h2 { margin: 0 0 0.6rem; font-size: 1.3rem; color: #f8fafc; }
+#crash-screen h2 { margin: 0 0 0.6rem; font-size: 1.3rem; font-family: var(--serif); color: var(--ink); }
 #crash-screen p { margin: 0 0 1.2rem; color: #cbd5e1; line-height: 1.5; }
 #crash-screen button {
   padding: 0.6rem 1.6rem;
@@ -633,8 +640,8 @@ body.touch .overlay.hidden { display: none; }
     padding: 0;
     border-radius: 50%;
     font-size: 0;
-    background: rgba(2, 6, 23, 0.72);
-    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: var(--plaque);
+    border: 1px solid var(--brass);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -768,14 +775,15 @@ body.touch .overlay.hidden { display: none; }
   align-self: flex-start;
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--ink-dim);
   font-size: 0.8rem;
   font-weight: 600;
   padding: 0.15rem 0.1rem;
   cursor: pointer;
 }
 .log-toggle:hover {
-  color: #e2e8f0;
+  color: var(--brass-lit);
+  box-shadow: none; /* it's borderless text — no plaque glow from the base button:hover */
 }
 
 .log {
@@ -947,7 +955,7 @@ body.touch .overlay.hidden { display: none; }
   height: 3rem;
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(30, 41, 59, 0.9);
+  background: rgba(28, 22, 14, 0.92); /* warm stone, not cold slate — the card's subclass colour rings it */
   display: grid;
   place-items: center;
   font-size: 1.5rem;
@@ -1121,7 +1129,7 @@ body.touch .overlay.hidden { display: none; }
   margin: 0;
   font-size: 0.82rem;
   font-style: italic;
-  color: #64748b;
+  color: rgba(203, 185, 148, 0.6);
 }
 
 .score-heading {
@@ -1130,22 +1138,22 @@ body.touch .overlay.hidden { display: none; }
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--brass-lit);
 }
 
 .score-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.82rem;
-  color: #cbd5e1;
+  color: var(--ink-dim);
 }
 
 .score-table th {
   text-align: right;
   font-weight: 600;
-  color: #64748b;
+  color: rgba(203, 185, 148, 0.75);
   padding: 0.1rem 0.45rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  border-bottom: 1px solid rgba(180, 150, 90, 0.3);
 }
 
 .score-table th:first-child {
@@ -1160,11 +1168,11 @@ body.touch .overlay.hidden { display: none; }
 
 .score-table td:first-child {
   text-align: left;
-  color: #64748b;
+  color: rgba(203, 185, 148, 0.7);
 }
 
 .score-date {
-  color: #64748b;
+  color: rgba(203, 185, 148, 0.7);
   font-size: 0.74rem;
 }
 
@@ -1211,10 +1219,10 @@ body.touch .overlay.hidden { display: none; }
   padding: 7px 11px 7px 8px;
   border-radius: 9px;
   border: 1px solid currentColor;
-  /* The tier colour bleeds faintly into the top of the plaque, over the dark base. */
+  /* The tier colour bleeds faintly into the top of the plaque, over a warm stone base. */
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0) 62%),
-    rgba(2, 6, 23, 0.72);
+    linear-gradient(180deg, rgba(255, 240, 200, 0.1), rgba(255, 255, 255, 0) 62%),
+    rgba(18, 14, 10, 0.8);
   font-size: 0.78rem;
   line-height: 1.25;
   max-width: 236px;
@@ -1293,13 +1301,13 @@ body.touch .overlay.hidden { display: none; }
   border-style: dashed;
 }
 .ach-badge.badge-locked .badge-medal {
-  background: rgba(100, 116, 139, 0.16);
+  background: rgba(120, 100, 62, 0.16);
   border-style: dashed;
   box-shadow: none;
-  color: #94a3b8;
+  color: rgba(203, 185, 148, 0.7);
   font-size: 0.72rem;
 }
-.ach-badge.badge-locked .badge-name { color: #cbd5e1; }
+.ach-badge.badge-locked .badge-name { color: var(--ink-dim); }
 
 /* ============================================================================
    PHONE / NARROW SCREENS — stack the board over its side panels so it all fits
@@ -1426,8 +1434,8 @@ body.touch .overlay.hidden { display: none; }
     padding: 0;
     border-radius: 50%;
     font-size: 0; /* hide the word "Options" */
-    background: rgba(2, 6, 23, 0.72);
-    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: var(--plaque);
+    border: 1px solid var(--brass);
     display: flex;
     align-items: center;
     justify-content: center;
