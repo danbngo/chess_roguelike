@@ -2792,7 +2792,7 @@
       if (isConfirmKey(event)) {
         event.preventDefault();
         const sel = opts.find((o) => o.id === titleHover) || opts[0];
-        if (sel && sel.action) sel.action();
+        if (sel && sel.action) pressMenu(sel.id, sel.action);
       }
       return;
     }
@@ -2961,6 +2961,25 @@
   // A tap OR a mouse-click at a client point, dispatched by screen. Both the mouse `click` listener and
   // the touch `touchend` tap call this with a bare {clientX, clientY} — handleClick and the option
   // hit-tests only ever read those two fields, so a synthesized point works exactly like a real event.
+  // PRESS FEEDBACK for the diegetic menus (title / class-select / trophy). A tap or Enter used to fire
+  // the action instantly and hard-cut to the next screen — nothing acknowledged the press, worst on
+  // touch where there is no hover. Now: a UI tick + a bright flash on the pressed option (Renderer.
+  // setPressed drives the flash off the same hit-rects), held ~110ms so it READS, then the action runs.
+  // Guarded so a double-tap can't fire twice or stack transitions.
+  const MENU_PRESS_MS = 110;
+  let menuPressing = false;
+  function pressMenu(id, action) {
+    if (menuPressing) return;
+    menuPressing = true;
+    GameAudio.play('select');
+    if (Renderer.setPressed) Renderer.setPressed(id);
+    setTimeout(() => {
+      menuPressing = false;
+      if (Renderer.setPressed) Renderer.setPressed(null);
+      if (typeof action === 'function') action();
+    }, MENU_PRESS_MS);
+  }
+
   function dispatchTap(clientX, clientY) {
     if (screen === 'title') {
       const rect = canvas.getBoundingClientRect();
@@ -2968,7 +2987,7 @@
       const id = Renderer.titleOptionAt((clientX - rect.left) * scale, (clientY - rect.top) * scale);
       if (id) {
         const opt = withDebugOption(titleMenuModel()).options.find((o) => o.id === id);
-        if (opt && opt.enabled && opt.action) opt.action();
+        if (opt && opt.enabled && opt.action) pressMenu(opt.id, opt.action);
       }
       return;
     }
@@ -2992,7 +3011,11 @@
   });
 
   // A click on the diegetic class-select or trophy scene, by the hit-rect id the renderer reported.
+  // Routed through pressMenu so it flashes + ticks + holds a beat before acting, exactly like the title.
   function handleSceneClick(id) {
+    pressMenu(id, () => applySceneChoice(id));
+  }
+  function applySceneChoice(id) {
     if (id === 'back') {
       if (screen === 'class' && pickStage === 'difficulty') { pickStage = 'class'; sceneHover = null; } else showTitle();
       return;

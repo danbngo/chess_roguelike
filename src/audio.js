@@ -132,6 +132,12 @@ const GameAudio = (function () {
       tone(523.25, t, 0.1, { type: 'triangle', gain: 0.16 });
       tone(783.99, t + 0.09, 0.14, { type: 'triangle', gain: 0.16 });
     },
+    // A crisp UI TICK for pressing a menu button — a short bright blip with a quick overtone, quieter
+    // than a pickup so it reads as "registered", not an event.
+    select(t) {
+      tone(880, t, 0.05, { type: 'triangle', gain: 0.12, slideTo: 1040 });
+      tone(1320, t + 0.028, 0.05, { type: 'sine', gain: 0.06 });
+    },
     quaff(t) {
       tone(400, t, 0.18, { type: 'sine', gain: 0.14, slideTo: 820 });
       noise(t, 0.05, 0.05);

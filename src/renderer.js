@@ -4737,6 +4737,27 @@ const Renderer = (function () {
   let titleRects = []; // {id, x, y, w, h, enabled} in canvas pixels — the hit-test targets
   let titleCenter = null; // the throne's pixel centre — the origin for spatial keyboard select
   let sceneCenter = null; // the trophy-hall king's pixel centre — origin for directional trophy select
+  // PRESS FEEDBACK: which menu option the player just pressed (main.js sets it for ~110ms, then clears
+  // it and runs the option's action). We POP it bright — a bright fill + white-hot border over its
+  // hit-rect — so a tap/click reads as "registered" before the screen changes, instead of a dead cut.
+  // One helper serves the title, class-select AND trophy scenes, since all three share the rect lists.
+  let pressedMenuId = null;
+  function setPressed(id) { pressedMenuId = id || null; }
+  function drawPressFlash(rects) {
+    if (!pressedMenuId || !rects || !rects.length) return;
+    const r = rects.find((o) => o.id === pressedMenuId);
+    if (!r) return;
+    const beat = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(clock * 22)); // a fast shimmer for the brief press
+    ctx.save();
+    ctx.shadowColor = 'rgba(134, 239, 172, 0.95)';
+    ctx.shadowBlur = r.w * 0.6 * beat;
+    ctx.fillStyle = `rgba(134, 239, 172, ${(0.34 * beat).toFixed(3)})`;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = 'rgba(240, 253, 244, 0.98)';
+    ctx.lineWidth = Math.max(2.5, r.w * 0.07);
+    ctx.strokeRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6);
+    ctx.restore();
+  }
 
   // ONE layout, shared by the draw and the hit-test so a click can never land somewhere the eye
   // was not pointed. A tidy 2x2 of options around the king in the middle.
@@ -4982,6 +5003,7 @@ const Renderer = (function () {
     ctx.restore();
 
     // (The vignette is drawn by drawBoardBackdrop, under the king and options.)
+    drawPressFlash(titleRects);
   }
 
   // --------------------------- PRE-GAME SCENES ---------------------------
@@ -5177,6 +5199,7 @@ const Renderer = (function () {
     const hov = choices.find((c) => c.id === m.hover);
     drawSceneBlurb(L, hov ? hov.label : (m.hint || 'Hover a king to read its calling.'), hov ? hov.desc : '');
     drawSceneBack(L, m.hover === 'back');
+    drawPressFlash(sceneRects);
   }
 
   // ONE trophy on the wall of a room: a medallion (lit by tier, or a hollow star if unwon) + its name.
@@ -5287,6 +5310,7 @@ const Renderer = (function () {
     const hov = trophies.find((tr) => tr.id === m.hover);
     drawSceneBlurb(L, hov ? hov.name : 'Walk the doorways ‹ › (or arrow keys) to view every trophy.', hov ? hov.desc : '');
     drawSceneBack(L, m.hover === 'back');
+    drawPressFlash(sceneRects);
   }
 
   // A room's colour identity: a soft accent vignette drawn over the board so no two adjacent rooms
@@ -6348,5 +6372,5 @@ const Renderer = (function () {
     tutSpotlight = tiles || null;
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight, setPressed };
 })();
