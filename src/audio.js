@@ -748,6 +748,21 @@ const GameAudio = (function () {
   function isEnabled() {
     return enabled;
   }
+  // FORCE the audio graph back to life — the manual "unstick". iOS can leave the context in the
+  // 'interrupted' state (not 'suspended') and KILL the buffer sources while `musicSource` still points
+  // at the dead one, so an ordinary resume()/applyMusic() quietly no-ops and the game stays silent.
+  // This resumes from ANY non-running state AND tears the sources down (`stopMusicFile`/`stopHeart`)
+  // before rebuilding them, so a stale-but-referenced source can't block the restart. Wired to enabling
+  // Sound below, so toggling it OFF→ON in Options is a reliable reset whenever the mixer sticks muted.
+  function forceRevive() {
+    unlocked = true;
+    if (!ensure()) return;
+    const revive = () => { stopMusicFile(); stopHeart(); applyMusic(); startHeart(); };
+    if (ctx.state === 'running') { revive(); return; }
+    const p = ctx.resume();
+    if (p && typeof p.then === 'function') p.then(revive).catch(() => revive());
+    else revive();
+  }
   function setEnabled(on) {
     enabled = Boolean(on);
     try {
@@ -755,7 +770,7 @@ const GameAudio = (function () {
     } catch (e) {
       /* ignore */
     }
-    if (enabled) unlock();
+    if (enabled) forceRevive(); // not just unlock(): a HARD rebuild, so ON always unsticks a dead mixer
     else stopMusic();
   }
   function toggle() {
