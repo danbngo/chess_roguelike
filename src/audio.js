@@ -6,6 +6,7 @@
 
 const GameAudio = (function () {
   const STORE_KEY = 'chess-roguelike-sound';
+  const MASTER_GAIN = 0.85; // the master bus's normal level — dropped to 0 to MUTE (Sound: Off) and back
   let ctx = null;
   let master = null; // final output bus
   let sfxBus = null; // sound-effect volume
@@ -35,7 +36,7 @@ const GameAudio = (function () {
     if (!AC) return null;
     ctx = new AC();
     master = ctx.createGain();
-    master.gain.value = 0.85;
+    master.gain.value = enabled ? MASTER_GAIN : 0; // start muted if Sound was left Off
     master.connect(ctx.destination);
     sfxBus = ctx.createGain();
     sfxBus.gain.value = 0.9;
@@ -773,8 +774,18 @@ const GameAudio = (function () {
     } catch (e) {
       /* ignore */
     }
-    if (enabled) forceRevive(); // not just unlock(): a HARD rebuild, so ON always unsticks a dead mixer
-    else stopMusic();
+    if (!ensure()) { if (enabled) unlock(); return; } // no graph yet (headless / pre-unlock)
+    if (enabled) {
+      unlocked = true;
+      if (master) master.gain.value = MASTER_GAIN; // UNMUTE — the still-running track comes straight back
+      // Only REBUILD (which restarts the loop) when the mixer is genuinely stuck: the context is parked
+      // (suspended/'interrupted'), or the source actually died (e.g. an iOS interruption). A live, running
+      // track just unmuted RESUMES WHERE IT WAS — no restart. This was the bug: forceRevive() ran every
+      // time, tearing down a healthy source and starting a fresh BufferSource from 0.
+      if (ctx.state !== 'running' || !isMusicPlaying()) forceRevive();
+    } else if (master) {
+      master.gain.value = 0; // MUTE — keep the source alive so re-enabling resumes in place, not from the top
+    }
   }
   function toggle() {
     setEnabled(!enabled);
