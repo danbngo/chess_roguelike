@@ -121,6 +121,23 @@ const GameAudio = (function () {
       tone(200, t, 0.7, { type: 'sawtooth', gain: 0.22, slideTo: 45 });
       noise(t, 0.2, 0.16);
     },
+    // A guardian's BELLOW as it wakes and turns on the king — low, throaty, falling away.
+    roar(t) {
+      tone(150, t, 0.42, { type: 'sawtooth', gain: 0.2, slideTo: 66 });
+      tone(74, t, 0.42, { type: 'square', gain: 0.1, slideTo: 40 });
+      noise(t, 0.3, 0.09, { filter: 'lowpass', freq: 700, sweepTo: 200 });
+    },
+    // A guardian's DYING WAIL — a mournful cry that falls away, higher and longer than the bellow.
+    wail(t) {
+      tone(360, t, 0.6, { type: 'sawtooth', gain: 0.18, slideTo: 92 });
+      tone(540, t + 0.04, 0.5, { type: 'triangle', gain: 0.08, slideTo: 120 });
+      noise(t + 0.1, 0.35, 0.05, { filter: 'lowpass', freq: 900, sweepTo: 250 });
+    },
+    // A soft FOOTSTEP — a low muffled scuff underfoot, quiet enough to walk on all day.
+    step(t) {
+      tone(95, t, 0.05, { type: 'sine', gain: 0.05, slideTo: 55 });
+      noise(t, 0.035, 0.03, { filter: 'lowpass', freq: 500 });
+    },
     cast(t) {
       tone(320, t, 0.22, { type: 'sine', gain: 0.15, slideTo: 760 });
       tone(480, t, 0.22, { type: 'triangle', gain: 0.06, slideTo: 1140 });
@@ -328,12 +345,14 @@ const GameAudio = (function () {
     attack: 5, quaff: 5, pickup: 5, buy: 5, crush: 4, rumble: 4,
     timber: 6, splash: 3, hiss: 3, creak: 3, bonk: 3, chop: 3, nope: 2, swish: 1,
     vent: 1, // a geyser: the most frequent sound on a demon floor — it yields to everything else
+    step: 1, // a footstep: constant while walking — the quietest voice, first to be culled
   };
   // Milliseconds a cue must wait before it may sound again.
   const DEBOUNCE = {
     bonk: 110, swish: 160, splash: 130, hiss: 130, creak: 160, rumble: 170,
     vent: 400, // a whole FIELD of vents blowing at once is one soft exhale, never a stack of them
     crush: 90, thrum: 110, fall: 110, alarm: 140, nope: 220, attack: 40, chop: 60, timber: 200,
+    step: 90, roar: 220, wail: 220, // a step guards against a walk-stutter; a bellow/wail never stacks on itself
   };
   const WINDOW = 0.09; // seconds counted as "the same instant"
   let recent = []; // { t, pri } for cues started inside WINDOW
@@ -752,20 +771,39 @@ const GameAudio = (function () {
   function isEnabled() {
     return enabled;
   }
-  // FORCE the audio graph back to life — the manual "unstick". iOS can leave the context in the
-  // 'interrupted' state (not 'suspended') and KILL the buffer sources while `musicSource` still points
-  // at the dead one, so an ordinary resume()/applyMusic() quietly no-ops and the game stays silent.
-  // This resumes from ANY non-running state AND tears the sources down (`stopMusicFile`/`stopHeart`)
-  // before rebuilding them, so a stale-but-referenced source can't block the restart. Wired to enabling
-  // Sound below, so toggling it OFF→ON in Options is a reliable reset whenever the mixer sticks muted.
+  // THE NUCLEAR RESET: build a BRAND-NEW AudioContext. iOS can leave the context UNRECOVERABLE after the
+  // app is MINIMISED (as opposed to a mere tab switch, which resume() fixes): resume() no longer takes,
+  // and fresh sources on the old context stay silent — so even forceRevive/the toggle could not fix it.
+  // Only a new context recovers it. (A brand-new context is 'suspended' on iOS until a gesture, so if
+  // this runs off a lifecycle event the play() waits for the resume, and the per-gesture path retries.)
+  function recreateContext() {
+    stopMusicFile();
+    stopProcedural();
+    stopHeart();
+    try { if (ctx && ctx.state !== 'closed' && typeof ctx.close === 'function') ctx.close(); } catch (e) { /* ignore */ }
+    ctx = null; master = null; sfxBus = null; musicBus = null; musicFileGain = null;
+    if (!enabled || !unlocked || !ensure()) return;
+    const play = () => { applyMusic(); startHeart(); };
+    if (ctx.state === 'running') { play(); return; }
+    const p = ctx.resume();
+    if (p && typeof p.then === 'function') p.then(play).catch(() => { /* awaits a gesture */ }); else play();
+  }
+  // FORCE the audio graph back to life — the "unstick". iOS also leaves the context in the 'interrupted'
+  // state (not 'suspended') and KILLS the buffer sources while `musicSource` still points at the dead one,
+  // so an ordinary resume()/applyMusic() no-ops and the game stays silent. This resumes from ANY non-
+  // running state AND tears the sources down before rebuilding. If the context is 'closed', or resume
+  // finishes and it is STILL not running (the minimise case), it ESCALATES to a full recreate.
   function forceRevive() {
     unlocked = true;
+    if (!ctx || ctx.state === 'closed') { recreateContext(); return; }
     if (!ensure()) return;
-    const revive = () => { stopMusicFile(); stopHeart(); applyMusic(); startHeart(); };
-    if (ctx.state === 'running') { revive(); return; }
+    const rebuild = () => { stopMusicFile(); stopHeart(); applyMusic(); startHeart(); };
+    if (ctx.state === 'running') { rebuild(); return; }
     const p = ctx.resume();
-    if (p && typeof p.then === 'function') p.then(revive).catch(() => revive());
-    else revive();
+    if (p && typeof p.then === 'function') {
+      p.then(() => { if (ctx && ctx.state === 'running') rebuild(); else recreateContext(); })
+        .catch(() => recreateContext());
+    } else if (ctx.state === 'running') { rebuild(); } else { recreateContext(); }
   }
   function setEnabled(on) {
     enabled = Boolean(on);

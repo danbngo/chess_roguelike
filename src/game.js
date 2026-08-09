@@ -2649,6 +2649,10 @@ function defeatBoss(state, boss) {
   if (boss && (!(boss.mini || boss.rush) || randomInt(3) === 0)) {
     state.bossShout = { x: boss.x, y: boss.y, text: bossDeathLine(boss), demon: isDemonBoss(boss), death: true };
   }
+  // The dying CRY rides the cue channel, not the shout bubble, so it sounds on EVERY guardian and
+  // mini-boss death — even the two-in-three mini deaths that show no bubble. The bubble is rationed
+  // (a scream every time reads as punctuation); the sound is the payoff for the kill and is not.
+  if (boss) cue(state, 'wail');
   // Badge ledger: remember every TRAIT the felled guardian wore this run, for the "one of each" trophy.
   if (boss && Array.isArray(boss.bossPerks)) {
     if (!state.player.slainBossTraits) state.player.slainBossTraits = {};

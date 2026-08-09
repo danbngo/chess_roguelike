@@ -187,6 +187,17 @@
   const ENEMY_MOVE_TIME = 0.16;
   const SHOT_LEAD_TIME = 0.19; // arrow/bolt flies for this long before its hit resolves
   const LEVELUP_LEAD_TIME = 1.5; // beat between a guardian's death fanfare and the boon menu
+  const FLOOR_FADE_OUT = 0.3; // stair descent: the old floor darkens to black over this long...
+  const FLOOR_FADE_IN = 0.34; // ...then the new floor rises out of it. Also the 'floor' hold time.
+  // A black curtain over the whole board for the descent between floors: fade the old one out, build
+  // the next behind the black, fade it back in. `phase` is 'out' (0→1 opaque) then 'in' (1→0 clear).
+  let floorFade = null; // { phase:'out'|'in', t, dur } or null when no transition is playing
+  function startFloorFade(phase, dur) { floorFade = { phase, t: 0, dur }; }
+  function floorFadeAlpha() {
+    if (!floorFade) return 0;
+    const k = floorFade.dur > 0 ? Math.min(1, floorFade.t / floorFade.dur) : 1;
+    return floorFade.phase === 'out' ? k : 1 - k;
+  }
 
   // Modal bookkeeping: which screen to return to when a tip / options closes.
   let pendingTips = [];
@@ -1535,6 +1546,7 @@
     enemyQueue = [];
     animTimer = 0;
     pendingAction = null;
+    startFloorFade('in', FLOOR_FADE_IN); // the new floor rises out of the black
     saveGame(gameState);
     scanVisibleTips(gameState);
   }
@@ -2095,6 +2107,14 @@
       animTimer = SHOT_LEAD_TIME;
       return;
     }
+    // FOOTSTEP: a plain WALK — lastAction 'move' that actually changed the king's tile — gets a soft
+    // step underfoot. A held turn (skipTurn is also 'move', but the tile is unchanged) and every bump
+    // or capture ('combat', which already has its own thud) get none. gameState is still the PRE-move
+    // state here; resolveCommitted swaps the new one in below, so this compares old tile vs new.
+    if (nextState.lastAction === 'move' && gameState
+        && (gameState.player.x !== nextState.player.x || gameState.player.y !== nextState.player.y)) {
+      GameAudio.play('step');
+    }
     resolveCommitted(nextState);
   }
 
@@ -2159,8 +2179,9 @@
     }
     if (nextState.lastAction === 'exit') {
       GameAudio.play('descend');
+      startFloorFade('out', FLOOR_FADE_OUT); // darken the old floor before it is torn down
       pendingAction = 'floor';
-      animTimer = PLAYER_MOVE_TIME;
+      animTimer = FLOOR_FADE_OUT; // hold the (darkening) old floor on screen until it is fully black
       return;
     }
     // A NEW GAME+ realm is finished: back to the room between realms, that door dark behind him.
@@ -2284,9 +2305,9 @@
     if (gameState.bossLine) { logMessage(gameState.bossLine); gameState.bossLine = null; }
     if (gameState.bossShout) {
       Renderer.shout(gameState.bossShout.x, gameState.bossShout.y, gameState.bossShout.text, gameState.bossShout.demon);
-      // A dying guardian WAILS; a waking one BELLOWS. Same bubble, opposite sound — the bellow swells
-      // and the wail collapses, so you can hear which one happened without reading the words.
-      GameAudio.play(gameState.bossShout.death ? 'wail' : 'roar');
+      // A waking guardian BELLOWS. The DYING wail is not played here — it rides the cue channel from
+      // defeatBoss so it sounds on every death, not just the two-in-three that raise a death bubble.
+      if (!gameState.bossShout.death) GameAudio.play('roar');
       gameState.bossShout = null;
     }
   }
@@ -2362,9 +2383,10 @@
       if (next.lastAction === 'exit') {
         applyState(next, true);
         GameAudio.play('descend');
+        startFloorFade('out', FLOOR_FADE_OUT); // same curtain as a stepped exit
         enemyQueue = [];
         pendingAction = 'floor';
-        animTimer = PLAYER_MOVE_TIME;
+        animTimer = FLOOR_FADE_OUT;
         return;
       }
       // A piece that did NOTHING you can see — a turret sweeping an empty lane, a circle groping
@@ -2608,6 +2630,13 @@
     const delta = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
 
+    if (floorFade) {
+      floorFade.t += delta;
+      // OUT holds at full black until goNextFloor swaps it to IN (the new floor is built behind the
+      // curtain); only the IN phase clears itself once the new floor has fully risen into view.
+      if (floorFade.phase === 'in' && floorFade.t >= floorFade.dur) floorFade = null;
+    }
+
     tickAutoMove(); // advance a confirmed auto-walk (only when idle)
 
     if (screen === 'playing' && animTimer > 0) {
@@ -2724,6 +2753,10 @@
       syncTutSpotlight(); // training floor: dim the board / light the one tile or card to tap next
       Renderer.draw(gameState, isIdle() && !aiming, targets, aiming ? cardCursor : null, aoe);
     }
+    // The descent curtain rides ABOVE the board (and even a modal's board backdrop) so the whole view
+    // sinks to black and rises again between floors.
+    const fadeA = floorFadeAlpha();
+    if (fadeA > 0 && typeof Renderer.drawFade === 'function') Renderer.drawFade(fadeA);
   }
 
   // The animation loop, wrapped so ONE bad frame can't freeze the whole game. On an uncaught error we
