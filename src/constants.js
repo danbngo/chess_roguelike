@@ -24,28 +24,28 @@ const DIFFICULTY_HP = {
 // was so gradual it BOILED THE FROG — you never felt the moment it turned, you only slowly noticed.
 // Short steps mean a player moving at a decent clip is off the floor inside the grace and never
 // meets it at all, while one who dawdles gets urgency that ARRIVES rather than creeps.
-// Softened so a MODESTLY-skilled clear (~120 turns) still finishes inside the grace: a long quiet
-// opening, then dread climbs across the middle, then — for a king who WILL NOT leave — the molten
-// overstay. Each of the three phases is DREAD_STEP_TURNS*5 turns: grace 0-95 (first danger tick at 95),
-// dread ramp 95-190 (max dread + first lava at 190), lava ramp 190-285 (molten peak at 285). The grace
-// holds 5 steps and the ramp 5 (fixed by the audio's HURRY gears). The step was 24; SPED UP to 19
-// (2026-08-08) — ~1.25x faster across the WHOLE cycle, because on a brisk run dread barely registered
-// and "hard" played too safe. Everything downstream (MAX_TURNS_SCARY, the lava overstay, the music
-// gears via dreadFraction) is derived from this, so this one number re-paces the lot.
+// A quiet opening, then dread climbs across the middle, then — for a king who WILL NOT leave — the
+// molten overstay. Phases: grace 0-57 (first danger tick at 57), dread ramp 57-152 (max dread + first
+// lava at 152), lava ramp 152-247 (molten peak at 247). The grace holds 3 steps, the ramp 5 (the ramp
+// is fixed by the audio's HURRY gears; the GRACE is free). The step was 24, SPED UP to 19 (2026-08-08,
+// ~1.25x faster overall); then the GRACE was CUT 5→3 steps (2026-08-09) — a brisk clear used to finish
+// inside a 95-turn free window, so abilities never met a clock; now danger arrives ~40% sooner and the
+// player can't dawdle assembling combos. Everything downstream (MAX_TURNS_SCARY, the lava overstay, the
+// music gears via dreadFraction) is derived from these, so they re-pace the lot.
 const DREAD_STEP_TURNS = 19;
-const DREAD_GRACE_STEPS = 5; // the quiet opening — nothing stirs (5 * 24 = 120 turns)
+const DREAD_GRACE_STEPS = 3; // the quiet opening — nothing stirs (3 * 19 = 57 turns)
 const DREAD_RAMP_STEPS = 5; // must match HURRY.length in audio.js
-const DREAD_TOTAL_STEPS = DREAD_GRACE_STEPS + DREAD_RAMP_STEPS; // 10
-const DREAD_GRACE_TURNS = DREAD_STEP_TURNS * DREAD_GRACE_STEPS; // 120 — the first danger tick lands here
-const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 240 — dread maxes, and the first lava wells up
+const DREAD_TOTAL_STEPS = DREAD_GRACE_STEPS + DREAD_RAMP_STEPS; // 8
+const DREAD_GRACE_TURNS = DREAD_STEP_TURNS * DREAD_GRACE_STEPS; // 57 — the first danger tick lands here
+const MAX_TURNS_SCARY = DREAD_STEP_TURNS * DREAD_TOTAL_STEPS; // 152 — dread maxes, and the first lava wells up
 // PAST max dread, a floor the king WILL NOT LEAVE turns lethal: five more OVERSTAY steps (turns
-// 240-360) over which LAVA wells up and closes in (tickLavaEncroachment) and the swarm runs unbounded.
-// It peaks at turn 360 — by then the molten floor and the horde together kill any build. See
+// 152-247) over which LAVA wells up and closes in (tickLavaEncroachment) and the swarm runs unbounded.
+// It peaks at turn 247 — by then the molten floor and the horde together kill any build. See
 // overstayFraction. (Nothing crosses the fire now — Pathfinder wades water/trees/pits but lava sears
 // all; Waiting shrugs the horde but not the ground; no build survives the molten peak, so lingering
 // is always fatal in the end.)
 const DREAD_OVERSTAY_STEPS = 5;
-const MAX_TURNS_LAVA = MAX_TURNS_SCARY + DREAD_STEP_TURNS * DREAD_OVERSTAY_STEPS; // 360 — the molten floor peaks here
+const MAX_TURNS_LAVA = MAX_TURNS_SCARY + DREAD_STEP_TURNS * DREAD_OVERSTAY_STEPS; // 247 — the molten floor peaks here
 // Which HURRY gear a dread fraction sits in. Gear 0 is the GRACE; 1..DREAD_RAMP_STEPS are the
 // climbing steps.
 //

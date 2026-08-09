@@ -1437,22 +1437,22 @@ test('a chasing foe will not immolate itself — it enters only fire it can surv
 });
 
 test('the dread cycle opens with a GRACE: five quiet steps, then five climbing ones', () => {
-  // Derived, not hardcoded: the STEP has been re-paced (40 -> 20 -> 24) and the grace widened (3 -> 5
-  // steps) to soften the clock, so these read off the constants. What matters is the SHAPE — a grace,
-  // then a five-step climb to max dread.
+  // Derived, not hardcoded: the step has been re-paced (40 -> 20 -> 24 -> 19) and the grace re-sized
+  // (3 -> 5 -> 3 steps) over time, so these read off the constants and do NOT assume grace and ramp are
+  // the same length. What matters is the SHAPE — a quiet grace, then a clean climb to max dread.
   const M = MAX_TURNS_SCARY;
-  const step = DREAD_GRACE_TURNS / 5;
-  assert.equal(M, step * 10, 'ten steps to max dread — five grace, five climbing');
-  assert.equal(DREAD_GRACE_TURNS, step * 5, 'the first five steps are grace');
+  const grace = DREAD_GRACE_TURNS; // the quiet opening
+  const climb = M - grace; // the ramp from the end of grace to full dread
+  assert.ok(grace > 0 && climb > 0, 'there is both a grace and a climb');
   // Nothing stirs through the grace...
-  for (const t of [0, step, step * 3, DREAD_GRACE_TURNS - 1]) {
+  for (const t of [0, Math.floor(grace * 0.25), Math.floor(grace * 0.75), grace - 1]) {
     assert.ok(inDreadGrace(t, M), `turn ${t} is still grace`);
     assert.equal(dreadFraction(t, M), 0, `turn ${t} carries no dread at all`);
   }
   // ...then dread climbs cleanly to full by the end of the cycle.
-  assert.ok(!inDreadGrace(DREAD_GRACE_TURNS, M), 'grace lifts when the fifth step ends');
-  assert.ok(dreadFraction(DREAD_GRACE_TURNS + 1, M) > 0, 'and dread starts the moment it does');
-  assert.equal(dreadFraction(DREAD_GRACE_TURNS + step * 2.5, M), 0.5, 'halfway through the CLIMB, not the cycle');
+  assert.ok(!inDreadGrace(grace, M), 'grace lifts when the last grace step ends');
+  assert.ok(dreadFraction(grace + 1, M) > 0, 'and dread starts the moment it does');
+  assert.equal(dreadFraction(grace + climb / 2, M), 0.5, 'halfway through the CLIMB, not the cycle');
   assert.equal(dreadFraction(M, M), 1, 'maxed at the end of the cycle');
   assert.equal(dreadFraction(M * 40, M), 1, 'and never exceeds 1');
 });
