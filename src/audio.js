@@ -138,6 +138,14 @@ const GameAudio = (function () {
       tone(95, t, 0.05, { type: 'sine', gain: 0.05, slideTo: 55 });
       noise(t, 0.035, 0.03, { filter: 'lowpass', freq: 500 });
     },
+    // A WARP — the swirling "wrrrrrp" of stepping through a portal: a saw that swoops UP while a
+    // second swoops DOWN through it, a low body wobble, and a band-swept hiss riding over the top.
+    warp(t) {
+      tone(150, t, 0.5, { type: 'sawtooth', gain: 0.15, slideTo: 820 });
+      tone(720, t + 0.1, 0.45, { type: 'sawtooth', gain: 0.11, slideTo: 95 });
+      tone(70, t, 0.55, { type: 'square', gain: 0.06, slideTo: 260 });
+      noise(t, 0.5, 0.08, { filter: 'bandpass', freq: 380, sweepTo: 2000, q: 5 });
+    },
     cast(t) {
       tone(320, t, 0.22, { type: 'sine', gain: 0.15, slideTo: 760 });
       tone(480, t, 0.22, { type: 'triangle', gain: 0.06, slideTo: 1140 });
@@ -341,7 +349,7 @@ const GameAudio = (function () {
   //      busy turn gets DENSER rather than LOUDER. This is what stops the sum clipping.
   const PRIORITY = {
     death: 10, win: 10, roar: 10, wail: 10, hit: 9, fanfare: 8, doom: 8, descend: 8, // a guardian's bellow outranks a blow: it is the floor announcing itself
-    deflect: 7, kill: 6, cast: 6, alarm: 6, fall: 6, unsummon: 5, thrum: 5,
+    deflect: 7, kill: 6, cast: 6, alarm: 6, fall: 6, warp: 8, unsummon: 5, thrum: 5,
     attack: 5, quaff: 5, pickup: 5, buy: 5, crush: 4, rumble: 4,
     timber: 6, splash: 3, hiss: 3, creak: 3, bonk: 3, chop: 3, nope: 2, swish: 1,
     vent: 1, // a geyser: the most frequent sound on a demon floor — it yields to everything else
@@ -353,6 +361,7 @@ const GameAudio = (function () {
     vent: 400, // a whole FIELD of vents blowing at once is one soft exhale, never a stack of them
     crush: 90, thrum: 110, fall: 110, alarm: 140, nope: 220, attack: 40, chop: 60, timber: 200,
     step: 90, roar: 220, wail: 220, // a step guards against a walk-stutter; a bellow/wail never stacks on itself
+    warp: 260, // one swirl per portal, never a stack
   };
   const WINDOW = 0.09; // seconds counted as "the same instant"
   let recent = []; // { t, pri } for cues started inside WINDOW

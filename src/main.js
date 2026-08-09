@@ -189,10 +189,15 @@
   const LEVELUP_LEAD_TIME = 1.5; // beat between a guardian's death fanfare and the boon menu
   const FLOOR_FADE_OUT = 0.3; // stair descent: the old floor darkens to black over this long...
   const FLOOR_FADE_IN = 0.34; // ...then the new floor rises out of it. Also the 'floor' hold time.
-  // A black curtain over the whole board for the descent between floors: fade the old one out, build
-  // the next behind the black, fade it back in. `phase` is 'out' (0→1 opaque) then 'in' (1→0 clear).
-  let floorFade = null; // { phase:'out'|'in', t, dur } or null when no transition is playing
-  function startFloorFade(phase, dur) { floorFade = { phase, t: 0, dur }; }
+  const PORTAL_FADE_OUT = 0.4; // a portal warps a touch slower and swirlier than a plain stair...
+  const PORTAL_FADE_IN = 0.46; // ...and rises back in over this long.
+  const FLOOR_TINT = '#000'; // a plain stair sinks to black
+  const PORTAL_TINT = '#1b0733'; // a portal sinks to a deep violet instead
+  // A coloured curtain over the whole board for a transition between floors/realms: fade the old one
+  // out, build the next behind it, fade it back in. `phase` is 'out' (0→1 opaque) then 'in' (1→0 clear);
+  // `color` is the tint it sinks to (black for stairs, violet for portals).
+  let floorFade = null; // { phase:'out'|'in', t, dur, color } or null when no transition is playing
+  function startFloorFade(phase, dur, color) { floorFade = { phase, t: 0, dur, color: color || FLOOR_TINT }; }
   function floorFadeAlpha() {
     if (!floorFade) return 0;
     const k = floorFade.dur > 0 ? Math.min(1, floorFade.t / floorFade.dur) : 1;
@@ -1950,16 +1955,20 @@
     screen = 'playing';
     if (!gate) return;
     if (gate.accept) {
+      // Stepping into the light IS a portal — warp through it, then the win fanfare and the book closes.
+      GameAudio.play('warp');
       GameAudio.play('win');
       gameState.won = true;
       onVictory();
       return;
     }
-    GameAudio.play('descend');
-    applyState(enterRealm(gameState, gate.realm), false);
-    enemyQueue = []; animTimer = 0;
-    saveGame(gameState);
-    scanVisibleTips(gameState);
+    // A REALM portal: warp out to violet, build the realm behind the curtain, warp back in. The board
+    // is torn down and rebuilt in the 'enter-realm' resolver once the curtain is full (see stepFrame).
+    GameAudio.play('warp');
+    gameState.enteringRealm = gate.realm;
+    startFloorFade('out', PORTAL_FADE_OUT, PORTAL_TINT);
+    pendingAction = 'enter-realm';
+    animTimer = PORTAL_FADE_OUT;
   }
 
   function openAltar() {
@@ -2186,9 +2195,10 @@
     }
     // A NEW GAME+ realm is finished: back to the room between realms, that door dark behind him.
     if (nextState.lastAction === 'realm-cleared') {
-      GameAudio.play('win');
+      GameAudio.play('warp'); // back through the portal to the room between realms
+      startFloorFade('out', PORTAL_FADE_OUT, PORTAL_TINT);
       pendingAction = 'portalroom';
-      animTimer = PLAYER_MOVE_TIME;
+      animTimer = PORTAL_FADE_OUT;
       return;
     }
     // He stepped onto a portal IN that room — into a realm, or into the light.
@@ -2204,10 +2214,17 @@
         return;
       }
       // No gate found (should not happen) — fall back to the old immediate behaviour rather than
-      // stranding him on a tile that does nothing.
-      GameAudio.play(nextState.lastAction === 'portal-accept' ? 'win' : 'descend');
-      pendingAction = nextState.lastAction === 'portal-accept' ? 'accept-victory' : 'enter-realm';
-      animTimer = PLAYER_MOVE_TIME;
+      // stranding him on a tile that does nothing, but still warp through the same violet curtain.
+      GameAudio.play('warp');
+      if (nextState.lastAction === 'portal-accept') {
+        GameAudio.play('win');
+        pendingAction = 'accept-victory';
+        animTimer = PLAYER_MOVE_TIME;
+      } else {
+        startFloorFade('out', PORTAL_FADE_OUT, PORTAL_TINT);
+        pendingAction = 'enter-realm';
+        animTimer = PORTAL_FADE_OUT;
+      }
       return;
     }
     // A strike either felled a piece (kill) or merely chipped it (attack) — but shattering a
@@ -2662,11 +2679,13 @@
           pendingAction = null;
           applyState(returnToPortalRoom(gameState), false);
           enemyQueue = []; animTimer = 0;
+          startFloorFade('in', PORTAL_FADE_IN, PORTAL_TINT); // the room rises out of the violet
           saveGame(gameState);
         } else if (pendingAction === 'enter-realm') {
           pendingAction = null;
           applyState(enterRealm(gameState, gameState.enteringRealm), false);
           enemyQueue = []; animTimer = 0;
+          startFloorFade('in', PORTAL_FADE_IN, PORTAL_TINT); // the realm rises out of the violet
           saveGame(gameState);
           scanVisibleTips(gameState);
         } else if (pendingAction === 'accept-victory') {
@@ -2756,7 +2775,7 @@
     // The descent curtain rides ABOVE the board (and even a modal's board backdrop) so the whole view
     // sinks to black and rises again between floors.
     const fadeA = floorFadeAlpha();
-    if (fadeA > 0 && typeof Renderer.drawFade === 'function') Renderer.drawFade(fadeA);
+    if (fadeA > 0 && typeof Renderer.drawFade === 'function') Renderer.drawFade(fadeA, floorFade && floorFade.color);
   }
 
   // The animation loop, wrapped so ONE bad frame can't freeze the whole game. On an uncaught error we

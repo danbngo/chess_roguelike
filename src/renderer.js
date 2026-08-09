@@ -4900,15 +4900,16 @@ const Renderer = (function () {
   // The LIVING BOARD behind the menus: a warm sepia checkerboard, flickering corner torches, and a
   // vignette that settles the eye toward the middle. Shared by the title splash and every other
   // pre-game screen (class select, trophies, options) so none of them is a black void any more.
-  // A full-screen BLACK CURTAIN at the given opacity, painted over the finished frame. Used for the
-  // fade-out/in between floors. Resets to the identity transform so it fills the whole backing store
-  // (every device pixel) no matter what camera/DPR transform the board left in place.
-  function drawFade(alpha) {
+  // A full-screen CURTAIN at the given opacity and colour, painted over the finished frame. Used for
+  // the fade-out/in between floors (black) and between realms via a portal (violet). Resets to the
+  // identity transform so it fills the whole backing store (every device pixel) no matter what
+  // camera/DPR transform the board left in place.
+  function drawFade(alpha, color) {
     if (!ctx || !canvas || alpha <= 0) return;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = Math.min(1, alpha);
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = color || '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
   }
