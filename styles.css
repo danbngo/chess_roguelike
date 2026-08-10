@@ -105,13 +105,13 @@ h1 {
 p {
   margin: 0 0 1rem;
   line-height: 1.5;
-  color: #cbd5e1;
+  color: var(--ink-dim);
 }
 
 button {
   background: var(--plaque);
   border: 1px solid var(--brass);
-  border-radius: 11px;
+  border-radius: 4px;
   padding: 0.45rem 0.8rem;
   cursor: pointer;
   color: var(--ink);
@@ -145,27 +145,27 @@ button:active {
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: rgba(2, 6, 23, 0.92);
+  background: rgba(10, 6, 2, 0.92);
 }
 #crash-screen.hidden { display: none; }
 #crash-screen .crash-card {
   max-width: 30rem;
   text-align: center;
   padding: 1.75rem 2rem;
-  border-radius: 14px;
+  border-radius: 4px;
   border: 1px solid var(--brass);
   background: var(--panel);
   color: var(--ink-dim);
 }
 #crash-screen h2 { margin: 0 0 0.6rem; font-size: 1.3rem; font-family: var(--serif); color: var(--ink); }
-#crash-screen p { margin: 0 0 1.2rem; color: #cbd5e1; line-height: 1.5; }
+#crash-screen p { margin: 0 0 1.2rem; color: var(--ink-dim); line-height: 1.5; }
 #crash-screen button {
   padding: 0.6rem 1.6rem;
   font-size: 1rem;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  background: rgba(30, 41, 59, 0.9);
-  color: #f8fafc;
+  border-radius: 4px;
+  border: 1px solid rgba(180, 150, 90, 0.4);
+  background: rgba(46, 37, 22, 0.9);
+  color: var(--ink);
   cursor: pointer;
 }
 
@@ -178,8 +178,8 @@ button:active {
   transform: translateX(-50%);
   padding: 0.5rem 1rem;
   border-radius: 999px;
-  background: rgba(2, 6, 23, 0.72);
-  color: #cbd5e1;
+  background: rgba(10, 6, 2, 0.72);
+  color: var(--ink-dim);
   font-size: 0.85rem;
   letter-spacing: 0.04em;
   opacity: 0;
@@ -194,9 +194,9 @@ button:active {
 canvas {
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 18px;
+  border-radius: 4px;
   border: 2px solid rgba(248, 250, 252, 0.12);
-  background: #020617;
+  background: #0c0806;
   display: block;
   /* The game owns all touch gestures on the board (tap/drag/pinch handled in main.js); tell the
      browser not to scroll or double-tap-zoom the page when a finger lands here. No effect on mouse. */
@@ -208,7 +208,7 @@ canvas {
   inset: 0;
   display: grid;
   place-items: center;
-  border-radius: 18px;
+  border-radius: 4px;
   /* A warm torch-dark wash over the board, not the old cold blue-black. */
   background: rgba(10, 7, 4, 0.82);
   backdrop-filter: blur(3px);
@@ -229,10 +229,10 @@ canvas {
   gap: 0.7rem;
   max-width: 340px;
   padding: 1.4rem 1.5rem 1.3rem;
-  border-radius: 16px;
+  border-radius: 4px;
   border: 1px solid var(--brass);
   background: var(--panel);
-  box-shadow: 0 18px 50px rgba(2, 6, 23, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.12);
+  box-shadow: 0 18px 50px rgba(10, 6, 2, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.12);
 }
 
 .overlay-title {
@@ -276,10 +276,10 @@ canvas {
   letter-spacing: 0.02em;
   color: var(--ink);
   padding: 0.55rem 1.15rem;
-  border-radius: 11px;
+  border-radius: 4px;
   border: 1px solid var(--brass);
   background: var(--plaque);
-  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.08), 0 3px 10px rgba(2, 6, 23, 0.4);
+  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.08), 0 3px 10px rgba(10, 6, 2, 0.4);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, transform 0.04s ease, color 0.15s ease;
 }
 .overlay button:hover,
@@ -307,7 +307,7 @@ button:disabled {
     transform: scale(1.35);
   }
   100% {
-    background: rgba(30, 41, 59, 0.9);
+    background: rgba(46, 37, 22, 0.9);
     color: inherit;
     transform: scale(1);
   }
@@ -345,9 +345,9 @@ button:disabled {
   justify-content: space-between;
   gap: 0.75rem;
   text-align: left;
-  background: rgba(30, 41, 59, 0.85);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 12px;
+  background: rgba(46, 37, 22, 0.85);
+  border: 1px solid rgba(180, 150, 90, 0.2);
+  border-radius: 4px;
   padding: 0.5rem 0.7rem;
 }
 
@@ -362,7 +362,7 @@ button:disabled {
 
 .shop-desc {
   font-size: 0.82rem;
-  color: #cbd5e1;
+  color: var(--ink-dim);
 }
 
 .shop-item button {
@@ -384,15 +384,15 @@ button:disabled {
   z-index: 60;
   max-width: 230px;
   padding: 6px 9px;
-  border-radius: 8px;
-  background: rgba(2, 6, 23, 0.94);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  color: #e2e8f0;
+  border-radius: 4px;
+  background: rgba(10, 6, 2, 0.94);
+  border: 1px solid rgba(180, 150, 90, 0.3);
+  color: var(--ink);
   font-size: 0.8rem;
   line-height: 1.35;
   white-space: pre-line;
   pointer-events: none;
-  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.5);
+  box-shadow: 0 6px 20px rgba(10, 6, 2, 0.5);
 }
 
 .tile-popover.hidden {
@@ -412,24 +412,24 @@ button:disabled {
 /* THE CLASS SELECT, in the vein of the title: a living board behind, a warm STONE panel in front —
    not a dark web card floating in a void. The heavy overlay dim is lifted so the board shows. */
 #class-screen.overlay {
-  background: rgba(2, 6, 23, 0.32);
+  background: rgba(10, 6, 2, 0.32);
   backdrop-filter: none;
 }
 #class-screen .overlay-card {
   max-width: 560px;
   width: 92%;
   padding: 1.1rem 1.3rem 1rem;
-  border-radius: 14px;
+  border-radius: 4px;
   border: 1px solid rgba(180, 150, 90, 0.5);
   background:
-    linear-gradient(180deg, rgba(60, 48, 30, 0.4), rgba(2, 6, 23, 0) 60%),
+    linear-gradient(180deg, rgba(60, 48, 30, 0.4), rgba(10, 6, 2, 0) 60%),
     rgba(14, 12, 10, 0.9);
-  box-shadow: 0 14px 44px rgba(2, 6, 23, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
+  box-shadow: 0 14px 44px rgba(10, 6, 2, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
 }
 #class-screen .overlay-title {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--display);
   color: #f1e5c8;
-  text-shadow: 0 2px 0 rgba(2, 6, 23, 0.6);
+  text-shadow: 0 2px 0 rgba(10, 6, 2, 0.6);
 }
 /* Each row: the class/difficulty EMBLEM on the left, then the name + blurb, then the pick button. */
 #class-screen .class-item {
@@ -454,7 +454,7 @@ button:disabled {
    behind a translucent LEDGER pinned to the bottom — so the room reads above it, in the vein of the
    title and class screens. The heavy overlay dim is lifted so the hall shows through. */
 #trophy-screen.overlay {
-  background: rgba(2, 6, 23, 0.22);
+  background: rgba(10, 6, 2, 0.22);
   backdrop-filter: none;
   align-items: end;       /* pin the ledger to the bottom; the hall + king own the top of the screen */
   padding-bottom: 1rem;
@@ -464,16 +464,16 @@ button:disabled {
   width: 94%;
   max-height: 54vh;
   padding: 0.9rem 1.2rem;
-  border-radius: 14px;
+  border-radius: 4px;
   border: 1px solid rgba(180, 150, 90, 0.5);
   background: linear-gradient(180deg, rgba(48, 38, 22, 0.58), rgba(12, 10, 8, 0.84));
-  box-shadow: 0 14px 44px rgba(2, 6, 23, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
+  box-shadow: 0 14px 44px rgba(10, 6, 2, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
   backdrop-filter: blur(2px);
 }
 #trophy-screen .overlay-title {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--display);
   color: #f1e5c8;
-  text-shadow: 0 2px 0 rgba(2, 6, 23, 0.6);
+  text-shadow: 0 2px 0 rgba(10, 6, 2, 0.6);
   margin: 0;
 }
 #trophy-screen .character-body { max-height: 34vh; }
@@ -487,10 +487,10 @@ button:disabled {
   z-index: 55;
   width: min(220px, 24vmin);
   height: min(220px, 24vmin);
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  background: rgba(2, 6, 23, 0.9);
-  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.5);
+  border-radius: 4px;
+  border: 1px solid rgba(180, 150, 90, 0.4);
+  background: rgba(10, 6, 2, 0.9);
+  box-shadow: 0 6px 20px rgba(10, 6, 2, 0.5);
   pointer-events: none;
   display: none;
 }
@@ -545,7 +545,7 @@ body.on-title .stage {
   height: 100vh;
   display: grid;
   place-items: center;   /* centre the board in the viewport */
-  background: #020617;    /* black letterbox around it */
+  background: #0c0806;    /* black letterbox around it */
 }
 
 /* The board canvas draws a SQUARE (640x640 internally). Show it at a square size that FITS the
@@ -691,8 +691,8 @@ body.touch .overlay.hidden { display: none; }
     gap: 0.15rem;
     padding: 0.4rem 0.6rem;
     font-size: 0.82rem;
-    background: rgba(2, 6, 23, 0.6);
-    border-radius: 12px;
+    background: rgba(10, 6, 2, 0.6);
+    border-radius: 4px;
   }
   /* OPTIONS → gear, top-right. */
   body.touch.in-game #options {
@@ -716,7 +716,7 @@ body.touch .overlay.hidden { display: none; }
     content: '\2699'; /* ⚙ gear */
     font-size: 1.4rem;
     line-height: 1;
-    color: #cbd5e1;
+    color: var(--ink-dim);
   }
   /* CARDS — bottom-left thumb zone, a wrapped tray. */
   body.touch.in-game .card-bar {
@@ -730,8 +730,8 @@ body.touch .overlay.hidden { display: none; }
     justify-content: flex-start;
     gap: 0.4rem;
     padding: 0.35rem 0.45rem;
-    background: rgba(2, 6, 23, 0.55);
-    border-radius: 14px;
+    background: rgba(10, 6, 2, 0.55);
+    border-radius: 4px;
     overflow: visible;
   }
   body.touch.in-game .card-slot {
@@ -948,7 +948,7 @@ body.touch .info-panel {
 }
 
 .examine-empty {
-  color: #64748b;
+  color: var(--ink-dim);
 }
 
 .examine-block {
@@ -981,28 +981,28 @@ body.touch .info-panel {
   padding: 0.15rem 0.3rem;
   font-size: 0.8rem;
   font-weight: 700;
-  color: #cbd5e1;
-  background: #1e293b;
-  border: 1px solid #475569;
+  color: var(--ink-dim);
+  background: #2a1e12;
+  border: 1px solid #5a4632;
   border-radius: 4px;
   cursor: pointer;
 }
 .rebind-key:hover {
-  background: #334155;
-  color: #f8fafc;
-  border-color: #94a3b8;
+  background: #3a2c1c;
+  color: var(--ink);
+  border-color: var(--ink-dim);
 }
 /* A slot with nothing in it: still perfectly pickable (that is the point — park a card on 7 and leave
    4-6 empty), just drawn hollow so you can tell at a glance which numbers already hold something. */
 .rebind-key.vacant {
   border-style: dashed;
-  color: #94a3b8;
+  color: var(--ink-dim);
   background: transparent;
 }
 .rebind-key.current {
-  background: #0f172a;
-  color: #64748b;
-  border-color: #334155;
+  background: #1a120a;
+  color: var(--ink-dim);
+  border-color: #3a2c1c;
   cursor: default;
 }
 
@@ -1041,8 +1041,8 @@ body.touch .info-panel {
   font-size: 1.15rem;
   line-height: 1;
   border-radius: 0.4rem;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(180, 150, 90, 0.35);
+  background: rgba(22, 15, 8, 0.75);
   cursor: default;
 }
 
@@ -1088,7 +1088,7 @@ body.touch .info-panel {
 }
 
 .card-slot.empty {
-  color: rgba(148, 163, 184, 0.5);
+  color: rgba(180, 150, 90, 0.5);
   font-size: 0.7rem;
   border-style: dashed;
   cursor: default;
@@ -1112,7 +1112,7 @@ body.touch .info-panel {
   font-size: 0.68rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--ink-dim);
   margin: 0.2rem 0 -0.1rem;
 }
 
@@ -1175,9 +1175,9 @@ body.touch .info-panel {
   inset: 0;
   display: grid;
   place-items: center;
-  border-radius: 12px;
-  background: rgba(2, 6, 23, 0.6);
-  color: #f8fafc;
+  border-radius: 4px;
+  background: rgba(10, 6, 2, 0.6);
+  color: var(--ink);
   font-size: 1.1rem;
   font-weight: 700;
 }
@@ -1340,7 +1340,7 @@ body.touch .info-panel {
   align-items: center;
   gap: 9px;
   padding: 7px 11px 7px 8px;
-  border-radius: 9px;
+  border-radius: 4px;
   border: 1px solid currentColor;
   /* The tier colour bleeds faintly into the top of the plaque, over a warm stone base. */
   background:
@@ -1358,7 +1358,7 @@ body.touch .info-panel {
   place-items: center;
   font-size: 0.82rem;
   /* The star is stamped INTO the metal, so it reads dark against the disc. */
-  color: rgba(2, 6, 23, 0.72);
+  color: rgba(10, 6, 2, 0.72);
   border: 1px solid currentColor;
   background:
     radial-gradient(circle at 34% 27%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 47%),
@@ -1383,8 +1383,8 @@ body.touch .info-panel {
 .trophy-tier {
   margin: 0 0 10px;
   padding: 4px 8px 10px;
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(2, 6, 23, 0) 70%);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(180, 150, 90, 0.06), rgba(10, 6, 2, 0) 70%);
   border-bottom: 2px solid rgba(120, 100, 60, 0.35);
 }
 .trophy-tier-label {
@@ -1394,7 +1394,7 @@ body.touch .info-panel {
   text-align: center;
   padding: 3px 0 6px;
   color: #cbb489;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  border-bottom: 1px solid rgba(180, 150, 90, 0.18);
   margin-bottom: 8px;
 }
 .trophy-tier-gold .trophy-tier-label { color: #f5c542; text-shadow: 0 0 8px rgba(245, 197, 66, 0.4); }
@@ -1567,7 +1567,7 @@ body.touch .info-panel {
     content: '\2699'; /* ⚙ gear */
     font-size: 1.5rem;
     line-height: 1;
-    color: #cbd5e1;
+    color: var(--ink-dim);
   }
 
   /* The pane below the board is now just the STATS BAND (cards are the bottom strip, the log is gone).
@@ -1596,8 +1596,8 @@ body.touch .info-panel {
     flex-wrap: nowrap;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    background: rgba(2, 6, 23, 0.55);
-    border-radius: 16px;
+    background: rgba(10, 6, 2, 0.55);
+    border-radius: 4px;
   }
   body.touch.in-game .card-slot {
     width: 4.4rem;
