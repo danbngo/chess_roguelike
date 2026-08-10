@@ -755,8 +755,10 @@ const GameAudio = (function () {
     // only takes on a gesture there), the per-gesture path below is the reliable fallback. Debounced so
     // visibilitychange + pageshow firing together don't restart the loop twice.
     let lastWake = 0;
+    let needsNudge = false; // set on every return; the first gesture afterwards re-primes a lying-'running' sink
     const wakeAudio = () => {
       if (!enabled || !unlocked) return;
+      needsNudge = true; // even if the debounce below skips the rebuild, still arm the gesture re-prime
       const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       if (now - lastWake < 400) return;
       lastWake = now;
@@ -768,9 +770,14 @@ const GameAudio = (function () {
       window.addEventListener('pageshow', wakeAudio); // bfcache restore / some iOS re-maximise paths
     }
     // The reliable iOS fallback: the first touch/key after returning forces the rebuild whenever the
-    // context is still not running (there, resume() only takes effect from a user gesture).
+    // context is still not running (there, resume() only takes effect from a user gesture). And when the
+    // context claims 'running' but is secretly SILENT (WebKit bug 263627), that same first gesture is the
+    // iOS-blessed moment to re-prime the dead output with a nudge — ONCE per return, so ordinary in-game
+    // taps don't each spawn a throwaway oscillator.
     const resumeOnGesture = () => {
-      if (ctx && enabled && unlocked && ctx.state !== 'running') forceRevive();
+      if (!ctx || !enabled || !unlocked) return;
+      if (ctx.state !== 'running') { forceRevive(); return; }
+      if (needsNudge) { needsNudge = false; nudge(); }
     };
     document.addEventListener('pointerdown', resumeOnGesture);
     document.addEventListener('touchend', resumeOnGesture);
@@ -779,6 +786,24 @@ const GameAudio = (function () {
 
   function isEnabled() {
     return enabled;
+  }
+  // THE "RUNNING BUT SILENT" NUDGE. iOS/WebKit can bring the app back with ctx.state === 'running' while
+  // the actual audio OUTPUT stays asleep — no graph rebuild fixes that, because the graph is fine; the
+  // hardware sink is dead (WebKit bug 263627: state lies about being running). Starting ANY fresh node
+  // re-primes the sink, so we tick a ~10ms, effectively-silent oscillator STRAIGHT to the destination —
+  // bypassing master, so it fires even while muted — every time we bring the context back. Harmless when
+  // the output was already awake, and cheap enough to fire on every wake/gesture.
+  function nudge() {
+    if (!ctx || ctx.state !== 'running' || typeof ctx.createOscillator !== 'function') return;
+    try {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      g.gain.value = 0.00001;
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.01);
+    } catch (e) { /* ignore */ }
   }
   // THE NUCLEAR RESET: build a BRAND-NEW AudioContext. iOS can leave the context UNRECOVERABLE after the
   // app is MINIMISED (as opposed to a mere tab switch, which resume() fixes): resume() no longer takes,
@@ -792,7 +817,7 @@ const GameAudio = (function () {
     try { if (ctx && ctx.state !== 'closed' && typeof ctx.close === 'function') ctx.close(); } catch (e) { /* ignore */ }
     ctx = null; master = null; sfxBus = null; musicBus = null; musicFileGain = null;
     if (!enabled || !unlocked || !ensure()) return;
-    const play = () => { applyMusic(); startHeart(); };
+    const play = () => { applyMusic(); startHeart(); nudge(); };
     if (ctx.state === 'running') { play(); return; }
     const p = ctx.resume();
     if (p && typeof p.then === 'function') p.then(play).catch(() => { /* awaits a gesture */ }); else play();
@@ -806,12 +831,19 @@ const GameAudio = (function () {
     unlocked = true;
     if (!ctx || ctx.state === 'closed') { recreateContext(); return; }
     if (!ensure()) return;
-    const rebuild = () => { stopMusicFile(); stopHeart(); applyMusic(); startHeart(); };
+    const rebuild = () => { stopMusicFile(); stopHeart(); applyMusic(); startHeart(); nudge(); };
     if (ctx.state === 'running') { rebuild(); return; }
     const p = ctx.resume();
     if (p && typeof p.then === 'function') {
-      p.then(() => { if (ctx && ctx.state === 'running') rebuild(); else recreateContext(); })
-        .catch(() => recreateContext());
+      // WebKit bug 281566: after a background-suspend, resume() can NEVER resolve. Don't wait on it
+      // forever — race the promise against a short timer; whichever wins first, the other is a no-op.
+      // If resume takes hold we rebuild; if it stalls (or rejects, or resolves still-not-running), we
+      // ESCALATE to a full recreate rather than sitting silent.
+      let settled = false;
+      const done = (fn) => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
+      const timer = setTimeout(() => done(recreateContext), 500);
+      p.then(() => done(() => { if (ctx && ctx.state === 'running') rebuild(); else recreateContext(); }))
+        .catch(() => done(recreateContext));
     } else if (ctx.state === 'running') { rebuild(); } else { recreateContext(); }
   }
   function setEnabled(on) {

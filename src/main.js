@@ -569,6 +569,11 @@
     }
     cardTargeting = index;
     cardTargets = getCardMoves(gameState, card);
+    // Entering card-aim CANCELS any far-move in flight — a proposed walk path (the yellow preview) and a
+    // running auto-walk both mean "go THERE", the opposite of "aim HERE". Left up, the two targeting
+    // modes fought over the board and the next tap; now starting an aim clears the walk outright.
+    clearAutoMove();
+    clearPathProposal();
     if (!cardTargets.length) {
       gameState.message = 'That card has no target in reach.';
       cancelCardTargeting();
