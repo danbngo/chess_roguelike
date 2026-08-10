@@ -1,9 +1,13 @@
 :root {
   color-scheme: dark;
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  /* DUNGEON THEME — the palette of the diegetic board (warm stone, brass, torch-lit parchment), so the
-     DOM menus read as carved panels in the same world rather than a web form bolted to the front. */
-  --serif: Georgia, 'Times New Roman', serif;
+  /* MONOSPACE everywhere — a terminal/roguelike voice. One size across the whole UI (--fs); headings
+     differ by WEIGHT, CAPS and COLOUR, never size. No italics anywhere. */
+  --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', 'DejaVu Sans Mono', Consolas, 'Courier New', monospace;
+  --fs: 15px; /* the single UI text size (absolute, so it doesn't rescale rem units) */
+  font-family: var(--mono);
+  /* DUNGEON THEME — the palette of the diegetic board (brownish stone wall, brass, torchlight), so the
+     DOM menus read as carved blocks in the same world rather than a web form bolted to the front. */
+  --serif: var(--mono); /* kept as a name so old references resolve; the theme is all-monospace now */
   --ink: #f1e5c8;        /* warm cream — the same colour the diegetic tile labels are carved in */
   --ink-dim: #cbb994;    /* aged parchment, for sub-text */
   --brass: rgba(180, 150, 90, 0.55);  /* the gold border-line of the class-select card */
@@ -13,15 +17,22 @@
   --plaque-lit: linear-gradient(180deg, rgba(74, 58, 32, 0.98), rgba(34, 26, 16, 0.98));
   /* AMBIENT — the torch-lit dungeon around the panels: deep warm stone, a torch glow, a chiselled
      bevel, and a fine 4px stone-grain STIPPLE that reads as pixel-art rock without a pixel font. */
-  --stone: #0c0906;      /* the deep unlit stone the whole thing sits in */
-  --stone-wall: linear-gradient(175deg, #241b11 0%, #170f09 48%, #0c0806 100%); /* a lit dungeon wall */
-  --stone-recess: linear-gradient(180deg, #0b0805, #100b07); /* a carved-in recess (log, readouts) */
+  --stone: #241a10;      /* the brownish stone the whole thing sits in */
+  --stone-wall: linear-gradient(175deg, #3b2c1c 0%, #2a1e12 55%, #1c140b 100%); /* a lit brown stone wall */
+  --stone-recess: linear-gradient(180deg, #1a120a, #221810); /* a carved-in recess (readouts) */
   --torch: rgba(232, 170, 74, 0.45); /* the colour torchlight throws on stone */
+  /* A conceptual BROWN STONE WALL — rows of blocks picked out by dark mortar over a warm brown gradient,
+     with torchlight spilling from above. Layered behind everything; panels sit as darker recesses on it. */
+  --wall:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.34) 0 2px, transparent 2px 32px),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.26) 0 2px, transparent 2px 62px),
+    radial-gradient(120% 85% at 50% -8%, rgba(255, 194, 116, 0.12), transparent 55%),
+    linear-gradient(180deg, #4a3624 0%, #33241660 42%, #241a10 100%);
   /* Chiselled edge: a hairline of catch-light on top, a hard black seam all round, deep inner shade. */
   --carve: inset 0 1px 0 rgba(255, 224, 160, 0.06), inset 0 0 0 1px rgba(0, 0, 0, 0.55), inset 0 -10px 22px rgba(0, 0, 0, 0.55);
-  /* MAIN-CHARACTER DISPLAY — the loud, all-caps voice of the game: a heavy blocky face set uppercase
-     with wide tracking and a hard carved shadow, for titles and the floor plate. */
-  --display: 'Arial Black', 'Franklin Gothic Heavy', Impact, system-ui, sans-serif;
+  /* MAIN-CHARACTER DISPLAY — the loud voice of the game: still MONOSPACE (everything is), but bold and
+     UPPERCASE with a hard carved shadow, for titles, the floor plate and section labels. */
+  --display: var(--mono);
   /* The pixel-art stone grain — a 4px DITHER: dark pits + faint highlight specks half a tile offset so
      the rock reads chiselled/stippled. TWO layers; every usage gives it two sizes AND two positions. */
   --tex: radial-gradient(rgba(0, 0, 0, 0.34) 1px, transparent 1.6px), radial-gradient(rgba(255, 235, 195, 0.04) 1px, transparent 1.6px);
@@ -46,13 +57,12 @@ body {
      over a fine pixel-stone grain. Fixed so it stays put behind the panels rather than scrolling. */
   background:
     var(--tex),
-    radial-gradient(120% 80% at 50% -10%, rgba(232, 170, 74, 0.10), transparent 55%),
-    radial-gradient(140% 120% at 50% 120%, rgba(0, 0, 0, 0.6), transparent 60%),
-    var(--stone);
-  background-size: var(--tex-size), auto, auto, auto;
-  background-position: var(--tex-pos), 0 0, 0 0, 0 0;
+    var(--wall);
+  background-size: var(--tex-size), auto, auto, auto, auto;
+  background-position: var(--tex-pos), 0 0, 0 0, 0 0, 0 0;
   background-attachment: fixed;
-  color: #f8fafc;
+  color: var(--ink);
+  font-size: var(--fs);
   /* A game, not a document: never let a tap/long-press select text or pop the iOS callout menu
      (accidental text-selection on a long-press was easy on mobile), and kill the grey tap flash. */
   -webkit-user-select: none;
@@ -773,9 +783,7 @@ body.touch .info-panel {
 }
 
 .floor-name {
-  font-size: 0.82rem;
   font-weight: 600;
-  font-style: italic;
   color: #c4b5fd;
   margin-top: -0.1rem;
 }
@@ -941,8 +949,6 @@ body.touch .info-panel {
 
 .examine-empty {
   color: #64748b;
-  font-size: 0.85rem;
-  font-style: italic;
 }
 
 .examine-block {
@@ -1245,8 +1251,7 @@ body.touch .info-panel {
 
 .score-empty {
   margin: 0;
-  font-size: 0.82rem;
-  font-style: italic;
+  font-style: normal;
   color: rgba(203, 185, 148, 0.6);
 }
 
@@ -1608,3 +1613,19 @@ body.touch .info-panel {
     bottom: calc(8px + env(safe-area-inset-bottom));
   }
 }
+
+/* ============================================================================================
+   ONE SIZE ACROSS THE UI. Placed LAST so it wins by source order over the assorted per-element
+   font-sizes above. Headings/labels still stand apart — by weight, CAPS and colour — but never by
+   size, for the flat terminal look. Deliberately EXCLUDES the ability-card glyphs and the pixel-art
+   hearts (those are icons/sprites, sized to fill their slot, not body text). No italics anywhere. */
+h1, h2, h3, p, button, li,
+.overlay-title, .overlay-sub, .overlay-text,
+.info-panel, #floor, .floor-name, .stat-line, .level-badges, .level-badges .badge, .carry,
+.pane-title, .examine-empty, .examine-h, .examine-line, .examine-block,
+.card-hint, .shop-name, .shop-desc, .shop-message, .shop-item button,
+.rebind-key, .run-table, .score-heading, .score-date, .score-empty, .badge-name, .badge-desc,
+.tile-popover, .crash-card h2, .crash-card p {
+  font-size: var(--fs);
+}
+* { font-style: normal !important; } /* no italics anywhere in the UI */

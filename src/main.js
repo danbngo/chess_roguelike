@@ -361,8 +361,8 @@
   // Append a message to the left-pane log (newest at the bottom), skipping exact
   // consecutive repeats.
   function logMessage(text) {
-    if (!text || text === lastLogged) {
-      return;
+    if (!logEl || !text || text === lastLogged) {
+      return; // the on-screen log was removed from the UI — messages surface via the board + status line
     }
     lastLogged = text;
     const line = document.createElement('div');
@@ -1263,7 +1263,7 @@
     titleScreen.classList.add('hidden'); // the diegetic board IS the title now
     titleHover = null;
     canvas.style.cursor = 'default';
-    logEl.innerHTML = '';
+    if (logEl) logEl.innerHTML = '';
     lastLogged = null;
   }
 
