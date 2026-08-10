@@ -11,12 +11,33 @@
   --panel: linear-gradient(180deg, rgba(60, 48, 30, 0.4), rgba(14, 12, 10, 0) 60%), rgba(18, 14, 10, 0.96);
   --plaque: linear-gradient(180deg, rgba(46, 37, 22, 0.96), rgba(22, 17, 11, 0.96)); /* a button's carved stone */
   --plaque-lit: linear-gradient(180deg, rgba(74, 58, 32, 0.98), rgba(34, 26, 16, 0.98));
+  /* AMBIENT — the torch-lit dungeon around the panels: deep warm stone, a torch glow, a chiselled
+     bevel, and a fine 4px stone-grain STIPPLE that reads as pixel-art rock without a pixel font. */
+  --stone: #0c0906;      /* the deep unlit stone the whole thing sits in */
+  --stone-wall: linear-gradient(175deg, #241b11 0%, #170f09 48%, #0c0806 100%); /* a lit dungeon wall */
+  --stone-recess: linear-gradient(180deg, #0b0805, #100b07); /* a carved-in recess (log, readouts) */
+  --torch: rgba(232, 170, 74, 0.45); /* the colour torchlight throws on stone */
+  /* Chiselled edge: a hairline of catch-light on top, a hard black seam all round, deep inner shade. */
+  --carve: inset 0 1px 0 rgba(255, 224, 160, 0.06), inset 0 0 0 1px rgba(0, 0, 0, 0.55), inset 0 -10px 22px rgba(0, 0, 0, 0.55);
+  /* The pixel-art stone grain — a fine 4px grid of dark pits tiled over a --stone-* fill, so the rock
+     reads as stippled/dithered rather than smooth. ONE layer on purpose, so a single background-size
+     value lines up with it in every usage. */
+  --grain: radial-gradient(rgba(0, 0, 0, 0.30) 1px, transparent 1.5px);
+  --grain-size: 4px 4px;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: #000;
+  /* A torch throwing warm light down cold stone, fading to black at the edges (the dungeon closing in),
+     over a fine pixel-stone grain. Fixed so it stays put behind the panels rather than scrolling. */
+  background:
+    var(--grain),
+    radial-gradient(120% 80% at 50% -10%, rgba(232, 170, 74, 0.10), transparent 55%),
+    radial-gradient(140% 120% at 50% 120%, rgba(0, 0, 0, 0.6), transparent 60%),
+    var(--stone);
+  background-size: var(--grain-size), auto, auto, auto;
+  background-attachment: fixed;
   color: #f8fafc;
   /* A game, not a document: never let a tap/long-press select text or pop the iOS callout menu
      (accidental text-selection on a long-press was easy on mobile), and kill the grey tap flash. */
@@ -36,16 +57,21 @@ body {
 
 .panel {
   width: min(92vw, 760px);
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 24px;
+  background: var(--stone-wall);
+  border: 2px solid var(--brass);
+  border-radius: 6px; /* chiselled block, not a soft web-card */
   padding: 1.25rem;
-  box-shadow: 0 16px 60px rgba(2, 6, 23, 0.35);
+  /* A cast shadow below + a carved bevel within, so the frame reads as a slab of lit stone. */
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55), var(--carve);
 }
 
 h1 {
   margin: 0 0 0.5rem;
   font-size: 2rem;
+  font-family: var(--serif);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5), 0 0 16px rgba(232, 170, 74, 0.25);
 }
 
 p {
@@ -536,7 +562,14 @@ body.in-game .pane {
   box-sizing: border-box;
   padding: 0.7rem;
   overflow-y: auto;
-  background: #000;
+  /* A lit dungeon wall flanking the board: torchlight spilling from the top, a fine stone grain, and a
+     chiselled inner edge — instead of the flat black it used to be. */
+  background:
+    var(--grain),
+    radial-gradient(85% 34% at 50% 0%, rgba(232, 170, 74, 0.09), transparent 60%),
+    var(--stone-wall);
+  background-size: var(--grain-size), auto, auto;
+  box-shadow: var(--carve);
 }
 
 body.in-game .stage {
@@ -690,6 +723,28 @@ body.touch .overlay.hidden { display: none; }
   gap: 0.15rem;
   font-size: 1rem;
   font-weight: 600;
+  color: var(--ink-dim);
+  padding: 0.5rem 0.6rem;
+  background: var(--stone-recess);
+  border-radius: 4px;
+  box-shadow: var(--carve);
+}
+
+/* The floor plate — the one big carved heading of the HUD: torch-lit brass, cut into the stone. */
+#floor {
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  letter-spacing: 0.05em;
+  color: var(--brass-lit);
+  text-shadow: 0 0 8px rgba(232, 193, 74, 0.35), 0 1px 0 rgba(0, 0, 0, 0.65);
+}
+
+/* On TOUCH the pane is already the stone band under the board; don't nest an opaque plaque inside it —
+   the stats read straight off the band, keeping the tuned thumb-zone HUD undisturbed. */
+body.touch .info-panel {
+  background: none;
+  box-shadow: none;
+  padding: 0;
 }
 
 .floor-name {
@@ -792,8 +847,13 @@ body.touch .overlay.hidden { display: none; }
   gap: 0.2rem;
   font-size: 0.82rem;
   line-height: 1.3;
-  color: #cbd5e1;
+  color: var(--ink-dim);
   overflow-y: auto;
+  /* A recess cut into the wall where the dungeon's recent history is scratched. */
+  background: var(--stone-recess);
+  border-radius: 4px;
+  padding: 0.35rem 0.45rem;
+  box-shadow: var(--carve);
 }
 /* Two modes: SHORT shows the last few lines; LONG opens up to fill the pane. The list always
    scrolls to the newest line, so each mode simply reveals more or fewer of the recent messages. */
@@ -819,15 +879,20 @@ body.touch .overlay.hidden { display: none; }
 
 .log-line:last-child {
   opacity: 1;
-  color: #f8fafc;
+  color: var(--ink);
 }
 
 /* Right pane: the examine readout. */
 .pane-title {
   margin: 0;
-  font-size: 1.1rem;
-  letter-spacing: 0.03em;
-  color: #cbd5e1;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brass-lit);
+  text-shadow: 0 0 8px rgba(232, 193, 74, 0.28);
+  border-bottom: 1px solid var(--brass);
+  padding-bottom: 0.3rem;
 }
 
 .examine-empty {
@@ -843,14 +908,15 @@ body.touch .overlay.hidden { display: none; }
 .examine-h {
   font-weight: 700;
   font-size: 0.95rem;
-  color: #f8fafc;
+  font-family: var(--serif);
+  color: var(--ink);
   margin-bottom: 0.15rem;
 }
 
 .examine-line {
   font-size: 0.82rem;
   line-height: 1.35;
-  color: #cbd5e1;
+  color: var(--ink-dim);
 }
 
 /* Rebind-hotkey buttons under an aimed card's description. */
