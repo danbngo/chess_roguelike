@@ -1,5 +1,6 @@
 :root {
   color-scheme: dark;
+  --brick: url("data:image/png;base64,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"); /* seamless gray stone-brick tile (generated) */
   /* MONOSPACE everywhere — a terminal/roguelike voice. One size across the whole UI (--fs); headings
      differ by WEIGHT, CAPS and COLOUR, never size. No italics anywhere. */
   --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', 'DejaVu Sans Mono', Consolas, 'Courier New', monospace;
@@ -12,22 +13,18 @@
   --ink-dim: #cbb994;    /* aged parchment, for sub-text */
   --brass: rgba(180, 150, 90, 0.55);  /* the gold border-line of the class-select card */
   --brass-lit: #e8c14a;  /* lit brass / torchlight — hover + emphasis */
-  --panel: linear-gradient(180deg, rgba(60, 48, 30, 0.4), rgba(14, 12, 10, 0) 60%), rgba(18, 14, 10, 0.96);
-  --plaque: linear-gradient(180deg, rgba(46, 37, 22, 0.96), rgba(22, 17, 11, 0.96)); /* a button's carved stone */
-  --plaque-lit: linear-gradient(180deg, rgba(74, 58, 32, 0.98), rgba(34, 26, 16, 0.98));
+  --panel: linear-gradient(180deg, rgba(52, 53, 60, 0.4), rgba(14, 14, 17, 0) 60%), rgba(20, 20, 24, 0.96);
+  --plaque: linear-gradient(180deg, rgba(48, 49, 55, 0.96), rgba(26, 26, 30, 0.96)); /* a button's carved stone */
+  --plaque-lit: linear-gradient(180deg, rgba(66, 67, 74, 0.98), rgba(34, 34, 40, 0.98));
   /* AMBIENT — the torch-lit dungeon around the panels: deep warm stone, a torch glow, a chiselled
      bevel, and a fine 4px stone-grain STIPPLE that reads as pixel-art rock without a pixel font. */
-  --stone: #241a10;      /* the brownish stone the whole thing sits in */
-  --stone-wall: linear-gradient(175deg, #3b2c1c 0%, #2a1e12 55%, #1c140b 100%); /* a lit brown stone wall */
-  --stone-recess: linear-gradient(180deg, #1a120a, #221810); /* a carved-in recess (readouts) */
+  --stone: #17181c;      /* the dark gray stone the whole thing sits in */
+  --stone-wall: linear-gradient(175deg, #2b2c31 0%, #202126 55%, #17171b 100%); /* a flat gray stone slab */
+  --stone-recess: linear-gradient(180deg, #141418, #1b1b20); /* a carved-in recess (readouts) */
   --torch: rgba(232, 170, 74, 0.45); /* the colour torchlight throws on stone */
   /* A conceptual BROWN STONE WALL — rows of blocks picked out by dark mortar over a warm brown gradient,
      with torchlight spilling from above. Layered behind everything; panels sit as darker recesses on it. */
-  --wall:
-    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.34) 0 2px, transparent 2px 32px),
-    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.26) 0 2px, transparent 2px 62px),
-    radial-gradient(120% 85% at 50% -8%, rgba(255, 194, 116, 0.12), transparent 55%),
-    linear-gradient(180deg, #4a3624 0%, #33241660 42%, #241a10 100%);
+  --wall: var(--brick);
   /* Chiselled edge: a hairline of catch-light on top, a hard black seam all round, deep inner shade. */
   --carve: inset 0 1px 0 rgba(255, 224, 160, 0.06), inset 0 0 0 1px rgba(0, 0, 0, 0.55), inset 0 -10px 22px rgba(0, 0, 0, 0.55);
   /* MAIN-CHARACTER DISPLAY — the loud voice of the game: still MONOSPACE (everything is), but bold and
@@ -55,11 +52,12 @@ body {
   min-height: 100vh;
   /* A torch throwing warm light down cold stone, fading to black at the edges (the dungeon closing in),
      over a fine pixel-stone grain. Fixed so it stays put behind the panels rather than scrolling. */
-  background:
-    var(--tex),
-    var(--wall);
-  background-size: var(--tex-size), auto, auto, auto, auto;
-  background-position: var(--tex-pos), 0 0, 0 0, 0 0, 0 0;
+  background-image:
+    radial-gradient(130% 90% at 50% -6%, rgba(255, 190, 110, 0.10), transparent 52%),
+    radial-gradient(150% 120% at 50% 118%, rgba(0, 0, 0, 0.66), transparent 60%),
+    var(--brick);
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-position: center top, center bottom, top left;
   background-attachment: fixed;
   color: var(--ink);
   font-size: var(--fs);
@@ -81,9 +79,9 @@ body {
 
 .panel {
   width: min(92vw, 760px);
-  background: var(--tex), var(--stone-wall);
-  background-size: var(--tex-size), auto;
-  background-position: var(--tex-pos), 0 0;
+  background-image: linear-gradient(rgba(10, 10, 13, 0.35), rgba(10, 10, 13, 0.5)), var(--brick);
+  background-repeat: no-repeat, repeat;
+  background-position: 0 0, top left;
   border: 2px solid var(--brass);
   border-radius: 6px; /* chiselled block, not a soft web-card */
   padding: 1.25rem;
@@ -145,7 +143,7 @@ button:active {
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: rgba(10, 6, 2, 0.92);
+  background: rgba(9, 9, 12, 0.92);
 }
 #crash-screen.hidden { display: none; }
 #crash-screen .crash-card {
@@ -164,7 +162,7 @@ button:active {
   font-size: 1rem;
   border-radius: 4px;
   border: 1px solid rgba(180, 150, 90, 0.4);
-  background: rgba(46, 37, 22, 0.9);
+  background: rgba(46, 47, 53, 0.9);
   color: var(--ink);
   cursor: pointer;
 }
@@ -178,7 +176,7 @@ button:active {
   transform: translateX(-50%);
   padding: 0.5rem 1rem;
   border-radius: 999px;
-  background: rgba(10, 6, 2, 0.72);
+  background: rgba(9, 9, 12, 0.72);
   color: var(--ink-dim);
   font-size: 0.85rem;
   letter-spacing: 0.04em;
@@ -196,7 +194,7 @@ canvas {
   aspect-ratio: 1 / 1;
   border-radius: 4px;
   border: 2px solid rgba(248, 250, 252, 0.12);
-  background: #0c0806;
+  background: #0b0b0e;
   display: block;
   /* The game owns all touch gestures on the board (tap/drag/pinch handled in main.js); tell the
      browser not to scroll or double-tap-zoom the page when a finger lands here. No effect on mouse. */
@@ -232,7 +230,7 @@ canvas {
   border-radius: 4px;
   border: 1px solid var(--brass);
   background: var(--panel);
-  box-shadow: 0 18px 50px rgba(10, 6, 2, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.12);
+  box-shadow: 0 18px 50px rgba(9, 9, 12, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.12);
 }
 
 .overlay-title {
@@ -279,7 +277,7 @@ canvas {
   border-radius: 4px;
   border: 1px solid var(--brass);
   background: var(--plaque);
-  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.08), 0 3px 10px rgba(10, 6, 2, 0.4);
+  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.08), 0 3px 10px rgba(9, 9, 12, 0.4);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, transform 0.04s ease, color 0.15s ease;
 }
 .overlay button:hover,
@@ -307,7 +305,7 @@ button:disabled {
     transform: scale(1.35);
   }
   100% {
-    background: rgba(46, 37, 22, 0.9);
+    background: rgba(46, 47, 53, 0.9);
     color: inherit;
     transform: scale(1);
   }
@@ -345,7 +343,7 @@ button:disabled {
   justify-content: space-between;
   gap: 0.75rem;
   text-align: left;
-  background: rgba(46, 37, 22, 0.85);
+  background: rgba(46, 47, 53, 0.85);
   border: 1px solid rgba(180, 150, 90, 0.2);
   border-radius: 4px;
   padding: 0.5rem 0.7rem;
@@ -385,14 +383,14 @@ button:disabled {
   max-width: 230px;
   padding: 6px 9px;
   border-radius: 4px;
-  background: rgba(10, 6, 2, 0.94);
+  background: rgba(9, 9, 12, 0.94);
   border: 1px solid rgba(180, 150, 90, 0.3);
   color: var(--ink);
   font-size: 0.8rem;
   line-height: 1.35;
   white-space: pre-line;
   pointer-events: none;
-  box-shadow: 0 6px 20px rgba(10, 6, 2, 0.5);
+  box-shadow: 0 6px 20px rgba(9, 9, 12, 0.5);
 }
 
 .tile-popover.hidden {
@@ -412,7 +410,7 @@ button:disabled {
 /* THE CLASS SELECT, in the vein of the title: a living board behind, a warm STONE panel in front —
    not a dark web card floating in a void. The heavy overlay dim is lifted so the board shows. */
 #class-screen.overlay {
-  background: rgba(10, 6, 2, 0.32);
+  background: rgba(9, 9, 12, 0.32);
   backdrop-filter: none;
 }
 #class-screen .overlay-card {
@@ -422,19 +420,19 @@ button:disabled {
   border-radius: 4px;
   border: 1px solid rgba(180, 150, 90, 0.5);
   background:
-    linear-gradient(180deg, rgba(60, 48, 30, 0.4), rgba(10, 6, 2, 0) 60%),
-    rgba(14, 12, 10, 0.9);
-  box-shadow: 0 14px 44px rgba(10, 6, 2, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
+    linear-gradient(180deg, rgba(52, 53, 60, 0.4), rgba(9, 9, 12, 0) 60%),
+    rgba(16, 16, 20, 0.9);
+  box-shadow: 0 14px 44px rgba(9, 9, 12, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
 }
 #class-screen .overlay-title {
   font-family: var(--display);
   color: #f1e5c8;
-  text-shadow: 0 2px 0 rgba(10, 6, 2, 0.6);
+  text-shadow: 0 2px 0 rgba(9, 9, 12, 0.6);
 }
 /* Each row: the class/difficulty EMBLEM on the left, then the name + blurb, then the pick button. */
 #class-screen .class-item {
   gap: 0.9rem;
-  background: rgba(28, 24, 18, 0.85);
+  background: rgba(30, 31, 36, 0.85);
   border: 1px solid rgba(150, 124, 74, 0.28);
 }
 #class-screen .class-item:hover {
@@ -454,7 +452,7 @@ button:disabled {
    behind a translucent LEDGER pinned to the bottom — so the room reads above it, in the vein of the
    title and class screens. The heavy overlay dim is lifted so the hall shows through. */
 #trophy-screen.overlay {
-  background: rgba(10, 6, 2, 0.22);
+  background: rgba(9, 9, 12, 0.22);
   backdrop-filter: none;
   align-items: end;       /* pin the ledger to the bottom; the hall + king own the top of the screen */
   padding-bottom: 1rem;
@@ -467,13 +465,13 @@ button:disabled {
   border-radius: 4px;
   border: 1px solid rgba(180, 150, 90, 0.5);
   background: linear-gradient(180deg, rgba(48, 38, 22, 0.58), rgba(12, 10, 8, 0.84));
-  box-shadow: 0 14px 44px rgba(10, 6, 2, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
+  box-shadow: 0 14px 44px rgba(9, 9, 12, 0.6), inset 0 1px 0 rgba(255, 240, 200, 0.1);
   backdrop-filter: blur(2px);
 }
 #trophy-screen .overlay-title {
   font-family: var(--display);
   color: #f1e5c8;
-  text-shadow: 0 2px 0 rgba(10, 6, 2, 0.6);
+  text-shadow: 0 2px 0 rgba(9, 9, 12, 0.6);
   margin: 0;
 }
 #trophy-screen .character-body { max-height: 34vh; }
@@ -489,8 +487,8 @@ button:disabled {
   height: min(220px, 24vmin);
   border-radius: 4px;
   border: 1px solid rgba(180, 150, 90, 0.4);
-  background: rgba(10, 6, 2, 0.9);
-  box-shadow: 0 6px 20px rgba(10, 6, 2, 0.5);
+  background: rgba(9, 9, 12, 0.9);
+  box-shadow: 0 6px 20px rgba(9, 9, 12, 0.5);
   pointer-events: none;
   display: none;
 }
@@ -545,7 +543,11 @@ body.on-title .stage {
   height: 100vh;
   display: grid;
   place-items: center;   /* centre the board in the viewport */
-  background: #0c0806;    /* black letterbox around it */
+  /* The stone-brick wall shows in the margins around the board, dimmed a touch so it frames rather
+     than fights the title board. */
+  background-image: linear-gradient(rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0.42)), var(--brick);
+  background-repeat: no-repeat, repeat;
+  background-position: center, top left;
 }
 
 /* The board canvas draws a SQUARE (640x640 internally). Show it at a square size that FITS the
@@ -596,12 +598,12 @@ body.in-game .pane {
   overflow-y: auto;
   /* A lit dungeon wall flanking the board: torchlight spilling from the top, a fine stone grain, and a
      chiselled inner edge — instead of the flat black it used to be. */
-  background:
-    var(--tex),
-    radial-gradient(85% 34% at 50% 0%, rgba(232, 170, 74, 0.09), transparent 60%),
-    var(--stone-wall);
-  background-size: var(--tex-size), auto, auto;
-  background-position: var(--tex-pos), 0 0, 0 0;
+  background-image:
+    radial-gradient(85% 34% at 50% 0%, rgba(232, 170, 74, 0.10), transparent 60%),
+    linear-gradient(rgba(10, 10, 13, 0.62), rgba(10, 10, 13, 0.76)),
+    var(--brick);
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-position: center top, 0 0, top left;
   box-shadow: var(--carve);
 }
 
@@ -691,7 +693,7 @@ body.touch .overlay.hidden { display: none; }
     gap: 0.15rem;
     padding: 0.4rem 0.6rem;
     font-size: 0.82rem;
-    background: rgba(10, 6, 2, 0.6);
+    background: rgba(9, 9, 12, 0.6);
     border-radius: 4px;
   }
   /* OPTIONS → gear, top-right. */
@@ -730,7 +732,7 @@ body.touch .overlay.hidden { display: none; }
     justify-content: flex-start;
     gap: 0.4rem;
     padding: 0.35rem 0.45rem;
-    background: rgba(10, 6, 2, 0.55);
+    background: rgba(9, 9, 12, 0.55);
     border-radius: 4px;
     overflow: visible;
   }
@@ -780,6 +782,33 @@ body.touch .info-panel {
   background: none;
   box-shadow: none;
   padding: 0;
+}
+
+/* DESKTOP HUD (non-touch, wide). On a real screen the panes had room to spare, so the elements grow
+   and EACH becomes its own black, bevelled inset tablet sitting on the brick wall — instead of small
+   text floating on a transparent strip. (Mobile keeps its tuned thumb-zone layout, untouched.) */
+@media (min-width: 900px) {
+  body.in-game:not(.touch) { --fs: 17px; }
+  body.in-game:not(.touch) .pane {
+    max-width: 380px;
+    min-width: 240px;
+    padding: 1.1rem;
+    gap: 1rem;
+  }
+  body.in-game:not(.touch) .info-panel,
+  body.in-game:not(.touch) .ability-box {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.9rem 1rem;
+    background: linear-gradient(180deg, #0b0b0e, #131317); /* a near-black inset tablet */
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    border-radius: 4px;
+    box-shadow: var(--carve);
+  }
+  /* The right pane's readout tablet fills the tall pane rather than hugging the top. */
+  body.in-game:not(.touch) .right-pane .ability-box { flex: 1 1 auto; }
+  /* Bigger, louder ability cards to match the roomier pane. */
+  body.in-game:not(.touch) .card-slot { width: 3.6rem; height: 3.6rem; font-size: 2rem; }
 }
 
 .floor-name {
@@ -982,13 +1011,13 @@ body.touch .info-panel {
   font-size: 0.8rem;
   font-weight: 700;
   color: var(--ink-dim);
-  background: #2a1e12;
-  border: 1px solid #5a4632;
+  background: #26272c;
+  border: 1px solid #484951;
   border-radius: 4px;
   cursor: pointer;
 }
 .rebind-key:hover {
-  background: #3a2c1c;
+  background: #323339;
   color: var(--ink);
   border-color: var(--ink-dim);
 }
@@ -1000,9 +1029,9 @@ body.touch .info-panel {
   background: transparent;
 }
 .rebind-key.current {
-  background: #1a120a;
+  background: #16161b;
   color: var(--ink-dim);
-  border-color: #3a2c1c;
+  border-color: #323339;
   cursor: default;
 }
 
@@ -1042,7 +1071,7 @@ body.touch .info-panel {
   line-height: 1;
   border-radius: 0.4rem;
   border: 1px solid rgba(180, 150, 90, 0.35);
-  background: rgba(22, 15, 8, 0.75);
+  background: rgba(22, 22, 27, 0.75);
   cursor: default;
 }
 
@@ -1074,12 +1103,9 @@ body.touch .info-panel {
   /* A beveled, textured stone face: a catch-light along the top, a recessed shade along the bottom, the
      dither over warm stone. Done as BACKGROUND layers (not box-shadow) so the .ready pulse keeps its halo. */
   background:
-    linear-gradient(180deg, rgba(255, 230, 170, 0.10), transparent 42%),
-    linear-gradient(0deg, rgba(0, 0, 0, 0.45), transparent 45%),
-    var(--tex),
-    rgba(30, 23, 14, 0.96);
-  background-size: auto, auto, var(--tex-size), auto;
-  background-position: 0 0, 0 0, var(--tex-pos), 0 0;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 42%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.5), transparent 45%),
+    #2b2c31;
   display: grid;
   place-items: center;
   font-size: 1.5rem;
@@ -1176,7 +1202,7 @@ body.touch .info-panel {
   display: grid;
   place-items: center;
   border-radius: 4px;
-  background: rgba(10, 6, 2, 0.6);
+  background: rgba(9, 9, 12, 0.6);
   color: var(--ink);
   font-size: 1.1rem;
   font-weight: 700;
@@ -1358,7 +1384,7 @@ body.touch .info-panel {
   place-items: center;
   font-size: 0.82rem;
   /* The star is stamped INTO the metal, so it reads dark against the disc. */
-  color: rgba(10, 6, 2, 0.72);
+  color: rgba(9, 9, 12, 0.72);
   border: 1px solid currentColor;
   background:
     radial-gradient(circle at 34% 27%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 47%),
@@ -1384,7 +1410,7 @@ body.touch .info-panel {
   margin: 0 0 10px;
   padding: 4px 8px 10px;
   border-radius: 4px;
-  background: linear-gradient(180deg, rgba(180, 150, 90, 0.06), rgba(10, 6, 2, 0) 70%);
+  background: linear-gradient(180deg, rgba(180, 150, 90, 0.06), rgba(9, 9, 12, 0) 70%);
   border-bottom: 2px solid rgba(120, 100, 60, 0.35);
 }
 .trophy-tier-label {
@@ -1596,7 +1622,7 @@ body.touch .info-panel {
     flex-wrap: nowrap;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    background: rgba(10, 6, 2, 0.55);
+    background: rgba(9, 9, 12, 0.55);
     border-radius: 4px;
   }
   body.touch.in-game .card-slot {
