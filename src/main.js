@@ -1152,15 +1152,19 @@
 
     const taken = p.takenPerks || [];
     const chainColors = (cls && cls.chains) || {};
-    // The INNATE class trait leads the list, tagged so it reads apart from the perks he CHOSE.
+    // The INNATE class trait leads the list, tagged so it reads apart from the perks he CHOSE. The
+    // character sheet uses each perk's SHORT one-liner (not the full desc) — a scannable list, not a
+    // wall of text; the long form is reserved for the level-up/altar screens where you're choosing.
     const perkRows = [];
     if (cls && cls.startPerk) {
-      perkRows.push({ text: `${cls.startPerk.name} (innate) — ${cls.startPerk.desc}`, color: cls.color || null });
+      const blurb = cls.startPerk.short || cls.startPerk.desc;
+      perkRows.push({ text: `${cls.startPerk.name} (innate) — ${blurb}`, color: cls.color || null });
     }
     if (taken.length && cls) {
       for (const id of taken) {
-        const perk = cls.perks.find((k) => k.id === id) || { name: id, desc: '' };
-        const text = perk.desc ? `${perk.name} — ${perk.desc}` : perk.name;
+        const perk = cls.perks.find((k) => k.id === id) || { name: id };
+        const blurb = perk.short || perk.desc;
+        const text = blurb ? `${perk.name} — ${blurb}` : perk.name;
         perkRows.push({ text, color: chainColors[perk.chain] || null });
       }
     }
