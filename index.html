@@ -192,14 +192,10 @@
           </div>
           </div>
 
-          <aside class="pane right-pane">
-            <div class="ability-box">
-              <h3 class="pane-title">Ability</h3>
-              <div id="examine" class="examine">
-                <p class="examine-empty">Aim an ability to see what it does.</p>
-              </div>
-            </div>
-          </aside>
+          <!-- The right pane is intentionally EMPTY: it balances the left pane so the board stays
+               centred, and the minimap (a fixed-position canvas) floats in its bottom corner. The old
+               "Ability" readout was removed. -->
+          <aside class="pane right-pane" aria-hidden="true"></aside>
         </div>
       </section>
     </main>

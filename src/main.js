@@ -648,6 +648,7 @@
   // Show the card being aimed in the right pane (BRIEF description, not the full piece text), plus a
   // row of hotkey buttons to REBIND it to another slot (1-9) — swapping with whatever holds that slot.
   function showCardInfo(card, index) {
+    if (!examineEl) return; // the right-pane ability readout was removed from the UI
     examineEl.innerHTML = '';
     addExamineBlock(`${card.kind} — ${classCategory(gameState.player.className)}`, cardInfoLines(card));
     // REBIND-HOTKEY row DISABLED — the 1-9 slot grid ate too much of a phone screen (a rarely-used
@@ -659,6 +660,7 @@
   // hotkey slot. If another card already sits there, the two simply TRADE places, so no slot is ever
   // left empty and the total hand is unchanged.
   function addRebindRow(index) {
+    if (!examineEl) return;
     const cards = gameState.player.cards;
     if (!cards) return;
     const block = document.createElement('div');
@@ -824,6 +826,7 @@
   }
 
   function setExamineEmpty(text) {
+    if (!examineEl) return;
     examineEl.innerHTML = '';
     const p = document.createElement('p');
     p.className = 'examine-empty';
@@ -832,6 +835,7 @@
   }
 
   function addExamineBlock(title, lines) {
+    if (!examineEl) return;
     const block = document.createElement('div');
     block.className = 'examine-block';
     const h = document.createElement('div');
