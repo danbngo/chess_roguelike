@@ -189,7 +189,11 @@
   const SHOT_LEAD_TIME = 0.19; // arrow/bolt flies for this long before its hit resolves
   const LEVELUP_LEAD_TIME = 1.5; // beat between a guardian's death fanfare and the boon menu
   const GAMEOVER_LEAD_TIME = 1.2; // beat between the king's death (blood pool + flash) and the death screen
-  const BOSS_DISSOLVE_TIME = 0.72; // a felled guardian dissolves for this long BEFORE the king claims its tile
+  // A felled guardian dissolves for this long BEFORE the king claims its tile. MUST stay SHORTER than the
+  // renderer's DISSOLVE_DUR (0.9s) — that entry has to outlive this hold, or the boss flashes back at full
+  // sprite in the gap between "faded out" and "removed from state". The sprite is fully gone by ~0.45s, so
+  // 0.62 gives a brief beat of empty tile before the king strides on.
+  const BOSS_DISSOLVE_TIME = 0.62;
   const FLOOR_FADE_OUT = 0.3; // stair descent: the old floor darkens to black over this long...
   const FLOOR_FADE_IN = 0.34; // ...then the new floor rises out of it. Also the 'floor' hold time.
   const PORTAL_FADE_OUT = 0.4; // a portal warps a touch slower and swirlier than a plain stair...
@@ -964,14 +968,6 @@
       for (const c of cues) GameAudio.play(c);
       nextState.cues = [];
     }
-    // The KING's pseudo-tutorial line ("I must find the key!" etc.) — the same speech bubble a boss
-    // uses, over his own tile, but SILENT (no roar). Drained here so it speaks both on a fresh floor
-    // load (the spawn line) and mid-play (the reminder a turn after he grabs the key/orb). Cleared so
-    // it speaks exactly once.
-    if (nextState.kingShout) {
-      Renderer.shout(nextState.player.x, nextState.player.y, nextState.kingShout.text, false);
-      nextState.kingShout = null;
-    }
     // Drain the COLLISIONS: anything a shove slammed into something lurches at what it hit, the way
     // the king's own blows lurch. Drained here rather than in landEnemyMove because a shove comes
     // from both sides of the board — an enemy's Bulwark blow AND the king's own Blast/Recoil/
@@ -1003,6 +999,15 @@
       Renderer.sync(nextState);
     } else {
       Renderer.reset(nextState);
+    }
+    // The KING's pseudo-tutorial line ("I must find the key!" etc.) — the same speech bubble a boss
+    // uses, over his own tile, but SILENT (no roar). Drained AFTER sync/reset because a fresh floor load
+    // takes the reset path, and Renderer.reset CLEARS the shouts list — draining before it wiped the
+    // spawn line (the mid-play reminder survived only because a normal move syncs, not resets). Fires
+    // on both a floor load (the spawn line) and mid-play (the reminder a turn after he grabs the key/orb).
+    if (nextState.kingShout) {
+      Renderer.shout(nextState.player.x, nextState.player.y, nextState.kingShout.text, false);
+      nextState.kingShout = null;
     }
   }
 

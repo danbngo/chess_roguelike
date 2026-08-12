@@ -52,7 +52,11 @@ const Renderer = (function () {
   // dissolve snapshots the boss's look at the instant it died, so it plays on even as the state drops it.
   let dissolves = []; // { id, x, y, kind, opts, t, dur }
   let dissolveMotes = []; // { x, y, vx, vy, t, dur, r, bright } — dark-red essence rising off it
-  const DISSOLVE_DUR = 0.6; // seconds the boss takes to fade out
+  // The dissolve ENTRY must LIVE LONGER than main.js's BOSS_DISSOLVE_TIME (the hold before the king
+  // steps on): while the entry exists the enemy loop SKIPS the boss, so it can never flash back at full
+  // sprite in the seam between "faded out" and "removed from state". Keep DISSOLVE_DUR > that hold.
+  const DISSOLVE_DUR = 0.9; // seconds the entry lives (the visual fade finishes far sooner, see FADE_FRAC)
+  const FADE_FRAC = 0.5; // the SPRITE is fully gone by this fraction of DISSOLVE_DUR (0.45s) — before the king moves
   let boulderRenders = []; // { x, y, targetX, targetY, angle, targetAngle } — boulders ROLL + spin as they move
   let lungePoint = null; // the king POUNCES onto this tile first, then eases to his real target (leap-onto-foe bounce)
 
@@ -1647,15 +1651,20 @@ const Renderer = (function () {
   // off it and wink out. Drawn in the effects pass so it floats above the board as it goes.
   function drawDissolves() {
     for (const d of dissolves) {
-      const prog = Math.min(1, d.t / d.dur);
-      const yoff = -prog * 0.18; // the essence lifts as it comes apart
+      // The SPRITE fades over the first FADE_FRAC of the entry's life, so the guardian is GONE well
+      // before the king steps on; the entry itself lingers past the hold (see above) purely to keep the
+      // enemy loop skipping it, drawing nothing once faded.
+      const pf = Math.min(1, d.t / (d.dur * FADE_FRAC));
+      const alpha = Math.max(0, 1 - pf * pf); // fade, slow at first then quick
+      if (alpha <= 0.002) continue; // fully gone — the entry only lingers to keep the boss skipped
+      const yoff = -pf * 0.2; // the essence lifts as it comes apart
       ctx.save();
-      ctx.globalAlpha = Math.max(0, 1 - prog * prog); // fade, slow at first then quick
+      ctx.globalAlpha = alpha;
       drawPiece(d.x, d.y + yoff, d.kind, false, d.opts);
       // the "fade to dark red" — a bloody veil floods it, peaking mid-dissolve
       const cx = d.x * tileSize + tileSize / 2;
       const cy = (d.y + yoff) * tileSize + tileSize / 2;
-      ctx.globalAlpha = 0.6 * Math.sin(prog * Math.PI);
+      ctx.globalAlpha = 0.6 * Math.sin(pf * Math.PI);
       ctx.fillStyle = '#5a0d0d';
       ctx.beginPath();
       ctx.arc(cx, cy, tileSize * 0.5, 0, Math.PI * 2);
