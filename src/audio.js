@@ -642,13 +642,28 @@ const GameAudio = (function () {
     musicSourceName = null;
   }
 
+  // EAGER PREFETCH: pull a track's BYTES down before it is needed. Fetching needs neither a user gesture
+  // nor an AudioContext (only decode + playback do), so the title track's network transfer — the slow
+  // part on a first visit — can happen WHILE the splash waits for the first tap instead of after it. The
+  // bytes are held as a promise; loadMusic consumes it (and decodes) once the context exists.
+  const prefetched = {}; // key -> Promise<ArrayBuffer>
+  function prefetchMusic(key) {
+    if (prefetched[key] || typeof fetch !== 'function') return;
+    const url = MUSIC_FILES[key];
+    if (!url) return;
+    prefetched[key] = fetch(url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))));
+    prefetched[key].catch(() => {}); // swallow here — loadMusic re-handles the failure when it consumes this
+  }
+
   function loadMusic(key) {
     if (!ctx || musicBuffers[key] !== undefined) return; // already loaded / loading / failed
     const url = MUSIC_FILES[key];
     if (!url) return;
     musicBuffers[key] = 'loading';
-    fetch(url)
-      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+    // Reuse the eager prefetch if one is already in flight (the title), else fetch the bytes now.
+    const bytes = prefetched[key]
+      || fetch(url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))));
+    bytes
       // callback form of decodeAudioData for older Safari (which doesn't return a promise)
       .then((data) => new Promise((res, rej) => ctx.decodeAudioData(data, res, rej)))
       .then((decoded) => { musicBuffers[key] = decoded; applyMusic(); preloadRest(); }) // swap in + then warm the rest
@@ -737,6 +752,10 @@ const GameAudio = (function () {
     startMusic(); // loads ONLY the current screen's track first; preloadRest warms the others after it lands
   }
   if (typeof document !== 'undefined') {
+    // Warm the TITLE track's bytes the instant the page loads (the splash is always the first thing
+    // heard), so the network transfer overlaps the wait for the first tap rather than following it.
+    // Skipped when Sound was left Off — don't spend a first-visitor's bandwidth on audio they silenced.
+    if (enabled) prefetchMusic('title');
     const once = () => {
       unlock();
       document.removeEventListener('pointerdown', once);
