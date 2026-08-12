@@ -752,10 +752,18 @@ const GameAudio = (function () {
     startMusic(); // loads ONLY the current screen's track first; preloadRest warms the others after it lands
   }
   if (typeof document !== 'undefined') {
-    // Warm the TITLE track's bytes the instant the page loads (the splash is always the first thing
-    // heard), so the network transfer overlaps the wait for the first tap rather than following it.
-    // Skipped when Sound was left Off — don't spend a first-visitor's bandwidth on audio they silenced.
-    if (enabled) prefetchMusic('title');
+    // Warm the TITLE track the instant the page loads (the splash is always the first thing heard), so
+    // BOTH the slow parts happen while the splash waits for the first tap instead of after it:
+    //   1) prefetchMusic  — the network transfer (bytes), which needs no context at all;
+    //   2) ensure()+loadMusic — DECODE into a brand-new SUSPENDED AudioContext. Creating a context and
+    //      decoding are both allowed without a gesture; only PLAYBACK waits for one (applyMusic no-ops
+    //      until `unlocked`). So by the time the tap comes, the buffer is decoded and playback is instant.
+    // Skipped when Sound was left Off — don't spend a first-visitor's bandwidth (or a context) on audio
+    // they silenced. Best-effort: any failure just falls back to the old load-on-gesture path.
+    if (enabled) {
+      prefetchMusic('title');
+      try { if (ensure()) loadMusic('title'); } catch (e) { /* eager decode is a nicety, never required */ }
+    }
     const once = () => {
       unlock();
       document.removeEventListener('pointerdown', once);
