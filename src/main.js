@@ -183,10 +183,13 @@
   let pendingAction = null; // null | 'floor' | 'shot' | 'enemyshot' (resolve after the projectile lands)
   let pendingShot = null; // the player state to resolve once a ranged/spell projectile lands
   let pendingEnemyShot = null; // { state, hpBefore } — an ENEMY's volley in flight; its blow lands with it
+  let pendingBossKill = null; // the post-capture state to resolve once a felled guardian has DISSOLVED
   const PLAYER_MOVE_TIME = 0.16;
   const ENEMY_MOVE_TIME = 0.16;
   const SHOT_LEAD_TIME = 0.19; // arrow/bolt flies for this long before its hit resolves
   const LEVELUP_LEAD_TIME = 1.5; // beat between a guardian's death fanfare and the boon menu
+  const GAMEOVER_LEAD_TIME = 1.2; // beat between the king's death (blood pool + flash) and the death screen
+  const BOSS_DISSOLVE_TIME = 0.72; // a felled guardian dissolves for this long BEFORE the king claims its tile
   const FLOOR_FADE_OUT = 0.3; // stair descent: the old floor darkens to black over this long...
   const FLOOR_FADE_IN = 0.34; // ...then the new floor rises out of it. Also the 'floor' hold time.
   const PORTAL_FADE_OUT = 0.4; // a portal warps a touch slower and swirlier than a plain stair...
@@ -960,6 +963,14 @@
     if (cues && cues.length) {
       for (const c of cues) GameAudio.play(c);
       nextState.cues = [];
+    }
+    // The KING's pseudo-tutorial line ("I must find the key!" etc.) — the same speech bubble a boss
+    // uses, over his own tile, but SILENT (no roar). Drained here so it speaks both on a fresh floor
+    // load (the spawn line) and mid-play (the reminder a turn after he grabs the key/orb). Cleared so
+    // it speaks exactly once.
+    if (nextState.kingShout) {
+      Renderer.shout(nextState.player.x, nextState.player.y, nextState.kingShout.text, false);
+      nextState.kingShout = null;
     }
     // Drain the COLLISIONS: anything a shove slammed into something lurches at what it hit, the way
     // the king's own blows lurch. Drained here rather than in landEnemyMove because a shove comes
@@ -2137,6 +2148,28 @@
         && (gameState.player.x !== nextState.player.x || gameState.player.y !== nextState.player.y)) {
       GameAudio.play('step');
     }
+    // BOSS CAPTURE: the king ended his move ON a felled floor GUARDIAN's tile (a melee capture, or a
+    // knight-jump card onto it). Hold the capture — the guardian DISSOLVES where it stood (fade to dark
+    // red, see Renderer.dissolve) and only THEN does the king glide on to claim the tile. Minis/rush die
+    // instantly (they die too often to earn the beat), and a RANGED kill leaves the king off the tile,
+    // so neither matches here. gameState is still the PRE-move state, so the slain boss is still in it.
+    if (gameState && !nextState.gameOver && typeof Renderer.dissolve === 'function') {
+      const px = nextState.player.x;
+      const py = nextState.player.y;
+      const slain = gameState.enemies.find((e) => e.boss && !e.mini && !e.rush
+        && e.x === px && e.y === py && !nextState.enemies.some((n) => n.id === e.id));
+      if (slain) {
+        Renderer.dissolve(slain.id);
+        // The death cry lands WITH the dissolve, not a beat later — strip it from the cues so applyState
+        // (which runs after the hold) doesn't play a second one.
+        if (Array.isArray(nextState.cues)) nextState.cues = nextState.cues.filter((c) => c !== 'wail');
+        GameAudio.play('wail');
+        pendingBossKill = nextState;
+        pendingAction = 'bossdissolve';
+        animTimer = BOSS_DISSOLVE_TIME;
+        return;
+      }
+    }
     resolveCommitted(nextState);
   }
 
@@ -2196,7 +2229,10 @@
       return;
     }
     if (nextState.gameOver) {
-      onGameOver();
+      // HOLD the death screen back a beat — the death flash (above) and the pool of blood he left
+      // (game.js checkDeath) get a moment to land before the modal drops.
+      pendingAction = 'gameover';
+      animTimer = GAMEOVER_LEAD_TIME;
       return;
     }
     if (nextState.lastAction === 'exit') {
@@ -2270,7 +2306,10 @@
       // simply sit there waiting for an input he cannot give.
       if (typeof checkStalemate === 'function' && checkStalemate(gameState)) {
         applyState(gameState, true);
-        onGameOver();
+        Renderer.effect('death');
+        GameAudio.play('death');
+        pendingAction = 'gameover';
+        animTimer = GAMEOVER_LEAD_TIME;
         return;
       }
       maybeOpenLevelUp(); // a free-action boss kill still earns its boon
@@ -2317,7 +2356,7 @@
       flashHealth();
       enemyQueue = [];
       pendingAction = 'gameover';
-      animTimer = ENEMY_MOVE_TIME * 2.5;
+      animTimer = GAMEOVER_LEAD_TIME;
       return;
     }
     enemyQueue = phase.moverIds;
@@ -2378,9 +2417,9 @@
     }
     if (gameState.gameOver) {
       enemyQueue = [];
-      // Let the death flash/shake play for a beat before the overlay drops.
+      // Let the death flash/shake and the blood pool land before the overlay drops.
       pendingAction = 'gameover';
-      animTimer = ENEMY_MOVE_TIME * 2.5;
+      animTimer = GAMEOVER_LEAD_TIME;
       return true;
     }
     return false;
@@ -2676,6 +2715,13 @@
           pendingAction = null;
           const s = pendingShot;
           pendingShot = null;
+          if (s) resolveCommitted(s);
+        } else if (pendingAction === 'bossdissolve') {
+          // The guardian has finished dissolving — NOW the king glides onto its empty tile and the turn
+          // resolves as normal (enemy phase, boon, and the rest).
+          pendingAction = null;
+          const s = pendingBossKill;
+          pendingBossKill = null;
           if (s) resolveCommitted(s);
         } else if (pendingAction === 'enemyshot') {
           // The foe's arrow just arrived — NOW its blow lands, and the queue moves on.

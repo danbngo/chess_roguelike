@@ -2761,6 +2761,13 @@ function checkDeath(state) {
     return;
   }
   state.gameOver = true;
+  // A KING'S DEATH leaves a POOL. Fling blood out in every direction from where he fell — a spreading
+  // gush, not one tidy splat — so the board shows the kill for a beat before the death screen drops
+  // (main.js holds the modal back; see GAMEOVER_LEAD_TIME). Spatters do NOT decay past game-over (no
+  // more turns tick), so the pool stays under the modal.
+  for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
+    bleedFor(state, p, p.x, p.y, dx, dy);
+  }
   // Bank what did it, and whether he was carrying the run home when it happened.
   p.deathTags = p.lastHurtTags || ['something'];
   p.diedHoldingOrb = Boolean(state.key && state.key.orb && state.key.collected);
@@ -5346,6 +5353,14 @@ function generateFloor(floor, carryPlayer, score, realm) {
   const ay = Math.max(3, Math.min(WORLD_SIZE - 4, anchor.y));
   const portalFloor = isFinalFloor(floor, realm);
   state.isPortalFloor = portalFloor;
+  // PSEUDO-TUTORIAL (base overworld only — an NG+ realm player knows the drill): the king names his
+  // goal the instant he arrives on the FIRST floor and on the LAST. The follow-ups ("...the stair/
+  // portal!") fire one turn after he grabs the key/orb — see collectKeyIfHere + passTurn. A silent
+  // speech bubble, drained in main.js's applyState.
+  if (state.realm === DEFAULT_REALM) {
+    if (portalFloor) state.kingShout = { text: 'I must find the orb!' };
+    else if (floor === 1) state.kingShout = { text: 'I must find the key!' };
+  }
   occupied.add(`${ax},${ay}`);
   // ONE chamber style per floor — a moat of fire/water, a walled keep, a timber copse, an icy
   // sanctum, or a hazard-strewn quarry — shared by the real chamber and its decoys alike.
@@ -6365,6 +6380,15 @@ function passTurn(state) {
   p.lastTileX = p.x;
   p.lastTileY = p.y;
   state.turn += 1;
+  // PSEUDO-TUTORIAL: a king's line scheduled by collectKeyIfHere ("...the stair/portal!") counts down
+  // here and speaks when it lands, one turn after the pickup (drained by main.js's applyState).
+  if (state.kingLineIn > 0) {
+    state.kingLineIn -= 1;
+    if (state.kingLineIn === 0 && state.kingLineText) {
+      state.kingShout = { text: state.kingLineText };
+      state.kingLineText = null;
+    }
+  }
   // NB: the steam does NOT thin here. It used to, and that cost every bank a turn of life before
   // anyone could walk into it: steam laid on turn N was already down one by the time he could step in
   // on turn N+1, and a geyser's 1-turn vent expired during his move — so walking into a gout of steam
@@ -8243,6 +8267,14 @@ function collectKeyIfHere(next) {
       }
     } else {
       next.message = 'You seize the floor key — the stair unlocks!';
+    }
+    // PSEUDO-TUTORIAL follow-up: one turn after taking the orb (final floor) or the FLOOR-1 key, the
+    // king names the way out. Only those two — the intervening floors stay silent. Base overworld only.
+    // `kingLineIn` counts down in passTurn; it is set to 2 because the pickup turn's own tick spends one,
+    // so the line lands exactly ONE turn later. (See passTurn + main.js applyState.)
+    if (next.realm === DEFAULT_REALM) {
+      if (k.orb) { next.kingLineText = 'I must find the portal!'; next.kingLineIn = 2; }
+      else if (next.floor === 1) { next.kingLineText = 'I must find the stair!'; next.kingLineIn = 2; }
     }
     return true;
   }

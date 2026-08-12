@@ -47,6 +47,12 @@ const Renderer = (function () {
   const SHOUT_TIME = 1.6; // seconds the bubble lingers before it fades
   let riposts = []; // { x, y, kind, role, dx, dy, t } — Sentinel RIPOSTE: a ghost of the slain foe replays its blow
   const RIPOSTE_TIME = 0.5; // seconds the riposte ghost takes to lunge, ring off the guard, and be cut down
+  // A felled floor GUARDIAN UNMAKES itself where it stood — reddening, lifting and fading to nothing —
+  // before the king steps onto its tile to claim it (main.js holds the capture for DISSOLVE_DUR). Each
+  // dissolve snapshots the boss's look at the instant it died, so it plays on even as the state drops it.
+  let dissolves = []; // { id, x, y, kind, opts, t, dur }
+  let dissolveMotes = []; // { x, y, vx, vy, t, dur, r, bright } — dark-red essence rising off it
+  const DISSOLVE_DUR = 0.6; // seconds the boss takes to fade out
   let boulderRenders = []; // { x, y, targetX, targetY, angle, targetAngle } — boulders ROLL + spin as they move
   let lungePoint = null; // the king POUNCES onto this tile first, then eases to his real target (leap-onto-foe bounce)
 
@@ -285,6 +291,31 @@ const Renderer = (function () {
     if (e) { e.x += dx * 0.34; e.y += dy * 0.34; }
   }
 
+  // Begin a felled guardian's DISSOLVE at its current tile. Snapshots its look so it keeps playing after
+  // the state has removed it, and throws a burst of dark-red motes that rise and fade. See drawDissolves.
+  function dissolve(id) {
+    const e = enemyRenders.find((r) => r.id === id);
+    if (!e) return;
+    dissolves.push({
+      id, x: e.x, y: e.y, kind: e.kind, t: 0, dur: DISSOLVE_DUR,
+      opts: { role: e.role, boss: e.boss, bossPerk: e.bossPerk, rush: e.rush, mini: e.mini, finalBoss: e.finalBoss },
+    });
+    const cx = e.x + 0.5;
+    const cy = e.y + 0.5;
+    for (let i = 0; i < 20; i += 1) {
+      const ang = Math.random() * Math.PI * 2;
+      dissolveMotes.push({
+        x: cx + (Math.random() - 0.5) * 0.55,
+        y: cy + (Math.random() - 0.5) * 0.55,
+        vx: Math.cos(ang) * (0.1 + Math.random() * 0.35),
+        vy: -0.5 - Math.random() * 0.7, // rise (tiles/sec)
+        t: 0, dur: DISSOLVE_DUR * (0.6 + Math.random() * 0.7),
+        r: 0.04 + Math.random() * 0.07,
+        bright: Math.random() < 0.35,
+      });
+    }
+  }
+
   // A boulder the king shoved but couldn't budge: nudge its rock toward the shove; it eases right
   // back to its tile — a little vibration matching the king's bump.
   function bumpBoulder(bx, by, dx, dy) {
@@ -395,6 +426,8 @@ const Renderer = (function () {
     allySyncedOnce = false; // ...and nobody standing beside him on arrival was CONJURED there
     shouts = [];
     riposts = [];
+    dissolves = [];
+    dissolveMotes = [];
     lungePoint = null;
     snapCameraToPlayer(state);
   }
@@ -574,6 +607,15 @@ const Renderer = (function () {
     shouts = shouts.filter((s) => s.t < 1);
     for (const r of riposts) r.t += delta / RIPOSTE_TIME;
     riposts = riposts.filter((r) => r.t < 1);
+    for (const d of dissolves) d.t += delta;
+    dissolves = dissolves.filter((d) => d.t < d.dur);
+    for (const m of dissolveMotes) {
+      m.t += delta;
+      m.x += m.vx * delta;
+      m.y += m.vy * delta;
+      m.vy += delta * 0.9; // gravity slows the rise
+    }
+    dissolveMotes = dissolveMotes.filter((m) => m.t < m.dur);
     clampCamera();
     camera.x += (camera.targetX - camera.x) * speed;
     camera.y += (camera.targetY - camera.y) * speed;
@@ -1601,6 +1643,37 @@ const Renderer = (function () {
 
   // A boss's battle-cry speech bubble: a rounded box with a little tail, floating above the tile —
   // pops in with a slight bounce, holds, then fades out over its life.
+  // A felled guardian UNMAKING itself: its snapshot reddens, lifts and fades, while dark-red motes rise
+  // off it and wink out. Drawn in the effects pass so it floats above the board as it goes.
+  function drawDissolves() {
+    for (const d of dissolves) {
+      const prog = Math.min(1, d.t / d.dur);
+      const yoff = -prog * 0.18; // the essence lifts as it comes apart
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - prog * prog); // fade, slow at first then quick
+      drawPiece(d.x, d.y + yoff, d.kind, false, d.opts);
+      // the "fade to dark red" — a bloody veil floods it, peaking mid-dissolve
+      const cx = d.x * tileSize + tileSize / 2;
+      const cy = (d.y + yoff) * tileSize + tileSize / 2;
+      ctx.globalAlpha = 0.6 * Math.sin(prog * Math.PI);
+      ctx.fillStyle = '#5a0d0d';
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    for (const m of dissolveMotes) {
+      const f = Math.max(0, 1 - m.t / m.dur);
+      ctx.save();
+      ctx.globalAlpha = f;
+      ctx.fillStyle = m.bright ? '#c0304f' : '#6a0f14';
+      ctx.beginPath();
+      ctx.arc(m.x * tileSize, m.y * tileSize, m.r * tileSize * (0.5 + f * 0.6), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawShouts() {
     for (const s of shouts) {
       const t = s.t;
@@ -6061,7 +6134,11 @@ const Renderer = (function () {
     // A unit's gore lives on the live state object (render objects only track position), so
     // look it up by id.
     const liveById = new Map((state.enemies || []).map((e) => [e.id, e]));
+    const dissolvingIds = dissolves.length ? new Set(dissolves.map((d) => d.id)) : null;
     for (const enemy of ordered) {
+      // A guardian mid-DISSOLVE is drawn by drawDissolves (its own fading snapshot), not here — so it
+      // keeps unmaking even after the state has dropped it, and never double-draws while it lingers.
+      if (dissolvingIds && dissolvingIds.has(enemy.id)) continue;
       const role = enemy.role || 'normal';
       const inSight = lit(enemy.targetX, enemy.targetY);
       // A spent summoning circle, or an enemy seen only through Premonition, is faded.
@@ -6249,6 +6326,7 @@ const Renderer = (function () {
     drawProjectiles();
     drawBursts();
     drawPuffs();
+    drawDissolves();
     drawFog(lit);
     drawInk(lit); // over the steam: ink is heavier than it is
 
@@ -6386,5 +6464,5 @@ const Renderer = (function () {
     tutSpotlight = tiles || null;
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawFade, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight, setPressed };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, dissolve, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawFade, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight, setPressed };
 })();
