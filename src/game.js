@@ -2877,7 +2877,10 @@ function cardUnusableReason(state, card) {
   // Wading WATER ties up both hands keeping him upright, so he can't ready a weapon there (Pathfinder
   // wades at a walk, hands free). LAVA no longer blocks a card — it only SEARS (see passTurn): dashing
   // across fire is dangerous, not disarming. A self-cast ability needs no hands at all.
-  if (under === 'water' && !p.pathfinder && !isAbilityCard(card)) {
+  // A self-cast ability needs no hands — EXCEPT a spell. Wading ties up a SORCERER too: casting is a
+  // matter of gesture and focus he can't spare while keeping his footing, so every spell (even the
+  // "ability" ones — Displacement, Mass Confusion) is barred in water, exactly like a weapon or bow.
+  if (under === 'water' && !p.pathfinder && !(isAbilityCard(card) && classCategory(p.className) !== 'spell')) {
     const noun = classCategory(p.className) === 'spell' ? 'spell' : classCategory(p.className) === 'ranged' ? 'bow' : 'weapon';
     return `You can't ready a ${noun} while wading through ${under}.`;
   }
@@ -8773,7 +8776,25 @@ function useCard(state, cardIndex, x, y) {
     if (rdx || rdy) {
       const bx = p.x + rdx;
       const by = p.y + rdy;
-      if (bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE && standableAt(next, bx, by, {})) {
+      const inB = bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < WORLD_SIZE;
+      if (inB && terrainAt(next, bx, by) === 'pit' && !p.pathfinder) {
+        // A PIT right behind him is the one thing the kick does NOT merely halt against — the recoil
+        // flings him clean over the edge. Same reckoning as a shove into a pit (knockbackKing): a wound,
+        // then either he claws back onto solid ground or he does not climb out. Pathfinder treads over it.
+        cue(next, 'fall');
+        hurtBy(next, 'pit');
+        p.hp -= 1;
+        p.wasHit = true;
+        p.hitThisFloor = true;
+        checkDeath(next);
+        if (!next.gameOver) {
+          const out = nearestFooting(next, bx, by);
+          if (out) { p.x = out.x; p.y = out.y; }
+          next.message = 'The recoil flings the king into a pit — he claws his way out!';
+        } else {
+          next.message = 'The recoil flings the king into a pit — and he does not climb out.';
+        }
+      } else if (inB && standableAt(next, bx, by, {})) {
         const foe = next.enemies.find((e) => e.x === bx && e.y === by);
         if (!foe) {
           p.x = bx;
@@ -8798,8 +8819,8 @@ function useCard(state, cardIndex, x, y) {
     // Shockwave: shove every MOBILE foe (and loose boulder) that was FORMERLY adjacent to him —
     // i.e. crowding his FIRING tile — back one tile, away from that spot. Anchoring on the firing
     // position (not his landing) means kicking back toward a foe that stood two tiles off no
-    // longer rolls the king up next to it and wrongly punts it.
-    shoveAdjacentAway(next, originX, originY, null);
+    // longer rolls the king up next to it and wrongly punts it. (Skipped if the pit just finished him.)
+    if (!next.gameOver) shoveAdjacentAway(next, originX, originY, null);
   }
 
   // FIREBALL (Conjuration T3): the bolt BURSTS where it lands — spellfire washes over every tile

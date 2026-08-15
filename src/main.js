@@ -184,6 +184,7 @@
   let pendingShot = null; // the player state to resolve once a ranged/spell projectile lands
   let pendingEnemyShot = null; // { state, hpBefore } — an ENEMY's volley in flight; its blow lands with it
   let pendingBossKill = null; // the post-capture state to resolve once a felled guardian has DISSOLVED
+  let pendingBossKillId = null; // the guardian's id, held through its death SCREAM until the dissolve begins
   const PLAYER_MOVE_TIME = 0.16;
   const ENEMY_MOVE_TIME = 0.16;
   const SHOT_LEAD_TIME = 0.19; // arrow/bolt flies for this long before its hit resolves
@@ -194,6 +195,7 @@
   // sprite in the gap between "faded out" and "removed from state". The sprite is fully gone by ~0.45s, so
   // 0.62 gives a brief beat of empty tile before the king strides on.
   const BOSS_DISSOLVE_TIME = 0.62;
+  const BOSS_SCREAM_LEAD = 0.3; // a felled guardian screams (still standing) for this beat BEFORE it dissolves
   const FLOOR_FADE_OUT = 0.3; // stair descent: the old floor darkens to black over this long...
   const FLOOR_FADE_IN = 0.34; // ...then the new floor rises out of it. Also the 'floor' hold time.
   const PORTAL_FADE_OUT = 0.4; // a portal warps a touch slower and swirlier than a plain stair...
@@ -250,6 +252,12 @@
       healthLabel.append(h);
     }
     healthLabel.title = `HP ${hp}/${maxHp}`;
+    // LOW HP alarm: at 3 hearts or fewer the lit hearts BLINK, faster the fewer remain (1 heart ≈ 0.34s,
+    // 3 ≈ 0.78s). Off above the threshold and at 0 (nothing left to blink — the death screen takes over).
+    const blink = hp > 0 && hp <= 3;
+    healthLabel.classList.toggle('blinking', blink);
+    if (blink) healthLabel.style.setProperty('--blink', `${(0.12 + hp * 0.22).toFixed(2)}s`);
+    else healthLabel.style.removeProperty('--blink');
   }
 
   // Character level as ONE compact badge ("Lv 3"), not a row of stars. MAXED — once he holds every boon
@@ -568,7 +576,8 @@
     }
     const p = gameState.player;
     const underNow = terrainAt(gameState, p.x, p.y);
-    if (!isAbilityCard && !p.pathfinder && underNow === 'water') {
+    // Mirrors cardUnusableReason (game.js): a SPELL is barred in water too, even the "ability" spells.
+    if (!(isAbilityCard && classCategory(p.className) !== 'spell') && !p.pathfinder && underNow === 'water') {
       const cardNoun = classCategory(p.className) === 'spell' ? 'spell' : classCategory(p.className) === 'ranged' ? 'bow' : 'weapon';
       gameState.message = `You can't ready a ${cardNoun} while wading through ${underNow}.`;
       updateHud();
@@ -960,6 +969,7 @@
     if (!animate) { clearAutoMove(); clearPathProposal(); }
     gameState = nextState;
     updateHud();
+    if (!nextState.gameOver) kingDeathBegun = false; // a living state: re-arm the death throes for next time
     // Drain the action's SOUND CUES. The logic layer names what happened (a door creaked open, a
     // boulder started rolling, something went down a pit); the mixer decides what actually sounds —
     // see the priority/debounce/duck notes in audio.js. Cleared so a cue fires exactly once.
@@ -1739,6 +1749,22 @@
     }
   }
 
+  // The king's DEATH THROES — fired once at the moment the run is lost, during the GAMEOVER_LEAD_TIME
+  // beat before the death screen drops: he DISSOLVES like a felled guardian (over the blood pool he
+  // left, game.js checkDeath) and grunts his last. `kingDeathBegun` guards against a death caught by two
+  // paths in one frame stacking two dissolves; it is cleared whenever a living state is applied.
+  const DEATH_CRIES = ['Guh!', 'Oof!', 'Argh!', 'Nngh!', 'Gah!', 'Ackh!'];
+  let kingDeathBegun = false;
+  function beginKingDeath() {
+    if (kingDeathBegun || !gameState) return;
+    kingDeathBegun = true;
+    if (Renderer.dissolveKing) {
+      const col = (typeof CLASSES !== 'undefined' && CLASSES[gameState.player.className]) ? CLASSES[gameState.player.className].color : null;
+      Renderer.dissolveKing(col, GAMEOVER_LEAD_TIME); // size the fade to outlast the pre-screen hold
+    }
+    Renderer.shout(gameState.player.x, gameState.player.y, DEATH_CRIES[Math.floor(Math.random() * DEATH_CRIES.length)], false);
+  }
+
   function onGameOver() {
     // DYING ON THE TRAINING GROUNDS costs nothing — it is a place to make mistakes. Rebuild the floor
     // and wake the king back at the start rather than ending the run.
@@ -2164,14 +2190,15 @@
       const slain = gameState.enemies.find((e) => e.boss && !e.mini && !e.rush
         && e.x === px && e.y === py && !nextState.enemies.some((n) => n.id === e.id));
       if (slain) {
-        Renderer.dissolve(slain.id);
-        // The death cry lands WITH the dissolve, not a beat later — strip it from the cues so applyState
-        // (which runs after the hold) doesn't play a second one.
+        // The guardian SCREAMS first and still STANDING (it isn't dissolving yet — Renderer.dissolve is
+        // held back), THEN it unmakes itself: the death cry leads the death anim, not the reverse. Strip
+        // 'wail' from the cues so applyState (after the hold) doesn't play a second one.
         if (Array.isArray(nextState.cues)) nextState.cues = nextState.cues.filter((c) => c !== 'wail');
         GameAudio.play('wail');
         pendingBossKill = nextState;
-        pendingAction = 'bossdissolve';
-        animTimer = BOSS_DISSOLVE_TIME;
+        pendingBossKillId = slain.id;
+        pendingAction = 'bosskill-lead';
+        animTimer = BOSS_SCREAM_LEAD;
         return;
       }
     }
@@ -2234,8 +2261,9 @@
       return;
     }
     if (nextState.gameOver) {
-      // HOLD the death screen back a beat — the death flash (above) and the pool of blood he left
-      // (game.js checkDeath) get a moment to land before the modal drops.
+      // HOLD the death screen back a beat — the death flash (above), the pool of blood he left
+      // (game.js checkDeath), his dissolve + dying grunt (beginKingDeath) all land before the modal.
+      beginKingDeath();
       pendingAction = 'gameover';
       animTimer = GAMEOVER_LEAD_TIME;
       return;
@@ -2313,6 +2341,7 @@
         applyState(gameState, true);
         Renderer.effect('death');
         GameAudio.play('death');
+        beginKingDeath();
         pendingAction = 'gameover';
         animTimer = GAMEOVER_LEAD_TIME;
         return;
@@ -2359,6 +2388,7 @@
       Renderer.effect('death');
       GameAudio.play('death');
       flashHealth();
+      beginKingDeath();
       enemyQueue = [];
       pendingAction = 'gameover';
       animTimer = GAMEOVER_LEAD_TIME;
@@ -2422,7 +2452,8 @@
     }
     if (gameState.gameOver) {
       enemyQueue = [];
-      // Let the death flash/shake and the blood pool land before the overlay drops.
+      // Let the death flash/shake, the blood pool, and his dissolve + dying grunt land before the overlay.
+      beginKingDeath();
       pendingAction = 'gameover';
       animTimer = GAMEOVER_LEAD_TIME;
       return true;
@@ -2721,6 +2752,12 @@
           const s = pendingShot;
           pendingShot = null;
           if (s) resolveCommitted(s);
+        } else if (pendingAction === 'bosskill-lead') {
+          // The scream has led — NOW the guardian begins to dissolve (it stood, screaming, until here).
+          pendingAction = 'bossdissolve';
+          if (pendingBossKillId != null && Renderer.dissolve) Renderer.dissolve(pendingBossKillId);
+          pendingBossKillId = null;
+          animTimer = BOSS_DISSOLVE_TIME;
         } else if (pendingAction === 'bossdissolve') {
           // The guardian has finished dissolving — NOW the king glides onto its empty tile and the turn
           // resolves as normal (enemy phase, boon, and the rest).

@@ -71,7 +71,7 @@ const Renderer = (function () {
 
   // Feedback presets: each fires a tinted flash (and, for impacts, a shake).
   const EFFECTS = {
-    hit: { color: '220, 38, 38', peak: 0.5, shake: SHAKE_DURATION }, // red
+    hit: { color: '229, 30, 30', peak: 0.62, shake: SHAKE_DURATION * 1.2 }, // red — a louder tint + shake so a hit always registers
     deflect: { color: '125, 211, 252', peak: 0.4, shake: SHAKE_DURATION * 0.4 }, // sky blue — blocked
     death: { color: '153, 27, 27', peak: 0.85, shake: SHAKE_DURATION * 1.8 }, // deep crimson
     kill: { color: '248, 250, 252', peak: 0.18, shake: SHAKE_DURATION * 0.45 }, // pale impact
@@ -295,17 +295,10 @@ const Renderer = (function () {
     if (e) { e.x += dx * 0.34; e.y += dy * 0.34; }
   }
 
-  // Begin a felled guardian's DISSOLVE at its current tile. Snapshots its look so it keeps playing after
-  // the state has removed it, and throws a burst of dark-red motes that rise and fade. See drawDissolves.
-  function dissolve(id) {
-    const e = enemyRenders.find((r) => r.id === id);
-    if (!e) return;
-    dissolves.push({
-      id, x: e.x, y: e.y, kind: e.kind, t: 0, dur: DISSOLVE_DUR,
-      opts: { role: e.role, boss: e.boss, bossPerk: e.bossPerk, rush: e.rush, mini: e.mini, finalBoss: e.finalBoss },
-    });
-    const cx = e.x + 0.5;
-    const cy = e.y + 0.5;
+  // A burst of dark-red essence rising off a dissolving unit (tile coords; +0.5 puts it at the centre).
+  function spawnDissolveMotes(tileX, tileY) {
+    const cx = tileX + 0.5;
+    const cy = tileY + 0.5;
     for (let i = 0; i < 20; i += 1) {
       const ang = Math.random() * Math.PI * 2;
       dissolveMotes.push({
@@ -318,6 +311,31 @@ const Renderer = (function () {
         bright: Math.random() < 0.35,
       });
     }
+  }
+
+  // Begin a felled guardian's DISSOLVE at its current tile. Snapshots its look so it keeps playing after
+  // the state has removed it, and throws a burst of dark-red motes that rise and fade. See drawDissolves.
+  function dissolve(id) {
+    const e = enemyRenders.find((r) => r.id === id);
+    if (!e) return;
+    dissolves.push({
+      id, x: e.x, y: e.y, kind: e.kind, t: 0, dur: DISSOLVE_DUR,
+      opts: { role: e.role, boss: e.boss, bossPerk: e.bossPerk, rush: e.rush, mini: e.mini, finalBoss: e.finalBoss },
+    });
+    spawnDissolveMotes(e.x, e.y);
+  }
+
+  // The KING'S own death dissolve — same fade-to-dark-red as a guardian, over the player token, so his
+  // end reads as weighty as a boss's before the death screen drops. `classColor` tints the fading king.
+  // `holdSecs` is main.js's GAMEOVER_LEAD_TIME (the beat before the death screen); the entry is sized to
+  // OUTLIVE it (+0.2), so the enemy/player-draw keeps skipping the king and he never flashes back at full
+  // sprite in the seam between "faded out" and "screen up" (the same rule the boss dissolve follows).
+  function dissolveKing(classColor, holdSecs) {
+    dissolves.push({
+      id: '__king__', isPlayer: true, x: playerRender.x, y: playerRender.y, kind: 'king',
+      t: 0, dur: holdSecs ? holdSecs + 0.2 : DISSOLVE_DUR, opts: { classColor: classColor || null },
+    });
+    spawnDissolveMotes(playerRender.x, playerRender.y);
   }
 
   // A boulder the king shoved but couldn't budge: nudge its rock toward the shove; it eases right
@@ -1660,7 +1678,7 @@ const Renderer = (function () {
       const yoff = -pf * 0.2; // the essence lifts as it comes apart
       ctx.save();
       ctx.globalAlpha = alpha;
-      drawPiece(d.x, d.y + yoff, d.kind, false, d.opts);
+      drawPiece(d.x, d.y + yoff, d.kind, Boolean(d.isPlayer), d.opts);
       // the "fade to dark red" — a bloody veil floods it, peaking mid-dissolve
       const cx = d.x * tileSize + tileSize / 2;
       const cy = (d.y + yoff) * tileSize + tileSize / 2;
@@ -2609,17 +2627,19 @@ const Renderer = (function () {
     ctx.fill();
   }
 
-  // A violet marker on tiles a card being aimed can reach (ring = capture).
-  function drawCardHint(tileX, tileY, capture, warded) {
+  // A violet marker on tiles a card being aimed can reach (ring = capture). `ringColor` forces a RING
+  // (in that colour) even for a non-capture target — used by Displacement/Banish, whose targets sit ON
+  // a foe: a centre dot would hide UNDER the enemy token, so they ring it instead and stay visible.
+  function drawCardHint(tileX, tileY, capture, warded, ringColor) {
     const cx = tileX * tileSize + tileSize / 2;
     const cy = tileY * tileSize + tileSize / 2;
-    if (capture) {
+    if (capture || ringColor) {
       ctx.beginPath();
-      ctx.arc(cx, cy, tileSize * 0.42, 0, Math.PI * 2);
-      ctx.lineWidth = 3;
+      ctx.arc(cx, cy, tileSize * 0.44, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(2.5, tileSize * 0.06);
       // A WARDED foe rings STEEL instead of violet — the shot lands but its guard turns it aside, so
       // it reads apart from a target the shot would actually fell.
-      ctx.strokeStyle = warded ? 'rgba(148, 163, 184, 0.95)' : 'rgba(216, 180, 254, 0.95)';
+      ctx.strokeStyle = ringColor || (warded ? 'rgba(148, 163, 184, 0.95)' : 'rgba(216, 180, 254, 0.95)');
       ctx.stroke();
       return;
     }
@@ -6093,7 +6113,10 @@ const Renderer = (function () {
     }
     if (cardTargets) {
       for (const target of cardTargets) {
-        drawCardHint(target.x, target.y, target.capture, wardedAt(target.x, target.y));
+        // Displacement rings its swap targets cyan, Banish rings its pink — both sit ON a foe, so a ring
+        // (drawn large enough to clear the token) is the only mark that stays visible.
+        const ringColor = target.swap ? 'rgba(103, 232, 249, 0.95)' : target.banish ? 'rgba(240, 171, 252, 0.95)' : null;
+        drawCardHint(target.x, target.y, target.capture, wardedAt(target.x, target.y), ringColor);
         // En-passant dashes carry the two flank tiles they strike — mark them so the
         // hit area is obvious before the dash is committed.
         if (target.flanks) {
@@ -6318,18 +6341,23 @@ const Renderer = (function () {
     // While in Animal Form the king shows as a horse — a UNICORN (bishop + nightrider); the ♞ glyph
     // reads as the beast he moves and fights as.
     const playerGlyph = state.player.promotion > 0 ? 'nightrider' : 'king';
-    if (state.player.promotion > 0) drawBeastAura(playerRender.x, playerRender.y, state.player.promotion);
-    drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor, blood: woundBlood(state.player) });
-    if (state.player.promotion > 0) drawUnicornHorn(playerRender.x, playerRender.y); // the horn that makes the beast a UNICORN, not just a horse
-    if (state.player.invuln && !(state.player.promotion > 0)) {
-      drawInvulnMark(playerRender.x, playerRender.y); // Waiting: an untouchable halo (Animal Form has its own aura)
-      drawWaitMark(playerRender.x, playerRender.y); // ...and a golden corner badge, the at-a-glance tell (like Parry, but gold)
-    }
-    if (state.player.guardUp) {
-      drawGuardMark(playerRender.x, playerRender.y);
-    }
-    if (state.player.silence > 0) {
-      drawHushMark(playerRender.x, playerRender.y); // Silence in effect — a hush hangs over the king
+    // While the king is DISSOLVING (his death throes), drawDissolves paints his fading snapshot instead —
+    // skip the live token and all its marks so he isn't drawn twice.
+    const kingDissolving = dissolves.some((d) => d.isPlayer);
+    if (!kingDissolving) {
+      if (state.player.promotion > 0) drawBeastAura(playerRender.x, playerRender.y, state.player.promotion);
+      drawPiece(playerRender.x, playerRender.y, playerGlyph, true, { classColor, blood: woundBlood(state.player) });
+      if (state.player.promotion > 0) drawUnicornHorn(playerRender.x, playerRender.y); // the horn that makes the beast a UNICORN, not just a horse
+      if (state.player.invuln && !(state.player.promotion > 0)) {
+        drawInvulnMark(playerRender.x, playerRender.y); // Waiting: an untouchable halo (Animal Form has its own aura)
+        drawWaitMark(playerRender.x, playerRender.y); // ...and a golden corner badge, the at-a-glance tell (like Parry, but gold)
+      }
+      if (state.player.guardUp) {
+        drawGuardMark(playerRender.x, playerRender.y);
+      }
+      if (state.player.silence > 0) {
+        drawHushMark(playerRender.x, playerRender.y); // Silence in effect — a hush hangs over the king
+      }
     }
 
     drawProjectiles();
@@ -6473,5 +6501,5 @@ const Renderer = (function () {
     tutSpotlight = tiles || null;
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, dissolve, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawFade, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight, setPressed };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, dissolve, dissolveKing, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawFade, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight, setPressed };
 })();

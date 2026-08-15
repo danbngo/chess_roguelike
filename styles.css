@@ -851,7 +851,17 @@ body.touch .info-panel {
   box-shadow: var(--heart-shadow);
 }
 .hearts .heart.empty {
-  color: #4a3324; /* a drained, unlit socket */
+  color: #1f150e; /* a drained, unlit socket — darker so spent HP recedes and the lit hearts read louder */
+}
+/* LOW HP: the remaining (lit) hearts BLINK, and faster the fewer are left — main.js adds `.blinking` and
+   sets `--blink` (the period) on the container when HP is low. In sync (all recreated together) so it
+   pulses as one alarm. Empty sockets never blink. */
+@keyframes heart-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.18; } }
+.hearts.blinking .heart:not(.empty) {
+  animation: heart-blink var(--blink, 0.8s) ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hearts.blinking .heart:not(.empty) { animation: none; }
 }
 
 /* Turn / level / carried-key on one compact line. */
