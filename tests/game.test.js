@@ -14,7 +14,7 @@ const LOGIC_FILES = ['config.js', 'constants.js', 'utils.js', 'terrain.js', 'pie
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, buildTutorialFloor, tickTutorial, tutJuncture, leaveTutorial, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, buildTutorialFloor, tickTutorial, tutJuncture, leaveTutorial, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFireGlobes, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
 )();
 const {
   batStep, REALM_BOSS_NAMES,
@@ -57,7 +57,7 @@ const {
   isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies,
   playerTitle, cardBlockedReason, committedChain, attackTile, isStalemate, knightLPath, BOSS_PERKS,
   fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss,
-  tickGeysers, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
+  tickGeysers, tickFireGlobes, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
   overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS,
   barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot,
   realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, MAX_BOONS,
@@ -1230,41 +1230,43 @@ test('Parry is a guard you RAISE and SPEND — banked by a quiet turn, kept thro
   assert.equal(u.player.guardUp, true, 'the banked guard survives him taking a swing');
 });
 
-test('Fireball bursts around the FIRST foe on its ray, and burns friend and king alike', () => {
-  const build = () => {
-    const s = sorcererWith('s_staff', 's_barrage', 's_fireball');
-    s.terrain = {}; s.allies = []; s.enemies = [];
-    s.player.x = 10; s.player.y = 10;
-    return s;
-  };
-  const s = build();
+test('Chain Lightning auto-zaps the nearest foe and arcs through the connected cluster', () => {
+  const s = sorcererWith('s_staff', 's_barrage', 's_fireball');
+  s.terrain = {}; s.allies = []; s.enemies = [];
+  s.player.x = 10; s.player.y = 10;
+  // A shoulder-to-shoulder run of foes, one gapped off on its own.
   s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }), // first on the ray -> the burst centre
-    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }), // in the ring
-    makeEnemy({ kind: 'pawn', x: 12, y: 13, awake: true }), // outside it
+    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }), // nearest — the bolt leaps here
+    makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true }), // chained (adjacent)
+    makeEnemy({ kind: 'pawn', x: 13, y: 11, awake: true }), // chained (diagonally adjacent)
+    makeEnemy({ kind: 'pawn', x: 16, y: 10, awake: true }), // GAPPED off — not connected
   ];
-  s.allies = [{ id: 'pal', kind: 'mann', x: 11, y: 11 }];
-  const idx = s.player.cards.findIndex((c) => c.kind === 'fireball');
-  // The aim point IS the burst centre. It used to be the ray's far end — the marker sat past the
-  // foe about to be hit, which is precisely the thing that made the preview untrustworthy.
-  const aim = getCardMoves(s, s.player.cards[idx]).find((m) => m.y === 10 && m.x > 10);
-  assert.ok(aim && aim.x === 12, 'the aim point sits ON the foe it will burst against');
-  const hp0 = s.player.hp;
-  const r = useCard(s, idx, aim.x, aim.y);
+  const idx = s.player.cards.findIndex((c) => c.kind === 'chainlight');
+  assert.ok(idx >= 0, 'the tier-3 grants a Chain Lightning card');
+  // No aiming — it is self-cast (confirm on the king's own tile).
+  const aim = getCardMoves(s, s.player.cards[idx]);
+  assert.deepEqual(aim, [{ x: 10, y: 10, capture: false, viaJump: false, self: true }], 'it aims the king’s own tile');
+  const r = useCard(s, idx, 10, 10);
   const at = (x, y) => r.enemies.some((e) => e.x === x && e.y === y);
-  assert.ok(!at(12, 10), 'the target falls');
-  assert.ok(!at(12, 11), 'so does the foe in the burst ring');
-  assert.ok(at(12, 13), 'but not one outside it');
-  assert.ok(!(r.allies || []).some((a) => a.id === 'pal'), 'his own ally in the ring burns too');
-  assert.equal(hp0 - r.player.hp, 0, 'the king, two tiles clear, is unhurt');
-  // Stand next to your own blast and it takes a heart off you.
-  const close = build();
-  close.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })];
-  const i2 = close.player.cards.findIndex((c) => c.kind === 'fireball');
-  const aim2 = getCardMoves(close, close.player.cards[i2]).find((m) => m.y === 10 && m.x > 10);
-  const hp1 = close.player.hp;
-  const r2 = useCard(close, i2, aim2.x, aim2.y);
-  assert.equal(hp1 - r2.player.hp, 1, 'firing at an ADJACENT foe burns the king himself');
+  assert.ok(!at(12, 10) && !at(13, 10) && !at(13, 11), 'the whole connected cluster is felled');
+  assert.ok(at(16, 10), 'but the foe across the gap is untouched (the arc does not jump)');
+  assert.ok(Array.isArray(r.arc) && r.arc.length >= 3, 'the circuit lights up for the view');
+  assert.equal(r.enemyTurn, true, 'the cast spends the turn');
+
+  // The king CONDUCTS: stand shoulder-to-shoulder with the chain and you share the jolt.
+  const self = sorcererWith('s_staff', 's_barrage', 's_fireball');
+  self.terrain = {}; self.allies = []; self.player.x = 10; self.player.y = 10;
+  self.enemies = [makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true })]; // adjacent to the king
+  const hp0 = self.player.hp;
+  const i2 = self.player.cards.findIndex((c) => c.kind === 'chainlight');
+  const r2 = useCard(self, i2, 10, 10);
+  assert.equal(hp0 - r2.player.hp, 1, 'the king, on the network, takes the shock too');
+
+  // Nothing in sight: the card offers no target and refuses.
+  const empty = sorcererWith('s_staff', 's_barrage', 's_fireball');
+  empty.enemies = [];
+  const i3 = empty.player.cards.findIndex((c) => c.kind === 'chainlight');
+  assert.deepEqual(getCardMoves(empty, empty.player.cards[i3]), [], 'no foe in sight means no cast');
 });
 
 test('Explosive Round HURLS the ring outward instead of damaging it', () => {
@@ -2926,10 +2928,10 @@ test('Sorcerer cards carry cooldowns and subclass colours', () => {
   assert.equal(s.player.cards[0].kind, 'rook');
   assert.equal(s.player.cards[0].cooldown, 5, 'the starting rook uses the rook’s own cooldown');
   assert.equal(s.player.cards[0].color, '#a855f7', 'a starter card wears the class colour');
-  const conj = sorcererWith('s_amp', 's_staff');
-  const horse = conj.player.cards.find((c) => c.kind === 'horse');
-  assert.equal(horse.cooldown, 4, 'Phantom Steed horse has cooldown 4');
-  assert.equal(horse.color, '#8b5cf6', 'a granted card wears its subclass colour');
+  const conj = sorcererWith('s_staff');
+  const globe = conj.player.cards.find((c) => c.kind === 'globe');
+  assert.equal(globe.cooldown, 4, 'Globe of Fire card has cooldown 4');
+  assert.equal(globe.color, '#8b5cf6', 'a granted card wears its subclass colour');
 });
 
 test('a summon is a NORMAL monster — it outlives its circle, and Hex leaves it a ferz', () => {
@@ -3026,49 +3028,8 @@ test('FOG blocks the look while it lingers, Premonition peers through it, and it
   assert.equal(held.fog['11,10'], 2, 'his own turn leaves the bank at full strength');
 });
 
-test('a FIREBALL aims where it BURSTS, not at the far end of the line', () => {
-  // Every piercing spell aims the farthest tile it can reach, because a bolt travels the whole line.
-  // A fireball does not — it goes off at the first thing it meets. Aiming the far tile parked the
-  // cursor several squares PAST the foe about to be hit. (The resolution was always right: it
-  // rescans from the king along the cursor's direction, so this was a lie told only by the display.)
-  const mage = () => {
-    const s = sorcererWith('s_staff', 's_barrage', 's_fireball');
-    s.terrain = {}; s.enemies = []; s.allies = []; s.torches = {};
-    s.player.x = 10; s.player.y = 10;
-    return s;
-  };
-  const fb = (s) => s.player.cards.find((c) => c && c.kind === 'fireball');
-  const eastAims = (s) => getCardMoves(s, fb(s)).filter((m) => m.y === 10 && m.x > 10).map((m) => m.x);
-
-  // A foe three tiles east, open ground well beyond it.
-  const s = mage();
-  s.enemies = [makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true, id: 'f' })];
-  assert.deepEqual(eastAims(s), [13], 'the aim point IS the foe — the burst centre');
-  // ...and firing at it really does kill him, so the marker matches the outcome.
-  const idx = s.player.cards.findIndex((c) => c && c.kind === 'fireball');
-  const after = useCard(s, idx, 13, 10);
-  assert.ok(!after.enemies.some((e) => e.id === 'f'), 'and the burst lands where the marker promised');
-
-  // Cover stops it too: an ice slab is the centre, not the ground past it.
-  const ice = mage();
-  ice.terrain['12,10'] = 'ice';
-  assert.deepEqual(eastAims(ice), [12], 'it bursts against the slab');
-
-  // A line with nothing to burn or hit is not offered at all.
-  assert.deepEqual(eastAims(mage()), [], 'an empty line is not an aim');
-});
-
-test('a FIREBALL bursts against an ICE slab — where an ordinary bolt would merely stop', () => {
-  const s = sorcererWith('s_staff', 's_barrage', 's_fireball');
-  s.terrain = { '12,10': 'ice' };
-  s.player.x = 10; s.player.y = 10;
-  const victim = makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }); // beside the slab, in the blast ring
-  s.enemies = [victim];
-  const idx = s.player.cards.findIndex((c) => c.kind === 'fireball');
-  assert.ok(idx >= 0, 'he holds a fireball');
-  const r = useCard(s, idx, 12, 10); // aim at the ice
-  assert.ok(!r.enemies.some((e) => e.id === victim.id), 'the burst against the ice engulfs the foe beside it');
-});
+// (Removed: the two Fireball-card tests — the Fireball was reworked into Chain Lightning; see the
+//  Chain Lightning test above.)
 
 test('Animal Form: rallied horses REVERT to wild the moment the form wears off', () => {
   const s = rangerWith('r_wade', 'r_xray', 'r_promo');
@@ -3140,23 +3101,38 @@ test('Double Cast: the FIRST shot alone ends the turn when no target remains', (
   assert.ok(r.player.cards[idx].remaining > 0, 'and the card goes on cooldown');
 });
 
-test('Conjuration Phantom Steed: an L-shaped AOE spell that never moves the king', () => {
-  const s = sorcererWith('s_amp', 's_staff');
-  const idx = s.player.cards.findIndex((c) => c.kind === 'horse');
-  assert.ok(idx >= 0, 'Phantom Steed grants a horse card');
-  assert.equal(s.player.cards[idx].cooldown, 4, 'the horse keeps its own cooldown (4)');
-  // King at (10,10). Knight offset (+2,+1) traces the L: (11,10) · (12,10) · the tile (12,11).
-  s.enemies = [
-    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }), // on the L path
-    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }), // the aimed knight tile (destination)
-  ];
-  const targets = getCardMoves(s, s.player.cards[idx]);
-  assert.ok(targets.some((t) => t.x === 12 && t.y === 11), 'the knight tile is a valid aim');
-  const r = useCard(s, idx, 12, 11);
-  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 10, y: 10 }, 'the king does NOT move (it is no jump)');
-  assert.ok(!r.enemies.some((e) => e.x === 11 && e.y === 10), 'the foe on the L path is trampled');
-  assert.ok(!r.enemies.some((e) => e.x === 12 && e.y === 11), 'and the foe at the knight tile too');
-  assert.ok((r.ashes || []).length >= 1, 'spell kills leave ash');
+test('Globe of Fire: conjured beside the king, drifts one tile a turn, detonates on contact', () => {
+  const s = sorcererWith('s_staff');
+  s.terrain = {}; s.allies = []; s.enemies = [];
+  s.player.x = 10; s.player.y = 10;
+  const idx = s.player.cards.findIndex((c) => c.kind === 'globe');
+  assert.ok(idx >= 0, 'Globe of Fire grants a globe card');
+  assert.equal(s.player.cards[idx].cooldown, 4, 'the globe keeps its own cooldown (4)');
+  // Aim EAST: the empty neighbour (11,10) is offered; casting there sends it drifting +x.
+  const aims = getCardMoves(s, s.player.cards[idx]);
+  assert.ok(aims.some((t) => t.x === 11 && t.y === 10 && t.globe), 'the east neighbour is a valid aim');
+  const r = useCard(s, idx, 11, 10);
+  assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 10, y: 10 }, 'the king does NOT move (it is placed, not a jump)');
+  assert.equal(r.fireGlobes.length, 1, 'a globe now drifts');
+  assert.deepEqual({ dx: r.fireGlobes[0].dx, dy: r.fireGlobes[0].dy }, { dx: 1, dy: 0 }, 'heading east');
+  // A wall three tiles on: the globe drifts and BURSTS against it, scorching the tile beside it.
+  r.terrain['14,10'] = 'wall';
+  r.fireBursts = [];
+  let guard = 0;
+  while (r.fireGlobes.length && guard++ < 12) tickFireGlobes(r);
+  assert.equal(r.fireGlobes.length, 0, 'the globe is spent when it detonates');
+  assert.ok((r.fireBursts || []).some((b) => b.x === 13 && b.y === 10), 'the blast scorches the tile it burst on');
+
+  // A foe in its path is felled by the burst.
+  const s2 = sorcererWith('s_staff');
+  s2.terrain = {}; s2.allies = []; s2.player.x = 10; s2.player.y = 10;
+  s2.enemies = [makeEnemy({ kind: 'pawn', x: 13, y: 10, awake: true })];
+  const i2 = s2.player.cards.findIndex((c) => c.kind === 'globe');
+  const r2 = useCard(s2, i2, 11, 10);
+  let g2 = 0;
+  while (r2.fireGlobes.length && g2++ < 12) tickFireGlobes(r2);
+  assert.equal(r2.enemies.length, 0, 'the globe detonates on the foe and fells it');
+  assert.ok((r2.ashes || []).length >= 1, 'a spell kill leaves ash');
 });
 
 test('Phase lets the king enter walls, and no longer blinds him for it', () => {
@@ -3384,38 +3360,7 @@ test('breaking a summoning circle sheds no blood — it is a rune, not a creatur
   assert.ok((movePlayerTo(t, 11, 10).spatters || []).length > 0, 'control: a real foe bleeds');
 });
 
-test('the Spectral Steed charges any L with a foe ON it — not just one at the far end', () => {
-  const build = () => {
-    let t = createInitialState('sorcerer', 'easy');
-    t.terrain = {}; t.allies = []; t.enemies = [];
-    t.player.x = 10; t.player.y = 10;
-    return learnPerk(t, 's_staff');
-  };
-  const horseIdx = (t) => t.player.cards.findIndex((c) => c.kind === 'horse');
-  // The L for dx=+2,dy=+1 runs (11,10) -> (12,10) -> (12,11).
-  // A foe MID-path, with the endpoint hidden behind cover: the charge must still be offered. Gating
-  // on the ENDPOINT's line of sight (as this did) threw the whole direction away.
-  const s = build();
-  s.enemies = [makeEnemy({ kind: 'rook', x: 11, y: 10, awake: true })];
-  s.terrain = { '12,10': 'wall' }; // hides everything beyond, including the aim tile
-  assert.ok(
-    getCardMoves(s, s.player.cards[horseIdx(s)]).some((t) => t.x === 12 && t.y === 11),
-    'a foe on the path is enough — the aim tile is only where he points',
-  );
-  // Control: no foe on any L at all -> nothing is offered.
-  const n = build();
-  n.enemies = [makeEnemy({ kind: 'rook', x: 16, y: 16, awake: true })];
-  assert.equal(getCardMoves(n, n.player.cards[horseIdx(n)]).length, 0, 'control: no foe on an L, no charge');
-  // And it tramples the WHOLE path, which is what the AOE preview promises.
-  const c = build();
-  c.enemies = [
-    makeEnemy({ kind: 'pawn', x: 11, y: 10, awake: true }),
-    makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true }),
-    makeEnemy({ kind: 'pawn', x: 12, y: 11, awake: true }),
-  ];
-  const r = useCard(c, horseIdx(c), 12, 11);
-  assert.equal(r.enemies.length, 0, 'every foe along the L is trampled');
-});
+// (Removed: the Spectral Steed's L-path charge — reworked into the Globe of Fire; see the Globe test above.)
 
 test('a TREE is solid timber: it blocks sight, takes three swings, and leaves sticks', () => {
   const build = () => {

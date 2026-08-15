@@ -437,7 +437,7 @@ const TERRAIN_UNLOCK = { wall: 2, water: 3, lava: 5 };
 // CLASS (Warrior melee / Ranger ranged / Sorcerer spell), resolved via
 // classCategory(). There are no traits or ratings; card power comes from perks.
 const STEPPER_KINDS = ['king', 'pawn', 'knight', 'mann']; // reach 1; sliders reach 3
-const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'doublestep', 'promotion', 'reload', 'swap', 'horse', 'blink', 'fireball', 'silence', 'banish', 'confuse'];
+const CARD_KINDS = ['pawn', 'king', 'knight', 'bishop', 'rook', 'archbishop', 'chancellor', 'queen', 'amazon', 'enpassant', 'doublestep', 'promotion', 'reload', 'swap', 'horse', 'blink', 'fireball', 'silence', 'banish', 'confuse', 'globe', 'chainlight'];
 const CARD_COOLDOWN = 3;
 const PROMOTION_TURNS = 3; // how many turns the Ranger's Promotion (amazon form) lasts
 const SILENCE_TURNS = 3; // how many turns the Gloom Stalker's Silence holds the room asleep
@@ -693,9 +693,9 @@ const CLASSES = {
       // 🌀 Conjuration — the artillery-mage: reach, a queen, then a full barrage.
       // Reordered: the chain used to OPEN on Blast, which overlapped Marksman's shrapnel and gave
       // the Conjurer nothing to conjure. It now leads with the steed and crowns with Fireball.
-      { id: 's_staff', chain: 'Conjuration', tier: 1, name: 'Spectral Steed', short: 'Card: a horse tramples an L-path, scorching all on it', desc: 'Gain a horse card: a spectral steed that tramples an L-shaped path, scorching every foe along it (cooldown 4)', grants: { gainCard: 'horse', gainCooldown: 4 } },
+      { id: 's_staff', chain: 'Conjuration', tier: 1, name: 'Globe of Fire', short: 'Card: conjure a drifting fireball that bursts on contact', desc: 'Gain a Globe of Fire card (cooldown 4): conjure a ball of spellfire on an empty tile beside you and send it drifting one way — ONE tile each turn. It floats over ground, water, lava and pits, but DETONATES the instant its path meets anything solid (a wall, tree, gate, or any unit — foe, ally or you), scorching that tile and all eight around it', grants: { gainCard: 'globe', gainCooldown: 4 } },
       { id: 's_barrage', chain: 'Conjuration', tier: 2, requires: 's_staff', name: 'Double Cast', short: 'After a spell, fire a second if a target remains', desc: 'After firing a spell, if a targetable foe remains you may aim and fire once more before your turn ends', grants: { doubleCast: true } },
-      { id: 's_fireball', chain: 'Conjuration', tier: 3, requires: 's_barrage', name: 'Fireball', short: 'Card: a blast that scorches everything around the hit', desc: 'Gain a Fireball card (cooldown 7): hurl it along any queen line. It strikes your target AND washes spellfire over every tile around it — which will burn YOU and your allies if you stand too close', grants: { gainCard: 'fireball', gainCooldown: 7 } },
+      { id: 's_fireball', chain: 'Conjuration', tier: 3, requires: 's_barrage', name: 'Chain Lightning', short: 'Card: auto-zaps the nearest foe + everything chained to it', desc: 'Gain a Chain Lightning card (cooldown 6): a bolt leaps to the NEAREST foe in sight and arcs on through every unit chained to it — bodies packed shoulder to shoulder all take it at once, one jolt and one damage each. Your allies and YOU conduct too: stand in the chain and you share the shock', grants: { gainCard: 'chainlight', gainCooldown: 6 } },
       // 🔥 Necromancy — the summoner: a familiar, then undead, then a General.
       { id: 's_familiar', chain: 'Necromancy', tier: 1, name: 'Familiar', short: 'A skeletal ally follows and fights, respawning each floor', desc: 'Summon a skeletal MANN familiar (steps one tile any direction) that follows you, fights foes, and respawns each floor / when clear', grants: { familiar: true } },
       { id: 's_undead', chain: 'Necromancy', tier: 2, requires: 's_familiar', name: 'Grave Bond', short: 'A foe you kill rises as an undead ally (one at a time)', desc: 'A foe you slay rises as an undead ally (one at a time; undead do not follow you downstairs)', grants: { necromancy: true } },

@@ -122,18 +122,18 @@ rank/file, hitting every unit on the line. (HP was raised 3 → 4 once foes bega
 | 3 | `s_confuse` | **Mass Confusion** | gain a Mass Confusion card (**cooldown 9**, costs a turn): every foe you can **see** loses track of which side it is on. Each turn a confused piece either strikes whatever is nearest — **its own kind included** — or blunders off at random, an even chance of each. **Nothing is immune**: turrets, guardians and summoning circles all lose the thread (a rooted piece can only lash out or swing wild — it has nowhere to blunder to). The fog lifts on a coin at the end of each of its turns, and **any** blow you land snaps that piece straight out of it | `gainCard:confuse, gainCooldown:9` |
 
 
-### 🌀 Conjuration — the artillery-mage: a steed, a double cast, a fireball. (#8b5cf6)
+### 🌀 Conjuration — the artillery-mage: a drifting globe, a double cast, chain lightning. (#8b5cf6)
 | tier | id | name | effect | `grant` |
 |---|---|---|---|---|
-| 1 | `s_staff` | **Spectral Steed** | gain a horse card (cd 4): a spectral steed tramples an L-shaped path (aimed via spell targeting), scorching every foe along it — it does NOT move you | `gainCard:horse, gainCooldown:4` |
+| 1 | `s_staff` | **Globe of Fire** | gain a `globe` card (cd 4): conjure a ball of spellfire on an empty tile beside you and send it drifting one way — ONE tile each turn. It floats over ground/water/lava/pits but DETONATES the instant its path meets anything solid (wall, tree, gate, or any unit — foe, ally or **you**), scorching that tile + all 8 around it | `gainCard:globe, gainCooldown:4` |
 | 2 | `s_barrage` | Double Cast | after firing a spell, if a targetable foe remains you may aim + fire once more before your turn ends | `doubleCast` |
-| 3 | `s_fireball` | **Fireball** | gain a Fireball card (cd 7): hurl it along any queen line. It strikes your target AND washes spellfire over every tile around it — burning **you and your allies** if you stand in the ring | `gainCard:fireball, gainCooldown:7` |
+| 3 | `s_fireball` | **Chain Lightning** | gain a `chainlight` card (cd 6): a self-cast bolt leaps to the NEAREST foe in sight and arcs on through every unit CHAINED to it (adjacency network of bodies) — one jolt, one damage each. Your allies and **you** conduct too: stand in the chain and share the shock | `gainCard:chainlight, gainCooldown:6` |
 
 
-_**Fireball's burst centres on the FIRST foe along its ray, not on the aim point.** A spell card is
-aimed at its ray's FAR END — the bolt always flies its full reach and the aimed tile only picks a
-direction — so the aim point is usually empty ground past the target. The centre is captured in
-`useCard` BEFORE the bolt resolves, because afterwards that foe is ash and its tile is unknowable._
+_**Globe of Fire** is a persistent hazard on `state.fireGlobes` — `tickFireGlobes` (in `beginEnemyPhase`)
+advances each globe one tile and `detonateFire`s it on contact (`globeBlocked`). **Chain Lightning**
+reuses the Workshop's `dischargeElectricity` from the nearest visible foe: on a normal floor only BODIES
+conduct, so the arc runs through a cluster of adjacent units, lighting the whole circuit (`state.arc`)._
 
 ### 🔥 Necromancy — the summoner: a familiar, then undead, then a General. (#65a30d)
 | tier | id | name | effect | `grant` |

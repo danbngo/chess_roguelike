@@ -1006,10 +1006,12 @@ function dischargeElectricity(state, x, y, opts) {
   // RANGE. A circuit does not run the length of the floor — the arc reaches only as far as the king
   // can plainly see (his STANDARD window, never the Oracle's one-way band, which is sight he is not
   // supposed to be able to act through). Without this a single wire run could reach him from a room
-  // he has never entered, which is not a hazard so much as a random tax.
+  // he has never entered, which is not a hazard so much as a random tax. `opts.unbounded` lifts this —
+  // the Sorcerer's Chain Lightning follows the WHOLE connected cluster it leaps into, not just the part
+  // in view.
   const bounds = getAwarenessBounds(state);
-  const inRange = (tx, ty) => tx >= bounds.x && ty >= bounds.y
-    && tx < bounds.x + bounds.width && ty < bounds.y + bounds.height;
+  const inRange = (tx, ty) => o.unbounded || (tx >= bounds.x && ty >= bounds.y
+    && tx < bounds.x + bounds.width && ty < bounds.y + bounds.height);
   const charged = new Set();
   const queue = [{ x, y }];
   const seen = new Set([`${x},${y}`]);
@@ -1739,7 +1741,7 @@ function buildPortalRoom(carryPlayer, score, cleared) {
     explored: {},
     enemies: [],
     allies: [],
-    spatters: [],
+    spatters: [], fireGlobes: [],
     corpses: [],
     ashes: [],
     rubble: [],
@@ -1945,7 +1947,7 @@ function buildTutorialFloor(classKey, difficulty) {
     explored: {},
     enemies: [foe, boss],
     allies: [],
-    spatters: [], corpses: [], ashes: [], rubble: [], scraps: [], iceShards: [],
+    spatters: [], fireGlobes: [], corpses: [], ashes: [], rubble: [], scraps: [], iceShards: [],
     scorches: [], scars: [], boulders: [], puffs: [],
     fog: {}, torches, burningTrees: {}, treeHp: {}, switches: {},
     key: { x: L.key.x, y: L.key.y, collected: false },
@@ -5168,7 +5170,7 @@ function generateFloor(floor, carryPlayer, score, realm) {
     fixedDoors: keepDoors,
     explored: {},
     enemies: [],
-    spatters: [],
+    spatters: [], fireGlobes: [],
     corpses: [], // fading remains of slain pieces (cosmetic)
     ashes: [], // fading ash piles left by spell kills (cosmetic)
     rubble: [], // fading rock piles left by crushed / blasted boulders (cosmetic)
@@ -8505,6 +8507,41 @@ function useCard(state, cardIndex, x, y) {
     updateDiscovery(next);
     return next;
   }
+  // CHAIN LIGHTNING (Conjuration T3): auto-strikes the NEAREST foe in sight and everything CHAINED to
+  // it — a run of bodies packed shoulder to shoulder all take the bolt at once (one jolt, one damage
+  // each). The king and his allies conduct too: stand in the chain and you share the shock. Reuses the
+  // Workshop's electricity (dischargeElectricity), so the whole circuit lights up (state.arc).
+  if (card.kind === 'chainlight') {
+    const foes = getVisibleEnemies(next).filter((e) => !e.summonCircle);
+    if (!foes.length) {
+      next.message = 'No foe in sight for the lightning to leap to.';
+      next.lastAction = 'blocked';
+      return next;
+    }
+    let nearest = foes[0];
+    for (const e of foes) {
+      if (chebyshev(e.x, e.y, p.x, p.y) < chebyshev(nearest.x, nearest.y, p.x, p.y)) nearest = e;
+    }
+    const before = next.enemies.length;
+    dischargeElectricity(next, nearest.x, nearest.y, { skipOrigin: false, unbounded: true }); // arcs from the foe through the WHOLE cluster
+    if (next.enemies.length < before) p.killedWithCard = true; // Bare Hands: killed with a card
+    next.message = 'Chain lightning leaps through the ranks!';
+    // Cataclysm (spellSurprise): casting startles the room (mirrors the common spell tail).
+    if (p.spellSurprise && !next.gameOver && !next.won) {
+      for (const e of next.enemies) {
+        if (e.boss || e.turret || e.summonCircle) continue;
+        if (unitInSight(next, e.x, e.y)) startle(e);
+      }
+    }
+    card.remaining = card.cooldown;
+    card.justFired = true;
+    p.attacked = true; // an aggressive cast — shatters Silence, raises no Parry guard
+    passTurn(next);
+    next.enemyTurn = true;
+    next.lastAction = 'combat';
+    updateDiscovery(next);
+    return next;
+  }
 
   // Double Step charge into a boulder: the running shove rolls it TWO tiles (a plain move
   // heaves it just one), the king following into the boulder's old square.
@@ -8665,23 +8702,24 @@ function useCard(state, cardIndex, x, y) {
         checkDeath(next);
       }
     }
-  } else if (card.kind === 'horse') {
-    // The Conjuration horse: a spectral steed charges the L-shaped path toward the aimed
-    // knight tile — WITHOUT moving the king — scorching every foe along the L (leaving ash).
-    for (const t of knightLPath(fromX, fromY, x - fromX, y - fromY, next)) {
-      if (t.x < 0 || t.x >= WORLD_SIZE || t.y < 0 || t.y >= WORLD_SIZE) continue;
-      impactTiles.push({ x: t.x, y: t.y });
-      scorchGround(next, t.x, t.y); // the steed's spellfire burns the ground it charges over
-      scorchTileTerrain(next, t.x, t.y); // ...and reacts with terrain like any spellfire: LIGHT timber, thaw ice, wither grass, blast a boulder
-      dispelAllyAt(next, t.x, t.y);
-      const felled = attackTile(next, t.x, t.y, { ash: true });
-      if (felled) {
-        if (t.x === x && t.y === y) scored = true;
-        if (isKillablePiece(felled)) kills.push(felled);
-      }
+  } else if (card.kind === 'globe') {
+    // GLOBE OF FIRE: conjure a drifting ball of spellfire on the empty tile the player aimed (one step
+    // away, in the chosen heading) and send it off that way. It travels one tile each enemy phase
+    // (tickFireGlobes) and DETONATES the instant its path meets anything solid. It does not strike on
+    // cast — it is placed, and the board does the rest.
+    const gdx = Math.sign(x - fromX);
+    const gdy = Math.sign(y - fromY);
+    if (!Array.isArray(next.fireGlobes)) next.fireGlobes = [];
+    if ((gdx || gdy) && !globeBlocked(next, x, y)) {
+      next.fireGlobes.push({ x, y, dx: gdx, dy: gdy });
+      next.message = 'A globe of fire drifts forth!';
+    } else {
+      // Aimed straight into something solid at his elbow (getCardMoves normally forbids this) — it
+      // bursts as it forms.
+      detonateFire(next, x, y);
+      next.message = 'The globe of fire bursts as it forms!';
     }
-    realKill = kills.length > 0; // Blast hurls survivors along the charge
-    next.message = scored ? 'A spectral steed tramples through the ranks!' : 'The spectral steed charges past.';
+    scored = true; // a spell WAS cast (Cataclysm / Double-Cast bookkeeping keys off a fired spell)
   } else if (category === 'spell' && !move.viaJump) {
     // A sorcerer's bolt ALWAYS travels its FULL range in the aimed direction — every
     // tile out to `reach` is scorched, even past the nearest target (stopped only by a
@@ -9800,6 +9838,77 @@ function geyserErupting(state) {
 function geyserImminent(state) {
   return ((state.geyserPhase || 0) % GEYSER_PERIOD) === GEYSER_PERIOD - 1;
 }
+// ---- GLOBE OF FIRE (Conjuration T1) ------------------------------------------------------------
+// A ball of spellfire the Sorcerer conjures on an empty tile beside him and sends drifting one way,
+// ONE tile per enemy phase. It floats over open ground, water, lava, ice and pits alike — but the
+// instant its path meets anything SOLID (a wall, boulder, tree, gate, a body — friend, foe or the king
+// himself), it DETONATES: the tile and its eight neighbours are scorched and everything on them is
+// struck. It is his fire; it shows the king no mercy if he stands in the blast.
+
+// Is (x,y) something a drifting globe cannot pass — and so detonates against? Out of bounds, solid
+// terrain, or ANY body (the globe bursts ON contact with a unit).
+function globeBlocked(state, x, y) {
+  if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) return true;
+  const t = terrainAt(state, x, y);
+  if (t === 'wall' || t === 'boulder' || t === 'door' || t === 'gate' || isMetal(t) || isTimber(t)) return true;
+  if (state.enemies.some((e) => e.x === x && e.y === y)) return true;
+  if (allyAt(state, x, y)) return true;
+  if (state.player.x === x && state.player.y === y) return true;
+  return false;
+}
+
+// A spellfire DETONATION centred on (cx,cy): the tile + its eight neighbours are scorched (lighting
+// timber, thawing ice, withering grass, boiling water) and everything on them is struck — the king
+// included (it is his own fire). Queues a fire bloom on every tile for the view. Returns true if it
+// felled anything.
+function detonateFire(state, cx, cy) {
+  let felledAny = false;
+  const tiles = [{ x: cx, y: cy }, ...[...ORTHO, ...DIAG].map(([dx, dy]) => ({ x: cx + dx, y: cy + dy }))];
+  if (!Array.isArray(state.fireBursts)) state.fireBursts = [];
+  for (const tt of tiles) {
+    if (state.gameOver || state.won) break;
+    if (tt.x < 0 || tt.x >= WORLD_SIZE || tt.y < 0 || tt.y >= WORLD_SIZE) continue;
+    state.fireBursts.push({ x: tt.x, y: tt.y });
+    scorchGround(state, tt.x, tt.y);
+    scorchTileTerrain(state, tt.x, tt.y); // reacts with terrain like any spellfire (light timber, thaw ice...)
+    if (state.player.x === tt.x && state.player.y === tt.y) {
+      // His OWN blast — no parry, no ward.
+      state.player.hp -= 1;
+      state.player.wasHit = true;
+      state.player.hitThisFloor = true;
+      state.player.burnedByFire = true;
+      hurtBy(state, 'fire');
+      addSpatter(state, tt.x, tt.y);
+      checkDeath(state);
+      if (state.gameOver) break;
+    }
+    dispelAllyAt(state, tt.x, tt.y); // his own conjurations burn just as readily
+    const felled = attackTile(state, tt.x, tt.y, { ash: true }); // spell kills leave ash
+    if (felled) felledAny = true;
+  }
+  cue(state, 'cast'); // the whoomph of ignition
+  return felledAny;
+}
+
+// Advance every drifting globe one tile along its heading; if its next tile is solid (or a body has
+// moved onto the globe's OWN tile), it detonates there and is spent. Called each enemy phase.
+function tickFireGlobes(state) {
+  if (!Array.isArray(state.fireGlobes) || !state.fireGlobes.length) return;
+  const survivors = [];
+  for (const globe of state.fireGlobes) {
+    if (state.gameOver || state.won) { survivors.push(globe); continue; }
+    // Something now standing on the globe's OWN tile (a foe stepped into it) sets it off where it floats.
+    if (globeBlocked(state, globe.x, globe.y)) { detonateFire(state, globe.x, globe.y); continue; }
+    const nx = globe.x + globe.dx;
+    const ny = globe.y + globe.dy;
+    if (globeBlocked(state, nx, ny)) { detonateFire(state, globe.x, globe.y); continue; } // path meets something solid
+    globe.x = nx;
+    globe.y = ny;
+    survivors.push(globe);
+  }
+  state.fireGlobes = survivors;
+}
+
 // A geyser ERUPTS by venting a gout of scalding STEAM (fog) over its own tile — it no longer wounds
 // directly; the STEAM is what scalds whatever stands in it (see tickFogDamage), unifying geysers with
 // every other bank of fog. Geyser steam is brief — 1 turn — where most fog lingers for two.
@@ -9932,6 +10041,7 @@ function beginEnemyPhase(state) {
   recordSeenEnemies(next);
   charmBeasts(next); // Wild Empathy: beasts in view bow and join the king's side before the foes act
   tickBurningTrees(next); // a tree lit last turn burns away now, leaving a scorch (and may spread)
+  tickFireGlobes(next); // a Globe of Fire drifts one tile along its heading (and detonates if it hits something)
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
   tickPitFalls(next); // anything that blundered onto a pit (a confused foe) falls in
   tickGeysers(next); // on the third turn, every geyser vents a gout of 1-turn STEAM (fog) over itself

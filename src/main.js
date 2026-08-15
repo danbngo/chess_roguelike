@@ -646,6 +646,8 @@
       case 'enpassant': return 'Step 1 tile; also strikes one foe you pass (marked ✕).';
       case 'doublestep': return 'Dash the FULL 2 tiles in one direction (capturing at the end).';
       case 'horse': return 'A spectral steed tramples an L-shaped path to an aimed knight tile — you don’t move.';
+      case 'globe': return 'Aim a direction: a ball of fire is conjured beside you and drifts that way one tile a turn, bursting on the first solid thing it meets.';
+      case 'chainlight': return 'Self-cast: confirm on your own tile — a bolt leaps to the nearest foe and arcs through every unit chained to it (you and your allies conduct too).';
       case 'confuse': return 'Self-cast: confirm on your own tile — every foe in sight loses friend from foe.';
       case 'silence': return 'Self-cast: confirm on your own tile — every foe in sight drops asleep. Free action.';
       default:
@@ -811,6 +813,22 @@
     } else if (card.kind === 'horse') {
       // The phantom steed scorches the whole L-path to the aimed knight tile.
       for (const t of knightLPath(p.x, p.y, cursor.x - p.x, cursor.y - p.y, gameState)) push(t.x, t.y);
+    } else if (card.kind === 'globe') {
+      // Preview the globe's DRIFT: from the tile it spawns on (the aimed neighbour) forward until its
+      // path meets something solid, then the burst ring where it would detonate. A snapshot — things move.
+      const dx = Math.sign(cursor.x - p.x);
+      const dy = Math.sign(cursor.y - p.y);
+      let gx = cursor.x;
+      let gy = cursor.y;
+      push(gx, gy);
+      let guard = 0;
+      while (guard++ < WORLD_SIZE && typeof globeBlocked === 'function') {
+        if (globeBlocked(state, gx + dx, gy + dy)) break;
+        gx += dx;
+        gy += dy;
+        push(gx, gy);
+      }
+      for (let ox = -1; ox <= 1; ox += 1) for (let oy = -1; oy <= 1; oy += 1) push(gx + ox, gy + oy);
     } else {
       // A piercing bolt ALWAYS travels its full range in the aimed direction — preview every tile
       // it scorches, matching the real bolt: ice ends it (thaws), a wall/boulder stops it (unless
@@ -1004,6 +1022,12 @@
     if (nextState.smoke && nextState.smoke.length) {
       for (const sm of nextState.smoke) Renderer.smoke(sm.x, sm.y);
       nextState.smoke = [];
+    }
+    // Drain FIRE BURSTS: a molten bloom on every tile a Globe of Fire just detonated across.
+    if (nextState.fireBursts && nextState.fireBursts.length) {
+      if (Renderer.fireBloom) for (const fb of nextState.fireBursts) Renderer.fireBloom(fb.x, fb.y);
+      GameAudio.play('cast');
+      nextState.fireBursts = [];
     }
     if (animate) {
       Renderer.sync(nextState);

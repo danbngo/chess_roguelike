@@ -1633,6 +1633,45 @@ const Renderer = (function () {
     }
   }
 
+  // A public one-shot FIRE BLOOM on a tile — used when a Globe of Fire detonates (main.js drains
+  // state.fireBursts onto this). Reuses the bursts particle with a molten colour.
+  function fireBloom(tileX, tileY) {
+    bursts.push({ x: tileX, y: tileY, t: 0, delay: 0, color: '#fb923c' });
+  }
+
+  // The Sorcerer's drifting GLOBES OF FIRE — a molten orb wreathed in flame at each tile, flickering.
+  // Always shown (his own conjuration), drawn over the board in the effects pass.
+  function drawFireGlobes(state) {
+    const globes = state && state.fireGlobes;
+    if (!globes || !globes.length) return;
+    for (const glob of globes) {
+      const cx = (glob.x + 0.5) * tileSize;
+      const cy = (glob.y + 0.5) * tileSize;
+      const flick = 0.82 + 0.18 * Math.sin(clock * 14 + glob.x * 1.3 + glob.y * 0.7);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, tileSize * 0.55 * flick);
+      glow.addColorStop(0, 'rgba(255, 220, 130, 0.9)');
+      glow.addColorStop(0.4, 'rgba(251, 146, 60, 0.6)');
+      glow.addColorStop(1, 'rgba(220, 40, 10, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.55 * flick, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      ctx.fillStyle = '#fb923c';
+      ctx.beginPath();
+      ctx.arc(cx, cy, tileSize * 0.24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff3c4';
+      ctx.beginPath();
+      ctx.arc(cx - tileSize * 0.05, cy - tileSize * 0.06, tileSize * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   // A dying ally's farewell: a puff of purple smoke that swells and fades over PUFF_TIME. A
   // clutch of drifting violet blobs plus a bright core early on — a slow visual dissolve.
   function drawPuffs() {
@@ -6362,6 +6401,7 @@ const Renderer = (function () {
 
     drawProjectiles();
     drawBursts();
+    drawFireGlobes(state);
     drawPuffs();
     drawDissolves();
     drawFog(lit);
@@ -6501,5 +6541,5 @@ const Renderer = (function () {
     tutSpotlight = tiles || null;
   }
 
-  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, dissolve, dissolveKing, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawFade, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight, setPressed };
+  return { init, reset, sync, update, draw, hit, effect, rangedShot, centerOn, centerCameraOn, minimapToTile, bump, bumpBoulder, bumpEnemy, dissolve, dissolveKing, fireBloom, lunge, riposte, shout, puff, smoke, drawTitle, titleOptionAt, titleOptionInDirection, trophyInDirection, drawBoardBackdrop, drawFade, drawPickScene, drawTrophyScene, sceneOptionAt, panBy, panByPixels, zoomBy, screenToTile, markThreats, setPathPreview, setTutSpotlight, setPressed };
 })();

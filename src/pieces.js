@@ -307,6 +307,26 @@ function getCardMoves(state, card) {
   if (kind === 'promotion' || kind === 'reload' || kind === 'blink' || kind === 'silence' || kind === 'confuse') {
     return [{ x: p.x, y: p.y, capture: false, viaJump: false, self: true }];
   }
+  // Chain Lightning: auto-cast, no aiming — selecting the king's OWN tile looses it at the nearest foe.
+  // Offered only while a foe is in sight for the bolt to leap to (else the card greys out).
+  if (kind === 'chainlight') {
+    const hasFoe = state.enemies.some((e) => !e.summonCircle && targetable(e.x, e.y) && inLineOfSight(state, e.x, e.y));
+    return hasFoe ? [{ x: p.x, y: p.y, capture: false, viaJump: false, self: true }] : [];
+  }
+  // Globe of Fire: aim a DIRECTION — the globe is conjured on the empty tile one step that way and
+  // drifts on. Offer the eight neighbours clear enough to conjure it onto (empty, not solid, in sight).
+  if (kind === 'globe') {
+    const out = [];
+    for (const [dx, dy] of [...ORTHO, ...DIAG]) {
+      const gx = p.x + dx;
+      const gy = p.y + dy;
+      if (!inBounds(gx, gy)) continue;
+      if (typeof globeBlocked === 'function' && globeBlocked(state, gx, gy)) continue; // no wall/tree/body to conjure into
+      if (!inLineOfSight(state, gx, gy)) continue;
+      out.push({ x: gx, y: gy, capture: false, viaJump: false, globe: true });
+    }
+    return out;
+  }
   // Displacement (swap) can target any unit in sight — enemies and turrets alike. NOT a summoning
   // circle: that is a rune cut into the floor, not a body standing on it, so there is nothing there to
   // trade places WITH. (It was also a free teleport to the circle's tile, which destroys it on contact
@@ -729,6 +749,8 @@ function getPieceLabel(kind) {
     banish: '✧', // Translocations' Banish — a foe sent clean out of the world
     confuse: '๑', // the Hexer's Mass Confusion — the room forgets which side it is on
     fireball: '☄', // the Conjurer's Fireball — a queen-line bolt that bursts on impact
+    globe: '🔥', // the Conjuration Globe of Fire — a drifting ball that detonates on contact
+    chainlight: '⚡', // the Conjuration Chain Lightning — a bolt that arcs through a cluster
   };
   return labels[kind] ?? '♟';
 }
