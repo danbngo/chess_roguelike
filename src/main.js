@@ -618,7 +618,7 @@
     // foe, so a single Enter or a tap on the glowing tile always solves the puzzle.
     const tg = tutGuide();
     if (tg && tg.phase === 'cardTarget' && tg.tiles.length) cardCursor = { x: tg.tiles[0].x, y: tg.tiles[0].y };
-    gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — cycle targets with the numpad/WSAD, then Enter/Space (or press ${index + 1} again) to fire; Esc to cancel.`;
+    gameState.message = `Aiming the ${classCategory(gameState.player.className)} ${card.kind} — tap a highlighted target to fire, or tap the card again to cancel.`;
     showCardInfo(card, index);
     updateHud();
   }
@@ -640,16 +640,16 @@
   function cardVerb(card) {
     const cat = classCategory(gameState.player.className);
     switch (card.kind) {
-      case 'promotion': return 'Self-cast: confirm on your own tile. Free action.';
-      case 'reload': return 'Self-cast: confirm on your own tile — recharge every other card.';
+      case 'promotion': return 'Self-cast: tap your own tile. Free action.';
+      case 'reload': return 'Self-cast: tap your own tile — recharge every other card.';
       case 'swap': return 'Target any unit in sight to trade places with it; arriving shoves other adjacent foes back a tile. Summoning circles are cut into the floor and cannot be swapped with.';
       case 'enpassant': return 'Step 1 tile; also strikes one foe you pass (marked ✕).';
       case 'doublestep': return 'Dash the FULL 2 tiles in one direction (capturing at the end).';
       case 'horse': return 'A spectral steed tramples an L-shaped path to an aimed knight tile — you don’t move.';
       case 'globe': return 'Aim a direction: a ball of fire is conjured beside you and drifts that way one tile a turn, bursting on the first solid thing it meets.';
-      case 'chainlight': return 'Self-cast: confirm on your own tile — a bolt leaps to the nearest foe and arcs through every unit chained to it (you and your allies conduct too).';
-      case 'confuse': return 'Self-cast: confirm on your own tile — every foe in sight loses friend from foe.';
-      case 'silence': return 'Self-cast: confirm on your own tile — every foe in sight drops asleep. Free action.';
+      case 'chainlight': return 'Self-cast: tap your own tile — a bolt leaps to the nearest foe and arcs through every unit chained to it (you and your allies conduct too).';
+      case 'confuse': return 'Self-cast: tap your own tile — every foe in sight loses friend from foe.';
+      case 'silence': return 'Self-cast: tap your own tile — every foe in sight drops asleep. Free action.';
       default:
         return cat === 'melee' ? 'Strikes by moving onto the foe.'
           : cat === 'ranged' ? 'Fires from afar (blocked by cover); you hold your tile.'
@@ -1202,9 +1202,9 @@
 
     const taken = p.takenPerks || [];
     const chainColors = (cls && cls.chains) || {};
-    // The INNATE class trait leads the list, tagged so it reads apart from the perks he CHOSE. The
-    // character sheet uses each perk's SHORT one-liner (not the full desc) — a scannable list, not a
-    // wall of text; the long form is reserved for the level-up/altar screens where you're choosing.
+    // The INNATE class trait leads the list, tagged so it reads apart from the perks he CHOSE. Every
+    // perk display — this sheet, the level-up boon screen, the altar — uses the same SHORT one-liner
+    // (`perk.short || perk.desc`), so the description reads identically wherever you meet it.
     const perkRows = [];
     if (cls && cls.startPerk) {
       const blurb = cls.startPerk.short || cls.startPerk.desc;
