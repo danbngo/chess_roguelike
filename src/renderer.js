@@ -58,6 +58,7 @@ const Renderer = (function () {
   const DISSOLVE_DUR = 0.9; // seconds the entry lives (the visual fade finishes far sooner, see FADE_FRAC)
   const FADE_FRAC = 0.5; // the SPRITE is fully gone by this fraction of DISSOLVE_DUR (0.45s) — before the king moves
   let boulderRenders = []; // { x, y, targetX, targetY, angle, targetAngle } — boulders ROLL + spin as they move
+  let globeRenders = []; // { id, x, y, targetX, targetY } — a Globe of Fire GLIDES tile-to-tile as it drifts
   let lungePoint = null; // the king POUNCES onto this tile first, then eases to his real target (leap-onto-foe bounce)
 
   // Hit feedback: a brief screen shake + colored full-screen flash, easing out.
@@ -441,6 +442,7 @@ const Renderer = (function () {
       const [x, y] = k.split(',').map(Number);
       boulderRenders.push({ x, y, targetX: x, targetY: y, angle: 0, targetAngle: 0 });
     }
+    globeRenders = (state.fireGlobes || []).map((g) => ({ id: g.id, x: g.x, y: g.y, targetX: g.x, targetY: g.y }));
     projectiles = [];
     bursts = [];
     puffs = []; // a fresh floor: no lingering smoke
@@ -542,6 +544,22 @@ const Renderer = (function () {
     }
     allyRenders = nextAllies;
     syncBoulders(state);
+    syncGlobes(state);
+  }
+
+  // Match the eased globe renders to state.fireGlobes by id: a globe that MOVED keeps its render so the
+  // orb GLIDES to the new tile; a newly conjured one appears in place; a detonated one vanishes.
+  function syncGlobes(state) {
+    const globes = (state && state.fireGlobes) || [];
+    const next = [];
+    for (const g of globes) {
+      let render = globeRenders.find((r) => r.id === g.id);
+      if (!render) render = { id: g.id, x: g.x, y: g.y, targetX: g.x, targetY: g.y };
+      render.targetX = g.x;
+      render.targetY = g.y;
+      next.push(render);
+    }
+    globeRenders = next;
   }
 
   // Diff the boulder terrain against the eased boulder renders: a boulder that MOVED (its tile is
@@ -611,6 +629,12 @@ const Renderer = (function () {
       b.x += (b.targetX - b.x) * speed;
       b.y += (b.targetY - b.y) * speed;
       b.angle = (b.angle || 0) + ((b.targetAngle || 0) - (b.angle || 0)) * speed; // spin toward the roll angle
+    }
+    for (const g of globeRenders) {
+      // A globe drifts one tile per enemy phase; ease it across so the orb GLIDES rather than snapping —
+      // slower than a token's step so its float reads as a hovering ball of fire, not a thrown one.
+      g.x += (g.targetX - g.x) * speed * 0.6;
+      g.y += (g.targetY - g.y) * speed * 0.6;
     }
     for (const puff of puffs) puff.t += delta / PUFF_TIME;
     puffs = puffs.filter((p) => p.t < 1);
@@ -1642,12 +1666,12 @@ const Renderer = (function () {
   // The Sorcerer's drifting GLOBES OF FIRE — a molten orb wreathed in flame at each tile, flickering.
   // Always shown (his own conjuration), drawn over the board in the effects pass.
   function drawFireGlobes(state) {
-    const globes = state && state.fireGlobes;
-    if (!globes || !globes.length) return;
-    for (const glob of globes) {
+    // Drawn from the EASED globeRenders (not the snapped state tiles) so each orb glides tile-to-tile.
+    if (!globeRenders.length) return;
+    for (const glob of globeRenders) {
       const cx = (glob.x + 0.5) * tileSize;
       const cy = (glob.y + 0.5) * tileSize;
-      const flick = 0.82 + 0.18 * Math.sin(clock * 14 + glob.x * 1.3 + glob.y * 0.7);
+      const flick = 0.82 + 0.18 * Math.sin(clock * 14 + glob.targetX * 1.3 + glob.targetY * 0.7);
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, tileSize * 0.55 * flick);

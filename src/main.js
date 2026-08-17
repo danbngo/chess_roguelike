@@ -2219,6 +2219,14 @@
         // 'wail' from the cues so applyState (after the hold) doesn't play a second one.
         if (Array.isArray(nextState.cues)) nextState.cues = nextState.cues.filter((c) => c !== 'wail');
         GameAudio.play('wail');
+        // Its DYING WORDS ride the scream, over the tile it still stands on. Without this the bubble
+        // waited for the enemy phase's showBossShout — popping up a beat AFTER it had already dissolved
+        // away. Cleared so that later showBossShout doesn't raise it a second time onto an empty tile.
+        if (nextState.bossShout && nextState.bossShout.death) {
+          const cry = nextState.bossShout;
+          Renderer.shout(cry.x, cry.y, cry.text, cry.demon);
+          nextState.bossShout = null;
+        }
         pendingBossKill = nextState;
         pendingBossKillId = slain.id;
         pendingAction = 'bosskill-lead';
@@ -2235,6 +2243,16 @@
     const hpBefore = gameState ? gameState.player.hp : nextState.player.hp;
 
     applyState(nextState, true);
+    // A boss the KING just felled cries its dying words NOW, at the kill — not a beat later when the
+    // enemy phase's showBossShout would otherwise raise it (by then a ranged- or AoE-killed guardian
+    // has already vanished, so the bubble popped over an empty tile AFTER the death). Only DEATH shouts
+    // are ever set on the player's own turn; a waking ROAR is raised by the phase and still waits for it.
+    // (The melee-capture path clears its own bossShout during the scream-lead, so this never double-fires.)
+    if (gameState.bossShout && gameState.bossShout.death) {
+      const cry = gameState.bossShout;
+      Renderer.shout(cry.x, cry.y, cry.text, cry.demon);
+      gameState.bossShout = null;
+    }
     // BANISH: the foe is already gone from the state — all that is left to show is the smoke where
     // it stood. Cleared so it fires exactly once.
     if (gameState.banished) {

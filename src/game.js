@@ -8711,8 +8711,14 @@ function useCard(state, cardIndex, x, y) {
     const gdy = Math.sign(y - fromY);
     if (!Array.isArray(next.fireGlobes)) next.fireGlobes = [];
     if ((gdx || gdy) && !globeBlocked(next, x, y)) {
-      next.fireGlobes.push({ x, y, dx: gdx, dy: gdy });
+      // `fresh`: it only FORMS and hovers on the turn it is cast — it does not lurch a tile and cannot
+      // burst by its own drift this turn (that read as an instant explosion in the king's face). It
+      // begins to travel on the NEXT enemy phase. A foe that steps onto it before then still sets it off.
+      // `id`: a stable handle so the view can glide the SAME orb tile-to-tile as it drifts (see renderer).
+      const gid = (next.nextGlobeId = (next.nextGlobeId || 0) + 1);
+      next.fireGlobes.push({ id: gid, x, y, dx: gdx, dy: gdy, fresh: true });
       next.message = 'A globe of fire drifts forth!';
+      cue(next, 'cast'); // a MAGICAL conjuring chime — the globe is CONJURED, not fired, so no combat thud
     } else {
       // Aimed straight into something solid at his elbow (getCardMoves normally forbids this) — it
       // bursts as it forms.
@@ -8779,8 +8785,10 @@ function useCard(state, cardIndex, x, y) {
   }
 
   // Record the shot so the view can fly a projectile (arrow / bolt) from the king to the
-  // target before the hit resolves. Only ranged/spell weapon cards fire one.
-  if (category !== 'melee') {
+  // target before the hit resolves. Only ranged/spell weapon cards fire one. The GLOBE is not a shot —
+  // it is a hovering orb CONJURED on the neighbouring tile, so it flies no projectile (and thus makes
+  // no fireball-impact noise); it drifts under its own power from there.
+  if (category !== 'melee' && card.kind !== 'globe') {
     next.lastShot = {
       fromX, fromY, toX: x, toY: y,
       role: category === 'ranged' ? 'arrow' : 'fireball',
@@ -8964,7 +8972,10 @@ function useCard(state, cardIndex, x, y) {
   } else {
     passTurn(next);
     next.enemyTurn = true;
-    next.lastAction = 'combat';
+    // A conjured GLOBE is placed, not a blow — 'conjure' passes the turn like 'combat' but keeps the view
+    // from playing the melee thud + kill-flash (which key off 'combat'/'move-free'). Its magical chime is
+    // cued at placement instead. Every other weapon card is a strike and stays 'combat'.
+    next.lastAction = card.kind === 'globe' ? 'conjure' : 'combat';
   }
   updateDiscovery(next);
   return next;
@@ -9348,7 +9359,12 @@ function moveAlly(state, ally) {
     return Boolean(e) && isCapturable(state, e);
   };
   // The king's summons are NOT lava-immune, so they keep off it (lavaOk: false).
-  const moves = generateMoves(ally.kind, state, ally.x, ally.y, unitAt, isTarget, { lavaOk: false });
+  // ...and they give a hovering Globe of Fire a WIDE berth — an ally that walks onto one detonates it on
+  // itself (and on the king if he is near). Filtering the globe tiles out of its options means it will
+  // sooner hold its ground than step into fire, even if that globe sits square on its path to the king.
+  const onGlobe = (x, y) => Array.isArray(state.fireGlobes) && state.fireGlobes.some((g) => g.x === x && g.y === y);
+  const moves = generateMoves(ally.kind, state, ally.x, ally.y, unitAt, isTarget, { lavaOk: false })
+    .filter((m) => !onGlobe(m.x, m.y));
   const cap = moves.find((m) => isTarget(m.x, m.y));
   if (cap) {
     const foe = enemyHere(cap.x, cap.y);
@@ -9411,7 +9427,7 @@ function moveAlly(state, ally) {
 function advanceAllies(state) {
   maybeRespawnFamiliar(state);
   for (const ally of (state.allies || []).slice()) {
-    if ((state.allies || []).includes(ally)) moveAlly(state, ally);
+    if ((state.allies || []).includes(ally)) { moveAlly(state, ally); triggerGlobesUnderBodies(state); }
   }
 }
 
@@ -9897,14 +9913,37 @@ function tickFireGlobes(state) {
   const survivors = [];
   for (const globe of state.fireGlobes) {
     if (state.gameOver || state.won) { survivors.push(globe); continue; }
-    // Something now standing on the globe's OWN tile (a foe stepped into it) sets it off where it floats.
+    // Something now standing on the globe's OWN tile sets it off where it floats. SAFETY NET only — a unit
+    // that STEPS onto it is normally caught at move time by triggerGlobesUnderBodies (so it bursts on the
+    // same phase it is stepped into, not a turn later when this next runs).
     if (globeBlocked(state, globe.x, globe.y)) { detonateFire(state, globe.x, globe.y); continue; }
+    // The turn it is CONJURED it merely hovers: no drift, and so it cannot detonate by its own motion this
+    // turn (it would otherwise lurch into an adjacent foe and burst in the king's face the instant he cast
+    // it). It starts to travel on the NEXT enemy phase.
+    if (globe.fresh) { globe.fresh = false; survivors.push(globe); continue; }
     const nx = globe.x + globe.dx;
     const ny = globe.y + globe.dy;
     if (globeBlocked(state, nx, ny)) { detonateFire(state, globe.x, globe.y); continue; } // path meets something solid
     globe.x = nx;
     globe.y = ny;
     survivors.push(globe);
+  }
+  state.fireGlobes = survivors;
+}
+
+// Detonate any globe of fire that a body has just moved ONTO — the SECOND way a globe goes off (the
+// first is it drifting into something, in tickFireGlobes). Called right after a unit commits a move, so a
+// foe / ally / king stepping into a hovering globe sets it off THAT phase, not a turn later.
+function triggerGlobesUnderBodies(state) {
+  if (!Array.isArray(state.fireGlobes) || !state.fireGlobes.length) return;
+  const survivors = [];
+  for (const globe of state.fireGlobes) {
+    if (state.gameOver || state.won) { survivors.push(globe); continue; }
+    const bodyOn = state.enemies.some((e) => e.x === globe.x && e.y === globe.y)
+      || allyAt(state, globe.x, globe.y)
+      || (state.player.x === globe.x && state.player.y === globe.y);
+    if (bodyOn) detonateFire(state, globe.x, globe.y);
+    else survivors.push(globe);
   }
   state.fireGlobes = survivors;
 }
@@ -10041,6 +10080,7 @@ function beginEnemyPhase(state) {
   recordSeenEnemies(next);
   charmBeasts(next); // Wild Empathy: beasts in view bow and join the king's side before the foes act
   tickBurningTrees(next); // a tree lit last turn burns away now, leaving a scorch (and may spread)
+  triggerGlobesUnderBodies(next); // the KING may have walked onto one of his own globes on his turn — burst it first
   tickFireGlobes(next); // a Globe of Fire drifts one tile along its heading (and detonates if it hits something)
   tickLavaDamage(next); // lava burns any non-demonic foe/ally standing in it this turn
   tickPitFalls(next); // anything that blundered onto a pit (a confused foe) falls in
@@ -11944,6 +11984,7 @@ function moveEnemy(state, enemyId) {
     if (acted) acted.recovering = true;
   }
   openDoorsUnderUnits(result); // the foe may have stepped onto (and thus opened) a shut door
+  triggerGlobesUnderBodies(result); // ...or stepped INTO a hovering globe of fire, which bursts on contact
   return result;
 }
 

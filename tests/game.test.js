@@ -14,7 +14,7 @@ const LOGIC_FILES = ['config.js', 'constants.js', 'utils.js', 'terrain.js', 'pie
 const source = LOGIC_FILES.map((file) => fs.readFileSync(path.join(here, '..', 'src', file), 'utf8')).join('\n');
 
 const api = new Function(
-  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, buildTutorialFloor, tickTutorial, tutJuncture, leaveTutorial, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFireGlobes, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
+  `${source}\nreturn { createInitialState, createPlayer, generateFloor, elementForFloor, buildTutorialFloor, tickTutorial, tutJuncture, leaveTutorial, tickPuddles, collapseWaterElemental, wispTriggerAt, zombieFeed, SKELETON_CRUSH_BLOWS, batStep, REALM_BOSS_NAMES, bleedFor, becomeBat, batPrey, landBesideSurvivor, portalRealmName, portalRealmColor, PORTAL_REALMS, debugPortalRoom, CONFIG, perkAvailable, startingHpFor, NG_PLUS_REALMS, launchFromSpring, springKindAt, tickPlatforms, SPRING_KINDS, enterElemental, ENTERABLE_ELEMENTALS, isGap, tickSteamElementals, isStandable, tickBurningTrees, tickElementalTrails, inkAt, spillInk, tickInk, fogAt, addFog, tickDrowning, tickTrueBats, isDeepWater, isSlowTerrain, tickUndead, resolveElementalBlow, tickMushrooms, isTimber, isRock, fireTurretLineTo, scorchTileTerrain, isElementFloor, petrifyEarthFloor, makeElemental, isElemental, isElementalFolk, elementalTerrainMask, tickMolefolk, wouldSeverLocally, ELEMENTAL_TYPES, ELEMENTAL_MASKS, pieceTerrainOpts, nextFloor, learnPerk, rollLevelPerks, getPlayerMoves, movePlayer, movePlayerTo, beginEnemyPhase, moveEnemy, maybeSpawnEnemy, useCard, getVisibleBounds, capturableAt, createBoss, defeatBoss, enemyRole, getCardMoves, getPieceThreats, chebyshev, CLASSES, terrainAt, unitInSight, fireTurret, summonCircleTurn, tryDescend, collectKeyIfHere, getPieceMoves, blinkToSafety, getThreatenedTiles, advanceAllies, allyAt, enemyAwareOfKing, playerDisplayColor, chainColorFor, ensureReachable, dangerReachOk, standableFor, blocksSight, knockbackBoulder, meltIce, smashIce, inLineOfSight, isNeutralBeast, hasTorch, torchChance, scatterTorches, WORLD_SIZE, turretBlocksHallway, bossHas, bossDamage, rollBossPerks, runAllyPhase, scorchGround, randomEnemyKind, randomTurretKind, knockbackEnemy, makeTurret, knockbackKing, makeMiniBoss, fireDangerEvent, dreadFraction, dreadGear, inDreadGrace, bossPoolForFloor, bossNameFor, MAX_TURNS_SCARY, DREAD_GRACE_TURNS, PLAYER_START, SUMMON_TURNS, chamberAnchorForFloor, playerReachable, passTurn, isChoppable, isDoorwaySpot, treeHpAt, damageTree, threatenersOf, DEMON_FLOOR, levelForFloor, isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies, playerTitle, cardBlockedReason, committedChain, attackTile, isNeutralBeast, makeMiniBoss, knightLPath, thunderingCharge, isStalemate, checkStalemate, BOSS_PERKS, fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss, tickGeysers, tickFireGlobes, triggerGlobesUnderBodies, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn, overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS, barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot, realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, isDemonRealmFloor, MAX_BOONS, makeUndead, isUndead, resolveKill, tickDeathWater, ZOMBIE_HP, SKELETON_REKNIT_TURNS, createEnemy, tickPitFalls, buildPortalRoom, enterRealm, returnToPortalRoom, useAltar, altarOptions, ALTAR_RITES, rollAltarOffers, perkById, makeGolem, isGolem, GOLEM_RESTART_TURNS, dischargeElectricity, toggleMetalAt, tickGenerators, GENERATOR_PERIOD, conductsAt, isShovable, throwSwitch, generatorTiles, terrainLocked, isObjectiveTile, canPushBoulder, electricTurretAim, turretTargetsKing, damageTurret, fireFabricator, tickGloom, blocksSightSoft, COFFIN_HP, TOMBSTONE_FUSE, hasLightFitting, tickWisps, isWisp, confusedChopTargets };`,
 )();
 const {
   batStep, REALM_BOSS_NAMES,
@@ -57,7 +57,7 @@ const {
   isSolidBarrier, meleeMove, TREE_HP, PIECE_RANK, startle, confuse, isConfused, confusedTurn, getVisibleEnemies,
   playerTitle, cardBlockedReason, committedChain, attackTile, isStalemate, knightLPath, BOSS_PERKS,
   fireTurretLineToKing, turretLaneObstacle, connectWalledPockets, bossMove, tickGuardianWards, damageBoss,
-  tickGeysers, tickFireGlobes, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
+  tickGeysers, tickFireGlobes, triggerGlobesUnderBodies, tickFogDamage, tickLavaDamage, geyserErupting, geyserImminent, scatterGeysers, isDemonRealmFloor, hasLineOfSight, skipTurn,
   overstayFraction, MAX_TURNS_LAVA, spawnKindForFloor, isHellNow, turretTargetsKing, bossDeathLine, standableAt, isBorderStone, giveCard, MAX_CARD_SLOTS,
   barTheChokes, enemiesToTurrets, enemiesToMinis, enemiesToCircles, steamBurst, circlesAtHand, openFissures, hellscape, demoniseNearby, demonIntruder, blocksArrow, blocksShot,
   realmFinalFloor, realmDef, realmOf, REALMS, isFinalFloor, MAX_BOONS,
@@ -3115,6 +3115,12 @@ test('Globe of Fire: conjured beside the king, drifts one tile a turn, detonates
   assert.deepEqual({ x: r.player.x, y: r.player.y }, { x: 10, y: 10 }, 'the king does NOT move (it is placed, not a jump)');
   assert.equal(r.fireGlobes.length, 1, 'a globe now drifts');
   assert.deepEqual({ dx: r.fireGlobes[0].dx, dy: r.fireGlobes[0].dy }, { dx: 1, dy: 0 }, 'heading east');
+  // The turn it is CONJURED it only hovers: the first enemy phase must leave it on its spawn tile (one
+  // step east) and NOT detonate. Drifting/bursting on the cast turn made it seem to spawn two tiles away
+  // and burst in the king's own face — it may only go off if a body steps onto it (tested separately).
+  tickFireGlobes(r);
+  assert.deepEqual({ x: r.fireGlobes[0].x, y: r.fireGlobes[0].y }, { x: 11, y: 10 }, 'a freshly conjured globe rests on its cast turn (no drift)');
+  assert.equal((r.fireBursts || []).length, 0, 'and does not detonate on the turn it is cast');
   // A wall three tiles on: the globe drifts and BURSTS against it, scorching the tile beside it.
   r.terrain['14,10'] = 'wall';
   r.fireBursts = [];
@@ -3133,6 +3139,43 @@ test('Globe of Fire: conjured beside the king, drifts one tile a turn, detonates
   while (r2.fireGlobes.length && g2++ < 12) tickFireGlobes(r2);
   assert.equal(r2.enemies.length, 0, 'the globe detonates on the foe and fells it');
   assert.ok((r2.ashes || []).length >= 1, 'a spell kill leaves ash');
+});
+
+test('Globe of Fire: a body that steps onto it triggers it the same phase, not a turn later', () => {
+  // The second way a globe goes off (besides drifting into something): a foe/ally/king moves ONTO the
+  // tile it hovers on. triggerGlobesUnderBodies runs right after any unit commits a move, so it bursts
+  // that phase instead of waiting for the next tick to notice the body sharing its tile.
+  const s = sorcererWith('s_staff');
+  s.terrain = {}; s.allies = []; s.player.x = 10; s.player.y = 10;
+  s.fireGlobes = [{ x: 12, y: 10, dx: 1, dy: 0 }];
+  s.enemies = [makeEnemy({ kind: 'pawn', x: 12, y: 10, awake: true })]; // a foe now shares the globe's tile
+  s.fireBursts = [];
+  triggerGlobesUnderBodies(s);
+  assert.equal(s.fireGlobes.length, 0, 'the globe bursts the instant a body shares its tile');
+  assert.ok((s.fireBursts || []).length > 0, 'and throws a blast');
+  assert.equal(s.enemies.length, 0, 'felling the foe that walked into it');
+
+  // No body on it: it is left untouched (does not spuriously self-detonate).
+  const s2 = sorcererWith('s_staff');
+  s2.terrain = {}; s2.allies = []; s2.enemies = []; s2.player.x = 10; s2.player.y = 10;
+  s2.fireGlobes = [{ x: 12, y: 10, dx: 1, dy: 0 }];
+  s2.fireBursts = [];
+  triggerGlobesUnderBodies(s2);
+  assert.equal(s2.fireGlobes.length, 1, 'a globe with nothing on it is left to keep drifting');
+  assert.equal((s2.fireBursts || []).length, 0, 'and does not go off on its own');
+});
+
+test('Globe of Fire: an ally gives it a wide berth rather than stepping onto it', () => {
+  const s = sorcererWith('s_staff');
+  s.terrain = {}; s.enemies = [];
+  s.player.x = 10; s.player.y = 10;
+  s.allies = [{ id: 'fam', kind: 'mann', x: 12, y: 10, familiar: true }]; // wants to close on the king
+  s.fireGlobes = [{ id: 1, x: 11, y: 10, dx: -1, dy: 0 }]; // sitting square on its straight path to him
+  s.fireBursts = [];
+  advanceAllies(s);
+  assert.ok(!(s.allies[0].x === 11 && s.allies[0].y === 10), 'the familiar steps around, never onto, the globe');
+  assert.equal(s.fireGlobes.length, 1, 'so it never detonates a globe on itself (and the king beside it)');
+  assert.equal((s.fireBursts || []).length, 0, 'no blast goes off');
 });
 
 test('Phase lets the king enter walls, and no longer blinds him for it', () => {
